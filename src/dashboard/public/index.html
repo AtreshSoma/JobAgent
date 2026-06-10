@@ -75,18 +75,36 @@
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: var(--panel2); border: 1px solid var(--accent); padding: 8px 16px;
            border-radius: 8px; display: none; z-index: 30; }
+  #selbar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+            background: var(--panel); border: 1px solid var(--accent); padding: 9px 14px;
+            border-radius: 10px; display: none; z-index: 25; align-items: center; gap: 8px;
+            box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+  #selbar.show { display: flex; }
+  #selCount { color: var(--accent); font-weight: 600; margin-right: 4px; }
+  .conn { font-size: 12px; font-weight: 600; margin-right: 6px; white-space: nowrap; }
+  .conn.ok { color: var(--good); }
+  .conn.down { color: var(--bad); }
+  #offline { position: fixed; top: 0; left: 0; right: 0; z-index: 50; display: none;
+    background: var(--bad); color: #fff; text-align: center; padding: 8px 14px;
+    font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
+  #offline.show { display: block; }
+  #offline button { margin-left: 10px; }
 </style>
 </head>
 <body>
+<div id="offline">⚠ Lost connection to the dashboard server — it may have stopped.
+  Restart it with <code>npm run dashboard</code>, then
+  <button class="small" onclick="location.reload()">Reload</button></div>
 <header>
   <h1>JobAgent</h1>
   <span class="safety">local-only · never auto-submits · you click Submit</span>
   <span class="spacer"></span>
+  <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
   <span id="runStatus"></span>
   <button onclick="runPhase('discover')">Discover</button>
   <button onclick="runPhase('score')">Score</button>
   <button class="primary" onclick="runPhase('prepare')">Find &amp; Prepare</button>
-  <button id="compareBtn" onclick="showCompare()" disabled>Compare (0)</button>
+  <button onclick="exportCsv()" title="Download the full job tracker spreadsheet">⬇ Export CSV</button>
 </header>
 
 <main>
@@ -111,7 +129,8 @@
       <label><input type="checkbox" id="hideClosed" checked> hide rejected/archived</label>
     </div>
     <table>
-      <thead><tr><th></th><th>Score</th><th>Fit</th><th>Company / Role</th>
+      <thead><tr><th><input type="checkbox" id="selAll" title="Select all visible"
+          onclick="toggleSelectAll(this.checked)"></th><th>Score</th><th>Fit</th><th>Company / Role</th>
         <th>Sponsorship</th><th>Posted</th><th>Source</th><th>Status</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -126,18 +145,49 @@
 
 <div id="compare"></div>
 <div id="toast"></div>
+<div id="selbar">
+  <span id="selCount">0 selected</span>
+  <button class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply selected</button>
+  <button class="small" onclick="batchApprove()">✓ Approve selected</button>
+  <button class="small" onclick="batchDecide('shortlisted')">★ Shortlist</button>
+  <button class="small" onclick="batchDecide('rejected')">✕ Reject</button>
+  <button class="small" onclick="showCompare()" id="cmpBtn" disabled>Compare</button>
+  <button class="small" onclick="clearSelection()">Clear</button>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 let selectedId = null;
-let compareIds = new Set();
+let selectedIds = new Set();
+let visibleIds = [];
+let jobsById = {};
 let pollTimer = null;
 
 async function api(path, opts) {
-  const res = await fetch(path, opts);
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch {
+    // fetch() only throws on a network-level failure (server down, connection
+    // refused). Surface a clear, actionable message instead of "Failed to fetch".
+    setServerStatus(false);
+    throw new Error('Cannot reach the dashboard server — it may have stopped. Restart it with “npm run dashboard”, then reload this page.');
+  }
+  setServerStatus(true);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || res.statusText);
   return body;
+}
+let serverUp = null;
+function setServerStatus(up) {
+  if (up === serverUp) return;
+  serverUp = up;
+  const c = $('conn');
+  if (c) {
+    c.textContent = up ? '● connected' : '● disconnected';
+    c.className = 'conn ' + (up ? 'ok' : 'down');
+  }
+  $('offline')?.classList.toggle('show', !up);
 }
 function toast(msg, bad) {
   const t = $('toast');
@@ -164,6 +214,7 @@ const TILES = [
   ['preparedToday', 'Prepared today', 'good', {}],
   ['readyForSubmit', 'Ready to submit', 'warn', { appStatus: 'ready_for_submit' }],
   ['submittedToday', 'Submitted today', 'good', {}],
+  ['submittedTotal', 'Applied (all)', 'good', { appStatus: 'submitted' }],
   ['blocked', 'Blocked', 'bad', { appStatus: 'blocked' }],
   ['rejected', 'Rejected', '', { appStatus: 'rejected' }],
 ];
@@ -206,10 +257,13 @@ function filterParams() {
 }
 async function loadJobs() {
   const { jobs } = await api('/api/jobs?' + filterParams());
+  visibleIds = jobs.map((j) => j.id);
+  jobsById = {};
+  for (const j of jobs) jobsById[j.id] = j;
   $('rows').innerHTML = jobs.map((j) => `
     <tr class="job ${j.id === selectedId ? 'selected' : ''}" onclick="select('${esc(j.id)}')">
       <td onclick="event.stopPropagation()"><input type="checkbox"
-          ${compareIds.has(j.id) ? 'checked' : ''} onchange="toggleCompare('${esc(j.id)}', this.checked)"></td>
+          ${selectedIds.has(j.id) ? 'checked' : ''} onchange="toggleSelect('${esc(j.id)}', this.checked)"></td>
       <td><b>${j.score ?? '—'}</b></td>
       <td><span class="chip ${j.fit}">${j.fit.replace('_', ' ')}</span></td>
       <td><b>${esc(j.company)}</b><br><span class="muted">${esc(j.title)}</span></td>
@@ -219,6 +273,7 @@ async function loadJobs() {
       <td class="st-${j.appStatus}">${j.appStatus.replace(/_/g, ' ')}</td>
     </tr>`).join('')
     || '<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>';
+  syncSelAll();
 }
 
 /* ── detail ── */
@@ -308,7 +363,15 @@ async function runPhase(phase) {
 }
 async function pollRun() {
   clearTimeout(pollTimer);
-  const s = await api('/api/run/status');
+  let s;
+  try {
+    s = await api('/api/run/status');
+  } catch {
+    // Server unreachable: api() already flipped the connection banner. Keep
+    // retrying quietly so the UI recovers automatically once it is back.
+    pollTimer = setTimeout(pollRun, 2000);
+    return;
+  }
   if (s.running) {
     $('runStatus').textContent = `⏳ ${s.phase} running…`;
     pollTimer = setTimeout(pollRun, 1500);
@@ -319,16 +382,95 @@ async function pollRun() {
   }
 }
 
-/* ── compare ── */
-function toggleCompare(id, on) {
-  if (on) compareIds.add(id); else compareIds.delete(id);
-  if (compareIds.size > 3) { compareIds.delete(id); toast('Compare up to 3 jobs', true); }
-  $('compareBtn').textContent = `Compare (${compareIds.size})`;
-  $('compareBtn').disabled = compareIds.size < 2;
-  loadJobs();
+/* ── selection + batch actions ── */
+function toggleSelect(id, on) {
+  if (on) selectedIds.add(id); else selectedIds.delete(id);
+  syncSelbar();
 }
+function toggleSelectAll(on) {
+  for (const id of visibleIds) { if (on) selectedIds.add(id); else selectedIds.delete(id); }
+  syncSelbar(); loadJobs();
+}
+function syncSelAll() {
+  const all = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
+  const sel = $('selAll'); if (sel) sel.checked = all;
+}
+function syncSelbar() {
+  const n = selectedIds.size;
+  $('selCount').textContent = `${n} selected`;
+  $('selbar').classList.toggle('show', n > 0);
+  $('cmpBtn').disabled = n < 2;
+  syncSelAll();
+}
+function clearSelection() {
+  selectedIds.clear(); syncSelbar(); loadJobs();
+}
+const selIds = () => [...selectedIds];
+
+async function batchApprove() {
+  try {
+    const r = await api('/api/approve-batch', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: selIds() }) });
+    toast(`Approved ${r.approved.length}${r.failed.length ? `, ${r.failed.length} skipped (no packet)` : ''}`);
+    refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function batchDecide(decision) {
+  const ids = selIds();
+  try {
+    for (const id of ids) {
+      await api(`/api/jobs/${encodeURIComponent(id)}/decision`, { method: 'POST',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) });
+    }
+    toast(`Marked ${ids.length} as ${decision}`);
+    clearSelection(); refresh();
+  } catch (e) { toast(e.message, true); }
+}
+async function batchAutoApply() {
+  const ids = selIds();
+  if (!ids.length) return;
+  // Auto-apply only makes sense for live, not-yet-submitted postings. Warn about
+  // any selected jobs that are blocked / already submitted / rejected / archived.
+  const NON_APPLICABLE = new Set(['blocked', 'submitted', 'rejected', 'archived', 'discarded']);
+  const skippable = ids.filter((id) => NON_APPLICABLE.has(jobsById[id]?.appStatus));
+  const actionable = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus));
+  if (!actionable.length) {
+    toast(`All ${ids.length} selected job(s) are blocked/submitted/closed — nothing to auto-apply.`, true);
+    return;
+  }
+  let warn = '';
+  if (skippable.length) {
+    warn = `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
+  }
+  if (!confirm(`Auto-apply ${actionable.length} job(s)?${warn}\n\nIt will approve any prepared packets, open each in a browser, fill the form and advance safe steps — then STOP before submit so you review and click Submit yourself. Nothing is auto-submitted.`)) return;
+  try {
+    // Approve any prepared-but-unapproved packets first; ignore those without one.
+    await api('/api/approve-batch', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: actionable }) });
+    const r = await api('/api/assist-batch', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: actionable }) });
+    toast(`Auto-applying ${r.queued} job(s) — browser opens one at a time, stops before submit${r.skipped.length ? ` · ${r.skipped.length} skipped (not approved)` : ''}`);
+    pollRun();
+  } catch (e) { toast(e.message, true); }
+}
+async function exportCsv() {
+  try {
+    const res = await fetch('/api/export/tracker.csv');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'job_tracker.csv';
+    a.click(); URL.revokeObjectURL(a.href);
+    toast('Downloaded job_tracker.csv');
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ── compare (uses the current selection, first 3) ── */
 async function showCompare() {
-  const jobs = await Promise.all([...compareIds].map((id) => api('/api/jobs/' + encodeURIComponent(id))));
+  const ids = selIds().slice(0, 3);
+  if (ids.length < 2) { toast('Select 2–3 jobs to compare', true); return; }
+  const jobs = await Promise.all(ids.map((id) => api('/api/jobs/' + encodeURIComponent(id))));
   const row = (label, fn) => `<tr><th>${label}</th>${jobs.map((j) => `<td>${fn(j)}</td>`).join('')}</tr>`;
   $('compare').innerHTML = `
     <button style="float:right" onclick="$('compare').style.display='none'">Close</button>
@@ -350,12 +492,18 @@ async function showCompare() {
 }
 
 /* ── boot ── */
-function refresh() { loadStats(); loadJobs(); }
+function refresh() { loadStats().catch(() => {}); loadJobs().catch(() => {}); }
 for (const id of ['fit', 'appStatus', 'source', 'sort', 'last24h', 'hideClosed']) {
   $(id).addEventListener('change', loadJobs);
 }
 let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(loadJobs, 250); });
-refresh(); pollRun();
+// Lightweight health ping so the connection indicator recovers on its own and
+// the board reloads automatically once the server is restarted.
+setInterval(() => {
+  const wasDown = serverUp === false;
+  api('/api/run/status').then(() => { if (wasDown) refresh(); }).catch(() => {});
+}, 5000);
+refresh(); pollRun(); syncSelbar();
 </script>
 </body>
 </html>

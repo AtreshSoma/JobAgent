@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 import { openDatabase } from '../../src/logging/db.js';
-import { startDashboard } from '../../src/dashboard/server.js';
+import { startDashboard, installProcessSafetyNet } from '../../src/dashboard/server.js';
 
 const NOW = new Date('2026-06-04T12:00:00Z');
 
@@ -155,5 +155,163 @@ describe('dashboard server API', () => {
     expect(s.lastError).toContain('prepare failed: boom');
     // Server still serves requests after the failure.
     expect((await get('/api/stats')).status).toBe(200);
+  });
+});
+
+describe('dashboard batch actions + CSV export', () => {
+  let db;
+  let dash;
+  let trackerWrites;
+  const get = (p) => fetch(dash.url + p);
+  const post = (p, body) => fetch(dash.url + p, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  beforeEach(async () => {
+    db = openDatabase({ path: ':memory:' });
+    seed(db);
+    trackerWrites = 0;
+    dash = await startDashboard({
+      config: { root: '/fake/root' }, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        assistFn: async () => ({ status: 'ready_for_submit', blockers: [] }),
+        loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
+        // Avoid touching the real filesystem in tests.
+        writeJobTrackerImpl: () => { trackerWrites += 1; return { path: '/fake/root/data/job_tracker.csv' }; },
+        readTextImpl: () => 'Company,Job Role\nAcme,Senior Data Engineer',
+      },
+    });
+  });
+  afterEach(async () => { await dash.close(); db.close(); });
+
+  it('refreshes the tracker CSV after a human-gated action', async () => {
+    await post('/api/jobs/j1/approve');
+    expect(trackerWrites).toBeGreaterThan(0);
+  });
+
+  it('GET /api/export/tracker.csv streams the spreadsheet as an attachment', async () => {
+    const res = await get('/api/export/tracker.csv');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+    expect(res.headers.get('content-disposition')).toContain('job_tracker.csv');
+    expect(await res.text()).toContain('Company,Job Role');
+  });
+
+  it('approve-batch approves prepared packets and reports the rest', async () => {
+    const r = await post('/api/approve-batch', { jobIds: ['j1', 'j2'] });
+    expect(r.status).toBe(200);
+    expect(r.body.approved).toEqual(['j1']);     // j1 has a packet
+    expect(r.body.failed.map((f) => f.jobId)).toEqual(['j2']); // j2 has none
+    expect(db.getApprovalByJob('j1').approval_status).toBe('approved');
+  });
+
+  it('assist-batch fills approved jobs one at a time and never submits', async () => {
+    await post('/api/jobs/j1/approve');
+    const r = await post('/api/assist-batch', { jobIds: ['j1', 'j2'] });
+    expect(r.status).toBe(202);
+    expect(r.body.queued).toBe(1);       // only j1 is approved
+    expect(r.body.skipped).toEqual(['j2']);
+    await new Promise((res) => setTimeout(res, 30));
+    const run = (await fetch(dash.url + '/api/run/status').then((x) => x.json()));
+    expect(run.running).toBe(false);
+    expect(run.lastResult.phase).toBe('assist-batch');
+    expect(Number(db.getJob('j1').applied)).toBe(0); // batch fill NEVER submits
+  });
+
+  it('assist-batch rejects an empty or fully-unapproved selection', async () => {
+    expect((await post('/api/assist-batch', { jobIds: [] })).status).toBe(400);
+    expect((await post('/api/assist-batch', { jobIds: ['j2'] })).status).toBe(400);
+  });
+
+  it('reconciles a stale packet URL to the live DB job URL before assisting', async () => {
+    // The packet was prepared with an old aggregator link; the DB now holds the
+    // refreshed direct company URL the user sees on the board.
+    await dash.close();
+    db.upsertJob({ id: 'j1', url: 'https://jobs.company.com/apply/42' });
+    let navigatedUrl = null;
+    dash = await startDashboard({
+      config: { root: '/fake/root' }, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        loadPacketImpl: () => ({ job: { id: 'j1', url: 'https://www.indeed.com/viewjob?jk=stale' }, blockers: [] }),
+        assistFn: async ({ packet }) => { navigatedUrl = packet.job.url; return { status: 'ready_for_submit', blockers: [] }; },
+        writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }),
+      },
+    });
+    await post('/api/jobs/j1/approve');
+    await post('/api/assist-batch', { jobIds: ['j1'] });
+    await new Promise((res) => setTimeout(res, 30));
+    expect(navigatedUrl).toBe('https://jobs.company.com/apply/42'); // live URL, not the stale packet one
+  });
+
+  it('a failing assistFn never crashes the batch and always clears the busy lock', async () => {
+    // Regression: a thrown background error must be captured (status "failed"),
+    // the run must finish (running=false), and the server must stay reachable —
+    // otherwise the UI would only ever see "Failed to fetch".
+    await dash.close();
+    dash = await startDashboard({
+      config: { root: '/fake/root' }, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
+        assistFn: async () => { throw new Error('browser blew up'); },
+        writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }),
+      },
+    });
+    await post('/api/jobs/j1/approve');
+    const r = await post('/api/assist-batch', { jobIds: ['j1'] });
+    expect(r.status).toBe(202);
+    await new Promise((res) => setTimeout(res, 30));
+    const run = await fetch(dash.url + '/api/run/status').then((x) => x.json());
+    expect(run.running).toBe(false);                 // busy lock released
+    expect(run.lastResult.results[0].status).toBe('failed');
+    expect(run.lastResult.results[0].error).toContain('browser blew up');
+    // Server still alive: a follow-up request succeeds.
+    expect((await fetch(dash.url + '/api/stats')).status).toBe(200);
+  });
+});
+
+describe('installProcessSafetyNet', () => {
+  // A minimal fake "process" so we never register handlers on the real one.
+  function fakeProc() {
+    const handlers = {};
+    return {
+      on(event, fn) { (handlers[event] ??= []).push(fn); },
+      off(event, fn) { handlers[event] = (handlers[event] ?? []).filter((h) => h !== fn); },
+      emit(event, arg) { for (const h of handlers[event] ?? []) h(arg); },
+      count(event) { return (handlers[event] ?? []).length; },
+    };
+  }
+
+  it('records background errors on runState instead of crashing the process', () => {
+    const runState = { lastError: null };
+    const proc = fakeProc();
+    installProcessSafetyNet({ runState, proc });
+    proc.emit('unhandledRejection', new Error('window closed by user'));
+    expect(runState.lastError).toContain('window closed by user');
+    expect(runState.lastError).toContain('server still up');
+    proc.emit('uncaughtException', new Error('transport EPIPE'));
+    expect(runState.lastError).toContain('transport EPIPE');
+  });
+
+  it('uninstall removes the handlers so tests never leak globals', () => {
+    const proc = fakeProc();
+    const uninstall = installProcessSafetyNet({ runState: {}, proc });
+    expect(proc.count('unhandledRejection')).toBe(1);
+    expect(proc.count('uncaughtException')).toBe(1);
+    uninstall();
+    expect(proc.count('unhandledRejection')).toBe(0);
+    expect(proc.count('uncaughtException')).toBe(0);
+  });
+
+  it('tolerates a missing runState (logger-only mode)', () => {
+    const proc = fakeProc();
+    const logs = [];
+    installProcessSafetyNet({ logger: { error: (m) => logs.push(m) }, proc });
+    expect(() => proc.emit('unhandledRejection', new Error('boom'))).not.toThrow();
+    expect(logs[0]).toContain('boom');
   });
 });

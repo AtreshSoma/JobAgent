@@ -177,9 +177,15 @@ async function runCommand(command, parsed, env) {
           process.exitCode = 1;
           return { command, preflight: gate };
         }
-        const { startDashboard } = await import('./dashboard/server.js');
+        const { startDashboard, installProcessSafetyNet } = await import('./dashboard/server.js');
         const port = Number(parsed.options.port ?? env.DASHBOARD_PORT ?? 4646);
         const dash = await startDashboard({ config, db, logger, port });
+        // The dashboard runs browser automation in the background and leaves a
+        // real browser open for you to review. If that window is closed (or
+        // Playwright errors), the resulting unhandled rejection would otherwise
+        // kill this server and the UI would show only "Failed to fetch". This
+        // keeps the cockpit alive and records the error for /api/run/status.
+        const uninstallSafetyNet = installProcessSafetyNet({ runState: dash.runState, logger });
         ui.heading('JobAgent Dashboard');
         ui.success(`Running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
         ui.note('Discover, score, review, approve, and assist from the browser.');
@@ -192,6 +198,7 @@ async function runCommand(command, parsed, env) {
           process.once('SIGINT', resolve);
           process.once('SIGTERM', resolve);
         });
+        uninstallSafetyNet();
         await dash.close();
         return { command, url: dash.url, stopped: true };
       }

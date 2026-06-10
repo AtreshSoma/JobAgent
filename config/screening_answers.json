@@ -24,6 +24,12 @@
       "type": "text"
     },
     {
+      "id": "salary_expectation_monthly",
+      "patterns": ["per month", "usd per month", "monthly salary", "salary per month", "expected monthly"],
+      "answer": "Approximately $12,500 per month (about $150,000 per year), negotiable based on total compensation.",
+      "type": "text"
+    },
+    {
       "id": "salary_expectation",
       "patterns": ["salary expectation", "desired salary", "compensation expectation", "expected pay"],
       "answer": "Around $150,000 per year (negotiable based on total compensation)",
@@ -69,6 +75,42 @@
       "id": "certifications",
       "patterns": ["certification", "certified", "do you hold"],
       "answer": "Microsoft Certified: Azure Data Engineer Associate (DP-203)",
+      "type": "text"
+    },
+    {
+      "id": "data_pipelines_built",
+      "patterns": ["data pipelines have you built", "which data pipelines", "what data pipelines", "pipelines have you built", "tools you used to build them"],
+      "answer": "I build end-to-end Bronze/Silver/Gold (medallion) pipelines on Azure Databricks using PySpark, Delta Live Tables, and Structured Streaming, ingesting from Azure Event Hub and Kafka and orchestrated with Azure Data Factory. Core tools: Azure Data Factory, Databricks, PySpark, Delta Lake, Microsoft Fabric, Azure Synapse, and Azure DevOps / GitHub Actions for CI-CD.",
+      "type": "text"
+    },
+    {
+      "id": "cloud_warehouse_experience",
+      "patterns": ["snowflake", "redshift", "bigquery", "data warehouse experience", "cloud data warehouse"],
+      "answer": "My cloud data warehousing experience is on the Azure stack \u2014 Azure Synapse and Microsoft Fabric (OneLake / Lakehouse) \u2014 where I migrated 25 legacy Analysis Services models and delivered roughly 3x query-performance gains. The SQL, dimensional modeling, and ELT patterns transfer directly to Snowflake, Redshift, or BigQuery, and I ramp up quickly on new warehouse engines.",
+      "type": "text"
+    },
+    {
+      "id": "monitor_pipeline_failures",
+      "patterns": ["monitor and resolve", "pipeline failures", "resolve pipeline", "how do you monitor", "handle failures"],
+      "answer": "I build observability notebooks and medallion-layer data-quality scorecards with automated validation, and alert through Azure DevOps and Logic Apps. On failure I triage from the failing layer and safely replay from the last good Delta checkpoint, relying on Delta Lake ACID guarantees to avoid partial or duplicate data.",
+      "type": "text"
+    },
+    {
+      "id": "dbt_experience",
+      "patterns": ["dbt", "data build tool", "transformation framework", "data transformations"],
+      "answer": "I have implemented equivalent transformation frameworks using PySpark and Delta Live Tables on Databricks \u2014 modular, testable transformations with automated quality checks and lineage. The dbt model / test / lineage approach maps closely to what I already do, and I can adopt dbt quickly.",
+      "type": "text"
+    },
+    {
+      "id": "streaming_experience",
+      "patterns": ["real-time streaming", "real time streaming", "streaming data", "stream processing", "streaming experience"],
+      "answer": "Yes. I built Structured Streaming ingestion on Databricks from Azure Event Hub and Kafka into Delta Live Tables, moving financial reporting from a T+2 lag to near-real-time delivery.",
+      "type": "text"
+    },
+    {
+      "id": "data_quality_compliance",
+      "patterns": ["data quality and compliance", "ensure data quality", "data quality", "compliance with regulations", "regulatory requirements"],
+      "answer": "I build medallion-layer quality scorecards, lineage documentation, and automated audit trails that raised data trust from 68% to 94%. For compliance I automated SOX MUAR audits reconciling 2M+ monthly transactions at 99.97% accuracy, and applied row-level security and GDPR data classification across 8 markets.",
       "type": "text"
     }
   ]

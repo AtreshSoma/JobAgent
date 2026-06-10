@@ -42,6 +42,37 @@ describe('screeningQA', () => {
     expect(r.answered).toBe(true);
     expect(r.answer).toBe('Yes');
   });
+
+  it('answers a per-month salary question with the monthly figure (not the yearly one)', () => {
+    const r = answerScreeningQuestion('What is your salary expectation for this role? (In USD per month)', screeningAnswers);
+    expect(r.answered).toBe(true);
+    expect(r.matchedId).toBe('salary_expectation_monthly');
+    expect(r.answer.toLowerCase()).toContain('per month');
+  });
+
+  it('still answers a yearly salary question with the annual figure', () => {
+    const r = answerScreeningQuestion('What is your desired salary?', screeningAnswers);
+    expect(r.answered).toBe(true);
+    expect(r.matchedId).toBe('salary_expectation');
+    expect(r.answer).toContain('150,000');
+  });
+
+  it('answers the free-text technical screening questions from the profile', () => {
+    const cases = [
+      ['Which data pipelines have you built, and what tools you used to build them?', 'data_pipelines_built'],
+      ['Do you have experience with Snowflake, Redshift, or BigQuery?', 'cloud_warehouse_experience'],
+      ['How do you monitor and resolve pipeline failures?', 'monitor_pipeline_failures'],
+      ['Have you used dbt or a similar data transformation framework?', 'dbt_experience'],
+      ['Describe your real-time streaming data experience.', 'streaming_experience'],
+      ['How do you ensure data quality and compliance with regulations?', 'data_quality_compliance'],
+    ];
+    for (const [question, expectedId] of cases) {
+      const r = answerScreeningQuestion(question, screeningAnswers);
+      expect(r.answered, question).toBe(true);
+      expect(r.matchedId, question).toBe(expectedId);
+      expect(r.answer.length, question).toBeGreaterThan(20);
+    }
+  });
 });
 
 describe('atsDetector', () => {
