@@ -1,0 +1,29 @@
+{
+  "total": 3,
+  "jobPostings": [
+    {
+      "title": "Senior Data Engineer",
+      "externalPath": "/en-US/External/job/Remote/Senior-Data-Engineer_R-1001",
+      "locationsText": "Remote, United States",
+      "postedOnDate": "2026-05-30",
+      "timeType": "Full time",
+      "bulletFields": ["R-1001", "Azure Databricks, PySpark, Delta Lake"]
+    },
+    {
+      "title": "Staff Data Engineer",
+      "externalPath": "/en-US/External/job/Austin/Staff-Data-Engineer_R-1002",
+      "locationsText": "Austin, TX",
+      "postedOnDate": "2026-05-28",
+      "timeType": "Full time",
+      "bulletFields": ["R-1002", "Synapse, ADF, Power BI"]
+    },
+    {
+      "title": "Marketing Manager",
+      "externalPath": "/en-US/External/job/NYC/Marketing-Manager_R-1003",
+      "locationsText": "New York, NY",
+      "postedOnDate": "2026-05-25",
+      "timeType": "Full time",
+      "bulletFields": ["R-1003", "Brand strategy"]
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "name": "job-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-first automated job search, resume tailoring, and human-approved application assistant.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/index.js go",
+    "go": "node src/index.js go",
+    "find": "node src/index.js prepare-apps",
+    "discover": "node src/index.js discover",
+    "score": "node src/index.js score",
+    "prepare-apps": "node src/index.js prepare-apps",
+    "assist": "node src/index.js assist",
+    "apply": "node src/index.js apply",
+    "end-to-end": "node src/index.js end-to-end",
+    "approvals": "node src/index.js approvals",
+    "approve": "node src/index.js approve",
+    "reject": "node src/index.js reject",
+    "packets": "node src/index.js packets",
+    "packet": "node src/index.js packet",
+    "tracker": "node scripts/tracker.mjs",
+    "dry-run": "node src/index.js --mode=DRY_RUN",
+    "live-assist": "node src/index.js --mode=LIVE_ASSIST",
+    "report": "node src/index.js --report",
+    "migrate-output-names": "node scripts/migrateOutputNames.js",
+    "cleanup-outputs": "node scripts/cleanupGeneratedOutputs.js",
+    "regenerate-resumes": "node scripts/regenerateResumes.js",
+    "verify": "node scripts/verifyRepoHealth.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "dotenv": "^16.4.5",
+    "playwright": "^1.47.0",
+    "pino": "^9.4.0",
+    "pino-pretty": "^11.2.2"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.1"
+  }
+}

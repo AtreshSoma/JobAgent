@@ -1,0 +1,4 @@
+source,company,title,location,url,jd_text,posted_at,applicant_count,employment_type
+manual,Globex,Lead Data Engineer,"Remote, US",https://globex.example/jobs/42,"Azure Databricks, PySpark, Delta Lake. Visa sponsorship available.",2026-05-30,17,Full-time
+manual,,,"",,"this row is missing title, url and company",2026-05-20,5,Full-time
+manual,Umbrella,Senior Data Engineer,"Remote, US",https://umbrella.example/jobs/9,"Azure Synapse, ADF, Power BI semantic models. We sponsor H-1B.",2026-05-22,11,Full-time

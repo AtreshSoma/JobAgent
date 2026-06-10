@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "exclusions.schema.json",
+  "title": "Hard exclusion rules",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sponsorshipDenial",
+    "securityClearance",
+    "roleMismatch",
+    "employmentMismatch",
+    "geographyMismatch",
+    "staleness",
+    "clearanceAllowance"
+  ],
+  "properties": {
+    "sponsorshipDenial": {
+      "type": "array",
+      "description": "Phrases that indicate sponsorship will not be provided. Any match discards the job.",
+      "items": { "type": "string" }
+    },
+    "securityClearance": {
+      "type": "array",
+      "description": "Phrases indicating a clearance requirement.",
+      "items": { "type": "string" }
+    },
+    "roleMismatch": {
+      "type": "array",
+      "description": "Phrases indicating the role does not match the target profile.",
+      "items": { "type": "string" }
+    },
+    "employmentMismatch": {
+      "type": "array",
+      "description": "Phrases indicating an unacceptable employment arrangement.",
+      "items": { "type": "string" }
+    },
+    "geographyMismatch": {
+      "type": "array",
+      "description": "Phrases indicating an unacceptable location/timezone.",
+      "items": { "type": "string" }
+    },
+    "geography": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Optional US-only location gate. Discards jobs whose location field names a non-US country/city with no US signal.",
+      "properties": {
+        "usOnly": { "type": "boolean" },
+        "usLocationMarkers": { "type": "array", "items": { "type": "string" } },
+        "nonUsLocationMarkers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "staleness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["skipOlderThanDays", "flagOlderThanDays", "highApplicantThreshold"],
+      "properties": {
+        "skipOlderThanDays": { "type": "integer", "minimum": 1 },
+        "flagOlderThanDays": { "type": "integer", "minimum": 1 },
+        "highApplicantThreshold": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "clearanceAllowance": {
+      "type": "array",
+      "description": "Phrases that, if present, keep a clearance-tagged role (e.g. explicitly open to visa holders).",
+      "items": { "type": "string" }
+    }
+  }
+}

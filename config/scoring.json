@@ -1,0 +1,118 @@
+{
+  "weights": {
+    "titleFit": 12,
+    "seniorityFit": 8,
+    "azureFabricStack": 14,
+    "dataEngineeringStack": 12,
+    "biSemanticDepth": 8,
+    "pythonSqlPyspark": 12,
+    "domainFit": 6,
+    "sponsorshipFeasibility": 10,
+    "geographyFit": 6,
+    "freshness": 4,
+    "directAtsAvailability": 3,
+    "companySponsorshipLikelihood": 5,
+    "resumeKeywordAlignment": 10
+  },
+  "tiers": {
+    "priority": 85,
+    "apply": 75,
+    "queue": 60,
+    "nearMiss": 50
+  },
+  "sponsorshipGate": {
+    "allowApplyWhen": ["Confirmed", "Likely", "Approved"]
+  },
+  "sponsorship": {
+    "affirmativePhrases": [
+      "we sponsor h-1b",
+      "we sponsor h1b",
+      "visa sponsorship available",
+      "visa sponsorship is available",
+      "sponsorship available",
+      "will sponsor",
+      "h-1b sponsorship",
+      "green card sponsorship",
+      "sponsor visa"
+    ],
+    "likelySponsors": [
+      "capgemini", "tcs", "tata consultancy", "infosys", "accenture", "deloitte",
+      "wipro", "cognizant", "hcl", "ibm", "microsoft", "amazon", "google",
+      "meta", "oracle", "sap", "ey", "pwc", "kpmg", "mckinsey", "capco"
+    ]
+  },
+  "freshness": {
+    "skipOlderThanDays": 14,
+    "flagOlderThanDays": 7,
+    "highApplicantThreshold": 200
+  },
+  "keywords": {
+    "titles": [
+      "data engineer",
+      "senior data engineer",
+      "lead data engineer",
+      "data engineering",
+      "business intelligence developer",
+      "business intelligence engineer",
+      "bi developer",
+      "bi engineer",
+      "power bi developer",
+      "analytics engineer",
+      "analytics developer",
+      "data warehouse engineer",
+      "data warehouse developer",
+      "etl developer",
+      "data platform engineer"
+    ],
+    "azureFabric": [
+      "azure",
+      "microsoft fabric",
+      "fabric",
+      "azure data factory",
+      "adf",
+      "synapse",
+      "azure synapse",
+      "databricks",
+      "delta lake",
+      "azure databricks",
+      "onelake"
+    ],
+    "dataEngineering": [
+      "etl",
+      "elt",
+      "data pipeline",
+      "data warehouse",
+      "lakehouse",
+      "data lake",
+      "spark",
+      "kafka",
+      "airflow",
+      "dbt",
+      "streaming",
+      "batch processing"
+    ],
+    "biSemantic": [
+      "power bi",
+      "semantic model",
+      "semantic modeling",
+      "dax",
+      "tabular model",
+      "dimensional modeling",
+      "star schema"
+    ],
+    "languages": [
+      "python",
+      "sql",
+      "pyspark",
+      "t-sql",
+      "scala"
+    ],
+    "domains": [
+      "finance",
+      "healthcare",
+      "insurance",
+      "retail",
+      "banking"
+    ]
+  }
+}

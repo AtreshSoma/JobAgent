@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "candidate.schema.json",
+  "title": "Candidate profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "identity",
+    "contact",
+    "location",
+    "workAuthorization",
+    "sponsorshipRequired",
+    "targetTitles",
+    "seniority",
+    "employmentPreferences",
+    "locationPreferences",
+    "technicalStack",
+    "certifications",
+    "domainExperience",
+    "workHistory",
+    "education",
+    "salaryPreference",
+    "relocationPreference",
+    "travelPreference",
+    "startDate",
+    "prohibited"
+  ],
+  "properties": {
+    "_note": { "type": "string" },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fullName"],
+      "properties": {
+        "fullName": { "type": "string", "minLength": 1 },
+        "preferredName": { "type": "string" },
+        "headline": { "type": "string" },
+        "links": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "linkedin": { "type": "string" },
+            "github": { "type": "string" },
+            "portfolio": { "type": "string" }
+          }
+        }
+      }
+    },
+    "contact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email"],
+      "properties": {
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" }
+      }
+    },
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["city", "state", "country"],
+      "properties": {
+        "street": { "type": "string" },
+        "street2": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "zip": { "type": "string" },
+        "country": { "type": "string" },
+        "timezone": { "type": "string" }
+      }
+    },
+    "workAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "requiresSponsorship"],
+      "properties": {
+        "status": { "type": "string", "minLength": 1 },
+        "requiresSponsorship": { "type": "boolean" },
+        "details": { "type": "string" }
+      }
+    },
+    "sponsorshipRequired": { "type": "boolean" },
+    "targetTitles": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+    "seniority": {
+      "type": "string",
+      "enum": ["junior", "mid", "senior", "lead", "principal", "staff", "manager"]
+    },
+    "employmentPreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["types"],
+      "properties": {
+        "types": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["W2", "fulltime", "contract", "c2c", "1099", "parttime", "contract-to-hire"] },
+          "minItems": 1
+        },
+        "minContractMonths": { "type": "integer", "minimum": 0 },
+        "requiresW2": { "type": "boolean" }
+      }
+    },
+    "locationPreferences": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["remote", "onsite", "hybrid"],
+      "properties": {
+        "remote": { "type": "boolean" },
+        "onsite": { "type": "boolean" },
+        "hybrid": { "type": "boolean" },
+        "preferredRegions": { "type": "array", "items": { "type": "string" } },
+        "excludedLocations": { "type": "array", "items": { "type": "string" } },
+        "excludedTimezones": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "technicalStack": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "cloud": { "type": "array", "items": { "type": "string" } },
+        "dataEngineering": { "type": "array", "items": { "type": "string" } },
+        "languages": { "type": "array", "items": { "type": "string" } },
+        "biAndModeling": { "type": "array", "items": { "type": "string" } },
+        "orchestration": { "type": "array", "items": { "type": "string" } },
+        "other": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "certifications": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "domainExperience": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "workHistory": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["employer", "title", "startDate"],
+        "properties": {
+          "employer": { "type": "string" },
+          "title": { "type": "string" },
+          "location": { "type": "string" },
+          "startDate": { "type": "string" },
+          "endDate": { "type": "string" },
+          "current": { "type": "boolean" },
+          "highlights": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "education": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["institution", "degree"],
+        "properties": {
+          "institution": { "type": "string" },
+          "degree": { "type": "string" },
+          "field": { "type": "string" },
+          "graduationYear": { "type": "string" }
+        }
+      }
+    },
+    "salaryPreference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display"],
+      "properties": {
+        "display": { "type": "string" },
+        "minAnnualUSD": { "type": ["integer", "null"] },
+        "targetAnnualUSD": { "type": ["integer", "null"] },
+        "currency": { "type": "string" }
+      }
+    },
+    "relocationPreference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["willing"],
+      "properties": {
+        "willing": { "type": "boolean" },
+        "notes": { "type": "string" }
+      }
+    },
+    "travelPreference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxPercent"],
+      "properties": {
+        "maxPercent": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "notes": { "type": "string" }
+      }
+    },
+    "startDate": { "type": "string", "minLength": 1 },
+    "prohibited": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["employers", "terms"],
+      "properties": {
+        "employers": { "type": "array", "items": { "type": "string" } },
+        "terms": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

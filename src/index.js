@@ -1,0 +1,479 @@
+/**
+ * CLI entry point.
+ *
+ * Two invocation styles are supported:
+ *
+ *   1. Phase commands (preferred):
+ *        node src/index.js discover       search only -> found_jobs.json
+ *        node src/index.js score          + score    -> scored/queued_jobs.json
+ *        node src/index.js prepare-apps   + tailor + packets + approval queue
+ *        node src/index.js assist         open browser, fill, STOP before submit
+ *        node src/index.js end-to-end     discover -> ... -> assist (stops before submit)
+ *        node src/index.js approvals      list packets awaiting review
+ *        node src/index.js approve <id>   record human approval
+ *        node src/index.js reject <id>    record human rejection
+ *        node src/index.js packets        list prepared packets
+ *        node src/index.js packet <id>    show one packet (by job id / packet id)
+ *
+ *   2. Legacy mode flag (kept for compatibility):
+ *        node src/index.js --mode=DRY_RUN | PREPARE | LIVE_ASSIST
+ *        node src/index.js --report
+ *
+ * No command ever submits an application. The browser assist fills forms and
+ * advances through safe navigation (Next/Continue/Review) but always stops
+ * before the final submit so a human can review and click it. There is no
+ * auto-submit path and no bypass of CAPTCHA / login / MFA / bot protection.
+ */
+
+import { loadConfig } from './config/loadConfig.js';
+import { openDatabase } from './logging/db.js';
+import { JobLogger, createPinoLogger } from './logging/jobLogger.js';
+import { generateReport } from './reports/reportGenerator.js';
+import { runPipeline } from './pipeline/index.js';
+import {
+  runDiscover, runScore, runPrepareApps, runAssist, runEndToEnd,
+  listApprovalQueue, approvePacket, rejectPacket, listPackets, getPacket,
+} from './cli/commands.js';
+import { runGuided } from './cli/guided.js';
+import { runApply } from './cli/applyOneByOne.js';
+import { ui } from './cli/ui.js';
+import { formatPostedRelative } from './utils/dates.js';
+import { randomUUID } from 'node:crypto';
+import { join, relative } from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+/** Project-relative path with forward slashes, for tidy console output. */
+function rel(root, p) {
+  if (!p) return '';
+  try { return relative(root, p).split('\\').join('/'); }
+  catch { return String(p); }
+}
+
+/** Short, readable form of an approval UUID (keeps it copy-pasteable in full). */
+function shortId(id) {
+  return String(id ?? '').slice(0, 8);
+}
+
+/** Human label for a job from a discovered/scored row. */
+function jobLabel(row) {
+  const company = row.company || 'Unknown company';
+  const title = row.title || 'Untitled role';
+  return `${company} — ${title}`;
+}
+
+/** Short "Posted: <relative>" suffix from a row's postedAt/posted_at field. */
+function postedLabel(row) {
+  return `Posted: ${formatPostedRelative(row?.postedAt ?? row?.posted_at ?? null)}`;
+}
+
+const VALID_MODES = new Set(['DRY_RUN', 'PREPARE', 'LIVE_ASSIST']);
+
+/** Phase commands handled by the dispatcher (vs. the legacy mode path). */
+const COMMANDS = new Set([
+  'go', 'start',
+  'discover', 'score', 'prepare-apps', 'assist', 'apply', 'end-to-end', 'live-submit',
+  'approvals', 'approve', 'reject', 'packets', 'packet', 'report',
+]);
+
+/** Parse `--key=value` / `--flag` / positional args into an object. */
+export function parseArgs(argv = []) {
+  const out = { flags: new Set(), options: {}, positionals: [] };
+  for (const arg of argv) {
+    if (arg.startsWith('--')) {
+      const body = arg.slice(2);
+      const eq = body.indexOf('=');
+      if (eq === -1) out.flags.add(body);
+      else out.options[body.slice(0, eq)] = body.slice(eq + 1);
+    } else {
+      out.positionals.push(arg);
+    }
+  }
+  return out;
+}
+
+/** Resolve the effective run mode from CLI + env (legacy mode path). */
+export function resolveMode({ options, flags }, env = process.env) {
+  if (flags.has('report')) return 'REPORT';
+  const requested = options.mode ?? env.RUN_MODE ?? 'DRY_RUN';
+  return VALID_MODES.has(requested) ? requested : 'DRY_RUN';
+}
+
+export async function main(argv = process.argv.slice(2), env = process.env) {
+  const parsed = parseArgs(argv);
+  const command = parsed.positionals[0];
+
+  if (command && COMMANDS.has(command)) {
+    return runCommand(command, parsed, env);
+  }
+  return runLegacyMode(parsed, env);
+}
+
+/** Dispatch a phase command. */
+async function runCommand(command, parsed, env) {
+  const config = loadConfig({ env });
+  const runId = randomUUID();
+  const { logger: pino } = createPinoLogger({ runId, level: env.LOG_LEVEL ?? 'info' });
+  const db = openDatabase({});
+  const logger = new JobLogger({ db, logger: pino, runId });
+  const arg = parsed.positionals[1];
+
+  try {
+    switch (command) {
+      case 'go':
+      case 'start': {
+        const options = {
+          yes: parsed.flags.has('yes') || parsed.flags.has('y'),
+          assist: !parsed.flags.has('no-assist'),
+          prepareOnly: parsed.flags.has('prepare-only') || parsed.flags.has('prepareOnly'),
+        };
+        const r = await runGuided({ config, db, logger, options });
+        return { command, ...r };
+      }
+      case 'discover': {
+        ui.heading('Discover');
+        ui.step('Searching enabled job boards for matching roles…');
+        const r = await runDiscover({ config, logger });
+        pino.info({ counters: r.counters, file: r.found }, `Discover: found ${r.counters.jobs_found} jobs`);
+        summarizeDiscover(r, config);
+        return { command, ...r };
+      }
+      case 'score': {
+        ui.heading('Score');
+        ui.step('Scoring discovered jobs against your profile and sponsorship needs…');
+        logger.startRun('DRY_RUN');
+        const r = await runScore({ config, db, logger });
+        pino.info({ counters: r.counters }, `Score: ${r.counters.jobs_scored} scored, ${r.counters.jobs_queued} queued`);
+        summarizeScore(r, config);
+        return { command, ...r };
+      }
+      case 'prepare-apps': {
+        ui.heading('Prepare Applications');
+        ui.step('Tailoring resumes and building application packets for strong matches…');
+        logger.startRun('PREPARE');
+        const r = await runPrepareApps({ config, db, logger });
+        pino.info({ counters: r.counters }, `Prepare: ${r.counters.jobs_prepared} packets enqueued for approval`);
+        summarizePrepare(r, db, config);
+        return { command, ...r };
+      }
+      case 'assist': {
+        ui.heading('Assist');
+        ui.step('Opening a browser to fill approved applications — stops before submit…');
+        logger.startRun('LIVE_ASSIST');
+        const r = await runAssist({ config, db, logger, mode: 'LIVE_ASSIST' });
+        pino.info({ counters: r.counters }, `Assist: ${r.counters.jobs_assisted} assisted, ${r.counters.jobs_submitted} submitted`);
+        summarizeAssist(r, db);
+        return { command, ...r };
+      }
+      case 'apply': {
+        logger.startRun('LIVE_ASSIST');
+        const options = { all: parsed.flags.has('all') };
+        const r = await runApply({ config, db, logger, options });
+        return { command, ...r };
+      }
+      case 'live-submit': {
+        ui.heading('Live Submit');
+        ui.warn('live-submit has been removed. This assistant never auto-submits.');
+        ui.note('Use "npm run assist" to fill an approved application; review it, then click Submit yourself.');
+        return { command, removed: true };
+      }
+      case 'end-to-end': {
+        ui.heading('End-to-End');
+        ui.step('Discover → score → prepare → assist (always stops before submit)…');
+        logger.startRun('LIVE_ASSIST');
+        const r = await runEndToEnd({ config, db, logger });
+        pino.info({ prepared: r.prepared, assisted: r.assisted }, 'End-to-end complete (stopped before submit)');
+        ui.blank();
+        ui.stats([
+          ['Prepared', r.prepared ?? 0, 'good'],
+          ['Assisted', r.assisted ?? 0],
+        ]);
+        ui.blank();
+        ui.next([
+          { text: 'Review the queue:', cmd: 'npm run approvals' },
+          { text: 'Approve one:     ', cmd: 'npm run approve -- <id>' },
+        ]);
+        return { command, ...r };
+      }
+      case 'approvals': {
+        ui.heading('Approval Queue');
+        const rows = listApprovalQueue(db, { all: parsed.flags.has('all') });
+        summarizeApprovals(rows, db);
+        return { command, approvals: rows };
+      }
+      case 'approve': {
+        if (!arg) throw new Error('usage: approve <approvalId>  (get the id from "npm run approvals")');
+        const r = approvePacket(db, arg);
+        pino.info(r, `Approved ${arg}`);
+        ui.heading('Approve');
+        ui.success(`Approved packet ${ui.c.bold(shortId(arg))} — marked ready for assisted apply.`);
+        ui.blank();
+        ui.next([{ text: 'Fill it in a browser (stops before submit):', cmd: 'npm run assist' }]);
+        return { command, ...r };
+      }
+      case 'reject': {
+        if (!arg) throw new Error('usage: reject <approvalId>  (get the id from "npm run approvals")');
+        const r = rejectPacket(db, arg);
+        pino.info(r, `Rejected ${arg}`);
+        ui.heading('Reject');
+        ui.success(`Rejected packet ${ui.c.bold(shortId(arg))} — it will be skipped during assist.`);
+        return { command, ...r };
+      }
+      case 'packets': {
+        ui.heading('Prepared Packets');
+        const rows = listPackets(db);
+        if (!rows.length) {
+          ui.note('No packets prepared yet. Run "npm run prepare-apps" first.');
+        } else {
+          ui.table(rows.map((p) => ({
+            id: shortId(p.approvalId), company: truncate(p.company, 24), role: truncate(p.title, 40),
+            score: p.score, tier: p.tier, status: p.status, blockers: p.blockers.length,
+          })));
+        }
+        return { command, packets: rows };
+      }
+      case 'packet': {
+        if (!arg) throw new Error('usage: packet <jobId|packetId>');
+        const found = getPacket(db, arg);
+        if (!found) {
+          ui.heading('Packet');
+          ui.warn(`No packet found for "${arg}".`);
+          return { command, packet: null };
+        }
+        pino.info(found.packet, `Packet for ${found.packet?.job?.company ?? arg}`);
+        summarizePacket(found.packet, config);
+        return { command, ...found };
+      }
+      case 'report': {
+        ui.heading('Report');
+        const jobs = db.listJobs({});
+        const report = generateReport({ jobs, outDir: join(config.root, 'reports') });
+        pino.info({ files: report.files }, `Report regenerated for ${jobs.length} jobs`);
+        ui.success(`Regenerated report for ${ui.c.bold(jobs.length)} jobs.`);
+        ui.blank();
+        ui.files([
+          rel(config.root, report.files.csv),
+          rel(config.root, report.files.html),
+          rel(config.root, report.files.json),
+        ]);
+        return { command, report };
+      }
+      default:
+        throw new Error(`unknown command: ${command}`);
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/** Legacy `--mode=` / `--report` behavior. */
+async function runLegacyMode(parsed, env) {
+  const mode = resolveMode(parsed, env);
+  const config = loadConfig({ env });
+  const runId = randomUUID();
+  const { logger: pino } = createPinoLogger({ runId, level: env.LOG_LEVEL ?? 'info' });
+  const db = openDatabase({});
+  const logger = new JobLogger({ db, logger: pino, runId });
+
+  try {
+    if (mode === 'REPORT') {
+      const jobs = db.listJobs({});
+      const report = generateReport({ jobs, outDir: join(config.root, 'reports') });
+      pino.info({ files: report.files }, `Report regenerated for ${jobs.length} jobs`);
+      return { mode, report };
+    }
+
+    // Guardrail: LIVE_ASSIST never submits — it fills and stops for the human.
+    if (mode === 'LIVE_ASSIST') {
+      ui.note('LIVE_ASSIST fills approved applications and stops before submit — you review and click Submit.');
+    }
+
+    logger.startRun(mode);
+    const result = await runPipeline({ config, db, logger, mode });
+
+    pino.info({ counters: result.counters, files: result.report.files },
+      `Done (${mode}). Found ${result.counters.jobs_found}, scored ${result.counters.jobs_scored}, ` +
+      `prepared ${result.counters.jobs_prepared}, discarded ${result.counters.jobs_discarded}.`);
+
+    ui.heading(`Run complete — ${mode}`);
+    ui.blank();
+    ui.stats([
+      ['Found', result.counters.jobs_found],
+      ['Scored', result.counters.jobs_scored],
+      ['Prepared', result.counters.jobs_prepared, 'good'],
+      ['Discarded', result.counters.jobs_discarded, 'muted'],
+    ]);
+    ui.blank();
+    ui.files([
+      rel(config.root, result.report.files.csv),
+      rel(config.root, result.report.files.html),
+    ]);
+    return { mode, ...result };
+  } finally {
+    db.close();
+  }
+}
+
+/* ────────────────────────── console summaries ────────────────────────── */
+
+/** Group discovered rows by their source label and return [{source, count}]. */
+function countBySource(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const key = row.source || 'unknown';
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([source, count]) => ({ source, count }));
+}
+
+function summarizeDiscover(r, config) {
+  ui.blank();
+  ui.stats([
+    ['Found', r.counters.jobs_found, r.counters.jobs_found ? 'good' : 'muted'],
+    ['Errors', r.errors?.length ?? 0, r.errors?.length ? 'bad' : 'good'],
+  ]);
+  ui.blank();
+  const bySource = countBySource(r.jobs ?? []);
+  ui.list('By source', bySource.map((s) => `${s.source}  ${ui.c.dim(`${s.count} jobs`)}`));
+  ui.blank();
+  ui.files([rel(config.root, r.found)]);
+  if (r.errors?.length) {
+    ui.blank();
+    ui.warn(`${r.errors.length} source error(s) — see the log file for details.`);
+  }
+  ui.blank();
+  ui.next([{ text: 'Score these jobs:', cmd: 'npm run score' }]);
+}
+
+function summarizeScore(r, config) {
+  ui.blank();
+  ui.stats([
+    ['Found', r.counters.jobs_found],
+    ['Scored', r.counters.jobs_scored],
+    ['Queued', r.counters.jobs_queued, r.counters.jobs_queued ? 'good' : 'muted'],
+    ['Discarded', r.counters.jobs_discarded, 'muted'],
+  ]);
+  ui.blank();
+  const top = (r.scoredJobs ?? [])
+    .filter((j) => j.tier && j.tier !== 'Discard')
+    .slice(0, 5);
+  if (top.length) {
+    ui.list('Top matches', top.map((j) =>
+      `${ui.c.bold(String(j.score).padStart(3))}  ${ui.c.cyan(String(j.tier).padEnd(8))} ${jobLabel(j)}  ${ui.c.dim(postedLabel(j))}`));
+  } else {
+    ui.note('No jobs cleared the queue threshold this run.');
+  }
+  ui.blank();
+  ui.files([
+    rel(config.root, r.artifacts?.scored),
+    rel(config.root, r.artifacts?.queued),
+    rel(config.root, r.report?.files?.csv),
+  ]);
+  ui.blank();
+  ui.next([
+    { text: 'Build tailored packets:', cmd: 'npm run prepare-apps' },
+    { text: 'Refresh the Excel tracker:', cmd: 'npm run tracker' },
+  ]);
+}
+
+function summarizePrepare(r, db, config) {
+  ui.blank();
+  ui.stats([
+    ['Queued', r.counters.jobs_queued],
+    ['Packets prepared', r.counters.jobs_prepared, r.counters.jobs_prepared ? 'good' : 'muted'],
+  ]);
+  ui.blank();
+  const prepared = (r.scoredJobs ?? []).filter((j) => j.status === 'prepared');
+  if (prepared.length) {
+    ui.list('Awaiting your approval', prepared.map((j) => `${jobLabel(j)}  ${ui.c.dim(postedLabel(j))}`));
+  } else {
+    ui.note('No new packets were prepared (nothing reached the prepare threshold).');
+  }
+  ui.blank();
+  if (prepared.length) {
+    ui.next([
+      { text: 'See ids:  ', cmd: 'npm run approvals' },
+      { text: 'Approve:  ', cmd: 'npm run approve -- <id>' },
+      { text: 'Fill it:  ', cmd: 'npm run assist' },
+    ]);
+  } else {
+    ui.next([{ text: 'Discover more jobs:', cmd: 'npm run discover' }]);
+  }
+}
+
+function summarizeAssist(r, db) {
+  ui.blank();
+  ui.stats([
+    ['Assisted', r.counters.jobs_assisted, r.counters.jobs_assisted ? 'good' : 'muted'],
+    ['Ready to submit', r.counters.jobs_assisted - (r.counters.jobs_skipped_already_applied ?? 0), 'good'],
+  ]);
+  ui.blank();
+  if (!r.counters.jobs_assisted) {
+    ui.note('Nothing to assist — no packets are approved yet.');
+    ui.blank();
+    ui.next([
+      { text: 'Prepare packets:', cmd: 'npm run prepare-apps' },
+      { text: 'Then approve one:', cmd: 'npm run approve -- <id>' },
+    ]);
+    return;
+  }
+  for (const result of r.results ?? []) {
+    const blockers = result.blockers?.length ?? 0;
+    const label = blockers ? ui.c.yellow(`paused (${blockers} blocker${blockers === 1 ? '' : 's'})`)
+      : ui.c.cyan(result.status ?? 'filled');
+    ui.note(`  • ${label}`);
+  }
+  ui.blank();
+  ui.note('Forms were filled but NOT submitted — review each browser tab and submit yourself.');
+}
+
+function summarizeApprovals(rows, db) {
+  if (!rows.length) {
+    ui.note('Queue is empty. Run "npm run prepare-apps" to build packets.');
+    return;
+  }
+  ui.note('Copy a full id below into:  npm run approve -- <id>');
+  ui.blank();
+  ui.table(rows.map((a) => {
+    const job = db?.getJob?.(a.job_id);
+    const who = job ? `${job.company ?? '—'} — ${job.title ?? '—'}` : a.job_id;
+    return { id: a.id, status: a.approval_status, job: truncate(who, 50) };
+  }));
+}
+
+/** Trim a string to a max length with an ellipsis. */
+function truncate(text, max) {
+  const s = String(text ?? '');
+  return s.length > max ? `${s.slice(0, max - 1)}…` : s;
+}
+
+function summarizePacket(packet, config) {
+  if (!packet) return;
+  const job = packet.job ?? {};
+  ui.blank();
+  ui.stats([
+    ['Company', job.company ?? '—'],
+    ['Role', job.title ?? '—'],
+    ['Score', job.score ?? packet.score ?? '—'],
+    ['Tier', job.tier ?? packet.tier ?? '—'],
+  ]);
+  ui.blank();
+  ui.files([
+    rel(config.root, packet.resumePath),
+    rel(config.root, packet.coverLetterPath),
+  ].filter(Boolean));
+}
+
+/** Compact console output via the structured logger (legacy fallback). */
+function printTable(pino, rows) {
+  if (!rows.length) { pino.info('(none)'); return; }
+  for (const row of rows) pino.info(row);
+}
+
+// Run only when invoked directly.
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((err) => {
+    ui.fail(err.message);
+    process.exitCode = 1;
+  });
+}

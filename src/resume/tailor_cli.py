@@ -1,0 +1,118 @@
+"""CLI bridge for resume tailoring.
+
+Reads a single JSON request on stdin, runs the deterministic resume tailor
+(``tailor.py``), optionally exports a PDF, and writes a single JSON response to
+stdout. This is the process boundary the Node runtime (``tailorRunner.js``)
+talks to via ``child_process``.
+
+Request (stdin JSON):
+    {
+      "master_path": "resumes/base/MASTER_RESUME.docx",
+      "output_dir": "resumes/output",
+      "job": {"company": "...", "title": "...", "jd_text": "..."},
+      "keywords": ["azure", "databricks", ...],
+      "add_summary_line": true,
+      "export_pdf": false
+    }
+
+Response (stdout JSON):
+    {
+      "ok": true,
+      "output_path": "resumes/output/acme_senior-data-engineer_20260605.docx",
+      "pdf_path": null,
+      "audit": {"present": [...], "missing": [...]},
+      "emphasized": 3,
+      "summary_line": "Relevant strengths for this role: ...",
+      "error": null
+    }
+
+The master resume is opened read-only by ``tailor.py`` and is NEVER written.
+On any failure this prints ``{"ok": false, "error": "..."}`` and exits 0 so the
+Node caller can fall back gracefully (it inspects ``ok``, not the exit code).
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+# Make sibling modules (tailor, keywordAudit, humanizer, pdfExport) importable
+# regardless of the current working directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def _run(request: dict) -> dict:
+    from tailor import tailor_resume  # local import so import errors are reported
+
+    master_path = request.get("master_path")
+    output_dir = request.get("output_dir")
+    output_name = request.get("output_filename") or None
+    job = request.get("job") or {}
+    keywords = request.get("keywords") or []
+    add_summary_line = bool(request.get("add_summary_line", False))
+    export_pdf = bool(request.get("export_pdf", False))
+
+    if not master_path:
+        return {"ok": False, "error": "master_path is required"}
+    if not output_dir:
+        return {"ok": False, "error": "output_dir is required"}
+
+    result = tailor_resume(
+        master_path,
+        output_dir,
+        job,
+        keywords,
+        request.get("patterns") or {},
+        add_summary_line=add_summary_line,
+        output_name=output_name,
+    )
+
+    pdf_path = None
+    if export_pdf:
+        from pdfExport import export_to_pdf
+
+        pdf = export_to_pdf(result["output_path"])
+        pdf_path = pdf.get("pdf_path") if pdf.get("exported") else None
+
+    # Validate the generated resume's format + content (honest quality gate).
+    validation = None
+    try:
+        from validate import validate_resume
+
+        validation = validate_resume(result["output_path"], keywords)
+    except Exception as err:  # noqa: BLE001 - validation must never break tailoring
+        validation = {"ok": True, "issues": [], "warnings": [f"validation skipped: {err}"]}
+
+    return {
+        "ok": True,
+        "output_path": result["output_path"],
+        "pdf_path": pdf_path,
+        "audit": result.get("audit"),
+        "emphasized": result.get("emphasized"),
+        "summary_line": result.get("summary_line"),
+        "validation": validation,
+        "error": None,
+    }
+
+
+def main() -> int:
+    try:
+        raw = sys.stdin.read()
+        request = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError as err:
+        print(json.dumps({"ok": False, "error": f"invalid JSON request: {err}"}))
+        return 0
+
+    try:
+        response = _run(request)
+    except FileNotFoundError as err:
+        response = {"ok": False, "error": str(err)}
+    except Exception as err:  # noqa: BLE001 - report any failure to the caller
+        response = {"ok": False, "error": f"{type(err).__name__}: {err}"}
+
+    print(json.dumps(response))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

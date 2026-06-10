@@ -1,0 +1,117 @@
+/**
+ * Browser session wrapper (Playwright).
+ *
+ * Thin, dependency-injected wrapper around Playwright so the rest of the
+ * automation layer never imports Playwright directly (keeps it testable and
+ * lets us run headed by default for human oversight). This module only opens
+ * pages and reports what it sees — it performs no evasion and never tries to get
+ * past a CAPTCHA, login, MFA, or bot wall.
+ */
+
+import { detectBlocker } from './guards.js';
+
+/**
+ * Create a browser session.
+ *
+ * Two modes:
+ *  - Isolated (default): a fresh, empty context. Best for clean, repeatable runs.
+ *  - Persistent profile: pass `userDataDir` (and usually `channel: 'msedge'`) to
+ *    launch your REAL, installed browser reusing your signed-in profile, so job
+ *    sites you are already logged into don't prompt again. Close every window of
+ *    that browser first — a profile can only be opened by one process at a time.
+ *
+ * This wrapper performs no evasion and never tries to defeat a CAPTCHA/login/MFA;
+ * reusing your own profile is purely a convenience so you don't re-authenticate.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.headless=false] run headless (default headed for oversight)
+ * @param {number} [options.slowMo=0]
+ * @param {string|null} [options.channel] installed browser channel, e.g. 'msedge' | 'chrome'
+ * @param {string|null} [options.userDataDir] reuse this browser profile directory
+ * @param {object} [options.deps]
+ * @param {object} [options.deps.chromium] inject a Playwright browser type (testing)
+ * @returns {Promise<{ browser: object, context: object, page: object, close: Function }>}
+ */
+export async function createBrowserSession({
+  headless = false, slowMo = 0, channel = null, userDataDir = null, deps = {},
+} = {}) {
+  const chromium = deps.chromium ?? (await import('playwright')).chromium;
+
+  // Persistent profile: reuse a real, signed-in browser profile.
+  if (userDataDir) {
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      headless,
+      slowMo,
+      ...(channel ? { channel } : {}),
+      acceptDownloads: false,
+    });
+    const page = context.pages()[0] ?? (await context.newPage());
+    return {
+      browser: context.browser?.() ?? null,
+      context,
+      page,
+      async close() {
+        try { await context.close(); } catch { /* ignore */ }
+      },
+    };
+  }
+
+  // Isolated context (default).
+  const browser = await chromium.launch({ headless, slowMo, ...(channel ? { channel } : {}) });
+  const context = await browser.newContext({ acceptDownloads: false });
+  const page = await context.newPage();
+  return {
+    browser,
+    context,
+    page,
+    async close() {
+      try { await context.close(); } catch { /* ignore */ }
+      try { await browser.close(); } catch { /* ignore */ }
+    },
+  };
+}
+
+/**
+ * Navigate to an application URL and immediately run the safety guards.
+ *
+ * @param {object} page Playwright page
+ * @param {string} url
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=30000]
+ * @returns {Promise<{ status: number|null, html: string, guard: object }>}
+ */
+export async function openApplicationPage(page, url, { timeoutMs = 30000 } = {}) {
+  let status = null;
+  let html = '';
+  try {
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: timeoutMs });
+    status = response?.status ? response.status() : null;
+  } catch (err) {
+    // Navigation failure is itself a stop condition; surface as a bot-like block.
+    return { status, html, guard: { blocked: true, kind: 'navigation', reason: err.message, signals: [] } };
+  }
+  try {
+    html = await page.content();
+  } catch { /* ignore — guard will treat empty html conservatively */ }
+
+  const guard = detectBlocker({ html, url, status });
+  return { status, html, guard };
+}
+
+/**
+ * Re-inspect the page WITHOUT navigating (used between multi-step pages after a
+ * "Next"/"Continue" click). Reads the current content and re-runs the guards so
+ * the assistant stops if a later step throws up a CAPTCHA/login/bot wall.
+ *
+ * @param {object} page Playwright page
+ * @param {string} [url] fallback URL when page.url() is unavailable
+ * @returns {Promise<{ status: null, html: string, url: string, guard: object }>}
+ */
+export async function inspectCurrentPage(page, url = '') {
+  let html = '';
+  try { html = await page.content(); } catch { /* ignore — guard treats empty html conservatively */ }
+  let finalUrl = url;
+  try { finalUrl = (typeof page.url === 'function' ? page.url() : url) || url; } catch { /* ignore */ }
+  const guard = detectBlocker({ html, url: finalUrl, status: null });
+  return { status: null, html, url: finalUrl, guard };
+}

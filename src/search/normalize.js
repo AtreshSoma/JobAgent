@@ -1,0 +1,347 @@
+/**
+ * Normalization helpers shared by all search adapters.
+ *
+ * Every adapter must return job objects with this exact shape so the rest of
+ * the pipeline (dedup, exclusion, scoring) can rely on it:
+ *   { source, sourceJobId, company, title, location, url, jdText,
+ *     postedAt, applicantCount, employmentType, rawMetadata }
+ *
+ * Parsing here is dependency-free and conservative. JSON-LD JobPosting data is
+ * the legitimate, public, structured metadata many job pages expose; we read it
+ * rather than scraping rendered DOM or evading protections.
+ */
+
+import { dedupKey } from '../utils/textNormalize.js';
+
+/**
+ * Coerce a raw partial job into the canonical normalized shape.
+ * @param {object} raw
+ * @returns {object}
+ */
+export function normalizeJob(raw = {}) {
+  const job = {
+    source: str(raw.source),
+    sourceJobId: str(raw.sourceJobId),
+    company: str(raw.company),
+    title: str(raw.title),
+    location: str(raw.location),
+    url: str(raw.url),
+    jdText: str(raw.jdText),
+    postedAt: raw.postedAt ? str(raw.postedAt) : null,
+    applicantCount: numOrNull(raw.applicantCount),
+    employmentType: str(raw.employmentType),
+    rawMetadata: raw.rawMetadata && typeof raw.rawMetadata === 'object' ? raw.rawMetadata : {},
+  };
+  // Stable id used as the SQLite primary key.
+  job.id = raw.id ? str(raw.id) : makeJobId(job);
+  return job;
+}
+
+/** Build a deterministic job id from source + dedup key. */
+export function makeJobId(job) {
+  const key = dedupKey({ company: job.company, title: job.title, sourceJobId: job.sourceJobId });
+  const src = str(job.source) || 'src';
+  return `${src}:${key}`.slice(0, 200);
+}
+
+function str(v) {
+  if (v === null || v === undefined) return '';
+  return String(v).trim();
+}
+
+function numOrNull(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Strip HTML tags to readable plain text (dependency-free).
+ * @param {string} html
+ * @returns {string}
+ */
+export function htmlToText(html) {
+  if (!html) return '';
+  return String(html)
+    .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ')
+    .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+    .replace(/<\s*\/\s*(p|div|li|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Extract schema.org JobPosting objects from a page's JSON-LD blocks.
+ * Returns an array of normalized jobs (possibly empty).
+ *
+ * @param {string} html
+ * @param {object} [ctx]
+ * @param {string} [ctx.url]
+ * @param {string} [ctx.source]
+ * @returns {object[]}
+ */
+export function parseJsonLdJobs(html, { url = '', source = 'public' } = {}) {
+  if (!html) return [];
+  const blocks = extractJsonLdBlocks(html);
+  const jobs = [];
+  for (const block of blocks) {
+    for (const node of flattenJsonLd(block)) {
+      if (!isJobPosting(node)) continue;
+      jobs.push(jobFromJsonLd(node, { url, source }));
+    }
+  }
+  return jobs;
+}
+
+/** Pull raw JSON objects from <script type="application/ld+json"> blocks. */
+export function extractJsonLdBlocks(html) {
+  const out = [];
+  const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const text = m[1].trim();
+    if (!text) continue;
+    try {
+      out.push(JSON.parse(text));
+    } catch {
+      // Ignore malformed JSON-LD blocks rather than failing the whole parse.
+    }
+  }
+  return out;
+}
+
+/** Flatten JSON-LD that may be an array or use @graph. */
+function flattenJsonLd(block) {
+  if (Array.isArray(block)) return block.flatMap(flattenJsonLd);
+  if (block && typeof block === 'object') {
+    if (Array.isArray(block['@graph'])) return block['@graph'].flatMap(flattenJsonLd);
+    return [block];
+  }
+  return [];
+}
+
+function isJobPosting(node) {
+  const t = node?.['@type'];
+  if (!t) return false;
+  return Array.isArray(t) ? t.includes('JobPosting') : t === 'JobPosting';
+}
+
+/** Map a JobPosting JSON-LD node to a normalized job. */
+function jobFromJsonLd(node, { url, source }) {
+  const org = node.hiringOrganization;
+  const company = typeof org === 'string' ? org : org?.name ?? '';
+  const loc = node.jobLocation;
+  const address = Array.isArray(loc) ? loc[0]?.address : loc?.address;
+  const location = formatAddress(address) || (node.jobLocationType === 'TELECOMMUTE' ? 'Remote' : '');
+
+  return normalizeJob({
+    source,
+    sourceJobId: str(node.identifier?.value ?? node.identifier ?? ''),
+    company,
+    title: node.title ?? '',
+    location,
+    url: node.url ?? url,
+    jdText: htmlToText(node.description ?? ''),
+    postedAt: node.datePosted ?? null,
+    employmentType: Array.isArray(node.employmentType)
+      ? node.employmentType.join(', ')
+      : (node.employmentType ?? ''),
+    rawMetadata: { jsonLd: true, validThrough: node.validThrough ?? null },
+  });
+}
+
+function formatAddress(address) {
+  if (!address || typeof address !== 'object') return '';
+  const parts = [address.addressLocality, address.addressRegion, address.addressCountry]
+    .map((p) => (typeof p === 'object' ? p?.name : p))
+    .filter(Boolean);
+  return parts.join(', ');
+}
+
+/** Block/element opening tags whose inner content we may extract. */
+const CONTAINER_TAGS = ['article', 'main', 'section', 'div'];
+
+/** id/class keyword fragments that commonly wrap a job description. */
+const JD_CONTAINER_HINTS = [
+  'job-description', 'jobdescription', 'job_description',
+  'job-details', 'jobdetails', 'job-detail',
+  'posting-description', 'posting__description', 'posting-content',
+  'description', 'job-post', 'jobpost', 'opening', 'content-job',
+];
+
+/**
+ * Extract the most useful readable text from a job page using a layered set of
+ * deterministic heuristics. Returns the chosen text and the method used so the
+ * caller can record provenance.
+ *
+ * Order: known job-description container -> <article> -> <main> ->
+ * largest meaningful text block -> whole stripped page text.
+ *
+ * @param {string} html
+ * @param {object} [opts]
+ * @param {number} [opts.minChars=200] minimum length to accept a richer method
+ * @returns {{ text: string, method: 'container'|'article'|'main'|'largest-block'|'stripped'|'empty' }}
+ */
+export function extractReadableContent(html, { minChars = 200 } = {}) {
+  if (!html || typeof html !== 'string') return { text: '', method: 'empty' };
+
+  // 1. Known job-description containers (by id/class hint).
+  const container = extractHintedContainer(html);
+  if (container && container.length >= minChars) {
+    return { text: container, method: 'container' };
+  }
+
+  // 2/3. Semantic <article> then <main>.
+  for (const tag of ['article', 'main']) {
+    const inner = firstElementText(html, tag);
+    if (inner && inner.length >= minChars) {
+      return { text: inner, method: tag };
+    }
+  }
+
+  // 4. Largest meaningful text block (densest region of the stripped page).
+  const block = largestTextBlock(html, minChars);
+  if (block && block.length >= minChars) {
+    return { text: block, method: 'largest-block' };
+  }
+
+  // 5. Whole stripped page text — only if it carries meaningful content.
+  const stripped = htmlToText(html);
+  if (stripped && wordCount(stripped) >= 12) return { text: stripped, method: 'stripped' };
+  return { text: '', method: 'empty' };
+}
+
+/** Find the text of the first element whose id/class matches a JD hint. */
+function extractHintedContainer(html) {
+  const lower = html.toLowerCase();
+  let best = '';
+  for (const hint of JD_CONTAINER_HINTS) {
+    let from = 0;
+    // Scan all occurrences of the hint; only accept ones inside an id/class attr
+    // of a container tag, then slice that element's balanced inner HTML.
+    for (;;) {
+      const idx = lower.indexOf(hint, from);
+      if (idx === -1) break;
+      from = idx + hint.length;
+      const tagStart = lower.lastIndexOf('<', idx);
+      if (tagStart === -1) continue;
+      const tagMatch = /^<([a-z0-9]+)\b/.exec(lower.slice(tagStart, idx + hint.length + 1));
+      if (!tagMatch) continue;
+      const tagName = tagMatch[1];
+      if (!CONTAINER_TAGS.includes(tagName)) continue;
+      const attrSlice = lower.slice(tagStart, lower.indexOf('>', tagStart) + 1);
+      if (!/\b(id|class)\s*=/.test(attrSlice)) continue;
+      const inner = balancedInner(html, tagStart, tagName);
+      const text = htmlToText(inner);
+      if (text.length > best.length) best = text;
+    }
+  }
+  return best;
+}
+
+/** Text of the first <tag>...</tag> element (non-nesting-aware first match). */
+function firstElementText(html, tagName) {
+  const lower = html.toLowerCase();
+  const open = lower.indexOf(`<${tagName}`);
+  if (open === -1) return '';
+  return htmlToText(balancedInner(html, open, tagName));
+}
+
+/**
+ * Return the inner HTML of an element starting at `openIndex`, balancing nested
+ * same-name tags so we capture the full element.
+ */
+function balancedInner(html, openIndex, tagName) {
+  const lower = html.toLowerCase();
+  const openEnd = lower.indexOf('>', openIndex);
+  if (openEnd === -1) return '';
+  const openTag = `<${tagName}`;
+  const closeTag = `</${tagName}>`;
+  let depth = 1;
+  let i = openEnd + 1;
+  const contentStart = i;
+  while (i < html.length && depth > 0) {
+    const nextOpen = lower.indexOf(openTag, i);
+    const nextClose = lower.indexOf(closeTag, i);
+    if (nextClose === -1) break;
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth += 1;
+      i = nextOpen + openTag.length;
+    } else {
+      depth -= 1;
+      if (depth === 0) return html.slice(contentStart, nextClose);
+      i = nextClose + closeTag.length;
+    }
+  }
+  return html.slice(contentStart);
+}
+
+/** Pick the densest contiguous region of stripped text (>= minWords blocks). */
+function largestTextBlock(html, minChars) {
+  const stripped = htmlToText(html);
+  if (!stripped) return '';
+  const blocks = stripped.split(/\n{2,}/).map((b) => b.trim()).filter(Boolean);
+  const meaningful = blocks.filter((b) => wordCount(b) >= 12);
+  if (meaningful.length === 0) return '';
+  const joined = meaningful.join('\n\n');
+  if (joined.length >= minChars) return joined;
+  // Otherwise return the single longest block.
+  return meaningful.reduce((a, b) => (b.length > a.length ? b : a), '');
+}
+
+function wordCount(s) {
+  return (s.match(/\b[\w'-]+\b/g) ?? []).length;
+}
+
+/**
+ * Minimal RFC-4180-ish CSV parser. Returns array of row objects keyed by header.
+ * @param {string} text
+ * @returns {object[]}
+ */
+export function parseCsv(text) {
+  if (!text || !text.trim()) return [];
+  const rows = splitCsvRows(text);
+  if (rows.length === 0) return [];
+  const headers = rows[0].map((h) => h.trim());
+  return rows.slice(1).filter((r) => r.length && r.some((c) => c !== '')).map((cells) => {
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = cells[i] ?? ''; });
+    return obj;
+  });
+}
+
+/** Split CSV text into rows of fields, honoring quotes. */
+function splitCsvRows(text) {
+  const rows = [];
+  let field = '';
+  let row = [];
+  let inQuotes = false;
+  const s = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (s[i + 1] === '"') { field += '"'; i += 1; }
+        else inQuotes = false;
+      } else field += c;
+    } else if (c === '"') {
+      inQuotes = true;
+    } else if (c === ',') {
+      row.push(field); field = '';
+    } else if (c === '\n') {
+      row.push(field); rows.push(row); row = []; field = '';
+    } else {
+      field += c;
+    }
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}

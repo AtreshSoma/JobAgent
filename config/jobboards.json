@@ -1,0 +1,197 @@
+{
+  "defaults": {
+    "rateLimitMs": 3000,
+    "maxRetries": 3,
+    "requestTimeoutMs": 30000
+  },
+  "sources": [
+    {
+      "id": "manual-urls",
+      "adapter": "manualUrls",
+      "enabled": true,
+      "priority": 1,
+      "urls": [],
+      "options": {
+        "csvImportPath": "data/jobs_input/manual_jobs.csv"
+      }
+    },
+    {
+      "id": "apify-scrapers",
+      "adapter": "apify",
+      "enabled": true,
+      "priority": 2,
+      "rateLimitMs": 2000,
+      "options": {
+        "note": "REAL multi-portal discovery via your own Apify account. Set APIFY_TOKEN in .env, set enabled:true, then list one or more actors. Each actor: { actorId: 'username~actor-name', label, source, input: {...actor-specific...}, fieldMap?: {...overrides...} }. Or read a previous run: { datasetId: '...' }. Find actors at https://apify.com/store (search 'jobs').",
+        "tokenEnv": "APIFY_TOKEN",
+        "maxItemsPerActor": 100,
+        "actors": [
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-sr-data-eng-us",
+            "source": "indeed",
+            "input": {
+              "title": "Senior Data Engineer",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 30
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-us",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 30
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-azure-data-eng-remote",
+            "source": "indeed",
+            "input": {
+              "title": "Azure Data Engineer",
+              "location": "Remote",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-bi-developer-us",
+            "source": "indeed",
+            "input": {
+              "title": "Business Intelligence Developer",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 25
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-power-bi-developer-us",
+            "source": "indeed",
+            "input": {
+              "title": "Power BI Developer",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-analytics-eng-remote",
+            "source": "indeed",
+            "input": {
+              "title": "Analytics Engineer",
+              "location": "Remote",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "greenhouse-boards",
+      "adapter": "greenhouse",
+      "enabled": true,
+      "priority": 2,
+      "boards": [
+        "databricks", "reddit", "roblox", "pinterest", "affirm", "airbnb",
+        "instacart", "dropbox", "faire", "samsara", "twilio", "anthropic",
+        "discord", "lyft", "robinhood", "brex", "scaleai", "gusto", "chime",
+        "figma", "asana", "stripe", "sofi", "verkada", "elastic", "airtable",
+        "cribl", "datadog", "mongodb"
+      ],
+      "options": {
+        "note": "DISCOVERY. Greenhouse board tokens (the company slug in boards.greenhouse.io/<token>). These are verified-live H-1B-friendly tech companies that currently list Data/BI/Analytics-Engineer roles. A dead/empty board is logged and skipped, never crashes the run."
+      }
+    },
+    {
+      "id": "lever-boards",
+      "adapter": "lever",
+      "enabled": true,
+      "priority": 3,
+      "boards": ["spotify", "matchgroup", "gopuff"],
+      "options": {
+        "note": "DISCOVERY. Lever company slugs (jobs.lever.co/<slug>). Verified-live boards that currently list Data/Analytics roles."
+      }
+    },
+    {
+      "id": "dice-public",
+      "adapter": "dice",
+      "enabled": false,
+      "priority": 4,
+      "queries": ["senior data engineer azure"],
+      "rateLimitMs": 4000,
+      "options": {
+        "note": "URL READER ONLY. Not a real search adapter. Supply public Dice posting URLs in `urls`; `queries` are not automated."
+      }
+    },
+    {
+      "id": "linkedin-public",
+      "adapter": "linkedin",
+      "enabled": false,
+      "priority": 5,
+      "queries": ["senior data engineer"],
+      "rateLimitMs": 5000,
+      "options": {
+        "note": "URL READER ONLY. Public /jobs/view/ pages supplied in `urls`. No login automation, no evasion, no query search."
+      }
+    },
+    {
+      "id": "indeed-public",
+      "adapter": "indeed",
+      "enabled": false,
+      "priority": 6,
+      "queries": ["senior data engineer"],
+      "rateLimitMs": 5000,
+      "options": {
+        "note": "URL READER ONLY. Public posting URLs supplied in `urls`. No query search, no evasion."
+      }
+    },
+    {
+      "id": "workday-public",
+      "adapter": "workday",
+      "enabled": false,
+      "priority": 7,
+      "tenants": [],
+      "rateLimitMs": 4000,
+      "options": {
+        "note": "DISCOVERY. Public Workday CXS career-site endpoints only. Add tenants like { host: 'company.wd1.myworkdayjobs.com', tenant: 'company', site: 'External', pageSize: 20 }. No login, no CAPTCHA bypass, no private endpoints."
+      }
+    },
+    {
+      "id": "company-careers",
+      "adapter": "careers",
+      "enabled": false,
+      "priority": 8,
+      "companies": [],
+      "maxLinksPerCompany": 50,
+      "rateLimitMs": 4000,
+      "options": {
+        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped — never bypassed."
+      }
+    },
+    {
+      "id": "generic-public-pages",
+      "adapter": "genericPublicPage",
+      "enabled": false,
+      "priority": 9,
+      "urls": [],
+      "options": {
+        "note": "URL READER ONLY. Parses public posting URLs you supply in `urls`. Performs no search/discovery."
+      }
+    }
+  ]
+}

@@ -1,0 +1,681 @@
+import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import * as greenhouse from '../../src/search/adapters/greenhouse.js';
+import * as lever from '../../src/search/adapters/lever.js';
+import * as workday from '../../src/search/adapters/workday.js';
+import * as careers from '../../src/search/adapters/careersPage.js';
+import * as generic from '../../src/search/adapters/genericPublicPage.js';
+import * as manualUrls from '../../src/search/adapters/manualUrls.js';
+import * as apify from '../../src/search/adapters/apify.js';
+import { runSearch } from '../../src/search/index.js';
+import { adapterKind, sourceKind, isDiscoveryAdapter } from '../../src/search/sources.js';
+import { extractReadableContent } from '../../src/search/normalize.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const fixture = (f) => readFileSync(join(__dirname, 'fixtures', f), 'utf8');
+
+const jsonResponse = (data) => ({ ok: true, status: 200, json: async () => data, text: async () => '' });
+const htmlResponse = (html) => ({ ok: true, status: 200, text: async () => html, json: async () => ({}) });
+
+describe('greenhouse adapter', () => {
+  it('maps official board API jobs', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      jobs: [{ id: 5, title: 'Senior Data Engineer', company_name: 'Acme',
+        location: { name: 'Remote' }, absolute_url: 'http://x', content: '<p>Azure</p>',
+        updated_at: '2026-05-30' }],
+    }));
+    const { jobs, errors } = await greenhouse.run({ boards: ['acme'] }, { fetchImpl });
+    expect(errors).toHaveLength(0);
+    expect(jobs[0]).toMatchObject({ source: 'greenhouse', title: 'Senior Data Engineer', company: 'Acme' });
+    expect(jobs[0].jdText).toBe('Azure');
+  });
+
+  it('captures per-board errors without throwing', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 404, json: async () => ({}) });
+    const { jobs, errors } = await greenhouse.run({ boards: ['missing'] }, { fetchImpl, maxRetries: 0 });
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].board).toBe('missing');
+  });
+});
+
+describe('lever adapter', () => {
+  it('maps official postings API jobs', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([
+      { id: 'abc', text: 'Lead Data Engineer', hostedUrl: 'http://l',
+        categories: { location: 'Remote', commitment: 'Full-time' },
+        descriptionPlain: 'PySpark', createdAt: 1716000000000 },
+    ]));
+    const { jobs } = await lever.run({ boards: ['acme'] }, { fetchImpl });
+    expect(jobs[0]).toMatchObject({ source: 'lever', title: 'Lead Data Engineer', employmentType: 'Full-time' });
+  });
+
+  it('uses the board slug as company and keeps team in metadata (no dead branch)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([
+      { id: 'x', text: 'Data Engineer', hostedUrl: 'http://l',
+        categories: { location: 'Remote', team: 'Platform' }, descriptionPlain: 'SQL' },
+    ]));
+    const { jobs } = await lever.run({ boards: ['globex'] }, { fetchImpl });
+    expect(jobs[0].company).toBe('globex');
+    expect(jobs[0].rawMetadata.team).toBe('Platform');
+  });
+});
+
+describe('workday adapter', () => {
+  it('maps CXS postings into the normalized shape', async () => {
+    const data = JSON.parse(fixture('workday_jobs.json'));
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(data));
+    const { jobs, errors } = await workday.run(
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 50, fetchDetails: false }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(errors).toHaveLength(0);
+    expect(jobs).toHaveLength(3);
+    expect(jobs[0]).toMatchObject({ source: 'workday', company: 'acme', title: 'Senior Data Engineer' });
+    expect(jobs[0].url).toContain('acme.wd1.myworkdayjobs.com');
+    expect(jobs[0].jdText).toContain('Azure Databricks');
+    expect(jobs[0].rawMetadata.summaryOnly).toBe(true);
+  });
+
+  it('paginates using limit/offset until total is reached', async () => {
+    const page1 = { total: 2, jobPostings: [{ title: 'A', externalPath: '/x/A', bulletFields: ['R1'] }] };
+    const page2 = { total: 2, jobPostings: [{ title: 'B', externalPath: '/x/B', bulletFields: ['R2'] }] };
+    let call = 0;
+    const fetchImpl = vi.fn().mockImplementation(async () => {
+      call += 1;
+      return jsonResponse(call === 1 ? page1 : page2);
+    });
+    const { jobs } = await workday.run(
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 1, fetchDetails: false }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(jobs.map((j) => j.title)).toEqual(['A', 'B']);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports a config error when host/tenant/site are missing (no throw)', async () => {
+    const fetchImpl = vi.fn();
+    const { jobs, errors } = await workday.run({ tenants: [{ tenant: 'acme' }] }, { fetchImpl });
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].error).toMatch(/host, tenant, and site/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('captures HTTP errors without throwing', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
+    const { jobs, errors } = await workday.run(
+      { tenants: [{ host: 'h', tenant: 't', site: 's' }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].error).toMatch(/Workday HTTP 503/);
+  });
+
+  it('enriches the summary with the full JD from the public detail endpoint', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).endsWith('/jobs')) {
+        return jsonResponse({ total: 1, jobPostings: [
+          { title: 'Senior Data Engineer', externalPath: '/job/Remote/Senior-Data-Engineer_R-1', bulletFields: ['R-1'] },
+        ] });
+      }
+      // Public per-job CXS detail endpoint returns the full description.
+      return jsonResponse({ jobPostingInfo: {
+        jobDescription: '<p>Build <b>Azure Databricks</b> medallion lakehouses with PySpark and Delta Lake. We sponsor H-1B.</p>',
+        startDate: '2026-05-01', jobReqId: 'R-1',
+      } });
+    });
+    const { jobs, errors } = await workday.run(
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 50 }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(errors).toHaveLength(0);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].jdText).toContain('Build Azure Databricks medallion lakehouses');
+    expect(jobs[0].rawMetadata.summaryOnly).toBe(false);
+    expect(jobs[0].rawMetadata.detailFetched).toBe(true);
+    expect(jobs[0].rawMetadata.jobReqId).toBe('R-1');
+    // One list call + one detail call.
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to summaryOnly and reports when detail fetch is unavailable', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).endsWith('/jobs')) {
+        return jsonResponse({ total: 1, jobPostings: [
+          { title: 'Staff Data Engineer', externalPath: '/job/Remote/Staff_R-2', bulletFields: ['Azure', 'PySpark'] },
+        ] });
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+    const { jobs, errors } = await workday.run(
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 50 }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].rawMetadata.summaryOnly).toBe(true);
+    expect(jobs[0].rawMetadata.detailError).toMatch(/Workday detail HTTP 404/);
+    // Summary JD is preserved as the fallback.
+    expect(jobs[0].jdText).toContain('Azure');
+    expect(errors[0].error).toMatch(/kept summaryOnly/);
+  });
+});
+
+describe('genericPublicPage adapter', () => {
+  it('parses JSON-LD from a fetched public page', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(htmlResponse(fixture('jobposting.html')));
+    const jobs = await generic.fetchUrl('http://x', { fetchImpl });
+    expect(jobs[0].title).toBe('Senior Data Engineer');
+  });
+
+  it('falls back to title-only when no JSON-LD present', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(htmlResponse('<title>Some Data Role</title><body>hi</body>'));
+    const jobs = await generic.fetchUrl('http://x', { fetchImpl });
+    expect(jobs[0].title).toBe('Some Data Role');
+    expect(jobs[0].rawMetadata.fallback).toBe('title-only');
+  });
+
+  it('extracts a job-description container when JSON-LD is absent', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(htmlResponse(fixture('jobposting_article.html')));
+    const jobs = await generic.fetchUrl('http://x', { fetchImpl });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].rawMetadata.fallback).toBe('container');
+    expect(jobs[0].jdText).toContain('Azure Databricks');
+    expect(jobs[0].jdText).toContain('medallion');
+    // The crude meta description must NOT be what we captured.
+    expect(jobs[0].jdText).not.toContain('should not be used');
+  });
+});
+
+describe('manualUrls adapter', () => {
+  it('imports jobs from CSV without network', async () => {
+    const readFileImpl = () => fixture('manual_jobs.csv');
+    const { jobs } = await manualUrls.run(
+      { options: { csvImportPath: 'whatever.csv' } },
+      { readFileImpl, root: '/' },
+    );
+    expect(jobs).toHaveLength(2);
+    expect(jobs[0]).toMatchObject({ source: 'manual', company: 'Globex' });
+  });
+
+  it('treats a missing CSV as non-fatal', async () => {
+    const readFileImpl = () => { const e = new Error('nope'); e.code = 'ENOENT'; throw e; };
+    const { jobs, errors } = await manualUrls.run(
+      { options: { csvImportPath: 'missing.csv' } },
+      { readFileImpl, root: '/' },
+    );
+    expect(jobs).toHaveLength(0);
+    expect(errors).toHaveLength(0);
+  });
+
+  it('skips malformed CSV rows and reports them without crashing', async () => {
+    const readFileImpl = () => fixture('manual_jobs_malformed.csv');
+    const { jobs, errors } = await manualUrls.run(
+      { options: { csvImportPath: 'whatever.csv' } },
+      { readFileImpl, root: '/' },
+    );
+    // Two good rows kept (Globex, Umbrella); the empty middle row is reported.
+    expect(jobs.map((j) => j.company)).toEqual(['Globex', 'Umbrella']);
+    expect(errors).toHaveLength(1);
+    expect(errors[0].row).toBe(3);
+    expect(errors[0].error).toMatch(/missing/);
+  });
+});
+
+describe('apify adapter', () => {
+  const actorRun = (items) => ({ ok: true, status: 200, json: async () => items, text: async () => '' });
+
+  it('runs a configured actor and maps dataset items to normalized jobs', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      { positionName: 'Senior Data Engineer', companyName: 'Acme', location: 'Remote, US',
+        url: 'https://www.linkedin.com/jobs/view/123', descriptionText: 'Azure Databricks PySpark. H-1B sponsorship.',
+        postedAt: '2026-06-01', employmentType: 'Full-time', id: 'li-123' },
+    ]));
+    const source = { options: { actors: [{ actorId: 'bebity~linkedin-jobs-scraper', label: 'linkedin', source: 'linkedin', input: { title: 'x' } }] } };
+    const { jobs, errors } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(errors).toHaveLength(0);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ source: 'apify', title: 'Senior Data Engineer', company: 'Acme', location: 'Remote, US' });
+    expect(jobs[0].url).toBe('https://www.linkedin.com/jobs/view/123');
+    expect(jobs[0].jdText).toContain('Azure Databricks');
+    expect(jobs[0].rawMetadata.provider).toBe('linkedin');
+  });
+
+  it('sends the token as a Bearer header and never in the URL', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([{ title: 'Data Engineer', url: 'http://x' }]));
+    const source = { options: { actors: [{ actorId: 'user~actor', input: {} }] } };
+    await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'secret-tok' }, maxRetries: 0 });
+    const [calledUrl, init] = fetchImpl.mock.calls[0];
+    expect(String(calledUrl)).not.toContain('secret-tok');
+    expect(init.headers.Authorization).toBe('Bearer secret-tok');
+    expect(init.method).toBe('POST');
+  });
+
+  it('reports a config error (no throw) when the token is missing', async () => {
+    const fetchImpl = vi.fn();
+    const source = { options: { actors: [{ actorId: 'user~actor' }] } };
+    const { jobs, errors } = await apify.run(source, { fetchImpl, env: {}, maxRetries: 0 });
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].error).toMatch(/Missing Apify token/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('reads items from an existing datasetId via GET', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([{ jobTitle: 'Lead Data Engineer', companyName: 'Globex', jobUrl: 'http://g' }]));
+    const source = { options: { actors: [{ datasetId: 'ds-1', source: 'indeed' }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    const [calledUrl, init] = fetchImpl.mock.calls[0];
+    expect(String(calledUrl)).toContain('/datasets/ds-1/items');
+    expect(init?.method ?? 'GET').toBe('GET');
+    expect(jobs[0]).toMatchObject({ title: 'Lead Data Engineer', company: 'Globex', url: 'http://g' });
+  });
+
+  it('captures HTTP errors per-actor without throwing', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 402, json: async () => ({}) });
+    const source = { options: { actors: [{ actorId: 'user~actor', label: 'li' }] } };
+    const { jobs, errors } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].actor).toBe('li');
+    expect(errors[0].error).toMatch(/Apify HTTP 402/);
+  });
+
+  it('applies per-actor fieldMap overrides and skips unusable rows', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      { role: 'Staff Data Engineer', org: 'Initech', href: 'http://i', body: 'SQL dbt' },
+      { nothing: 'useful' },
+    ]));
+    const source = { options: { actors: [{ actorId: 'user~actor',
+      fieldMap: { title: 'role', company: 'org', url: 'href', jdText: 'body' } }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({ title: 'Staff Data Engineer', company: 'Initech', url: 'http://i' });
+  });
+
+  it('coerces nested object/array fields (Indeed-shape employer/location/jobTypes)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      {
+        title: 'Senior Data Engineer',
+        url: 'https://www.indeed.com/viewjob?jk=abc',
+        employer: { name: 'Switch', companyPageUrl: 'http://x' },
+        location: { city: 'Remote', admin1Code: 'CA', countryName: 'United States' },
+        jobTypes: ['Full-time', 'Contract'],
+        description: 'Build pipelines with SQL and Python',
+      },
+    ]));
+    const source = { options: { actors: [{ actorId: 'valig~indeed-jobs-scraper' }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].company).toBe('Switch');
+    expect(jobs[0].location).toBe('Remote, CA, United States');
+    expect(jobs[0].employmentType).toBe('Full-time, Contract');
+    expect(jobs[0].company).not.toContain('[object Object]');
+  });
+
+  it('prefers the direct company apply link over the Indeed viewjob wall page', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      {
+        title: 'Senior Data Engineer',
+        // Indeed returns BOTH: the gated viewjob page AND the direct company link.
+        url: 'https://www.indeed.com/viewjob?jk=abc',
+        jobUrl: 'https://jobs.merck.com/us/en/job/MERCUSR401498ENUS/apply',
+        employer: { name: 'Merck' },
+        description: 'Build pipelines with SQL and Python',
+      },
+    ]));
+    const source = { options: { actors: [{ actorId: 'valig~indeed-jobs-scraper' }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].url).toBe('https://jobs.merck.com/us/en/job/MERCUSR401498ENUS/apply');
+    expect(jobs[0].url).not.toContain('indeed.com');
+  });
+
+  it('falls back to the Indeed url only when no direct company link exists', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      { title: 'Data Engineer', url: 'https://www.indeed.com/viewjob?jk=zzz', employer: { name: 'Acme' } },
+    ]));
+    const source = { options: { actors: [{ actorId: 'valig~indeed-jobs-scraper' }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs[0].url).toBe('https://www.indeed.com/viewjob?jk=zzz');
+  });
+});
+
+describe('runSearch orchestration', () => {
+  it('runs enabled sources in priority order, dedups, and isolates failures', async () => {
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [
+        { id: 'gh', adapter: 'greenhouse', enabled: true, priority: 2, boards: ['acme'] },
+        { id: 'bad', adapter: 'greenhouse', enabled: true, priority: 3, boards: ['x'] },
+        { id: 'off', adapter: 'lever', enabled: false, priority: 1, boards: ['y'] },
+      ],
+    };
+    let call = 0;
+    const fetchImpl = vi.fn().mockImplementation(async () => {
+      call += 1;
+      if (call === 1) return jsonResponse({ jobs: [{ id: 1, title: 'SDE', company_name: 'Acme', content: 'Azure' }] });
+      return { ok: false, status: 500, json: async () => ({}) };
+    });
+    const { jobs, errors, perSource } = await runSearch({ jobboards, ctx: { fetchImpl } });
+    expect(jobs).toHaveLength(1);
+    expect(errors.length).toBeGreaterThanOrEqual(1); // the 'bad' source failed
+    expect(perSource.find((p) => p.source === 'gh').found).toBe(1);
+  });
+
+  it('dedupes across sources and attaches permissive discovery signals', async () => {
+    const candidate = {
+      targetTitles: ['Senior Data Engineer'],
+      seniority: 'senior',
+      technicalStack: { de: ['Azure', 'Delta Lake', 'PySpark'], lang: ['Python', 'SQL'] },
+      locationPreferences: { remote: true },
+    };
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [
+        { id: 'gh', adapter: 'greenhouse', enabled: true, priority: 1, boards: ['acme'] },
+        { id: 'lv', adapter: 'lever', enabled: true, priority: 2, boards: ['acme'] },
+      ],
+    };
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).includes('greenhouse')) {
+        return jsonResponse({ jobs: [{ title: 'Senior Data Engineer', company_name: 'Acme',
+          location: { name: 'Remote' }, content: 'Azure Delta Lake PySpark Python SQL' }] });
+      }
+      // Lever returns the same company+title (board slug 'acme') -> should dedupe to one.
+      return jsonResponse([{ text: 'Senior Data Engineer',
+        categories: { location: 'Remote' }, descriptionPlain: 'Azure Delta Lake PySpark' }]);
+    });
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
+    // Greenhouse "Acme" vs Lever board slug "acme", same title, no source id =>
+    // identical dedup key => collapses to a single job.
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].rawMetadata.discovery).toBeDefined();
+    expect(jobs[0].rawMetadata.discovery.match).toBe('strong');
+  });
+
+  it('tags every job with its source kind (discovery vs url-reader)', async () => {
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [
+        { id: 'gh', adapter: 'greenhouse', enabled: true, priority: 1, boards: ['acme'] },
+      ],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      jobs: [{ id: 7, title: 'Data Engineer', company_name: 'Acme', content: 'SQL' }],
+    }));
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl } });
+    expect(jobs[0].rawMetadata.sourceKind).toBe('discovery');
+  });
+});
+
+describe('sources registry', () => {
+  it('classifies real discovery adapters', () => {
+    expect(adapterKind('greenhouse')).toBe('discovery');
+    expect(adapterKind('lever')).toBe('discovery');
+    expect(adapterKind('workday')).toBe('discovery');
+    expect(adapterKind('careers')).toBe('discovery');
+    expect(adapterKind('apify')).toBe('discovery');
+    expect(isDiscoveryAdapter('careers')).toBe(true);
+    expect(isDiscoveryAdapter('apify')).toBe(true);
+  });
+
+  it('classifies url-reader adapters (Dice/LinkedIn/Indeed/generic) as NOT discovery', () => {
+    for (const a of ['dice', 'linkedin', 'indeed', 'genericPublicPage']) {
+      expect(adapterKind(a)).toBe('url-reader');
+      expect(isDiscoveryAdapter(a)).toBe(false);
+    }
+  });
+
+  it('classifies the manual fallback distinctly', () => {
+    expect(adapterKind('manualUrls')).toBe('manual');
+  });
+
+  it('maps normalized job.source strings to a kind', () => {
+    expect(sourceKind('greenhouse')).toBe('discovery');
+    expect(sourceKind('careers')).toBe('discovery');
+    expect(sourceKind('apify')).toBe('discovery');
+    expect(sourceKind('dice')).toBe('url-reader');
+    expect(sourceKind('public')).toBe('url-reader');
+    expect(sourceKind('manual')).toBe('manual');
+    expect(sourceKind('mystery')).toBe('unknown');
+  });
+});
+
+describe('careers adapter (public discovery)', () => {
+  it('delegates ats:greenhouse entries to the greenhouse adapter', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      jobs: [{ id: 1, title: 'Senior Data Engineer', company_name: 'Acme', content: 'Azure' }],
+    }));
+    const { jobs, errors } = await careers.run(
+      { companies: [{ name: 'Acme', ats: 'greenhouse', slug: 'acme' }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(errors).toHaveLength(0);
+    expect(jobs[0]).toMatchObject({ source: 'greenhouse', title: 'Senior Data Engineer' });
+    expect(jobs[0].rawMetadata.via).toBe('careers');
+  });
+
+  it('extracts job-like links from a public careers page and parses each', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).endsWith('/careers')) return htmlResponse(fixture('careers_page.html'));
+      // Each discovered posting URL returns a JSON-LD posting.
+      return htmlResponse(fixture('jobposting.html'));
+    });
+    const { jobs, errors } = await careers.run(
+      { companies: [{ name: 'Acme', careersUrl: 'https://acme.com/careers' }], maxLinksPerCompany: 10 },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(errors).toHaveLength(0);
+    // 3 distinct job-like links (greenhouse dup collapses, nav/footer/# excluded).
+    expect(jobs).toHaveLength(3);
+    expect(jobs.every((j) => j.source === 'careers')).toBe(true);
+    expect(jobs[0].rawMetadata.company).toBe('Acme');
+  });
+
+  it('reads job-like URLs from a public sitemap and parses each', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).endsWith('sitemap.xml')) return htmlResponse(fixture('sitemap.xml'));
+      return htmlResponse(fixture('jobposting.html'));
+    });
+    const { jobs, errors } = await careers.run(
+      { companies: [{ name: 'Globex', sitemap: 'https://globex.com/sitemap.xml' }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(errors).toHaveLength(0);
+    // 3 job-like locs (2 /careers/job/ + 1 greenhouse); blog/about/home excluded.
+    expect(jobs).toHaveLength(3);
+    expect(jobs.every((j) => j.source === 'careers')).toBe(true);
+  });
+
+  it('follows a sitemap index one level deep', async () => {
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      const u = String(url);
+      if (u.endsWith('sitemap.xml')) return htmlResponse(fixture('sitemap_index.xml'));
+      if (u.endsWith('sitemap-jobs.xml')) return htmlResponse(fixture('sitemap.xml'));
+      if (u.endsWith('sitemap-pages.xml')) return htmlResponse('<urlset></urlset>');
+      return htmlResponse(fixture('jobposting.html'));
+    });
+    const { jobs, errors } = await careers.run(
+      { companies: [{ name: 'Globex', sitemap: 'https://globex.com/sitemap.xml' }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(errors).toHaveLength(0);
+    expect(jobs).toHaveLength(3);
+  });
+
+  it('treats a blocked page as skip-and-log, never bypassing it', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue({
+      ok: false, status: 403, text: async () => 'Access denied', json: async () => ({}),
+    });
+    const { jobs, errors } = await careers.run(
+      { companies: [{ name: 'Locked', careersUrl: 'https://locked.com/careers' }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].error).toMatch(/blocked/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // no retry, no evasion
+  });
+
+  it('reports (does not throw) when no companies are configured', async () => {
+    const { jobs, errors } = await careers.run({ companies: [] }, { fetchImpl: vi.fn() });
+    expect(jobs).toHaveLength(0);
+    expect(errors[0].note).toMatch(/no companies configured/);
+  });
+});
+
+describe('careers helpers', () => {
+  it('isJobLikeUrl accepts ATS hosts and job-ish paths, rejects the rest', () => {
+    expect(careers.isJobLikeUrl('https://boards.greenhouse.io/acme/jobs/1')).toBe(true);
+    expect(careers.isJobLikeUrl('https://jobs.lever.co/acme/abc')).toBe(true);
+    expect(careers.isJobLikeUrl('https://x.com/careers/job/5')).toBe(true);
+    expect(careers.isJobLikeUrl('https://x.com/about')).toBe(false);
+    expect(careers.isJobLikeUrl('mailto:a@b.com')).toBe(false);
+    expect(careers.isJobLikeUrl('not a url')).toBe(false);
+  });
+
+  it('blockReason flags status codes and challenge markers', () => {
+    expect(careers.blockReason(403, '')).toBe('http-403-forbidden');
+    expect(careers.blockReason(429, '')).toBe('http-429-rate-limited');
+    expect(careers.blockReason(200, 'Please solve this CAPTCHA')).toBe('captcha');
+    expect(careers.blockReason(200, 'Verify you are human')).toBe('human-verification');
+    expect(careers.blockReason(200, 'normal page')).toBeNull();
+  });
+
+  it('extractLocs and isSitemapIndex parse sitemap XML', () => {
+    expect(careers.isSitemapIndex(fixture('sitemap_index.xml'))).toBe(true);
+    expect(careers.isSitemapIndex(fixture('sitemap.xml'))).toBe(false);
+    expect(careers.extractLocs(fixture('sitemap.xml')).length).toBe(6);
+  });
+});
+
+describe('generic JD extraction enrichment', () => {
+  it('uses meta description when the body is thin and there is no JSON-LD', async () => {
+    const html = '<html><head><title>Data Engineer Role</title>' +
+      '<meta name="description" content="Build Azure Databricks medallion pipelines with PySpark and Delta Lake."></head>' +
+      '<body><h1>Data Engineer Role</h1></body></html>';
+    const fetchImpl = vi.fn().mockResolvedValue(htmlResponse(html));
+    const jobs = await generic.fetchUrl('http://x', { fetchImpl });
+    expect(jobs[0].rawMetadata.fallback).toBe('meta-description');
+    expect(jobs[0].jdText).toContain('Delta Lake');
+  });
+});
+
+describe('extractReadableContent fallback order', () => {
+  const longText = (lead) => `${lead} ` + (
+    'We are hiring a data engineer to build and operate large scale Azure ' +
+    'Databricks medallion lakehouse pipelines with PySpark Delta Lake and ' +
+    'Microsoft Fabric across finance analytics workloads requiring strong ' +
+    'Python and SQL plus visa sponsorship for qualified candidates today.'
+  );
+
+  it('prefers a hinted job-description container', () => {
+    const html = `<html><body><nav>Home About</nav>` +
+      `<div class="job-description"><p>${longText('CONTAINER')}</p></div></body></html>`;
+    const { text, method } = extractReadableContent(html);
+    expect(method).toBe('container');
+    expect(text).toContain('CONTAINER');
+  });
+
+  it('falls back to <article> when no container hint is present', () => {
+    const html = `<html><body><nav>Home About Careers</nav>` +
+      `<article><p>${longText('ARTICLE')}</p></article>` +
+      `<footer>Copyright</footer></body></html>`;
+    const { text, method } = extractReadableContent(html);
+    expect(method).toBe('article');
+    expect(text).toContain('ARTICLE');
+  });
+
+  it('falls back to <main> when there is no container or article', () => {
+    const html = `<html><body><nav>Home</nav>` +
+      `<main><p>${longText('MAIN')}</p></main>` +
+      `<footer>x</footer></body></html>`;
+    const { text, method } = extractReadableContent(html);
+    expect(method).toBe('main');
+    expect(text).toContain('MAIN');
+  });
+
+  it('falls back to the largest meaningful text block', () => {
+    const html = `<html><body>` +
+      `<div><p>Short intro.</p></div>` +
+      `<div><p>${longText('LARGEST')}</p></div>` +
+      `<div><p>Footer note.</p></div></body></html>`;
+    const { text, method } = extractReadableContent(html);
+    expect(method).toBe('largest-block');
+    expect(text).toContain('LARGEST');
+  });
+
+  it('returns empty for content with no meaningful text', () => {
+    const { text, method } = extractReadableContent('<html><body><nav>a b c</nav></body></html>');
+    expect(method).toBe('empty');
+    expect(text).toBe('');
+  });
+});
+
+describe('discovery signal tagging (Greenhouse & Lever via runSearch)', () => {
+  const candidate = {
+    targetTitles: ['Senior Data Engineer', 'Lead Data Engineer'],
+    seniority: 'senior',
+    technicalStack: { de: ['Azure', 'Delta Lake', 'PySpark'], lang: ['Python', 'SQL'] },
+    locationPreferences: { remote: true },
+  };
+
+  it('attaches discovery match/signals/reasons to Greenhouse jobs', async () => {
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [{ id: 'gh', adapter: 'greenhouse', enabled: true, priority: 1, boards: ['acme'] }],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      jobs: [{ id: 1, title: 'Senior Data Engineer', company_name: 'Acme',
+        location: { name: 'Remote' }, content: 'Azure Delta Lake PySpark Python SQL' }],
+    }));
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
+    const d = jobs[0].rawMetadata.discovery;
+    expect(d.match).toBe('strong');
+    expect(Array.isArray(d.signals)).toBe(true);
+    expect(Array.isArray(d.reasons)).toBe(true);
+    expect(jobs[0].rawMetadata.sourceKind).toBe('discovery');
+  });
+
+  it('keeps a weak Greenhouse match visible (never discarded at discovery)', async () => {
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [{ id: 'gh', adapter: 'greenhouse', enabled: true, priority: 1, boards: ['acme'] }],
+    };
+    // Title matches a role token but only one stack hit -> weak, still returned.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      jobs: [{ id: 2, title: 'Data Engineer', company_name: 'Acme', content: 'Azure only' }],
+    }));
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].rawMetadata.discovery.match).toBe('weak');
+  });
+
+  it('attaches discovery match/signals/reasons to Lever jobs', async () => {
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [{ id: 'lv', adapter: 'lever', enabled: true, priority: 1, boards: ['globex'] }],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([
+      { id: 'x', text: 'Lead Data Engineer', hostedUrl: 'http://l',
+        categories: { location: 'Remote' }, descriptionPlain: 'Azure Delta Lake PySpark Python SQL' },
+    ]));
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
+    const d = jobs[0].rawMetadata.discovery;
+    expect(d.match).toBe('strong');
+    expect(jobs[0].rawMetadata.sourceKind).toBe('discovery');
+  });
+
+  it('labels an off-target Lever job as no_match but still returns it', async () => {
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [{ id: 'lv', adapter: 'lever', enabled: true, priority: 1, boards: ['globex'] }],
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([
+      { id: 'y', text: 'Marketing Manager', hostedUrl: 'http://l',
+        categories: { location: 'Remote' }, descriptionPlain: 'Brand campaigns and SEO' },
+    ]));
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].rawMetadata.discovery.match).toBe('no_match');
+  });
+});
