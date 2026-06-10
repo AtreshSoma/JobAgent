@@ -107,11 +107,35 @@
       "enabled": true,
       "priority": 2,
       "boards": [
-        "databricks", "reddit", "roblox", "pinterest", "affirm", "airbnb",
-        "instacart", "dropbox", "faire", "samsara", "twilio", "anthropic",
-        "discord", "lyft", "robinhood", "brex", "scaleai", "gusto", "chime",
-        "figma", "asana", "stripe", "sofi", "verkada", "elastic", "airtable",
-        "cribl", "datadog", "mongodb"
+        "databricks",
+        "reddit",
+        "roblox",
+        "pinterest",
+        "affirm",
+        "airbnb",
+        "instacart",
+        "dropbox",
+        "faire",
+        "samsara",
+        "twilio",
+        "anthropic",
+        "discord",
+        "lyft",
+        "robinhood",
+        "brex",
+        "scaleai",
+        "gusto",
+        "chime",
+        "figma",
+        "asana",
+        "stripe",
+        "sofi",
+        "verkada",
+        "elastic",
+        "airtable",
+        "cribl",
+        "datadog",
+        "mongodb"
       ],
       "options": {
         "note": "DISCOVERY. Greenhouse board tokens (the company slug in boards.greenhouse.io/<token>). These are verified-live H-1B-friendly tech companies that currently list Data/BI/Analytics-Engineer roles. A dead/empty board is logged and skipped, never crashes the run."
@@ -122,7 +146,11 @@
       "adapter": "lever",
       "enabled": true,
       "priority": 3,
-      "boards": ["spotify", "matchgroup", "gopuff"],
+      "boards": [
+        "spotify",
+        "matchgroup",
+        "gopuff"
+      ],
       "options": {
         "note": "DISCOVERY. Lever company slugs (jobs.lever.co/<slug>). Verified-live boards that currently list Data/Analytics roles."
       }
@@ -132,7 +160,9 @@
       "adapter": "dice",
       "enabled": false,
       "priority": 4,
-      "queries": ["senior data engineer azure"],
+      "queries": [
+        "senior data engineer azure"
+      ],
       "rateLimitMs": 4000,
       "options": {
         "note": "URL READER ONLY. Not a real search adapter. Supply public Dice posting URLs in `urls`; `queries` are not automated."
@@ -143,7 +173,9 @@
       "adapter": "linkedin",
       "enabled": false,
       "priority": 5,
-      "queries": ["senior data engineer"],
+      "queries": [
+        "senior data engineer"
+      ],
       "rateLimitMs": 5000,
       "options": {
         "note": "URL READER ONLY. Public /jobs/view/ pages supplied in `urls`. No login automation, no evasion, no query search."
@@ -154,7 +186,9 @@
       "adapter": "indeed",
       "enabled": false,
       "priority": 6,
-      "queries": ["senior data engineer"],
+      "queries": [
+        "senior data engineer"
+      ],
       "rateLimitMs": 5000,
       "options": {
         "note": "URL READER ONLY. Public posting URLs supplied in `urls`. No query search, no evasion."
@@ -180,7 +214,7 @@
       "maxLinksPerCompany": 50,
       "rateLimitMs": 4000,
       "options": {
-        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped — never bypassed."
+        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped \u2014 never bypassed."
       }
     },
     {
@@ -192,6 +226,42 @@
       "options": {
         "note": "URL READER ONLY. Parses public posting URLs you supply in `urls`. Performs no search/discovery."
       }
+    },
+    {
+      "id": "ashby-boards",
+      "adapter": "ashby",
+      "enabled": true,
+      "priority": 2,
+      "boards": [
+        "ramp",
+        "linear",
+        "deel",
+        "openai",
+        "notion",
+        "vanta",
+        "wander",
+        "replit",
+        "modal"
+      ],
+      "options": {
+        "note": "DISCOVERY via Ashby's official public posting API (api.ashbyhq.com/posting-api/job-board/<board>). Board slugs of tech companies hiring data roles; a dead board is logged and skipped."
+      }
+    },
+    {
+      "id": "smartrecruiters-companies",
+      "adapter": "smartrecruiters",
+      "enabled": true,
+      "priority": 3,
+      "options": {
+        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting."
+      },
+      "boards": [
+        "ServiceNow",
+        "Visa",
+        "Bosch",
+        "IKEA",
+        "McDonaldsCorporation"
+      ]
     }
   ]
 }

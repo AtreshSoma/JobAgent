@@ -202,6 +202,35 @@ It also reports **truthful profile gaps** (e.g. an empty street address or
 GitHub URL). These are never invented — fill them in `config/candidate.json`
 yourself, and only with real information.
 
+### The dashboard (recommended cockpit)
+
+```bash
+npm run dashboard     # then open http://127.0.0.1:4646
+```
+
+A local-only web dashboard (binds to 127.0.0.1, zero extra dependencies) that
+drives the whole workflow from the browser:
+
+- **Tiles**: jobs tracked, discovered today, posted in the last 24 h, strong /
+  medium / weak fit, shortlisted, pending review, prepared today, ready to
+  submit, submitted today, blocked, rejected — each tile filters the board.
+- **Board**: search, filter (fit / status / source / sponsorship / last-24 h),
+  sort (score / newest / company / recently updated), and compare up to three
+  jobs side by side.
+- **Why it fits**: every job shows its score explanation, the matched skills
+  found in the JD, and the missing/not-evidenced ones.
+- **Actions**: shortlist · reject · archive · approve packet · *Fill in browser
+  (stops before submit)* · *I submitted it myself* (the only path to
+  "submitted" — the system never sets it on its own).
+- **Pipeline buttons**: Discover / Score / Find & Prepare run the real pipeline
+  in the background; status is shown live in the header.
+- **Source breakdown**: found / strong / prepared / submitted per source
+  (Greenhouse, Lever, Ashby, SmartRecruiters, Workday, manual lists, …).
+
+Use `--port=NNNN` or `DASHBOARD_PORT` to change the port. The dashboard
+enforces the same safety gates as the CLI: assisted filling only works on a
+packet you approved, and it always stops before the final Submit.
+
 ### Run it (one command)
 
 Once your resume and job source are in place, the whole thing is just:

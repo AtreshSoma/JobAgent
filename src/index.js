@@ -73,7 +73,7 @@ const VALID_MODES = new Set(['DRY_RUN', 'PREPARE', 'LIVE_ASSIST']);
 
 /** Phase commands handled by the dispatcher (vs. the legacy mode path). */
 const COMMANDS = new Set([
-  'go', 'start',
+  'go', 'start', 'dashboard', 'ui',
   'discover', 'score', 'prepare-apps', 'assist', 'apply', 'end-to-end', 'live-submit',
   'approvals', 'approve', 'reject', 'packets', 'packet', 'report',
 ]);
@@ -165,6 +165,35 @@ async function runCommand(command, parsed, env) {
         };
         const r = await runGuided({ config, db, logger, options });
         return { command, ...r };
+      }
+      case 'dashboard':
+      case 'ui': {
+        const gate = quickPreflight(config);
+        if (!gate.ok) {
+          ui.heading('Cannot start the dashboard — preflight failed');
+          for (const problem of gate.problems) ui.fail(problem);
+          ui.blank();
+          ui.next([{ text: 'See the full checklist:', cmd: 'npm run doctor' }]);
+          process.exitCode = 1;
+          return { command, preflight: gate };
+        }
+        const { startDashboard } = await import('./dashboard/server.js');
+        const port = Number(parsed.options.port ?? env.DASHBOARD_PORT ?? 4646);
+        const dash = await startDashboard({ config, db, logger, port });
+        ui.heading('JobAgent Dashboard');
+        ui.success(`Running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
+        ui.note('Discover, score, review, approve, and assist from the browser.');
+        ui.note('Nothing is ever auto-submitted — you review and click Submit yourself.');
+        ui.blank();
+        ui.note('Press Ctrl+C to stop.');
+        // Keep the process alive until the user stops it; close the server
+        // (and fall through to the db.close() in finally) on SIGINT/SIGTERM.
+        await new Promise((resolve) => {
+          process.once('SIGINT', resolve);
+          process.once('SIGTERM', resolve);
+        });
+        await dash.close();
+        return { command, url: dash.url, stopped: true };
       }
       case 'discover': {
         ui.heading('Discover');

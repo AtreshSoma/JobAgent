@@ -23,6 +23,8 @@ import * as workday from './adapters/workday.js';
 import * as careers from './adapters/careersPage.js';
 import * as genericPublicPage from './adapters/genericPublicPage.js';
 import * as apify from './adapters/apify.js';
+import * as ashby from './adapters/ashby.js';
+import * as smartrecruiters from './adapters/smartrecruiters.js';
 
 /** adapter id -> module. */
 export const ADAPTERS = {
@@ -36,6 +38,8 @@ export const ADAPTERS = {
   careers,
   genericPublicPage,
   apify,
+  ashby,
+  smartrecruiters,
 };
 
 /**

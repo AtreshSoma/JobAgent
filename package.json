@@ -10,6 +10,8 @@
   "scripts": {
     "start": "node src/index.js go",
     "go": "node src/index.js go",
+    "dashboard": "node src/index.js dashboard",
+    "ui": "node src/index.js dashboard",
     "doctor": "node src/index.js doctor",
     "preflight": "node src/index.js doctor",
     "find": "node src/index.js prepare-apps",

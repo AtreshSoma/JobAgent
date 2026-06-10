@@ -23,6 +23,8 @@ export const DISCOVERY_ADAPTERS = Object.freeze(new Set([
   'workday',
   'careers',
   'apify',
+  'ashby',
+  'smartrecruiters',
 ]));
 
 /** Adapter ids that only read user-supplied public posting URLs (no search). */
@@ -62,6 +64,8 @@ const SOURCE_STRING_KIND = Object.freeze({
   workday: 'discovery',
   careers: 'discovery',
   apify: 'discovery',
+  ashby: 'discovery',
+  smartrecruiters: 'discovery',
   dice: 'url-reader',
   linkedin: 'url-reader',
   indeed: 'url-reader',
