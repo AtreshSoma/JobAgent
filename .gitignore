@@ -40,8 +40,8 @@ logs/*
 !logs/.gitkeep
 !logs/README.md
 
-# --- Reports ---
-reports/
+# --- Reports (generated output at the repo root ONLY — never src/reports/) ---
+/reports/
 
 # --- Playwright ---
 playwright-report/
