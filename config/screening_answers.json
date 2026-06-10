@@ -19,7 +19,7 @@
     },
     {
       "id": "require_sponsorship",
-      "patterns": ["require sponsorship", "need sponsorship", "visa sponsorship", "will you require", "now or in the future require sponsorship"],
+      "patterns": ["require sponsorship", "need sponsorship", "visa sponsorship", "will you require", "now or in the future require sponsorship", "sponsor you for a visa", "need an employer to sponsor", "employer to sponsor you", "require an employer to sponsor", "sponsorship to work", "sponsor you for an immigration", "need visa sponsorship"],
       "answer": "Yes. I currently hold H-1B status and will require employer sponsorship (transfer).",
       "type": "text"
     },

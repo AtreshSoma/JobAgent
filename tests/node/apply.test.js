@@ -117,6 +117,48 @@ describe('formPrefill', () => {
     expect(plan.find((p) => p.selector === '#ext')).toBeUndefined();
   });
 
+  it('treats a combined "First and Last Name" control as the FULL name', () => {
+    // Regression: "Legal First and Last Name" contains the substring "last name"
+    // and used to be filled with only the surname.
+    expect(classifyLabel('Legal First and Last Name')).toBe('fullName');
+    expect(classifyLabel('First and Last Name')).toBe('fullName');
+    expect(classifyLabel('Full Name')).toBe('fullName');
+    expect(classifyLabel('First Name')).toBe('firstName');
+    expect(classifyLabel('Last Name')).toBe('lastName');
+    expect(valueForField('fullName', candidate)).toBe(candidate.identity.fullName);
+  });
+
+  it('never matches a profile field inside an unrelated word or sentence', () => {
+    // "stated" contains "state"; "United States" contains "state"; these used to
+    // be classified as the State field and filled with the candidate's state.
+    expect(classifyLabel('I acknowledge I have read and understand the stated responsibilities of this position')).toBeNull();
+    expect(classifyLabel('Are you authorized to work in the United States?')).toBeNull();
+    expect(classifyLabel('Do you now or will you in the future need an employer to sponsor you for a visa?')).toBeNull();
+    // The real State field still classifies correctly.
+    expect(classifyLabel('State')).toBe('state');
+    expect(classifyLabel('State / Province')).toBe('state');
+  });
+
+  it('does not write the candidate State into a long acknowledgement/sponsorship field', () => {
+    const fields = [
+      { label: 'State', selector: '#state' },
+      { label: 'I acknowledge carefully reading the posted job description and understand the stated responsibilities', selector: '#ack' },
+    ];
+    const { plan } = buildPrefillPlan(fields, { candidate, screeningAnswers });
+    expect(plan.find((p) => p.selector === '#state')?.field).toBe('state');
+    // The acknowledgement must NOT be filled with the State (or anything) from the profile.
+    const ack = plan.find((p) => p.selector === '#ack');
+    expect(ack?.source).not.toBe('profile');
+  });
+
+  it('answers the visa-phrased sponsorship question and maps it to a Yes option', () => {
+    const q = 'Do you now or will you in the future need an employer to sponsor you for a visa to work in the United States?';
+    const r = answerScreeningQuestion(q, screeningAnswers, { choices: ['Select...', 'Yes', 'No'] });
+    expect(r.answered).toBe(true);
+    expect(r.matchedId).toBe('require_sponsorship');
+    expect(r.answer).toBe('Yes');
+  });
+
   it('builds a plan and flags unknown fields for the user', () => {
     const fields = [
       { label: 'First Name', selector: '#fn' },

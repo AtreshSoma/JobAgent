@@ -78,16 +78,93 @@ export function valueForField(field, candidate = {}) {
   }
 }
 
+/** Name-ish canonical fields handled by the dedicated, combined-aware resolver. */
+const NAME_FIELDS = new Set(['firstName', 'lastName', 'preferredName', 'fullName']);
+
+/**
+ * Profile fields are SHORT, label-like text. A long sentence or question (a
+ * legal acknowledgement paragraph, or "Do you now or will you in the future
+ * need an employer to sponsor you…?") is NEVER a profile text field — treating
+ * one as such is exactly how a stray word like "stated" or "United States" used
+ * to get the candidate's State written into the wrong control. Anything longer
+ * than this many words is left to the screening matcher instead.
+ */
+const MAX_LABEL_WORDS = 8;
+
+/** Whole-word test, so "state" matches "state" but never "stated"/"states". */
+function hasWord(text, word) {
+  const w = String(word).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\b${w}\\b`).test(text);
+}
+
+/** True when the words of `phrase` appear as a contiguous run inside `tokens`. */
+function containsPhrase(tokens, phrase) {
+  const p = phrase.split(' ').filter(Boolean);
+  if (!p.length) return false;
+  for (let i = 0; i + p.length <= tokens.length; i += 1) {
+    let ok = true;
+    for (let j = 0; j < p.length; j += 1) {
+      if (tokens[i + j] !== p[j]) { ok = false; break; }
+    }
+    if (ok) return true;
+  }
+  return false;
+}
+
+/**
+ * Resolve a name field, aware that one control often asks for several name
+ * parts at once: "Legal First and Last Name" / "First & Last Name" wants the
+ * FULL name, not just the last name (which naive substring matching produced).
+ * Only fires when the word "name" (or "surname") actually appears, so a
+ * question like "When did you first…?" is never mistaken for a name field.
+ *
+ * @param {string} text normalized, punctuation-free label
+ * @returns {('firstName'|'lastName'|'preferredName'|'fullName'|null)}
+ */
+function classifyNameField(text) {
+  const surname = hasWord(text, 'surname');
+  if (!hasWord(text, 'name') && !surname) return null;
+
+  const preferred = hasWord(text, 'preferred') || hasWord(text, 'nickname') || /\bgoes by\b/.test(text);
+  const first = hasWord(text, 'first') || hasWord(text, 'given');
+  const last = hasWord(text, 'last') || surname || hasWord(text, 'family');
+
+  if (first && last) return 'fullName';      // "First and Last Name"
+  if (preferred) return 'preferredName';
+  if (first) return 'firstName';
+  if (last) return 'lastName';
+  if (hasWord(text, 'full') || hasWord(text, 'legal') || hasWord(text, 'complete')) return 'fullName';
+  return 'fullName';                          // bare "Name" / "Your Name"
+}
+
 /** Identify the canonical field for a form label, or null. */
 export function classifyLabel(label) {
   const text = normalizeText(label);
+  if (!text) return null;
+  // Punctuation-free tokens, so "states?" -> ["states"] and "stated" -> ["stated"]
+  // can never be confused with the whole word "state".
+  const tokens = text.match(/[a-z0-9]+/g) || [];
+  if (!tokens.length) return null;
+  const clean = tokens.join(' ');
+
+  // 1. Exact label match — highest precision, always allowed.
   for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
-    if (aliases.some((a) => text === a)) return field;
+    if (aliases.includes(text) || aliases.includes(clean)) return field;
   }
+
+  // 2. Long sentences/questions are screening questions, not profile fields.
+  if (tokens.length > MAX_LABEL_WORDS) return null;
+
+  // 3. Name fields (combined-aware: "First and Last Name" => full name).
+  const nameField = classifyNameField(clean);
+  if (nameField) return nameField;
+
+  // 4. Whole-word / phrase matching for the remaining canonical fields.
   for (const [field, aliases] of Object.entries(FIELD_ALIASES)) {
+    if (NAME_FIELDS.has(field)) continue;
     const blockers = FIELD_DISQUALIFIERS[field];
-    if (blockers && blockers.some((b) => text.includes(b))) continue;
-    if (aliases.some((a) => text.includes(a))) return field;
+    if (blockers && blockers.some((b) => hasWord(clean, b))) continue;
+    if (aliases.some((a) => containsPhrase(tokens, a))) return field;
   }
   return null;
 }

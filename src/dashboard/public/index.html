@@ -26,6 +26,10 @@
   button.small { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
   button:disabled { opacity: .45; cursor: not-allowed; }
   #runStatus { font-size: 12px; color: var(--warn); min-width: 160px; text-align: right; }
+  #runStatus.busy { color: var(--accent); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  #runStatus.busy::before { content: ''; display: inline-block; width: 7px; height: 7px;
+    border-radius: 50%; background: var(--accent); margin-right: 5px; animation: pulse 1s infinite; }
   main { display: grid; grid-template-columns: 1fr 430px; gap: 18px; padding: 18px 22px; }
   @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -101,9 +105,9 @@
   <span class="spacer"></span>
   <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
   <span id="runStatus"></span>
-  <button onclick="runPhase('discover')">Discover</button>
-  <button onclick="runPhase('score')">Score</button>
-  <button class="primary" onclick="runPhase('prepare')">Find &amp; Prepare</button>
+  <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')">Discover</button>
+  <button id="btnScore" class="runBtn" onclick="runPhase('score')">Score</button>
+  <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')">Find &amp; Prepare</button>
   <button onclick="exportCsv()" title="Download the full job tracker spreadsheet">⬇ Export CSV</button>
 </header>
 
@@ -147,7 +151,7 @@
 <div id="toast"></div>
 <div id="selbar">
   <span id="selCount">0 selected</span>
-  <button class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply selected</button>
+  <button id="autoApplyBtn" class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply selected</button>
   <button class="small" onclick="batchApprove()">✓ Approve selected</button>
   <button class="small" onclick="batchDecide('shortlisted')">★ Shortlist</button>
   <button class="small" onclick="batchDecide('rejected')">✕ Reject</button>
@@ -162,6 +166,7 @@ let selectedIds = new Set();
 let visibleIds = [];
 let jobsById = {};
 let pollTimer = null;
+let isRunning = false;
 
 async function api(path, opts) {
   let res;
@@ -354,6 +359,7 @@ async function act(id, action, okMsg) {
   } catch (e) { toast(e.message, true); }
 }
 async function runPhase(phase) {
+  if (isRunning) { toast('A pipeline run is already in progress — wait for it to finish.', true); return; }
   try {
     await api('/api/run', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phase }) });
@@ -361,8 +367,41 @@ async function runPhase(phase) {
     pollRun();
   } catch (e) { toast(e.message, true); }
 }
+/** Human-friendly one-line summary of a finished run. */
+function prettyResult(r) {
+  if (!r) return '';
+  if (r.phase === 'assist-batch') {
+    const ok = (r.results || []).filter((x) => x.status !== 'failed').length;
+    return `auto-apply done · ${ok}/${r.total ?? (r.results || []).length} filled (review &amp; submit)`;
+  }
+  if (r.phase === 'assist') return `assist done · ${r.status ?? ''}`;
+  const c = r.counters || {};
+  if (r.phase === 'prepare') return `prepared ${c.jobs_prepared ?? 0} · scored ${c.jobs_scored ?? 0}`;
+  if (r.phase === 'discover') return `found ${c.jobs_found ?? 0}`;
+  if (r.phase === 'score') return `scored ${c.jobs_scored ?? 0}`;
+  return `${r.phase ?? 'run'} done`;
+}
+/** Reflect the live run state in the header + gate conflicting buttons. */
+function applyRunGate(s) {
+  isRunning = !!(s && s.running);
+  for (const id of ['btnDiscover', 'btnScore', 'btnPrepare']) {
+    const b = $(id); if (b) { b.disabled = isRunning; b.title = isRunning ? 'A run is in progress…' : ''; }
+  }
+  const rs = $('runStatus');
+  if (isRunning) {
+    rs.textContent = `${s.phase} running…`;
+    rs.className = 'busy';
+  } else {
+    rs.className = '';
+    rs.innerHTML = s && s.lastError ? `⚠ ${esc(s.lastError)}`
+      : s && s.lastResult ? `✓ ${prettyResult(s.lastResult)}` : '';
+  }
+  syncSelbar();
+}
+let wasRunning = false;
 async function pollRun() {
   clearTimeout(pollTimer);
+  const wasDown = serverUp === false;
   let s;
   try {
     s = await api('/api/run/status');
@@ -372,14 +411,14 @@ async function pollRun() {
     pollTimer = setTimeout(pollRun, 2000);
     return;
   }
-  if (s.running) {
-    $('runStatus').textContent = `⏳ ${s.phase} running…`;
-    pollTimer = setTimeout(pollRun, 1500);
-  } else {
-    $('runStatus').textContent = s.lastError ? `⚠ ${s.lastError}`
-      : s.lastResult ? `✓ ${s.lastResult.phase ?? ''} done` : '';
-    refresh();
-  }
+  applyRunGate(s);
+  // Reload the board + stats once when a run JUST finished OR the server just
+  // came back online, so the freshest data always shows.
+  if (wasDown || (!s.running && wasRunning)) refresh();
+  wasRunning = s.running;
+  // Poll fast while a run is active, slowly when idle (doubles as a health ping
+  // so the connection indicator recovers and the board reloads on restart).
+  pollTimer = setTimeout(pollRun, s.running ? 1500 : 4000);
 }
 
 /* ── selection + batch actions ── */
@@ -400,6 +439,13 @@ function syncSelbar() {
   $('selCount').textContent = `${n} selected`;
   $('selbar').classList.toggle('show', n > 0);
   $('cmpBtn').disabled = n < 2;
+  const aa = $('autoApplyBtn');
+  if (aa) {
+    aa.disabled = n === 0 || isRunning;
+    aa.title = isRunning
+      ? 'A pipeline run is in progress — wait for it to finish'
+      : 'Approve if needed, then open each in a browser and fill it — stops before submit';
+  }
   syncSelAll();
 }
 function clearSelection() {
@@ -429,6 +475,10 @@ async function batchDecide(decision) {
 async function batchAutoApply() {
   const ids = selIds();
   if (!ids.length) return;
+  if (isRunning) {
+    toast('A pipeline run is in progress — wait for it to finish, then auto-apply.', true);
+    return;
+  }
   // Auto-apply only makes sense for live, not-yet-submitted postings. Warn about
   // any selected jobs that are blocked / already submitted / rejected / archived.
   const NON_APPLICABLE = new Set(['blocked', 'submitted', 'rejected', 'archived', 'discarded']);
@@ -497,12 +547,9 @@ for (const id of ['fit', 'appStatus', 'source', 'sort', 'last24h', 'hideClosed']
   $(id).addEventListener('change', loadJobs);
 }
 let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(loadJobs, 250); });
-// Lightweight health ping so the connection indicator recovers on its own and
-// the board reloads automatically once the server is restarted.
-setInterval(() => {
-  const wasDown = serverUp === false;
-  api('/api/run/status').then(() => { if (wasDown) refresh(); }).catch(() => {});
-}, 5000);
+// pollRun() runs continuously (fast while a run is active, slow when idle) so it
+// doubles as a health ping: the connection indicator recovers and the board
+// reloads automatically once the server is restarted or a run finishes.
 refresh(); pollRun(); syncSelbar();
 </script>
 </body>
