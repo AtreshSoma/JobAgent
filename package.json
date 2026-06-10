@@ -10,6 +10,8 @@
   "scripts": {
     "start": "node src/index.js go",
     "go": "node src/index.js go",
+    "doctor": "node src/index.js doctor",
+    "preflight": "node src/index.js doctor",
     "find": "node src/index.js prepare-apps",
     "discover": "node src/index.js discover",
     "score": "node src/index.js score",
@@ -31,15 +33,16 @@
     "regenerate-resumes": "node scripts/regenerateResumes.js",
     "verify": "node scripts/verifyRepoHealth.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:py": "python3 -m pytest"
   },
   "dependencies": {
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "dotenv": "^16.4.5",
-    "playwright": "^1.47.0",
     "pino": "^9.4.0",
-    "pino-pretty": "^11.2.2"
+    "pino-pretty": "^11.2.2",
+    "playwright": "~1.56.1"
   },
   "devDependencies": {
     "vitest": "^2.1.1"

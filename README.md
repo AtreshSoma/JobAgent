@@ -185,6 +185,23 @@ Place your master resume at `resumes/base/MASTER_RESUME.docx`. It is opened
 **read-only** and is **never overwritten** — tailored copies go to
 `resumes/output/`.
 
+### Preflight (recommended before the first run)
+
+```bash
+npm run doctor    # alias: npm run preflight
+```
+
+This checks everything the pipeline depends on and prints one readable
+checklist: Node version, SQLite, config schemas, required candidate profile
+fields, the master resume, Python + python-docx, Playwright Chromium, output
+directory permissions, and test fixtures. Failures block the run; degraded
+capabilities (e.g. no Python → untailored master-resume fallback) are warnings.
+Add `--json` for machine-readable output. Exit code is 0 only when nothing failed.
+
+It also reports **truthful profile gaps** (e.g. an empty street address or
+GitHub URL). These are never invented — fill them in `config/candidate.json`
+yourself, and only with real information.
+
 ### Run it (one command)
 
 Once your resume and job source are in place, the whole thing is just:
@@ -315,10 +332,11 @@ npm run reject -- <id>     # reject a packet
 ### Utilities & tests
 
 ```bash
+npm run doctor         # preflight checks (env, config, resume, browsers, dirs)
 npm run report         # regenerate reports from stored data
 npm run verify         # repo health + safety check (no auto-submit path)
 npm test               # Node test suite (vitest)
-pytest                 # Python test suite
+npm run test:py        # Python test suite (pytest)
 ```
 
 ### Typical flow

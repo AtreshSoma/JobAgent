@@ -4,6 +4,7 @@
  * Two invocation styles are supported:
  *
  *   1. Phase commands (preferred):
+ *        node src/index.js doctor         preflight checks (alias: preflight)
  *        node src/index.js discover       search only -> found_jobs.json
  *        node src/index.js score          + score    -> scored/queued_jobs.json
  *        node src/index.js prepare-apps   + tailor + packets + approval queue
@@ -36,9 +37,11 @@ import {
 } from './cli/commands.js';
 import { runGuided } from './cli/guided.js';
 import { runApply } from './cli/applyOneByOne.js';
+import { runDoctor, printDoctorReport, requiredProfileGaps } from './cli/doctor.js';
 import { ui } from './cli/ui.js';
 import { formatPostedRelative } from './utils/dates.js';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -75,6 +78,9 @@ const COMMANDS = new Set([
   'approvals', 'approve', 'reject', 'packets', 'packet', 'report',
 ]);
 
+/** Commands that must work even when config/db are broken (they diagnose them). */
+const STANDALONE_COMMANDS = new Set(['doctor', 'preflight']);
+
 /** Parse `--key=value` / `--flag` / positional args into an object. */
 export function parseArgs(argv = []) {
   const out = { flags: new Set(), options: {}, positionals: [] };
@@ -102,8 +108,28 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   const parsed = parseArgs(argv);
   const command = parsed.positionals[0];
 
+  // doctor/preflight must not assume config or the DB are healthy — they are
+  // the tools that diagnose those — so they bypass the normal command setup.
+  if (command && STANDALONE_COMMANDS.has(command)) {
+    const result = await runDoctor({ env });
+    if (parsed.flags.has('json')) {
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    } else {
+      printDoctorReport(result);
+    }
+    process.exitCode = result.ok ? 0 : 1;
+    return { command: 'doctor', ...result };
+  }
+
   if (command && COMMANDS.has(command)) {
     return runCommand(command, parsed, env);
+  }
+
+  // A positional that isn't a known command is almost certainly a typo. Never
+  // silently fall through to a full legacy pipeline run — fail with guidance.
+  if (command) {
+    const known = [...STANDALONE_COMMANDS, ...COMMANDS].sort().join(', ');
+    throw new Error(`unknown command "${command}". Known commands: ${known}`);
   }
   return runLegacyMode(parsed, env);
 }
@@ -121,6 +147,17 @@ async function runCommand(command, parsed, env) {
     switch (command) {
       case 'go':
       case 'start': {
+        // Quick preflight: stop gracefully (with the exact gaps) before doing
+        // any work if required candidate data or the master resume is missing.
+        const gate = quickPreflight(config);
+        if (!gate.ok) {
+          ui.heading('Cannot start — preflight failed');
+          for (const problem of gate.problems) ui.fail(problem);
+          ui.blank();
+          ui.next([{ text: 'See the full checklist:', cmd: 'npm run doctor' }]);
+          process.exitCode = 1;
+          return { command, preflight: gate };
+        }
         const options = {
           yes: parsed.flags.has('yes') || parsed.flags.has('y'),
           assist: !parsed.flags.has('no-assist'),
@@ -311,6 +348,25 @@ async function runLegacyMode(parsed, env) {
   } finally {
     db.close();
   }
+}
+
+/**
+ * Minimal hard-requirement gate for the guided run: required candidate fields
+ * and the master resume. Everything else degrades gracefully mid-run, but
+ * these two would produce packets with fabricated/missing data — never start.
+ * @param {object} config loadConfig() bundle
+ * @returns {{ ok: boolean, problems: string[] }}
+ */
+export function quickPreflight(config) {
+  const problems = [];
+  for (const gap of requiredProfileGaps(config.candidate)) {
+    problems.push(`Candidate profile is missing ${gap.label} — add "${gap.path}" to config/candidate.json (true information only).`);
+  }
+  const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
+  if (!existsSync(master)) {
+    problems.push('Master resume not found at resumes/base/MASTER_RESUME.docx — it is the read-only source for tailoring.');
+  }
+  return { ok: problems.length === 0, problems };
 }
 
 /* ────────────────────────── console summaries ────────────────────────── */
