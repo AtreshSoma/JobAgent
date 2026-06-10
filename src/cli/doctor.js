@@ -4,7 +4,7 @@
  * Validates everything the pipeline depends on BEFORE a run, so failures
  * surface as one readable checklist instead of a mid-run crash:
  *
- *   - Node.js version (>= 20, required for node:sqlite and ESM features)
+ *   - Node.js version (>= 22.5, required for the node:sqlite built-in)
  *   - SQLite access (in-memory smoke test + the real data/applied_jobs.db)
  *   - configuration files load and validate against their JSON schemas
  *   - candidate profile completeness (required fields hard-fail; truthful
@@ -39,8 +39,8 @@ import { ui } from './ui.js';
 
 export const SEVERITY = Object.freeze({ PASS: 'pass', WARN: 'warn', FAIL: 'fail' });
 
-/** Minimum supported Node.js major version. */
-export const MIN_NODE_MAJOR = 20;
+/** Minimum supported Node.js major version (node:sqlite landed in 22.5). */
+export const MIN_NODE_MAJOR = 22;
 
 /** Output directories that must exist and be writable. */
 export const OUTPUT_DIRS = ['data', 'logs', 'reports', 'applications/output', 'resumes/output'];
@@ -164,7 +164,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
   } else {
     checks.push(makeCheck('node', 'Node.js version', SEVERITY.FAIL,
       `${nodeVersion} is below the required Node ${MIN_NODE_MAJOR}`,
-      `Install Node ${MIN_NODE_MAJOR}+ (node:sqlite and the ESM toolchain require it).`));
+      `Install Node ${MIN_NODE_MAJOR}+ (node:sqlite requires Node 22.5 or newer).`));
   }
 
   /* ── SQLite (built-in module + real database file) ───────────────────── */

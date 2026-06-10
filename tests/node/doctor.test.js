@@ -109,12 +109,13 @@ describe('runDoctor', () => {
   });
 
   it('fails on an old Node version with an actionable message', async () => {
+    // Node 20 has no node:sqlite, so it must fail preflight too.
     const result = await runDoctor({
-      root, env: {}, deps: { spawnImpl: spawnOk, nodeVersion: 'v18.19.0' },
+      root, env: {}, deps: { spawnImpl: spawnOk, nodeVersion: 'v20.11.0' },
     });
     const node = result.checks.find((c) => c.id === 'node');
     expect(node.status).toBe(SEVERITY.FAIL);
-    expect(node.fix).toContain('Node 20');
+    expect(node.fix).toContain('Node 22');
     expect(result.ok).toBe(false);
   });
 

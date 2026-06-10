@@ -12,7 +12,9 @@ jobs:
     timeout-minutes: 20
     strategy:
       matrix:
-        node: [20, 22]
+        # node:sqlite (used for the local job store) requires Node >= 22.5,
+        # so that is the real minimum — Node 20 cannot run this codebase.
+        node: [22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

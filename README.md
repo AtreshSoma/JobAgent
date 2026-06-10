@@ -157,7 +157,7 @@ clicks the final Submit; you always do.
 
 ## Tech stack
 
-- **Node.js 20+** — orchestration, search connectors, scoring, ATS form-prep planning
+- **Node.js 22.5+** (the `node:sqlite` built-in requires it) — orchestration, search connectors, scoring, ATS form-prep planning
 - **Python 3.12 + python-docx** — resume editing/audit/tailoring
 - **SQLite via the built-in `node:sqlite`** module (no native build step; not `better-sqlite3`)
 - **Playwright** — drives a real Chromium for **assisted** form-filling on
