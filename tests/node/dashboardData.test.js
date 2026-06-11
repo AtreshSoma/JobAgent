@@ -38,6 +38,18 @@ describe('deriveAppStatus precedence', () => {
     expect(deriveAppStatus({ score: 70 }, null)).toBe(APP_STATUS.SCORED);
     expect(deriveAppStatus({}, null)).toBe(APP_STATUS.DISCOVERED);
   });
+
+  // Regression: unknown-date jobs used to be lumped into "discarded", hiding
+  // them from review. They must surface as their own flagged status.
+  it('flags unknown posting dates distinctly (not discarded)', () => {
+    expect(deriveAppStatus({ status: 'unknown_date_review' }, null)).toBe(APP_STATUS.DATE_UNCONFIRMED);
+  });
+
+  it('user skips surface as skipped, below submitted/archive in precedence', () => {
+    expect(deriveAppStatus({ status: 'skipped' }, null)).toBe(APP_STATUS.SKIPPED);
+    expect(deriveAppStatus({ status: 'skipped', applied: 1 }, null)).toBe(APP_STATUS.SUBMITTED);
+    expect(deriveAppStatus({ status: 'skipped', user_decision: 'archived' }, null)).toBe(APP_STATUS.ARCHIVED);
+  });
 });
 
 describe('fitBucket', () => {
@@ -81,6 +93,21 @@ describe('stats, board, decisions against a seeded db', () => {
     });
   });
   afterEach(() => db.close());
+
+  it('dashboardStats breaks down sponsorship, daily progress, and next actions', () => {
+    const s = dashboardStats(db, { now: NOW });
+    expect(s.bySponsorship.Confirmed).toMatchObject({ count: 1, strong: 1 });
+    expect(s.bySponsorship.Likely).toMatchObject({ count: 1 });
+    // 7-day strip, oldest first, ends today.
+    expect(s.daily).toHaveLength(7);
+    expect(s.daily[6].day).toBe('2026-06-04');
+    expect(s.daily[6].discovered).toBe(2);
+    expect(s.daily[6].submitted).toBe(1);
+    // Next actions: 1 pending review surfaces with its board filter.
+    const review = s.nextActions.find((a) => a.text.includes('await your approval'));
+    expect(review).toBeDefined();
+    expect(review.filter).toEqual({ appStatus: APP_STATUS.NEEDS_REVIEW });
+  });
 
   it('dashboardStats counts every tile correctly', () => {
     const s = dashboardStats(db, { now: NOW });
@@ -167,5 +194,40 @@ describe('stats, board, decisions against a seeded db', () => {
 
   it('db.setUserDecision rejects unknown decisions', () => {
     expect(() => db.setUserDecision('medium', 'banana')).toThrow(/invalid user decision/);
+  });
+
+  it('jobDetail includes the audit-trail events, newest first', () => {
+    db.insertEvent({ id: 'e1', job_id: 'strong', event_type: 'SCORE_EXPLAINED', message: '90/100', created_at: '2026-06-04T01:00:00Z' });
+    db.insertEvent({ id: 'e2', job_id: 'strong', event_type: 'APPROVAL_REQUIRED', message: 'packet prepared', created_at: '2026-06-04T02:00:00Z' });
+    const detail = jobDetail(db, 'strong', { now: NOW, readFileImpl: () => { throw new Error('no packet'); } });
+    expect(detail.events.map((e) => e.type)).toEqual(['APPROVAL_REQUIRED', 'SCORE_EXPLAINED']);
+  });
+
+  it('board rows expose persisted assist results', () => {
+    db.upsertJob({ id: 'strong', assist_filled_count: 7, assist_blockers: ['login wall'] });
+    const [row] = listBoardJobs(db, { now: NOW, q: 'acme' });
+    expect(row.assistFilledCount).toBe(7);
+    expect(row.assistBlockers).toEqual(['login wall']);
+  });
+});
+
+describe('recordAssistResult persistence', () => {
+  it('stores status, filled count, and blockers from an assist result', async () => {
+    const { recordAssistResult } = await import('../../src/cli/commands.js');
+    const db = openDatabase({ path: ':memory:' });
+    try {
+      db.upsertJob({ id: 'j', company: 'X', title: 'DE', url: 'http://x' });
+      recordAssistResult(db, 'j', {
+        status: 'assist_blocked',
+        filled: [{ field: 'email' }, { field: 'phone' }],
+        blockers: ['captcha detected — needs you'],
+      });
+      const job = db.getJob('j');
+      expect(job.status).toBe('assist_blocked');
+      expect(job.assist_filled_count).toBe(2);
+      expect(JSON.parse(job.assist_blockers)).toEqual(['captcha detected — needs you']);
+    } finally {
+      db.close();
+    }
   });
 });

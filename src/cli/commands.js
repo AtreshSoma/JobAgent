@@ -155,7 +155,7 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
     });
     results.push(result);
     counters.jobs_assisted += 1;
-    persistAssistStatus(db, approval.job_id, result);
+    recordAssistResult(db, approval.job_id, result);
     logger?.event?.(EVENT_TYPES.PREFILL_STARTED, {
       jobId: approval.job_id,
       message: `assist ${result.status}`,
@@ -228,10 +228,22 @@ function isoDate(now) {
   return (now ?? new Date()).toISOString().slice(0, 10);
 }
 
-function persistAssistStatus(db, jobId, result) {
+/**
+ * Persist the outcome of one assisted-fill run: lifecycle status, how many
+ * fields were actually filled, and the blockers that need the human. This is
+ * what makes "Fields Filled" / "Blockers" in the tracker and dashboard real
+ * data instead of guesses. Exported so the dashboard server records assists
+ * identically to the CLI.
+ */
+export function recordAssistResult(db, jobId, result) {
   if (!jobId) return;
   try {
-    db.upsertJob({ id: jobId, status: result.status });
+    db.upsertJob({
+      id: jobId,
+      status: result.status,
+      assist_filled_count: Array.isArray(result.filled) ? result.filled.length : null,
+      assist_blockers: Array.isArray(result.blockers) ? result.blockers : [],
+    });
   } catch {
     /* job may not be persisted in some flows; ignore */
   }

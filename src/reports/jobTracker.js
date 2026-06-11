@@ -15,10 +15,23 @@ import { formatPostedRelative } from '../utils/dates.js';
 
 /** Tracker columns, in spreadsheet order. */
 const COLUMNS = [
-  'Company', 'Job Role', 'Posted On', 'Applied On', 'Job URL', 'Submit Status',
-  'Notes/Comments', 'Source', 'Location', 'Score', 'Tier', 'Sponsorship',
-  'ATS', 'Resume Used', 'Cover Letter', 'Job ID',
+  'Company', 'Job Role', 'Posted On', 'Applied On', 'Job URL', 'Source',
+  'Score', 'Tier', 'Sponsorship Confidence', 'Submit Status',
+  'Resume Generated', 'Fields Filled', 'Blockers', 'Notes/Comments',
+  'Location', 'ATS', 'Resume Used', 'Cover Letter', 'Job ID',
 ];
+
+/** Parse a TEXT column that may hold a JSON array. */
+function jsonList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }
+  return [];
+}
 
 /**
  * Human-readable submit status for a job + its latest approval row.
@@ -69,15 +82,23 @@ export function writeJobTracker(db, root) {
     const status = submitStatus(job, approval);
     if (Number(job.applied) === 1) submitted += 1;
     else if (job.application_packet_path) prepared += 1;
+    // A resume counts as generated only when an actual tailored docx exists —
+    // a master-resume fallback is "No (master fallback)" so it never overstates.
+    const resumeGenerated = job.resume_docx_path ? 'Yes'
+      : job.application_packet_path ? 'No (master fallback)' : '';
     return [
       job.company, job.title,
       job.posted_at ? formatPostedRelative(job.posted_at) : 'Unknown',
       job.applied_at ?? '',
-      job.url, status,
+      job.url, job.source,
+      job.score, job.tier, job.sponsorship,
+      status,
+      resumeGenerated,
+      typeof job.assist_filled_count === 'number' ? job.assist_filled_count : '',
+      jsonList(job.assist_blockers).join('; '),
       job.discard_reason ?? '',
-      job.source, job.location, job.score, job.tier, job.sponsorship,
-      job.ats_platform ?? '', job.resume_path ?? '', job.cover_letter_path ?? '',
-      job.id,
+      job.location, job.ats_platform ?? '', job.resume_path ?? '',
+      job.cover_letter_path ?? '', job.id,
     ].map(csvField).join(',');
   });
 

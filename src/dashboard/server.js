@@ -36,7 +36,7 @@ import {
   dashboardStats, listBoardJobs, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
 } from './data.js';
-import { runDiscover, runScore, runPrepareApps, loadPacket } from '../cli/commands.js';
+import { runDiscover, runScore, runPrepareApps, loadPacket, recordAssistResult } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { writeJobTracker } from '../reports/jobTracker.js';
@@ -166,7 +166,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     (async () => {
       try {
         const result = await assistFn({ packet, config, mode: 'LIVE_ASSIST', approval, options: {}, deps });
-        db.upsertJob({ id: jobId, status: result.status });
+        recordAssistResult(db, jobId, result);
         refreshTracker();
         runState.lastResult = {
           phase: 'assist', jobId, status: result.status,
@@ -234,7 +234,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
           runState.phase = `assist-batch (${done + 1}/${queue.length}) — ${jobId}`;
           try {
             const result = await assistFn({ packet, config, mode: 'LIVE_ASSIST', approval, options: {}, deps });
-            db.upsertJob({ id: jobId, status: result.status });
+            recordAssistResult(db, jobId, result);
             results.push({ jobId, status: result.status, blockers: result.blockers ?? [] });
           } catch (err) {
             results.push({ jobId, status: 'failed', error: err.message });

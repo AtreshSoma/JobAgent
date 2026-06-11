@@ -226,6 +226,16 @@ drives the whole workflow from the browser:
   in the background; status is shown live in the header.
 - **Source breakdown**: found / strong / prepared / submitted per source
   (Greenhouse, Lever, Ashby, SmartRecruiters, Workday, manual lists, …).
+- **Sponsorship breakdown**: Confirmed / Likely / Unconfirmed counts with how
+  many of each are strong fits.
+- **Daily progress**: discovered / prepared / submitted per day for the last
+  7 days.
+- **Next actions**: a ranked to-do list (filled apps waiting for your Submit,
+  packets awaiting approval, blocked apps, strong fits with no decision,
+  unconfirmed posting dates) — each links to the filtered board view.
+- **Audit trail**: every recorded event for a job (scored, prepared, assisted,
+  blocked) in the detail panel, plus the last assisted-fill result (fields
+  filled + blockers).
 
 Use `--port=NNNN` or `DASHBOARD_PORT` to change the port. The dashboard
 enforces the same safety gates as the CLI: assisted filling only works on a

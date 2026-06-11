@@ -122,8 +122,9 @@
       <select id="appStatus"><option value="">All statuses</option>
         <option>discovered</option><option>scored</option><option>shortlisted</option>
         <option>needs_review</option><option>approved</option><option>ready_for_submit</option>
-        <option>blocked</option><option>submitted</option><option>rejected</option>
-        <option>archived</option><option>discarded</option></select>
+        <option>blocked</option><option>skipped</option><option>submitted</option>
+        <option>rejected</option><option>archived</option><option>discarded</option>
+        <option>date_unconfirmed</option></select>
       <select id="source"><option value="">All sources</option></select>
       <select id="sort"><option value="score">Sort: score</option>
         <option value="posted">Sort: newest posted</option>
@@ -138,13 +139,30 @@
         <th>Sponsorship</th><th>Posted</th><th>Source</th><th>Status</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
-    <h3 style="margin-top:18px">Source breakdown</h3>
-    <table class="srcTable"><thead><tr><th>Source</th><th>Found</th><th>Strong</th>
-      <th>Prepared</th><th>Submitted</th></tr></thead><tbody id="srcRows"></tbody></table>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:18px">
+      <div>
+        <h3>Source breakdown</h3>
+        <table class="srcTable"><thead><tr><th>Source</th><th>Found</th><th>Strong</th>
+          <th>Prepared</th><th>Submitted</th></tr></thead><tbody id="srcRows"></tbody></table>
+      </div>
+      <div>
+        <h3>Sponsorship breakdown</h3>
+        <table class="srcTable"><thead><tr><th>Confidence</th><th>Jobs</th><th>Strong fit</th></tr></thead>
+          <tbody id="sponRows"></tbody></table>
+      </div>
+      <div>
+        <h3>Daily progress (last 7 days)</h3>
+        <table class="srcTable"><thead><tr><th>Day</th><th>Discovered</th><th>Prepared</th>
+          <th>Submitted</th></tr></thead><tbody id="dailyRows"></tbody></table>
+      </div>
+    </div>
   </section>
 
-  <aside id="detail"><div class="panel muted">Select a job to see why it fits,
-    its packet, blockers, and actions.</div></aside>
+  <aside>
+    <div class="panel" id="nextActions"></div>
+    <div id="detail"><div class="panel muted">Select a job to see why it fits,
+      its packet, blockers, and actions.</div></div>
+  </aside>
 </main>
 
 <div id="compare"></div>
@@ -221,6 +239,7 @@ const TILES = [
   ['submittedToday', 'Submitted today', 'good', {}],
   ['submittedTotal', 'Applied (all)', 'good', { appStatus: 'submitted' }],
   ['blocked', 'Blocked', 'bad', { appStatus: 'blocked' }],
+  ['dateUnconfirmed', 'Date unconfirmed', 'warn', { appStatus: 'date_unconfirmed' }],
   ['rejected', 'Rejected', '', { appStatus: 'rejected' }],
 ];
 async function loadStats() {
@@ -237,6 +256,19 @@ async function loadStats() {
   const cur = sel.value;
   sel.innerHTML = '<option value="">All sources</option>' + Object.keys(s.bySource)
     .map((src) => `<option${src === cur ? ' selected' : ''}>${esc(src)}</option>`).join('');
+
+  $('sponRows').innerHTML = Object.entries(s.bySponsorship ?? {})
+    .sort((a, b) => b[1].count - a[1].count)
+    .map(([k, v]) => `<tr><td><span class="chip ${esc(k)}">${esc(k)}</span></td>
+         <td>${v.count}</td><td>${v.strong}</td></tr>`).join('')
+    || '<tr><td colspan="3" class="muted">—</td></tr>';
+  $('dailyRows').innerHTML = (s.daily ?? [])
+    .map((d) => `<tr><td>${esc(d.day)}</td><td>${d.discovered}</td>
+         <td>${d.prepared}</td><td>${d.submitted}</td></tr>`).join('');
+  $('nextActions').innerHTML = '<h2>Next actions</h2>' + ((s.nextActions ?? []).length
+    ? '<ul class="plan">' + s.nextActions.map((a, i) =>
+        `<li>${a.filter ? `<a href="#" onclick='applyTileFilter(${JSON.stringify(a.filter)});return false'>${esc(a.text)}</a>` : esc(a.text)}</li>`).join('') + '</ul>'
+    : '<div class="muted">All caught up — nothing waiting on you.</div>');
 }
 function applyTileFilter(f) {
   $('fit').value = f.fit ?? '';
@@ -321,8 +353,13 @@ async function select(id) {
     <h3>Matched skills (yours, found in the JD)</h3><div>${kw(j.matchedKeywords, 'strong')}</div>
     <h3>Missing / not evidenced</h3><div>${kw(j.missingKeywords, 'weak')}</div>
 
+    ${j.assistFilledCount != null ? `<h3>Last assisted fill</h3>
+      <div>${j.assistFilledCount} field(s) filled${j.assistBlockers.length
+        ? `; blockers: <ul class="plan">${j.assistBlockers.map((b) => `<li class="st-blocked">${esc(b)}</li>`).join('')}</ul>` : ' · no blockers'}</div>` : ''}
     ${p ? renderPacket(p) : '<h3>Packet</h3><div class="muted">Not prepared yet — shortlist it and run Find & Prepare.</div>'}
     ${j.resumePath ? `<h3>Documents</h3><div class="muted" style="word-break:break-all">${esc(j.resumePath)}<br>${esc(j.coverLetterPath ?? '')}</div>` : ''}
+    ${(j.events ?? []).length ? `<h3>Audit trail</h3><ul class="plan">${j.events.map((e) =>
+      `<li><span class="muted">${esc((e.at ?? '').slice(0, 16).replace('T', ' '))}</span> ${esc(e.type)} — ${esc(e.message ?? '')}</li>`).join('')}</ul>` : ''}
   </div>`;
 }
 function renderPacket(p) {

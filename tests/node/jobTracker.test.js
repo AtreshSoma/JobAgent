@@ -46,7 +46,8 @@ describe('writeJobTracker', () => {
       db.upsertJob({
         id: 'j2', company: 'Globex', title: 'DE', url: 'http://b',
         applied: 1, applied_at: '2026-06-05T12:00:00Z', status: 'ready_for_submit',
-        application_packet_path: '/p/j2.json',
+        application_packet_path: '/p/j2.json', resume_docx_path: '/r/j2.docx',
+        assist_filled_count: 9, assist_blockers: ['1 screening field(s) need user input'],
       });
       db.upsertJob({ id: 'j3', company: 'Initech', title: 'Jr DE', url: 'http://c', score: 40 });
       db.insertApproval({ id: 'a1', job_id: 'j1', packet_path: '/p/j1.json', approval_status: 'pending_review' });
@@ -68,6 +69,14 @@ describe('writeJobTracker', () => {
       const j2 = lines.find((l) => l.includes('j2'));
       expect(j1).toContain('Prepared — awaiting your approval');
       expect(j2).toContain('Submitted');
+      // New audit columns: resume generated, fields filled, blockers.
+      expect(lines[0]).toContain('Resume Generated');
+      expect(lines[0]).toContain('Fields Filled');
+      expect(lines[0]).toContain('Blockers');
+      expect(j2).toContain('Yes');                 // tailored docx exists
+      expect(j2).toContain('9');                   // fields filled
+      expect(j2).toContain('1 screening field(s) need user input');
+      expect(j1).toContain('No (master fallback)'); // packet without tailored docx
     } finally {
       db.close();
       rmSync(root, { recursive: true, force: true });

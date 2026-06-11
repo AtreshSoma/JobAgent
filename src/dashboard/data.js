@@ -25,11 +25,13 @@ export const APP_STATUS = Object.freeze({
   SUBMITTED: 'submitted',          // human clicked Submit (applied = 1)
   ARCHIVED: 'archived',            // user archived it
   REJECTED: 'rejected',            // user rejected it (or rejected the packet)
+  SKIPPED: 'skipped',              // user skipped it during assisted apply
   BLOCKED: 'blocked',              // assist hit login/captcha/unknown fields
   READY_FOR_SUBMIT: 'ready_for_submit', // form filled; awaiting the human's click
   APPROVED: 'approved',            // packet approved; ready for assisted fill
   NEEDS_REVIEW: 'needs_review',    // packet prepared; awaiting human approval
   SHORTLISTED: 'shortlisted',      // user shortlisted; not yet prepared/approved
+  DATE_UNCONFIRMED: 'date_unconfirmed', // no parseable posting date; flagged for review
   DISCARDED: 'discarded',          // pipeline hard-excluded or below threshold
   SCORED: 'scored',                // scored, no action yet
   DISCOVERED: 'discovered',        // found, not yet scored
@@ -51,13 +53,15 @@ export function deriveAppStatus(job = {}, approval = null) {
   if (Number(job.applied) === 1) return APP_STATUS.SUBMITTED;
   if (job.user_decision === 'archived') return APP_STATUS.ARCHIVED;
   if (job.user_decision === 'rejected') return APP_STATUS.REJECTED;
+  if (job.status === 'skipped') return APP_STATUS.SKIPPED;
   if (job.status === 'assist_blocked') return APP_STATUS.BLOCKED;
   if (job.status === 'ready_for_submit') return APP_STATUS.READY_FOR_SUBMIT;
   if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return APP_STATUS.REJECTED;
   if (approval?.approval_status === APPROVAL_STATUS.APPROVED) return APP_STATUS.APPROVED;
   if (approval?.approval_status === APPROVAL_STATUS.PENDING) return APP_STATUS.NEEDS_REVIEW;
   if (job.user_decision === 'shortlisted') return APP_STATUS.SHORTLISTED;
-  if (job.status === 'discarded' || job.status === 'unknown_date_review') return APP_STATUS.DISCARDED;
+  if (job.status === 'unknown_date_review') return APP_STATUS.DATE_UNCONFIRMED;
+  if (job.status === 'discarded') return APP_STATUS.DISCARDED;
   if (typeof job.score === 'number' || job.tier) return APP_STATUS.SCORED;
   return APP_STATUS.DISCOVERED;
 }
@@ -129,6 +133,8 @@ function boardRow(job, approval, now) {
     discardReason: job.discard_reason ?? null,
     matchedKeywords: matched,
     missingKeywords: missing,
+    assistFilledCount: typeof job.assist_filled_count === 'number' ? job.assist_filled_count : null,
+    assistBlockers: jsonList(job.assist_blockers),
     approvalId: approval?.id ?? null,
     approvalStatus: approval?.approval_status ?? null,
     packetPath: job.application_packet_path ?? null,
@@ -153,6 +159,13 @@ export function dashboardStats(db, { now = new Date() } = {}) {
   const approvals = approvalsByJob(db);
   const today = dayOf(now.toISOString());
 
+  // Last 7 calendar days (oldest first) for the daily-progress strip.
+  const days = [];
+  for (let i = 6; i >= 0; i -= 1) {
+    days.push(dayOf(new Date(now.getTime() - i * 86_400_000).toISOString()));
+  }
+  const daily = new Map(days.map((d) => [d, { day: d, discovered: 0, prepared: 0, submitted: 0 }]));
+
   const stats = {
     generatedAt: now.toISOString(),
     totals: {
@@ -164,6 +177,8 @@ export function dashboardStats(db, { now = new Date() } = {}) {
       weakFit: 0,
       shortlisted: 0,
       rejected: 0,
+      skipped: 0,
+      dateUnconfirmed: 0,
       preparedToday: 0,
       submittedToday: 0,
       pendingReview: 0,
@@ -173,7 +188,13 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     },
     bySource: {},
     byStatus: {},
+    // sponsorship status -> { count, strong } so feasibility is visible at a glance
+    bySponsorship: {},
+    daily: [],
+    nextActions: [],
   };
+
+  let strongUntriaged = 0;
 
   for (const job of jobs) {
     const approval = approvals.get(job.id) ?? null;
@@ -188,6 +209,8 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     if (fit === 'weak') stats.totals.weakFit += 1;
     if (job.user_decision === 'shortlisted') stats.totals.shortlisted += 1;
     if (status === APP_STATUS.REJECTED) stats.totals.rejected += 1;
+    if (status === APP_STATUS.SKIPPED) stats.totals.skipped += 1;
+    if (status === APP_STATUS.DATE_UNCONFIRMED) stats.totals.dateUnconfirmed += 1;
     if (job.application_packet_path && dayOf(job.updated_at) === today
         && Number(job.applied) !== 1) stats.totals.preparedToday += 1;
     if (Number(job.applied) === 1 && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
@@ -195,6 +218,8 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     if (status === APP_STATUS.BLOCKED) stats.totals.blocked += 1;
     if (status === APP_STATUS.READY_FOR_SUBMIT) stats.totals.readyForSubmit += 1;
     if (Number(job.applied) === 1) stats.totals.submittedTotal += 1;
+    if (fit === 'strong' && !job.user_decision && !approval
+        && [APP_STATUS.SCORED, APP_STATUS.DISCOVERED].includes(status)) strongUntriaged += 1;
 
     if (!stats.bySource[source]) {
       stats.bySource[source] = { found: 0, strong: 0, prepared: 0, submitted: 0 };
@@ -205,9 +230,74 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     if (Number(job.applied) === 1) stats.bySource[source].submitted += 1;
 
     stats.byStatus[status] = (stats.byStatus[status] ?? 0) + 1;
+
+    const spon = job.sponsorship ?? 'Unclassified';
+    if (!stats.bySponsorship[spon]) stats.bySponsorship[spon] = { count: 0, strong: 0 };
+    stats.bySponsorship[spon].count += 1;
+    if (fit === 'strong') stats.bySponsorship[spon].strong += 1;
+
+    // Daily progress strip.
+    const created = dayOf(job.created_at);
+    if (daily.has(created)) daily.get(created).discovered += 1;
+    if (job.application_packet_path) {
+      const prepared = dayOf(job.updated_at);
+      if (daily.has(prepared)) daily.get(prepared).prepared += 1;
+    }
+    if (Number(job.applied) === 1) {
+      const submitted = dayOf(job.applied_at);
+      if (daily.has(submitted)) daily.get(submitted).submitted += 1;
+    }
   }
 
+  stats.daily = [...daily.values()];
+  stats.nextActions = buildNextActions(stats.totals, strongUntriaged);
   return stats;
+}
+
+/**
+ * Concrete "do this next" guidance, ordered by impact. Each action carries the
+ * board filter that shows exactly those jobs.
+ * @returns {Array<{ text: string, filter: object|null }>}
+ */
+export function buildNextActions(totals, strongUntriaged = 0) {
+  const actions = [];
+  if (totals.readyForSubmit > 0) {
+    actions.push({
+      text: `${totals.readyForSubmit} application(s) are filled and waiting — review each browser tab and click Submit yourself`,
+      filter: { appStatus: APP_STATUS.READY_FOR_SUBMIT },
+    });
+  }
+  if (totals.pendingReview > 0) {
+    actions.push({
+      text: `${totals.pendingReview} prepared packet(s) await your approval`,
+      filter: { appStatus: APP_STATUS.NEEDS_REVIEW },
+    });
+  }
+  if (totals.blocked > 0) {
+    actions.push({
+      text: `${totals.blocked} application(s) are blocked (login / CAPTCHA / unanswered questions) and need you`,
+      filter: { appStatus: APP_STATUS.BLOCKED },
+    });
+  }
+  if (strongUntriaged > 0) {
+    actions.push({
+      text: `${strongUntriaged} strong-fit job(s) have no decision yet — shortlist or reject them`,
+      filter: { fit: 'strong' },
+    });
+  }
+  if (totals.dateUnconfirmed > 0) {
+    actions.push({
+      text: `${totals.dateUnconfirmed} job(s) have no confirmed posting date — review them manually`,
+      filter: { appStatus: APP_STATUS.DATE_UNCONFIRMED },
+    });
+  }
+  if (totals.discoveredToday === 0) {
+    actions.push({
+      text: 'No jobs discovered today — run Discover (or Find & Prepare) to refresh the board',
+      filter: null,
+    });
+  }
+  return actions;
 }
 
 /** Allowed sort keys -> comparators (descending by default where sensible). */
@@ -301,7 +391,17 @@ export function jobDetail(db, jobId, deps = {}) {
       packet = { error: `packet unreadable: ${err.message}` };
     }
   }
-  return { ...row, jdText: job.jd_text ?? null, packet };
+
+  // Audit trail: every event the system recorded for this job (newest first).
+  let events = [];
+  try {
+    events = (db.listEvents?.(jobId) ?? [])
+      .map((e) => ({ at: e.created_at, type: e.event_type, message: e.message }))
+      .reverse()
+      .slice(0, 30);
+  } catch { /* events are best-effort */ }
+
+  return { ...row, jdText: job.jd_text ?? null, packet, events };
 }
 
 /**

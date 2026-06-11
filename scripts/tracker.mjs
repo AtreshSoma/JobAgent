@@ -29,7 +29,7 @@ function main() {
     const { path, total, prepared, submitted } = writeJobTracker(db, ROOT);
     console.log(`Job tracker written: ${path}`);
     console.log(`  ${total} jobs total | ${prepared} prepared/awaiting | ${submitted} submitted`);
-    console.log('  Open it in Excel: the columns are Company, Job Role, Posted On, Applied On, Job URL, Submit Status, Notes/Comments, ...');
+    console.log('  Open it in Excel: Company, Job Role, Posted On, Applied On, Job URL, Source, Score, Tier, Sponsorship Confidence, Submit Status, Resume Generated, Fields Filled, Blockers, Notes, ...');
   } finally {
     db.close();
   }
