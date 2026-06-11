@@ -5,6 +5,8 @@ import {
   deriveAppStatus, fitBucket, dashboardStats, listBoardJobs, jobDetail,
   applyDecision, approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   APP_STATUS,
+  gradeFromScore, postedConfidence, resumeStatusOf, progressFor,
+  dashboardSections, setJobNote, buildExportRows, exportRowsToCsv,
 } from '../../src/dashboard/data.js';
 
 const NOW = new Date('2026-06-04T12:00:00Z');
@@ -229,5 +231,149 @@ describe('recordAssistResult persistence', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+describe('derived signals: grade, posted confidence, resume status, progress', () => {
+  it('gradeFromScore maps scores to A–F with recommend flag', () => {
+    expect(gradeFromScore(90)).toMatchObject({ letter: 'A', recommend: true });
+    expect(gradeFromScore(78)).toMatchObject({ letter: 'B', recommend: true });
+    expect(gradeFromScore(66)).toMatchObject({ letter: 'C', recommend: true });
+    expect(gradeFromScore(55)).toMatchObject({ letter: 'D', recommend: false });
+    expect(gradeFromScore(20)).toMatchObject({ letter: 'F', recommend: false });
+    expect(gradeFromScore(null)).toBeNull();
+  });
+
+  it('postedConfidence flags missing/unparsed dates', () => {
+    expect(postedConfidence({ posted_at: '2026-06-04T00:00:00Z' })).toBe('confirmed');
+    expect(postedConfidence({ posted_at: null })).toBe('unconfirmed');
+    expect(postedConfidence({ status: 'unknown_date_review', posted_at: 'x' })).toBe('unconfirmed');
+  });
+
+  it('resumeStatusOf reflects tailored vs prepared vs none', () => {
+    expect(resumeStatusOf({ resume_pdf_path: '/r.pdf' })).toBe('tailored');
+    expect(resumeStatusOf({ application_packet_path: '/p.json' })).toBe('prepared');
+    expect(resumeStatusOf({})).toBe('none');
+  });
+
+  it('progressFor places linear stages and off-ramps', () => {
+    expect(progressFor(APP_STATUS.DISCOVERED)).toMatchObject({ index: 0, offRamp: false });
+    expect(progressFor(APP_STATUS.NEEDS_REVIEW)).toMatchObject({ stage: 'prepared', offRamp: false });
+    expect(progressFor(APP_STATUS.SUBMITTED)).toMatchObject({ percent: 100, offRamp: false });
+    expect(progressFor(APP_STATUS.BLOCKED)).toMatchObject({ offRamp: true, stage: 'blocked' });
+  });
+});
+
+describe('dashboardStats freshness metrics', () => {
+  it('reports discoveredLast24h and lastDiscoveryAt distinctly from postedLast24h', () => {
+    const db = openDatabase({ path: ':memory:' });
+    try {
+      // Found within 24h, but the employer posted it weeks ago.
+      db.upsertJob({ id: 'a', company: 'A', title: 'DE', url: 'u', score: 80, tier: 'Apply',
+        created_at: '2026-06-04T06:00:00Z', posted_at: OLD });
+      // Found long ago, but posted within 24h.
+      db.upsertJob({ id: 'b', company: 'B', title: 'DE', url: 'u', score: 70, tier: 'Queue',
+        created_at: OLD, posted_at: FRESH });
+      const s = dashboardStats(db, { now: NOW });
+      expect(s.totals.discoveredLast24h).toBe(1);          // only 'a'
+      expect(s.totals.postedLast24h).toBe(1);              // only 'b'
+      expect(s.lastDiscoveryAt).toBe('2026-06-04T06:00:00Z');
+      // nextActions must NOT nag to discover when something was found in 24h.
+      expect(s.nextActions.some((x) => /No new jobs found/.test(x.text))).toBe(false);
+    } finally { db.close(); }
+  });
+
+  it('nudges to run discovery only when nothing was found in the last 24h', () => {
+    const db = openDatabase({ path: ':memory:' });
+    try {
+      db.upsertJob({ id: 'old', company: 'A', title: 'DE', url: 'u', created_at: OLD, posted_at: OLD });
+      const s = dashboardStats(db, { now: NOW });
+      expect(s.totals.discoveredLast24h).toBe(0);
+      expect(s.nextActions.some((x) => /No new jobs found/.test(x.text))).toBe(true);
+    } finally { db.close(); }
+  });
+});
+
+describe('dashboardSections', () => {
+  let db;
+  beforeEach(() => {
+    db = openDatabase({ path: ':memory:' });
+    db.upsertJob({ id: 'ready', company: 'Ready Co', title: 'DE', url: 'u', score: 88, tier: 'Apply',
+      status: 'ready_for_submit', application_packet_path: '/p.json', created_at: TODAY });
+    db.upsertJob({ id: 'rev', company: 'Review Co', title: 'DE', url: 'u', score: 82, tier: 'Apply',
+      application_packet_path: '/p2.json', created_at: TODAY });
+    db.insertApproval({ id: 'ap', job_id: 'rev', packet_path: '/p2.json', approval_status: 'pending_review' });
+    db.upsertJob({ id: 'blk1', company: 'Block Co', title: 'DE', url: 'u', score: 80, tier: 'Apply',
+      status: 'assist_blocked', assist_blockers: ['captcha detected — needs you'], created_at: TODAY });
+    db.upsertJob({ id: 'blk2', company: 'Wall Co', title: 'DE', url: 'u', score: 79, tier: 'Apply',
+      status: 'assist_blocked', assist_blockers: ['login required to continue'], created_at: TODAY });
+    db.upsertJob({ id: 'best', company: 'Best Co', title: 'DE', url: 'u', score: 95, tier: 'Priority', created_at: TODAY });
+    db.upsertJob({ id: 'sub', company: 'Done Co', title: 'DE', url: 'u', score: 90, tier: 'Apply',
+      applied: 1, applied_at: TODAY, status: 'submitted', created_at: OLD });
+  });
+  afterEach(() => db.close());
+
+  it('builds curated, sorted, action-oriented sections', () => {
+    const sec = dashboardSections(db, { now: NOW });
+    expect(sec.readyForSubmit.map((r) => r.id)).toContain('ready');
+    expect(sec.needsReview.map((r) => r.id)).toEqual(['rev']);
+    expect(sec.recentlySubmitted.map((r) => r.id)).toEqual(['sub']);
+    // Best matches: strong + recommended + not closed; excludes the submitted one.
+    expect(sec.bestMatches.map((r) => r.id)).toContain('best');
+    expect(sec.bestMatches.map((r) => r.id)).not.toContain('sub');
+    // Today's priorities surface the ready job first.
+    expect(sec.todaysPriorities[0].id).toBe('ready');
+    expect(sec.counts.blocked).toBe(2);
+  });
+
+  it('groups blocked jobs by human-meaningful reason', () => {
+    const sec = dashboardSections(db, { now: NOW });
+    const reasons = sec.blockedByReason.map((b) => b.reason);
+    expect(reasons).toContain('CAPTCHA / bot wall');
+    expect(reasons).toContain('Login / account required');
+    expect(sec.blockedByReason.reduce((n, b) => n + b.count, 0)).toBe(2);
+  });
+});
+
+describe('notes + rich CSV export', () => {
+  let db;
+  beforeEach(() => {
+    db = openDatabase({ path: ':memory:' });
+    db.upsertJob({ id: 'j1', company: 'Acme, Inc.', title: 'Senior "Data" Engineer', url: 'http://a',
+      source: 'greenhouse', score: 90, tier: 'Priority', sponsorship: 'Confirmed', location: 'Remote - US',
+      status: 'ready_for_submit', application_packet_path: '/p.json', resume_pdf_path: '/r.pdf',
+      matched_keywords: ['azure', 'pyspark'], missing_keywords: ['kafka'], created_at: TODAY });
+  });
+  afterEach(() => db.close());
+
+  it('setJobNote persists a note and rejects unknown ids', () => {
+    const r = setJobNote(db, 'j1', 'Referral from Sam');
+    expect(r.notes).toBe('Referral from Sam');
+    expect(db.getJob('j1').notes).toBe('Referral from Sam');
+    expect(() => setJobNote(db, 'ghost', 'x')).toThrow(/unknown job/);
+  });
+
+  it('buildExportRows includes score, grade, status, blockers, notes', () => {
+    setJobNote(db, 'j1', 'note A');
+    const rows = buildExportRows(db, { now: NOW });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      company: 'Acme, Inc.', grade: 'A', fit: 'strong', appStatus: 'ready_for_submit',
+      resumeStatus: 'tailored', remote: 'yes', notes: 'note A',
+    });
+    expect(rows[0].matched).toBe('azure; pyspark');
+  });
+
+  it('exportRowsToCsv escapes commas/quotes and has a header row', () => {
+    const csv = exportRowsToCsv(buildExportRows(db, { now: NOW }));
+    const lines = csv.trim().split('\r\n');
+    expect(lines[0]).toContain('Company,Role');
+    // Company with a comma and title with quotes must be quoted/escaped.
+    expect(lines[1]).toContain('"Acme, Inc."');
+    expect(lines[1]).toContain('"Senior ""Data"" Engineer"');
+  });
+
+  it('exportRowsToCsv returns just a header when there are no rows', () => {
+    expect(exportRowsToCsv([]).trim().startsWith('Company,Role')).toBe(true);
   });
 });

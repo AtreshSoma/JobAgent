@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   decided_at TEXT,
   assist_filled_count INTEGER,
   assist_blockers TEXT,
+  notes TEXT,
   created_at TEXT,
   updated_at TEXT
 );
@@ -112,7 +113,7 @@ const JOB_COLUMNS = [
   'ats_platform', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
   'cover_letter_path', 'application_packet_path', 'output_folder_path',
   'applied', 'applied_at', 'user_decision', 'decided_at',
-  'assist_filled_count', 'assist_blockers', 'created_at', 'updated_at',
+  'assist_filled_count', 'assist_blockers', 'notes', 'created_at', 'updated_at',
 ];
 
 /**
@@ -144,7 +145,7 @@ function applyMigrations(db) {
   }
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
   for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
-    'user_decision', 'decided_at', 'assist_blockers']) {
+    'user_decision', 'decided_at', 'assist_blockers', 'notes']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }

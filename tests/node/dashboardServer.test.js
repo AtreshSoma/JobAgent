@@ -315,3 +315,68 @@ describe('installProcessSafetyNet', () => {
     expect(logs[0]).toContain('boom');
   });
 });
+
+describe('command-center endpoints (sections, notes, export, decide-batch)', () => {
+  let db;
+  let dash;
+  const get = (p) => fetch(dash.url + p);
+  const getJson = (p) => fetch(dash.url + p).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const post = (p, body) => fetch(dash.url + p, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  beforeEach(async () => {
+    db = openDatabase({ path: ':memory:' });
+    seed(db);
+    db.upsertJob({ id: 'blk', company: 'Wall Co', title: 'DE', url: 'http://w', score: 80, tier: 'Apply',
+      status: 'assist_blocked', assist_blockers: ['login required'] });
+    dash = await startDashboard({
+      config: { root: '/fake/root' }, db, logger: null, port: 0,
+      deps: { now: () => NOW, writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }) },
+    });
+  });
+  afterEach(async () => { await dash.close(); db.close(); });
+
+  it('GET /api/sections returns curated sections + counts', async () => {
+    const { status, body } = await getJson('/api/sections');
+    expect(status).toBe(200);
+    expect(body.counts).toBeDefined();
+    expect(body.counts.needsReview).toBe(1);          // j1 has a pending packet
+    expect(body.counts.blocked).toBe(1);              // blk
+    expect(body.blockedByReason[0].reason).toBe('Login / account required');
+  });
+
+  it('GET /api/export/jobs.csv streams a rich CSV attachment', async () => {
+    const res = await get('/api/export/jobs.csv');
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('text/csv');
+    expect(res.headers.get('content-disposition')).toContain('jobagent_jobs.csv');
+    const text = await res.text();
+    expect(text).toContain('Company,Role');
+    expect(text).toContain('Grade');
+  });
+
+  it('POST /api/jobs/:id/note saves a note and rejects unknown ids', async () => {
+    const ok = await post('/api/jobs/j1/note', { note: 'call recruiter' });
+    expect(ok.status).toBe(200);
+    expect(ok.body.notes).toBe('call recruiter');
+    expect(db.getJob('j1').notes).toBe('call recruiter');
+    expect((await post('/api/jobs/ghost/note', { note: 'x' })).status).toBe(404);
+  });
+
+  it('POST /api/decide-batch applies a triage decision to many jobs', async () => {
+    const r = await post('/api/decide-batch', { jobIds: ['j1', 'j2'], decision: 'shortlisted' });
+    expect(r.status).toBe(200);
+    expect(r.body.updated.sort()).toEqual(['j1', 'j2']);
+    expect(db.getJob('j1').user_decision).toBe('shortlisted');
+    expect(db.getJob('j2').user_decision).toBe('shortlisted');
+  });
+
+  it('POST /api/decide-batch reports invalid decisions per job without 500ing', async () => {
+    const r = await post('/api/decide-batch', { jobIds: ['j1'], decision: 'banana' });
+    expect(r.status).toBe(200);
+    expect(r.body.updated).toEqual([]);
+    expect(r.body.failed[0].error).toMatch(/invalid decision/);
+  });
+});

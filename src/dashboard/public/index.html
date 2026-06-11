@@ -6,65 +6,128 @@
 <title>JobAgent — Dashboard</title>
 <style>
   :root {
-    --bg: #0f1217; --panel: #171c24; --panel2: #1d242e; --line: #2a3340;
+    --bg: #0e1116; --panel: #161b22; --panel2: #1c232d; --line: #2a3340;
     --text: #e6ebf2; --dim: #8b97a7; --accent: #4da3ff; --good: #3ecf8e;
-    --warn: #f5b94f; --bad: #f4736f; --chip: #232c38;
+    --warn: #f5b94f; --bad: #f4736f; --chip: #232c38; --shadow: 0 6px 24px rgba(0,0,0,.45);
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text);
          font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; align-items: center; gap: 14px; padding: 14px 22px;
+  header { display: flex; align-items: center; gap: 14px; padding: 12px 22px;
            border-bottom: 1px solid var(--line); position: sticky; top: 0;
-           background: var(--bg); z-index: 5; }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; }
+           background: rgba(14,17,22,.92); backdrop-filter: blur(8px); z-index: 15; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; display: flex; align-items: center; gap: 7px; }
+  header h1::before { content: ''; width: 9px; height: 9px; border-radius: 3px;
+    background: linear-gradient(135deg, var(--accent), var(--good)); }
   header .safety { color: var(--dim); font-size: 12px; }
   header .spacer { flex: 1; }
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
            border-radius: 7px; padding: 6px 12px; cursor: pointer; font: inherit; }
   button:hover { border-color: var(--accent); }
   button.primary { background: var(--accent); border-color: var(--accent); color: #04101f; font-weight: 600; }
-  button.small { padding: 2px 8px; font-size: 12px; border-radius: 6px; }
+  button.ghost { background: transparent; }
+  button.small { padding: 3px 9px; font-size: 12px; border-radius: 6px; }
   button:disabled { opacity: .45; cursor: not-allowed; }
-  #runStatus { font-size: 12px; color: var(--warn); min-width: 160px; text-align: right; }
+  .menu { position: relative; display: inline-block; }
+  .menu-pop { position: absolute; right: 0; top: 110%; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 6px; display: none; flex-direction: column; gap: 4px; min-width: 210px;
+    box-shadow: var(--shadow); z-index: 30; }
+  .menu-pop.show { display: flex; }
+  .menu-pop button { text-align: left; border-color: transparent; }
+  #runStatus { font-size: 12px; color: var(--warn); min-width: 150px; text-align: right; }
   #runStatus.busy { color: var(--accent); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
   #runStatus.busy::before { content: ''; display: inline-block; width: 7px; height: 7px;
     border-radius: 50%; background: var(--accent); margin-right: 5px; animation: pulse 1s infinite; }
-  main { display: grid; grid-template-columns: 1fr 430px; gap: 18px; padding: 18px 22px; }
-  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-           gap: 10px; margin-bottom: 16px; }
+
+  /* Freshness / context bar */
+  .ctxbar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    padding: 9px 22px; border-bottom: 1px solid var(--line); background: var(--panel);
+    font-size: 12.5px; color: var(--dim); }
+  .ctxbar b { color: var(--text); }
+  .ctxbar .sep { width: 1px; height: 16px; background: var(--line); }
+
+  /* Section tabs */
+  .tabs { display: flex; gap: 4px; padding: 10px 22px 0; flex-wrap: wrap; }
+  .tab { background: transparent; border: 1px solid transparent; border-bottom: none;
+    color: var(--dim); padding: 7px 13px; border-radius: 8px 8px 0 0; cursor: pointer; font: inherit;
+    display: flex; align-items: center; gap: 7px; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); background: var(--panel); border-color: var(--line); font-weight: 600; }
+  .tab .badge { background: var(--chip); color: var(--dim); border-radius: 11px; padding: 0 7px;
+    font-size: 11px; min-width: 18px; text-align: center; }
+  .tab.active .badge { background: var(--accent); color: #04101f; }
+  .tab.urgent .badge { background: var(--warn); color: #2a1c00; }
+
+  main { display: grid; grid-template-columns: 1fr 440px; gap: 18px; padding: 16px 22px; }
+  @media (max-width: 1180px) { main { grid-template-columns: 1fr; } }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+           gap: 9px; margin-bottom: 14px; }
   .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-          padding: 10px 12px; cursor: pointer; }
+          padding: 9px 12px; cursor: pointer; transition: border-color .12s; }
   .tile:hover { border-color: var(--accent); }
-  .tile .n { font-size: 22px; font-weight: 700; }
-  .tile .l { color: var(--dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; }
+  .tile .n { font-size: 21px; font-weight: 700; }
+  .tile .l { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
   .tile.good .n { color: var(--good); } .tile.warn .n { color: var(--warn); }
   .tile.bad .n { color: var(--bad); } .tile.accent .n { color: var(--accent); }
+
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
   .filters input, .filters select { background: var(--panel2); color: var(--text);
     border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; font: inherit; }
-  .filters input[type=text] { width: 220px; }
+  .filters input[type=text] { width: 210px; }
   .filters label { color: var(--dim); font-size: 12px; display: flex; gap: 5px; align-items: center; }
+  .filters .clearf { margin-left: auto; }
+
   table { width: 100%; border-collapse: collapse; background: var(--panel);
           border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
-  th { color: var(--dim); font-size: 11.5px; text-transform: uppercase; letter-spacing: .4px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  tbody tr:last-child td { border-bottom: none; }
   tr.job:hover { background: var(--panel2); cursor: pointer; }
   tr.selected { background: #20304a !important; }
+
   .chip { display: inline-block; background: var(--chip); border-radius: 20px;
-          padding: 1px 9px; font-size: 11.5px; }
+          padding: 1px 9px; font-size: 11.5px; white-space: nowrap; }
   .chip.strong { color: var(--good); } .chip.medium { color: var(--warn); }
   .chip.weak, .chip.no_fit { color: var(--bad); } .chip.unscored { color: var(--dim); }
   .chip.Confirmed { color: var(--good); } .chip.Likely { color: var(--warn); }
+  .chip.Unconfirmed, .chip.Unlikely { color: var(--bad); }
   .st-submitted { color: var(--good); } .st-blocked, .st-rejected { color: var(--bad); }
-  .st-needs_review, .st-ready_for_submit { color: var(--warn); }
+  .st-needs_review, .st-ready_for_submit, .st-date_unconfirmed, .st-skipped { color: var(--warn); }
   .st-approved, .st-shortlisted { color: var(--accent); }
+  .st-discovered, .st-scored, .st-archived, .st-discarded { color: var(--dim); }
   .muted { color: var(--dim); }
-  aside .panel { background: var(--panel); border: 1px solid var(--line);
+
+  /* Letter grade badge */
+  .grade { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 7px; font-weight: 800; font-size: 13px; }
+  .grade.A { background: rgba(62,207,142,.18); color: var(--good); }
+  .grade.B { background: rgba(77,163,255,.18); color: var(--accent); }
+  .grade.C { background: rgba(245,185,79,.18); color: var(--warn); }
+  .grade.D, .grade.F { background: rgba(244,115,111,.16); color: var(--bad); }
+  .grade.none { background: var(--chip); color: var(--dim); font-size: 11px; }
+  .gradebig { width: 46px; height: 46px; border-radius: 10px; font-size: 22px; }
+
+  /* Posted-confidence dot */
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+  .dot.confirmed { background: var(--good); } .dot.unconfirmed { background: var(--warn); }
+  /* Resume + ATS mini chips */
+  .rs { font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--chip); }
+  .rs.tailored { color: var(--good); } .rs.prepared { color: var(--accent); } .rs.none { color: var(--dim); }
+
+  /* Progress mini bar + stepper */
+  .bar { height: 5px; background: var(--chip); border-radius: 3px; overflow: hidden; min-width: 64px; }
+  .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
+  .bar.off > i { background: var(--bad); }
+  .stepper { display: flex; gap: 4px; margin: 6px 0 2px; }
+  .stepper .s { flex: 1; height: 6px; border-radius: 3px; background: var(--chip); }
+  .stepper .s.done { background: var(--accent); } .stepper .s.now { background: var(--good); }
+  .steplabels { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
+
+  aside .panel, .card { background: var(--panel); border: 1px solid var(--line);
                  border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
   aside h2 { font-size: 14px; margin: 0 0 8px; }
-  aside h3 { font-size: 12px; color: var(--dim); text-transform: uppercase;
+  aside h3, .card h3 { font-size: 12px; color: var(--dim); text-transform: uppercase;
              letter-spacing: .4px; margin: 14px 0 5px; }
   .kw { display: inline-block; margin: 2px 3px 0 0; }
   .actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
@@ -72,23 +135,37 @@
          padding: 9px 11px; font-size: 13px; }
   ul.plan { margin: 4px 0; padding-left: 18px; } ul.plan li { margin: 2px 0; }
   .srcTable td, .srcTable th { padding: 4px 8px; font-size: 12.5px; }
+  .nba { background: linear-gradient(135deg, rgba(77,163,255,.16), rgba(62,207,142,.10));
+    border: 1px solid var(--accent); border-radius: 9px; padding: 10px 12px; margin: 4px 0 2px; }
+  .nba b { color: var(--accent); }
+  .notes textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px; font: inherit; resize: vertical; min-height: 54px; }
   a { color: var(--accent); }
-  #compare { position: fixed; inset: 6% 8%; background: var(--panel); z-index: 20;
+
+  /* Empty + loading states */
+  .empty { text-align: center; color: var(--dim); padding: 38px 16px; }
+  .empty .big { font-size: 15px; color: var(--text); margin-bottom: 6px; }
+  .skeleton { height: 40px; border-radius: 8px; margin: 6px 0;
+    background: linear-gradient(90deg, var(--panel) 25%, var(--panel2) 50%, var(--panel) 75%);
+    background-size: 400% 100%; animation: sk 1.2s infinite; }
+  @keyframes sk { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
+
+  #compare { position: fixed; inset: 6% 8%; background: var(--panel); z-index: 40;
              border: 1px solid var(--accent); border-radius: 12px; padding: 18px;
-             overflow: auto; display: none; }
+             overflow: auto; display: none; box-shadow: var(--shadow); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
            background: var(--panel2); border: 1px solid var(--accent); padding: 8px 16px;
-           border-radius: 8px; display: none; z-index: 30; }
+           border-radius: 8px; display: none; z-index: 50; box-shadow: var(--shadow); }
   #selbar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
             background: var(--panel); border: 1px solid var(--accent); padding: 9px 14px;
-            border-radius: 10px; display: none; z-index: 25; align-items: center; gap: 8px;
-            box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+            border-radius: 10px; display: none; z-index: 35; align-items: center; gap: 8px;
+            box-shadow: var(--shadow); flex-wrap: wrap; max-width: 94vw; }
   #selbar.show { display: flex; }
   #selCount { color: var(--accent); font-weight: 600; margin-right: 4px; }
   .conn { font-size: 12px; font-weight: 600; margin-right: 6px; white-space: nowrap; }
   .conn.ok { color: var(--good); }
   .conn.down { color: var(--bad); }
-  #offline { position: fixed; top: 0; left: 0; right: 0; z-index: 50; display: none;
+  #offline { position: fixed; top: 0; left: 0; right: 0; z-index: 60; display: none;
     background: var(--bad); color: #fff; text-align: center; padding: 8px 14px;
     font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
   #offline.show { display: block; }
@@ -105,11 +182,23 @@
   <span class="spacer"></span>
   <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
   <span id="runStatus"></span>
-  <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')">Discover</button>
-  <button id="btnScore" class="runBtn" onclick="runPhase('score')">Score</button>
-  <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')">Find &amp; Prepare</button>
-  <button onclick="exportCsv()" title="Download the full job tracker spreadsheet">⬇ Export CSV</button>
+  <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')" title="Search job boards for new roles">Discover</button>
+  <button id="btnScore" class="runBtn" onclick="runPhase('score')" title="Score discovered jobs against your profile">Score</button>
+  <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')" title="Discover, score and tailor resumes — end to end">Find &amp; Prepare</button>
+  <span class="menu">
+    <button class="ghost" onclick="toggleMenu(event)" title="Export your pipeline">⬇ Export ▾</button>
+    <div class="menu-pop" id="exportMenu">
+      <button onclick="exportJobs();closeMenus()">All jobs + scores (CSV)</button>
+      <button onclick="exportCsv();closeMenus()">Application tracker (CSV)</button>
+    </div>
+  </span>
 </header>
+
+<div class="ctxbar" id="ctxbar">
+  <span id="freshness" class="muted">Loading…</span>
+</div>
+
+<div class="tabs" id="tabs"></div>
 
 <main>
   <section>
@@ -125,34 +214,45 @@
         <option>blocked</option><option>skipped</option><option>submitted</option>
         <option>rejected</option><option>archived</option><option>discarded</option>
         <option>date_unconfirmed</option></select>
+      <select id="sponsorship"><option value="">Any sponsorship</option>
+        <option>Confirmed</option><option>Likely</option><option>Unconfirmed</option>
+        <option>Unlikely</option></select>
       <select id="source"><option value="">All sources</option></select>
       <select id="sort"><option value="score">Sort: score</option>
         <option value="posted">Sort: newest posted</option>
         <option value="company">Sort: company</option>
         <option value="updated">Sort: recently updated</option></select>
-      <label><input type="checkbox" id="last24h"> last 24h only</label>
-      <label><input type="checkbox" id="hideClosed" checked> hide rejected/archived</label>
+      <label><input type="checkbox" id="last24h"> last 24h</label>
+      <label><input type="checkbox" id="remoteOnly"> remote</label>
+      <label><input type="checkbox" id="hideClosed" checked> hide closed</label>
+      <button class="small clearf" onclick="resetFilters()">Reset</button>
     </div>
     <table>
-      <thead><tr><th><input type="checkbox" id="selAll" title="Select all visible"
-          onclick="toggleSelectAll(this.checked)"></th><th>Score</th><th>Fit</th><th>Company / Role</th>
-        <th>Sponsorship</th><th>Posted</th><th>Source</th><th>Status</th></tr></thead>
+      <thead><tr>
+        <th><input type="checkbox" id="selAll" title="Select all visible" onclick="toggleSelectAll(this.checked)"></th>
+        <th>Grade</th><th>Company / Role</th><th>Sponsor</th><th>Posted</th>
+        <th>Resume</th><th>ATS</th><th>Progress</th><th>Status</th>
+      </tr></thead>
       <tbody id="rows"></tbody>
     </table>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:18px;margin-top:18px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;margin-top:18px">
       <div>
-        <h3>Source breakdown</h3>
+        <h3>Source performance</h3>
         <table class="srcTable"><thead><tr><th>Source</th><th>Found</th><th>Strong</th>
           <th>Prepared</th><th>Submitted</th></tr></thead><tbody id="srcRows"></tbody></table>
       </div>
       <div>
-        <h3>Sponsorship breakdown</h3>
+        <h3>Sponsorship feasibility</h3>
         <table class="srcTable"><thead><tr><th>Confidence</th><th>Jobs</th><th>Strong fit</th></tr></thead>
           <tbody id="sponRows"></tbody></table>
       </div>
       <div>
+        <h3>Blocked by reason</h3>
+        <table class="srcTable"><thead><tr><th>Reason</th><th>Jobs</th></tr></thead><tbody id="blockRows"></tbody></table>
+      </div>
+      <div>
         <h3>Daily progress (last 7 days)</h3>
-        <table class="srcTable"><thead><tr><th>Day</th><th>Discovered</th><th>Prepared</th>
+        <table class="srcTable"><thead><tr><th>Day</th><th>Found</th><th>Prepared</th>
           <th>Submitted</th></tr></thead><tbody id="dailyRows"></tbody></table>
       </div>
     </div>
@@ -160,8 +260,8 @@
 
   <aside>
     <div class="panel" id="nextActions"></div>
-    <div id="detail"><div class="panel muted">Select a job to see why it fits,
-      its packet, blockers, and actions.</div></div>
+    <div id="detail"><div class="panel empty"><div class="big">Select a job</div>
+      See its grade, fit breakdown, sponsorship, blockers, packet, ATS status, and the next best action.</div></div>
   </aside>
 </main>
 
@@ -169,10 +269,11 @@
 <div id="toast"></div>
 <div id="selbar">
   <span id="selCount">0 selected</span>
-  <button id="autoApplyBtn" class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply selected</button>
-  <button class="small" onclick="batchApprove()">✓ Approve selected</button>
+  <button id="autoApplyBtn" class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply</button>
+  <button class="small" onclick="batchApprove()" title="Approve prepared packets">✓ Approve</button>
   <button class="small" onclick="batchDecide('shortlisted')">★ Shortlist</button>
   <button class="small" onclick="batchDecide('rejected')">✕ Reject</button>
+  <button class="small" onclick="batchDecide('archived')">Archive</button>
   <button class="small" onclick="showCompare()" id="cmpBtn" disabled>Compare</button>
   <button class="small" onclick="clearSelection()">Clear</button>
 </div>
@@ -185,6 +286,8 @@ let visibleIds = [];
 let jobsById = {};
 let pollTimer = null;
 let isRunning = false;
+let lastStats = null;
+let lastSections = null;
 
 async function api(path, opts) {
   let res;
@@ -224,29 +327,42 @@ function esc(s) {
     ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
-/* ── tiles ── */
+/* ── tiles (grouped: pipeline funnel + activity) ── */
 const TILES = [
   ['jobsTracked', 'Jobs tracked', '', {}],
-  ['discoveredToday', 'Discovered today', 'accent', {}],
-  ['postedLast24h', 'Posted last 24h', 'accent', { last24h: '1' }],
   ['strongFit', 'Strong fit', 'good', { fit: 'strong' }],
-  ['mediumFit', 'Medium fit', 'warn', { fit: 'medium' }],
-  ['weakFit', 'Weak fit', '', { fit: 'weak' }],
   ['shortlisted', 'Shortlisted', 'accent', { appStatus: 'shortlisted' }],
-  ['pendingReview', 'Pending review', 'warn', { appStatus: 'needs_review' }],
-  ['preparedToday', 'Prepared today', 'good', {}],
+  ['pendingReview', 'Needs review', 'warn', { appStatus: 'needs_review' }],
   ['readyForSubmit', 'Ready to submit', 'warn', { appStatus: 'ready_for_submit' }],
-  ['submittedToday', 'Submitted today', 'good', {}],
-  ['submittedTotal', 'Applied (all)', 'good', { appStatus: 'submitted' }],
+  ['submittedTotal', 'Submitted', 'good', { appStatus: 'submitted' }],
   ['blocked', 'Blocked', 'bad', { appStatus: 'blocked' }],
+  ['discoveredLast24h', 'New (24h)', 'accent', {}],
   ['dateUnconfirmed', 'Date unconfirmed', 'warn', { appStatus: 'date_unconfirmed' }],
-  ['rejected', 'Rejected', '', { appStatus: 'rejected' }],
 ];
+function relTime(iso) {
+  if (!iso) return null;
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return null;
+  const h = Math.floor(ms / 3.6e6); const d = Math.floor(h / 24);
+  if (h < 1) return 'under an hour ago';
+  if (h < 24) return `${h}h ago`;
+  return `${d}d ago`;
+}
 async function loadStats() {
   const s = await api('/api/stats');
+  lastStats = s;
   $('tiles').innerHTML = TILES.map(([key, label, tone, filter]) =>
     `<div class="tile ${tone}" onclick='applyTileFilter(${JSON.stringify(filter)})'>
-       <div class="n">${s.totals[key] ?? 0}</div><div class="l">${label}</div></div>`).join('');
+       <div class="n">${s.totals[key] ?? 0}</div><div class="l">${esc(label)}</div></div>`).join('');
+  // Freshness line — explains the discovered-vs-posted distinction so "0
+  // discovered today" next to "many posted last 24h" is never confusing.
+  const last = relTime(s.lastDiscoveryAt);
+  $('freshness').innerHTML =
+    `<b>${s.totals.discoveredLast24h ?? 0}</b> found in last 24h `
+    + `· last discovery <b>${last ?? 'never'}</b> `
+    + `<span class="sep"></span> <b>${s.totals.postedLast24h ?? 0}</b> roles posted by employers in last 24h `
+    + `<span class="sep"></span> <b>${s.totals.strongFit ?? 0}</b> strong-fit `
+    + `· <b>${s.totals.submittedTotal ?? 0}</b> submitted by you`;
   $('srcRows').innerHTML = Object.entries(s.bySource)
     .sort((a, b) => b[1].found - a[1].found)
     .map(([src, v]) => `<tr><td>${esc(src)}</td><td>${v.found}</td><td>${v.strong}</td>
@@ -256,7 +372,6 @@ async function loadStats() {
   const cur = sel.value;
   sel.innerHTML = '<option value="">All sources</option>' + Object.keys(s.bySource)
     .map((src) => `<option${src === cur ? ' selected' : ''}>${esc(src)}</option>`).join('');
-
   $('sponRows').innerHTML = Object.entries(s.bySponsorship ?? {})
     .sort((a, b) => b[1].count - a[1].count)
     .map(([k, v]) => `<tr><td><span class="chip ${esc(k)}">${esc(k)}</span></td>
@@ -265,19 +380,68 @@ async function loadStats() {
   $('dailyRows').innerHTML = (s.daily ?? [])
     .map((d) => `<tr><td>${esc(d.day)}</td><td>${d.discovered}</td>
          <td>${d.prepared}</td><td>${d.submitted}</td></tr>`).join('');
-  $('nextActions').innerHTML = '<h2>Next actions</h2>' + ((s.nextActions ?? []).length
-    ? '<ul class="plan">' + s.nextActions.map((a, i) =>
+  $('nextActions').innerHTML = '<h2>Today\u2019s priorities</h2>' + ((s.nextActions ?? []).length
+    ? '<ul class="plan">' + s.nextActions.map((a) =>
         `<li>${a.filter ? `<a href="#" onclick='applyTileFilter(${JSON.stringify(a.filter)});return false'>${esc(a.text)}</a>` : esc(a.text)}</li>`).join('') + '</ul>'
     : '<div class="muted">All caught up — nothing waiting on you.</div>');
 }
+
+/* ── section tabs ── */
+const TABS = [
+  ['all', 'All jobs', null, null],
+  ['bestMatches', 'Best matches', { fit: 'strong' }, false],
+  ['needsReview', 'Needs review', { appStatus: 'needs_review' }, false],
+  ['readyForSubmit', 'Ready to submit', { appStatus: 'ready_for_submit' }, true],
+  ['blocked', 'Blocked', { appStatus: 'blocked' }, true],
+  ['recentlySubmitted', 'Submitted', { appStatus: 'submitted' }, false],
+];
+let activeTab = 'all';
+async function loadSections() {
+  let sec;
+  try { sec = await api('/api/sections'); } catch { return; }
+  lastSections = sec;
+  $('tabs').innerHTML = TABS.map(([key, label, , urgent]) => {
+    const count = key === 'all' ? (lastStats?.totals?.jobsTracked ?? '') : (sec.counts?.[key] ?? 0);
+    const u = urgent && count > 0 ? ' urgent' : '';
+    return `<button class="tab${activeTab === key ? ' active' : ''}${u}" onclick="setTab('${key}')">
+      ${esc(label)} <span class="badge">${count}</span></button>`;
+  }).join('');
+  // Blocked-by-reason breakdown.
+  $('blockRows').innerHTML = (sec.blockedByReason ?? []).length
+    ? sec.blockedByReason.map((b) =>
+        `<tr><td>${esc(b.reason)}</td><td>${b.count}</td></tr>`).join('')
+    : '<tr><td colspan="2" class="muted">None blocked</td></tr>';
+}
+function setTab(key) {
+  activeTab = key;
+  const def = TABS.find((t) => t[0] === key);
+  // Reset board filters, then apply the tab's filter.
+  $('fit').value = ''; $('appStatus').value = ''; $('last24h').checked = false;
+  $('remoteOnly').checked = false; $('q').value = '';
+  $('hideClosed').checked = !(def && def[2] && ['submitted'].includes(def[2].appStatus));
+  if (def && def[2]) {
+    if (def[2].fit) $('fit').value = def[2].fit;
+    if (def[2].appStatus) { $('appStatus').value = def[2].appStatus; $('hideClosed').checked = false; }
+  }
+  loadSections(); loadJobs();
+}
+
 function applyTileFilter(f) {
+  activeTab = 'all';
   $('fit').value = f.fit ?? '';
   $('appStatus').value = f.appStatus ?? '';
   $('last24h').checked = Boolean(f.last24h);
-  if (f.appStatus && ['rejected', 'archived', 'discarded'].includes(f.appStatus)) {
+  if (f.appStatus && ['rejected', 'archived', 'discarded', 'submitted'].includes(f.appStatus)) {
     $('hideClosed').checked = false;
   }
-  loadJobs();
+  loadSections(); loadJobs();
+}
+function resetFilters() {
+  activeTab = 'all';
+  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'source']) $(id).value = '';
+  $('last24h').checked = false; $('remoteOnly').checked = false; $('hideClosed').checked = true;
+  $('sort').value = 'score';
+  loadSections(); loadJobs();
 }
 
 /* ── board ── */
@@ -286,72 +450,135 @@ function filterParams() {
   if ($('q').value) p.set('q', $('q').value);
   if ($('fit').value) p.set('fit', $('fit').value);
   if ($('appStatus').value) p.set('appStatus', $('appStatus').value);
+  if ($('sponsorship').value) p.set('sponsorship', $('sponsorship').value);
   if ($('source').value) p.set('source', $('source').value);
   p.set('sort', $('sort').value);
   if ($('last24h').checked) p.set('last24h', 'true');
+  if ($('remoteOnly').checked) p.set('remote', 'true');
   p.set('hideClosed', $('hideClosed').checked);
   return p;
 }
+function gradeBadge(g) {
+  if (!g) return '<span class="grade none">—</span>';
+  return `<span class="grade ${g.letter}" title="${esc(g.label)} · score">${g.letter}</span>`;
+}
+function progressBar(pr) {
+  if (!pr) return '';
+  if (pr.offRamp) return `<div class="bar off" title="${esc(pr.stage)}"><i style="width:100%"></i></div>`;
+  return `<div class="bar" title="${esc(pr.stage)} (${pr.percent}%)"><i style="width:${pr.percent}%"></i></div>`;
+}
 async function loadJobs() {
-  const { jobs } = await api('/api/jobs?' + filterParams());
+  $('rows').innerHTML = '<tr><td colspan="9"><div class="skeleton"></div><div class="skeleton"></div></td></tr>';
+  let jobs;
+  try { ({ jobs } = await api('/api/jobs?' + filterParams())); }
+  catch (e) { $('rows').innerHTML = `<tr><td colspan="9" class="empty">${esc(e.message)}</td></tr>`; return; }
   visibleIds = jobs.map((j) => j.id);
   jobsById = {};
   for (const j of jobs) jobsById[j.id] = j;
+  if (!jobs.length) {
+    const tot = lastStats?.totals?.jobsTracked ?? 0;
+    $('rows').innerHTML = `<tr><td colspan="9"><div class="empty">
+      <div class="big">${tot === 0 ? 'No jobs yet' : 'Nothing matches these filters'}</div>
+      ${tot === 0 ? 'Click <b>Find &amp; Prepare</b> to discover, score and tailor in one pass.'
+        : 'Try <a href="#" onclick="resetFilters();return false">Reset filters</a>.'}</div></td></tr>`;
+    syncSelAll(); return;
+  }
   $('rows').innerHTML = jobs.map((j) => `
     <tr class="job ${j.id === selectedId ? 'selected' : ''}" onclick="select('${esc(j.id)}')">
       <td onclick="event.stopPropagation()"><input type="checkbox"
           ${selectedIds.has(j.id) ? 'checked' : ''} onchange="toggleSelect('${esc(j.id)}', this.checked)"></td>
-      <td><b>${j.score ?? '—'}</b></td>
-      <td><span class="chip ${j.fit}">${j.fit.replace('_', ' ')}</span></td>
-      <td><b>${esc(j.company)}</b><br><span class="muted">${esc(j.title)}</span></td>
+      <td>${gradeBadge(j.grade)}<div class="muted" style="font-size:10px">${j.score ?? '—'}</div></td>
+      <td><b>${esc(j.company)}</b>${j.remote ? ' <span class="rs">remote</span>' : ''}<br>
+        <span class="muted">${esc(j.title)}</span></td>
       <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span></td>
-      <td>${esc(j.postedLabel)}${j.postedLast24h ? ' <span class="chip strong">new</span>' : ''}</td>
-      <td class="muted">${esc(j.source)}</td>
+      <td><span class="dot ${j.postedConfidence}" title="posting date ${j.postedConfidence}"></span>${esc(j.postedLabel)}${j.postedLast24h ? ' <span class="chip strong">new</span>' : ''}</td>
+      <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span></td>
+      <td class="muted">${esc(j.atsPlatform ?? '—')}</td>
+      <td>${progressBar(j.progress)}</td>
       <td class="st-${j.appStatus}">${j.appStatus.replace(/_/g, ' ')}</td>
-    </tr>`).join('')
-    || '<tr><td colspan="8" class="muted">Nothing matches these filters.</td></tr>';
+    </tr>`).join('');
   syncSelAll();
 }
 
 /* ── detail ── */
+function nextBestAction(j) {
+  // The single most useful thing to do next, with a one-click button.
+  if (j.appStatus === 'submitted') return { text: 'Submitted — no further action.', btn: '' };
+  if (j.appStatus === 'needs_review') return { text: 'Review the packet below, then approve it to enable assisted fill.',
+    btn: `<button class="small primary" onclick="act('${esc(j.id)}','approve','Packet approved')">✓ Approve packet</button>` };
+  if (j.appStatus === 'approved') return { text: 'Approved. Open it in the browser — it fills the form and stops before submit.',
+    btn: `<button class="small primary" onclick="act('${esc(j.id)}','assist','Browser opening — stops before submit')">▶ Fill in browser</button>` };
+  if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting in the browser — review and submit, then mark it.',
+    btn: `<button class="small primary" onclick="act('${esc(j.id)}','mark-submitted','Recorded as submitted by you')">I submitted it myself</button>` };
+  if (j.appStatus === 'blocked') return { text: 'Blocked (login / CAPTCHA / a question needs you). Open the posting and finish it manually.',
+    btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>` };
+  if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit, undecided — shortlist it to prepare a tailored resume.',
+    btn: `<button class="small primary" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
+  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — run Find & Prepare to build its tailored packet.', btn: '' };
+  if (['no_fit', 'weak'].includes(j.fit)) return { text: 'Low fit — likely not worth your time. Reject to keep the board focused.',
+    btn: `<button class="small" onclick="decide('${esc(j.id)}','rejected')">✕ Reject</button>` };
+  return { text: 'Review the fit and sponsorship below, then shortlist or reject.', btn: '' };
+}
+function stepper(pr) {
+  if (!pr) return '';
+  const labels = ['Found', 'Scored', 'Shortlist', 'Prepared', 'Approved', 'Ready', 'Submitted'];
+  if (pr.offRamp) return `<div class="muted" style="margin:6px 0">Off-track: <b class="st-blocked">${esc(pr.stage.replace(/_/g, ' '))}</b></div>`;
+  const cells = labels.map((_, i) =>
+    `<div class="s ${i < pr.index ? 'done' : i === pr.index ? 'now' : ''}"></div>`).join('');
+  return `<div class="stepper">${cells}</div><div class="steplabels"><span>${labels[0]}</span><span>${labels[pr.index] ?? ''}</span><span>${labels[labels.length - 1]}</span></div>`;
+}
 async function select(id) {
   selectedId = id;
   loadJobs();
-  const j = await api('/api/jobs/' + encodeURIComponent(id));
+  let j;
+  try { j = await api('/api/jobs/' + encodeURIComponent(id)); }
+  catch (e) { $('detail').innerHTML = `<div class="panel empty">${esc(e.message)}</div>`; return; }
   const kw = (list, tone) => list.length
     ? list.map((k) => `<span class="chip kw ${tone}">${esc(k)}</span>`).join('') : '<span class="muted">none</span>';
   const p = j.packet;
+  const g = j.grade;
+  const nba = nextBestAction(j);
   $('detail').innerHTML = `
   <div class="panel">
-    <h2>${esc(j.company)} — ${esc(j.title)}</h2>
-    <div class="muted">${esc(j.location ?? '')} · ${esc(j.postedLabel)} · via ${esc(j.source)}
-      ${j.atsPlatform ? '· ATS: ' + esc(j.atsPlatform) : ''}</div>
-    <div style="margin-top:6px">
-      <span class="chip ${j.fit}">fit: ${j.fit.replace('_',' ')} ${j.score != null ? '· ' + j.score + '/100' : ''}</span>
-      <span class="chip ${esc(j.sponsorship ?? '')}">sponsorship: ${esc(j.sponsorship ?? 'unknown')}</span>
-      <span class="chip st-${j.appStatus}">${j.appStatus.replace(/_/g,' ')}</span>
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <span class="grade gradebig ${g ? g.letter : 'none'}">${g ? g.letter : '—'}</span>
+      <div style="flex:1">
+        <h2 style="margin:0">${esc(j.company)} — ${esc(j.title)}</h2>
+        <div class="muted">${esc(j.location ?? '')}${j.remote ? ' · remote' : ''} · ${esc(j.postedLabel)} · via ${esc(j.source)}
+          ${j.atsPlatform ? '· ATS: ' + esc(j.atsPlatform) : ''}</div>
+        <div style="margin-top:6px">
+          <span class="chip ${j.fit}">${g ? g.label : 'unscored'} ${j.score != null ? '· ' + j.score + '/100' : ''}</span>
+          <span class="chip ${esc(j.sponsorship ?? '')}">sponsorship: ${esc(j.sponsorship ?? 'unknown')}</span>
+          <span class="chip st-${j.appStatus}">${j.appStatus.replace(/_/g,' ')}</span>
+        </div>
+      </div>
     </div>
+
+    ${stepper(j.progress)}
+
+    <h3>Next best action</h3>
+    <div class="nba">${esc(nba.text)}${nba.btn ? `<div style="margin-top:8px">${nba.btn}</div>` : ''}</div>
+
     <div class="actions">
       <a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small">Open posting ↗</button></a>
       <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>
       <button class="small" onclick="decide('${esc(j.id)}','rejected')">✕ Reject</button>
       <button class="small" onclick="decide('${esc(j.id)}','archived')">Archive</button>
-      <button class="small" onclick="decide('${esc(j.id)}','clear')">Clear decision</button>
-    </div>
-    <div class="actions">
+      <button class="small" onclick="decide('${esc(j.id)}','clear')">Clear</button>
       ${j.approvalStatus === 'pending_review'
-        ? `<button class="small primary" onclick="act('${esc(j.id)}','approve','Packet approved')">✓ Approve packet</button>
-           <button class="small" onclick="act('${esc(j.id)}','reject-packet','Packet rejected')">Reject packet</button>` : ''}
-      ${j.approvalStatus === 'approved' && j.appStatus !== 'submitted'
-        ? `<button class="small primary" onclick="act('${esc(j.id)}','assist','Browser opening — it will stop before submit')">▶ Fill in browser (stops before submit)</button>` : ''}
+        ? `<button class="small" onclick="act('${esc(j.id)}','reject-packet','Packet rejected')">Reject packet</button>` : ''}
       ${['ready_for_submit','blocked','approved'].includes(j.appStatus)
-        ? `<button class="small" onclick="act('${esc(j.id)}','mark-submitted','Recorded as submitted by you')">I submitted it myself</button>` : ''}
+        ? `<button class="small" onclick="act('${esc(j.id)}','mark-submitted','Recorded as submitted by you')">Mark submitted</button>` : ''}
     </div>
 
     <h3>Why this ${j.fit === 'strong' ? 'is' : j.fit === 'no_fit' ? 'is NOT' : 'may be'} a fit</h3>
     <div class="why">${esc(j.explanation ?? j.discardReason ?? 'Not scored yet — run Score.')}</div>
     <h3>Matched skills (yours, found in the JD)</h3><div>${kw(j.matchedKeywords, 'strong')}</div>
     <h3>Missing / not evidenced</h3><div>${kw(j.missingKeywords, 'weak')}</div>
+
+    <h3>Your notes</h3>
+    <div class="notes"><textarea id="noteBox" placeholder="Private reminders — saved with this job and included in CSV export…">${esc(j.notes ?? '')}</textarea>
+      <div style="margin-top:6px"><button class="small primary" onclick="saveNote('${esc(j.id)}')">Save note</button></div></div>
 
     ${j.assistFilledCount != null ? `<h3>Last assisted fill</h3>
       <div>${j.assistFilledCount} field(s) filled${j.assistBlockers.length
@@ -552,6 +779,30 @@ async function exportCsv() {
     toast('Downloaded job_tracker.csv');
   } catch (e) { toast(e.message, true); }
 }
+async function exportJobs() {
+  try {
+    const res = await fetch('/api/export/jobs.csv');
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'jobagent_jobs.csv';
+    a.click(); URL.revokeObjectURL(a.href);
+    toast('Downloaded jobagent_jobs.csv (all jobs + scores)');
+  } catch (e) { toast(e.message, true); }
+}
+async function saveNote(id) {
+  const note = $('noteBox')?.value ?? '';
+  try {
+    await api(`/api/jobs/${encodeURIComponent(id)}/note`, { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ note }) });
+    if (jobsById[id]) jobsById[id].notes = note;
+    toast('Note saved');
+  } catch (e) { toast(e.message, true); }
+}
+function toggleMenu(ev) { ev.stopPropagation(); $('exportMenu').classList.toggle('show'); }
+function closeMenus() { $('exportMenu')?.classList.remove('show'); }
+document.addEventListener('click', closeMenus);
 
 /* ── compare (uses the current selection, first 3) ── */
 async function showCompare() {
@@ -579,8 +830,12 @@ async function showCompare() {
 }
 
 /* ── boot ── */
-function refresh() { loadStats().catch(() => {}); loadJobs().catch(() => {}); }
-for (const id of ['fit', 'appStatus', 'source', 'sort', 'last24h', 'hideClosed']) {
+function refresh() {
+  // stats first so the "All jobs" tab badge (jobsTracked) is known before tabs render.
+  loadStats().then(loadSections).catch(() => {});
+  loadJobs().catch(() => {});
+}
+for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
   $(id).addEventListener('change', loadJobs);
 }
 let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(loadJobs, 250); });

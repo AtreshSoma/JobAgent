@@ -25,6 +25,10 @@
  *   POST /api/jobs/:id/assist             fill the approved packet, stop before submit
  *   POST /api/run {phase}                 discover | score | prepare (async)
  *   GET  /api/run/status                  current/last run state
+ *   GET  /api/sections                    curated command-center sections
+ *   POST /api/jobs/:id/note {note}        save a free-text note on a job
+ *   POST /api/decide-batch {jobIds,decision}  bulk shortlist/reject/archive
+ *   GET  /api/export/jobs.csv             rich CSV of every job + score/status
  */
 
 import { createServer } from 'node:http';
@@ -35,6 +39,7 @@ import { fileURLToPath } from 'node:url';
 import {
   dashboardStats, listBoardJobs, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
+  dashboardSections, setJobNote, buildExportRows, exportRowsToCsv,
 } from './data.js';
 import { runDiscover, runScore, runPrepareApps, loadPacket, recordAssistResult } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
@@ -289,6 +294,18 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method === 'GET' && path === '/api/run/status') {
       return sendJson(res, 200, runState);
     }
+    if (req.method === 'GET' && path === '/api/sections') {
+      return sendJson(res, 200, dashboardSections(db, { now: nowDate() }));
+    }
+    if (req.method === 'GET' && path === '/api/export/jobs.csv') {
+      const csv = exportRowsToCsv(buildExportRows(db, { now: nowDate() }));
+      res.writeHead(200, {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': 'attachment; filename="jobagent_jobs.csv"',
+      });
+      res.end(csv);
+      return;
+    }
     if (req.method === 'GET' && path === '/api/export/tracker.csv') {
       const root = config?.root;
       if (!root) return sendJson(res, 400, { error: 'no project root configured for export' });
@@ -325,6 +342,18 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       refreshTracker();
       return sendJson(res, 200, { approved, failed });
     }
+    if (req.method === 'POST' && path === '/api/decide-batch') {
+      const body = await readBody(req);
+      const ids = Array.isArray(body.jobIds) ? [...new Set(body.jobIds.filter(Boolean))] : [];
+      const updated = [];
+      const failed = [];
+      for (const jobId of ids) {
+        try { applyDecision(db, jobId, body.decision); updated.push(jobId); }
+        catch (err) { failed.push({ jobId, error: err.message }); }
+      }
+      refreshTracker();
+      return sendJson(res, 200, { updated, failed, decision: body.decision });
+    }
 
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)(?:\/([a-z-]+))?$/);
     if (jobMatch) {
@@ -353,6 +382,11 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       if (req.method === 'POST' && action === 'mark-submitted') {
         const result = markSubmittedByHuman(db, jobId, { now: nowDate() });
         refreshTracker();
+        return sendJson(res, 200, result);
+      }
+      if (req.method === 'POST' && action === 'note') {
+        const body = await readBody(req);
+        const result = setJobNote(db, jobId, body.note);
         return sendJson(res, 200, result);
       }
       if (req.method === 'POST' && action === 'assist') {
