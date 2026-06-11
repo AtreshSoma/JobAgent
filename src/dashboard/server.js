@@ -28,6 +28,7 @@
  *   GET  /api/sections                    curated command-center sections
  *   POST /api/jobs/:id/note {note}        save a free-text note on a job
  *   POST /api/decide-batch {jobIds,decision}  bulk shortlist/reject/archive
+ *   POST /api/add-url {url}               ingest one public job URL (score + track)
  *   GET  /api/export/jobs.csv             rich CSV of every job + score/status
  */
 
@@ -43,7 +44,7 @@ import {
 } from './data.js';
 import {
   runDiscover, runScore, runPrepareApps, loadPacket, recordAssistResult,
-  preparePacketsForJobs,
+  preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
@@ -389,6 +390,13 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       }
       refreshTracker();
       return sendJson(res, 200, { updated, failed, decision: body.decision });
+    }
+    if (req.method === 'POST' && path === '/api/add-url') {
+      const body = await readBody(req);
+      const ingestImpl = deps.ingestUrlFn ?? ingestUrl;
+      const result = await ingestImpl({ config, db, logger, url: body.url, deps });
+      refreshTracker();
+      return sendJson(res, 200, result);
     }
 
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)(?:\/([a-z-]+))?$/);

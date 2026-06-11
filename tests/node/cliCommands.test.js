@@ -7,8 +7,9 @@ import { openDatabase } from '../../src/logging/db.js';
 import { enqueueForApproval, APPROVAL_STATUS } from '../../src/apply/approvalQueue.js';
 import {
   runDiscover, runAssist, listApprovalQueue, approvePacket, rejectPacket,
-  listPackets, getPacket, loadPacket,
+  listPackets, getPacket, loadPacket, ingestUrl,
 } from '../../src/cli/commands.js';
+import { loadConfig } from '../../src/config/loadConfig.js';
 import { LIFECYCLE } from '../../src/lifecycle.js';
 
 function writePacketFile(dir, id, packet) {
@@ -92,6 +93,83 @@ describe('runDiscover', () => {
     expect(r.jobs[0].lifecycle).toBe(LIFECYCLE.FOUND);
     expect(r.jobs[0].score).toBe(null);
     expect(r.found.endsWith('found_jobs.json')).toBe(true);
+  });
+});
+
+describe('ingestUrl (add a job by URL)', () => {
+  let db;
+  const config = loadConfig({ loadEnv: false, env: {} });
+  beforeEach(() => { db = openDatabase({ path: ':memory:' }); });
+  afterEach(() => db.close());
+
+  // A page exposing a schema.org JobPosting JSON-LD (the legitimate public path).
+  const jdHtml = (title, desc, org = 'Microsoft') => `<!doctype html><html><head>
+    <script type="application/ld+json">${JSON.stringify({
+      '@context': 'https://schema.org', '@type': 'JobPosting',
+      title, description: desc, hiringOrganization: { name: org },
+      jobLocation: { address: { addressLocality: 'Redmond', addressRegion: 'WA', addressCountry: 'US' } },
+      datePosted: '2026-06-01',
+    })}</script></head><body><h1>${title}</h1></body></html>`;
+
+  it('reads, scores, and persists a strong-fit posting from a public URL', async () => {
+    const desc = 'Senior Data Engineer building Azure Databricks medallion lakehouses with PySpark, '
+      + 'Delta Lake, Azure Data Factory, Synapse, and Power BI. We sponsor H-1B visas.';
+    const fetchImpl = async () => ({ ok: true, status: 200, text: async () => jdHtml('Senior Data Engineer', desc) });
+    const r = await ingestUrl({
+      config, db, url: 'https://careers.microsoft.com/jobs/123', deps: { fetchImpl, now: new Date('2026-06-05') },
+    });
+    expect(r.company).toBe('Microsoft');
+    expect(r.title).toBe('Senior Data Engineer');
+    expect(typeof r.score).toBe('number');
+    expect(r.appStatusHint).toBe('scored');
+    // Persisted so it shows on the board.
+    const job = db.getJob(r.id);
+    expect(job).toBeTruthy();
+    expect(job.company).toBe('Microsoft');
+    expect(job.status).toBe('scored');
+    expect(job.url).toBe('https://careers.microsoft.com/jobs/123');
+  });
+
+  it('rejects an invalid (non-http) URL', async () => {
+    await expect(ingestUrl({ config, db, url: 'not a url' })).rejects.toThrow(/valid public job URL/);
+  });
+
+  it('reports honestly when the page is blocked (no fabricated job)', async () => {
+    const fetchImpl = async () => ({ ok: false, status: 403, text: async () => 'Forbidden' });
+    await expect(ingestUrl({ config, db, url: 'https://blocked.example.com/x', deps: { fetchImpl } }))
+      .rejects.toThrow(/could not read that page/);
+  });
+
+  it('reports when no job posting is found on the page', async () => {
+    const fetchImpl = async () => ({ ok: true, status: 200, text: async () => '<html><body></body></html>' });
+    await expect(ingestUrl({ config, db, url: 'https://empty.example.com/x', deps: { fetchImpl } }))
+      .rejects.toThrow(/no job posting found/);
+  });
+
+  it('persists even an off-target posting so the user sees it was considered', async () => {
+    const fetchImpl = async () => ({ ok: true, status: 200,
+      text: async () => jdHtml('Warehouse Associate', 'Lift boxes in the warehouse. No remote.', 'Acme') });
+    const r = await ingestUrl({ config, db, url: 'https://careers.acme.com/jobs/9', deps: { fetchImpl } });
+    expect(['scored', 'discarded']).toContain(r.appStatusHint);
+    expect(db.getJob(r.id)).toBeTruthy();
+  });
+
+  it('still SCORES a stale posting (manual add overrides the bulk freshness filter)', async () => {
+    // A deliberately-pasted older posting must be scored, not silently discarded
+    // with a null score — that was the "why am I not seeing the score?" bug.
+    const stale = jdHtml('Senior Data Engineer',
+      'Azure Databricks, PySpark, Delta Lake, Synapse, Power BI. H-1B sponsorship available.');
+    const dated = stale.replace('"datePosted":"2026-06-01"', '"datePosted":"2026-04-01"');
+    const fetchImpl = async () => ({ ok: true, status: 200, text: async () => dated });
+    const r = await ingestUrl({
+      config, db, url: 'https://careers.microsoft.com/jobs/stale', deps: { fetchImpl, now: new Date('2026-06-11') },
+    });
+    expect(typeof r.score).toBe('number');        // scored, not null
+    expect(r.score).toBeGreaterThan(0);
+    expect(r.caveat).toMatch(/stale_posting/);     // staleness surfaced as a caveat
+    const job = db.getJob(r.id);
+    expect(job.score).not.toBeNull();
+    expect(job.explanation).toMatch(/Heads-up.*stale/);
   });
 });
 

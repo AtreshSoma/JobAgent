@@ -166,6 +166,13 @@
   #submitModal input, #submitModal textarea { width: 100%; background: var(--panel2);
     color: var(--text); border: 1px solid var(--line); border-radius: 7px;
     padding: 7px 9px; font: inherit; margin: 4px 0 10px; box-sizing: border-box; }
+  #addUrlModal { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 45;
+                 display: none; align-items: center; justify-content: center; }
+  #addUrlModal.show { display: flex; }
+  #addUrlModal .box { background: var(--panel); border: 1px solid var(--accent);
+                      border-radius: 12px; padding: 20px; width: 460px; max-width: 92vw; }
+  #addUrlModal input { width: 100%; background: var(--panel2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; font: inherit; box-sizing: border-box; }
   #compare { position: fixed; inset: 6% 8%; background: var(--panel); z-index: 40;
              border: 1px solid var(--accent); border-radius: 12px; padding: 18px;
              overflow: auto; display: none; box-shadow: var(--shadow); }
@@ -204,6 +211,8 @@
     title="Recompute fit, sponsorship likelihood, seniority, location/remote fit, freshness, and ease of applying for every discovered job.">Re-score Jobs</button>
   <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')"
     title="Full pass: find new jobs, re-score, and tailor a resume packet for every strong match. To prepare specific jobs instead, select rows and use “Prepare selected”.">Auto-Prepare Best</button>
+  <button id="btnAddUrl" onclick="openAddUrl()"
+    title="Add a specific posting from any public job URL (e.g. Microsoft, Amazon, Apple) — it is scored and tracked like a discovered job.">＋ Add job by URL</button>
   <span class="menu">
     <button class="ghost" onclick="toggleMenu(event)" title="View reports first, then export">📊 Reports ▾</button>
     <div class="menu-pop" id="exportMenu">
@@ -213,6 +222,21 @@
     </div>
   </span>
 </header>
+
+<div id="addUrlModal">
+  <div class="box">
+    <h2 style="margin-top:0">Add a job by URL</h2>
+    <div class="muted" style="margin-bottom:8px">Paste a public job posting URL from any company career site
+      (Microsoft, Amazon, Apple, anywhere). It is read, scored against your profile, and added to the board —
+      then you can shortlist, prepare a tailored resume, and apply. Sites that block automated reads are reported honestly.</div>
+    <input id="addUrlInput" type="url" placeholder="https://careers.example.com/jobs/12345" autocomplete="off">
+    <div id="addUrlMsg" class="muted" style="margin-top:6px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button class="small" onclick="closeAddUrl()">Cancel</button>
+      <button class="small primary" id="addUrlGo" onclick="submitAddUrl()">Add &amp; score</button>
+    </div>
+  </div>
+</div>
 
 <div class="ctxbar" id="ctxbar">
   <span id="freshness" class="muted">Loading…</span>
@@ -689,6 +713,39 @@ async function confirmSubmitted() {
   } catch (e) { toast(e.message, true); }
 }
 
+/* ── add a job by URL (compliant manual path for custom/bot-protected sites) ── */
+function openAddUrl() {
+  $('addUrlInput').value = '';
+  $('addUrlMsg').textContent = '';
+  $('addUrlMsg').className = 'muted';
+  $('addUrlGo').disabled = false;
+  $('addUrlModal').classList.add('show');
+  setTimeout(() => $('addUrlInput').focus(), 30);
+}
+function closeAddUrl() { $('addUrlModal').classList.remove('show'); }
+async function submitAddUrl() {
+  const url = $('addUrlInput').value.trim();
+  if (!url) { $('addUrlMsg').textContent = 'Paste a job URL first.'; $('addUrlMsg').className = 'st-blocked'; return; }
+  $('addUrlGo').disabled = true;
+  $('addUrlMsg').className = 'muted';
+  $('addUrlMsg').textContent = 'Reading and scoring the posting…';
+  try {
+    const r = await api('/api/add-url', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url }) });
+    const where = r.tier === 'Discard'
+      ? `scored ${r.score ?? '—'} — below threshold (added under "All jobs")`
+      : `scored ${r.score}/100 · ${esc(r.tier)}`;
+    toast(`Added: ${esc(r.company || 'job')} — ${esc(r.title || '')} · ${where}`);
+    closeAddUrl();
+    refresh();
+    if (r.id) select(r.id);
+  } catch (e) {
+    $('addUrlMsg').className = 'st-blocked';
+    $('addUrlMsg').textContent = e.message;
+    $('addUrlGo').disabled = false;
+  }
+}
+
 /* ── prepare selected ── */
 async function batchPrepare() {
   const ids = selIds();
@@ -1001,6 +1058,11 @@ for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeSta
   $(id).addEventListener('change', onFilterChange);
 }
 let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(onFilterChange, 250); });
+// Add-job-by-URL modal: Enter submits, Escape closes.
+$('addUrlInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); submitAddUrl(); }
+  else if (e.key === 'Escape') { closeAddUrl(); }
+});
 // pollRun() runs continuously (fast while a run is active, slow when idle) so it
 // doubles as a health ping: the connection indicator recovers and the board
 // reloads automatically once the server is restarted or a run finishes.

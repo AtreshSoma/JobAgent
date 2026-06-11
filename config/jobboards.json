@@ -210,6 +210,9 @@
         { "host": "comcast.wd5.myworkdayjobs.com", "tenant": "comcast", "site": "Comcast_Careers", "company": "Comcast", "searchText": "data engineer", "pageSize": 20 },
         { "host": "target.wd5.myworkdayjobs.com", "tenant": "target", "site": "targetcareers", "company": "Target", "searchText": "data engineer", "pageSize": 20 },
         { "host": "blackrock.wd1.myworkdayjobs.com", "tenant": "blackrock", "site": "BlackRock_Professional", "company": "BlackRock", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "citi.wd5.myworkdayjobs.com", "tenant": "citi", "site": "2", "company": "Citi", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "hpe.wd5.myworkdayjobs.com", "tenant": "hpe", "site": "Jobsathpe", "company": "Hewlett Packard Enterprise", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "warnerbros.wd5.myworkdayjobs.com", "tenant": "warnerbros", "site": "global", "company": "Warner Bros. Discovery", "searchText": "data engineer", "pageSize": 20 },
         { "host": "workday.wd5.myworkdayjobs.com", "tenant": "workday", "site": "Workday", "company": "Workday", "searchText": "data engineer", "pageSize": 20 }
       ],
       "rateLimitMs": 4000,

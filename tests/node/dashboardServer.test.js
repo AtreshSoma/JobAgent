@@ -379,6 +379,41 @@ describe('command-center endpoints (sections, notes, export, decide-batch)', () 
     expect(r.body.updated).toEqual([]);
     expect(r.body.failed[0].error).toMatch(/invalid decision/);
   });
+
+  it('POST /api/add-url ingests a pasted job (via injected ingest impl) and refreshes the tracker', async () => {
+    await dash.close();
+    let received = null;
+    dash = await startDashboard({
+      config: { root: '/fake/root' }, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }),
+        ingestUrlFn: async ({ url }) => {
+          received = url;
+          return { id: 'ext1', company: 'Microsoft', title: 'Senior Data Engineer', url, score: 82, tier: 'Apply', appStatusHint: 'scored' };
+        },
+      },
+    });
+    const r = await post('/api/add-url', { url: 'https://careers.microsoft.com/jobs/123' });
+    expect(r.status).toBe(200);
+    expect(received).toBe('https://careers.microsoft.com/jobs/123');
+    expect(r.body).toMatchObject({ company: 'Microsoft', tier: 'Apply', score: 82 });
+  });
+
+  it('POST /api/add-url surfaces a blocked-page error with its status code', async () => {
+    await dash.close();
+    dash = await startDashboard({
+      config: { root: '/fake/root' }, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }),
+        ingestUrlFn: async () => { throw Object.assign(new Error('could not read that page (HTTP 403)'), { statusCode: 422 }); },
+      },
+    });
+    const r = await post('/api/add-url', { url: 'https://blocked.example.com/x' });
+    expect(r.status).toBe(422);
+    expect(r.body.error).toMatch(/could not read that page/);
+  });
 });
 
 describe('reports, prepare-selected, and submission-record endpoints', () => {
