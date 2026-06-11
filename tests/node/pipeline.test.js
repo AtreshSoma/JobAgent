@@ -8,7 +8,7 @@ import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
 import { listPending } from '../../src/apply/approvalQueue.js';
 import { loadConfig } from '../../src/config/loadConfig.js';
-import { parseArgs, resolveMode } from '../../src/index.js';
+import { parseArgs, resolveMode, main } from '../../src/index.js';
 import * as F from './fixtures/jobs.js';
 
 const base = loadConfig({ loadEnv: false, env: {} });
@@ -32,6 +32,13 @@ describe('CLI arg parsing', () => {
     expect(resolveMode(parseArgs(['--report']), {})).toBe('REPORT');
     expect(resolveMode(parseArgs(['--mode=BOGUS']), {})).toBe('DRY_RUN');
     expect(resolveMode(parseArgs([]), { RUN_MODE: 'LIVE_ASSIST' })).toBe('LIVE_ASSIST');
+  });
+
+  // Regression: a typo'd command used to fall through to a full legacy
+  // DRY_RUN pipeline run. It must fail fast with the list of known commands.
+  it('rejects unknown commands instead of silently running the pipeline', async () => {
+    await expect(main(['scor'], {})).rejects.toThrow(/unknown command "scor"/);
+    await expect(main(['scor'], {})).rejects.toThrow(/score/); // lists known commands
   });
 });
 

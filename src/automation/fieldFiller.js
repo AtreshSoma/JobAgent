@@ -30,17 +30,35 @@ async function safeCount(page, selector) {
   try { return await page.locator(selector).count(); } catch { return 0; }
 }
 
+/** True when `needle` appears as a whole word/phrase inside `haystack`. */
+function wholeWordIn(haystack, needle) {
+  const n = String(needle).trim();
+  if (!n) return false;
+  const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try { return new RegExp(`\\b${esc}\\b`).test(haystack); } catch { return haystack.includes(n); }
+}
+
 /** Selectors that commonly hold the rendered options of a typeahead/combobox. */
 const OPTION_SELECTORS = ['[role="option"]', '.select__option', 'li[role="option"]', '[class*="option"]'];
+
+/**
+ * Longest typed value we trust a typeahead to have filtered for us. A short
+ * value (a city, "Yes", "Remote") may legitimately commit the highlighted/top
+ * option even without a textual match. A long sentence value never should — if
+ * nothing matches we report the field unfilled rather than click a random first
+ * option (that is how the wrong choice slipped into an acknowledgement dropdown).
+ */
+const MAX_COMBOBOX_AUTOPICK = 40;
 
 /**
  * After typing into a combobox/typeahead, pick the dropdown option that best
  * matches `value`. Returns the action taken or an error. Best-effort: tries the
  * common option containers, prefers an exact (then substring) text match, and
- * falls back to committing the highlighted option with Enter.
+ * only commits the highlighted/top option for SHORT typed values.
  */
 async function pickComboboxOption(page, field, value) {
   const want = String(value ?? '').trim().toLowerCase();
+  const allowTopMatch = want.length > 0 && want.length <= MAX_COMBOBOX_AUTOPICK;
   const scope = field.listboxSelector ? `${field.listboxSelector} ` : '';
 
   for (const base of OPTION_SELECTORS) {
@@ -53,8 +71,14 @@ async function pickComboboxOption(page, field, value) {
     try { texts = await page.locator(sel).allTextContents(); } catch { texts = []; }
     const norm = texts.map((t) => String(t ?? '').trim().toLowerCase());
     let idx = norm.findIndex((t) => t === want);
-    if (idx < 0) idx = norm.findIndex((t) => t && (t.includes(want) || want.includes(t)));
-    if (idx < 0) idx = 0; // typeahead already filtered by what we typed -> top match
+    // Option text contains what we typed (typeahead prefix/substring match).
+    if (idx < 0) idx = norm.findIndex((t) => t && t.includes(want));
+    // What we typed contains the option text — but only as a WHOLE WORD, so a
+    // two-letter option like "No" can never match inside "ack-no-wledge".
+    if (idx < 0) idx = norm.findIndex((t) => t && wholeWordIn(want, t));
+    // No textual match: only trust the typeahead's top result for short values.
+    if (idx < 0 && allowTopMatch) idx = 0;
+    if (idx < 0) return { ok: false, action: 'combobox', error: `no option matches "${value}"` };
 
     try {
       await page.locator(sel).nth(idx).click();
@@ -62,8 +86,9 @@ async function pickComboboxOption(page, field, value) {
     } catch { /* try the next container shape */ }
   }
 
-  // Nothing clickable found: commit the highlighted option via keyboard.
-  if (page.keyboard && typeof page.keyboard.press === 'function') {
+  // Nothing clickable found: commit the highlighted option via keyboard — but
+  // only for short values (never blindly commit after a long/sentence value).
+  if (allowTopMatch && page.keyboard && typeof page.keyboard.press === 'function') {
     try { await page.keyboard.press('Enter'); return { ok: true, action: 'combobox-enter' }; }
     catch { /* fall through */ }
   }
@@ -79,10 +104,12 @@ export function matchOption(options = [], value) {
   let hit = options.find((o) => String(o.label ?? '').trim().toLowerCase() === want)
     || options.find((o) => String(o.value ?? '').trim().toLowerCase() === want);
   if (hit) return hit;
-  // 2. substring either direction
+  // 2. option label contains the wanted value, OR the wanted value contains the
+  //    label as a WHOLE WORD (so a 2-letter option like "No" never matches
+  //    inside an unrelated word such as "acknowledge").
   hit = options.find((o) => {
     const lab = String(o.label ?? '').trim().toLowerCase();
-    return lab && (lab.includes(want) || want.includes(lab));
+    return lab && (lab.includes(want) || wholeWordIn(want, lab));
   });
   return hit ?? null;
 }
@@ -133,7 +160,11 @@ export async function applyValue(page, field, value) {
       // then commit a matching option from the dropdown.
       try { await input.click?.(); } catch { /* best effort */ }
       await input.fill(String(value));
-      return pickComboboxOption(page, field, value);
+      const res = await pickComboboxOption(page, field, value);
+      // Never leave stray filter text behind when we could not commit a choice —
+      // an unselected combobox showing leftover text reads as a wrong answer.
+      if (!res.ok) { try { await input.fill?.(''); } catch { /* best effort */ } }
+      return res;
     }
 
     // text-like + textarea

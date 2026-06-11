@@ -42,6 +42,37 @@ describe('screeningQA', () => {
     expect(r.answered).toBe(true);
     expect(r.answer).toBe('Yes');
   });
+
+  it('answers a per-month salary question with the monthly figure (not the yearly one)', () => {
+    const r = answerScreeningQuestion('What is your salary expectation for this role? (In USD per month)', screeningAnswers);
+    expect(r.answered).toBe(true);
+    expect(r.matchedId).toBe('salary_expectation_monthly');
+    expect(r.answer.toLowerCase()).toContain('per month');
+  });
+
+  it('still answers a yearly salary question with the annual figure', () => {
+    const r = answerScreeningQuestion('What is your desired salary?', screeningAnswers);
+    expect(r.answered).toBe(true);
+    expect(r.matchedId).toBe('salary_expectation');
+    expect(r.answer).toContain('150,000');
+  });
+
+  it('answers the free-text technical screening questions from the profile', () => {
+    const cases = [
+      ['Which data pipelines have you built, and what tools you used to build them?', 'data_pipelines_built'],
+      ['Do you have experience with Snowflake, Redshift, or BigQuery?', 'cloud_warehouse_experience'],
+      ['How do you monitor and resolve pipeline failures?', 'monitor_pipeline_failures'],
+      ['Have you used dbt or a similar data transformation framework?', 'dbt_experience'],
+      ['Describe your real-time streaming data experience.', 'streaming_experience'],
+      ['How do you ensure data quality and compliance with regulations?', 'data_quality_compliance'],
+    ];
+    for (const [question, expectedId] of cases) {
+      const r = answerScreeningQuestion(question, screeningAnswers);
+      expect(r.answered, question).toBe(true);
+      expect(r.matchedId, question).toBe(expectedId);
+      expect(r.answer.length, question).toBeGreaterThan(20);
+    }
+  });
 });
 
 describe('atsDetector', () => {
@@ -84,6 +115,48 @@ describe('formPrefill', () => {
     const { plan } = buildPrefillPlan(fields, { candidate, screeningAnswers });
     expect(plan.find((p) => p.selector === '#phone')?.field).toBe('phone');
     expect(plan.find((p) => p.selector === '#ext')).toBeUndefined();
+  });
+
+  it('treats a combined "First and Last Name" control as the FULL name', () => {
+    // Regression: "Legal First and Last Name" contains the substring "last name"
+    // and used to be filled with only the surname.
+    expect(classifyLabel('Legal First and Last Name')).toBe('fullName');
+    expect(classifyLabel('First and Last Name')).toBe('fullName');
+    expect(classifyLabel('Full Name')).toBe('fullName');
+    expect(classifyLabel('First Name')).toBe('firstName');
+    expect(classifyLabel('Last Name')).toBe('lastName');
+    expect(valueForField('fullName', candidate)).toBe(candidate.identity.fullName);
+  });
+
+  it('never matches a profile field inside an unrelated word or sentence', () => {
+    // "stated" contains "state"; "United States" contains "state"; these used to
+    // be classified as the State field and filled with the candidate's state.
+    expect(classifyLabel('I acknowledge I have read and understand the stated responsibilities of this position')).toBeNull();
+    expect(classifyLabel('Are you authorized to work in the United States?')).toBeNull();
+    expect(classifyLabel('Do you now or will you in the future need an employer to sponsor you for a visa?')).toBeNull();
+    // The real State field still classifies correctly.
+    expect(classifyLabel('State')).toBe('state');
+    expect(classifyLabel('State / Province')).toBe('state');
+  });
+
+  it('does not write the candidate State into a long acknowledgement/sponsorship field', () => {
+    const fields = [
+      { label: 'State', selector: '#state' },
+      { label: 'I acknowledge carefully reading the posted job description and understand the stated responsibilities', selector: '#ack' },
+    ];
+    const { plan } = buildPrefillPlan(fields, { candidate, screeningAnswers });
+    expect(plan.find((p) => p.selector === '#state')?.field).toBe('state');
+    // The acknowledgement must NOT be filled with the State (or anything) from the profile.
+    const ack = plan.find((p) => p.selector === '#ack');
+    expect(ack?.source).not.toBe('profile');
+  });
+
+  it('answers the visa-phrased sponsorship question and maps it to a Yes option', () => {
+    const q = 'Do you now or will you in the future need an employer to sponsor you for a visa to work in the United States?';
+    const r = answerScreeningQuestion(q, screeningAnswers, { choices: ['Select...', 'Yes', 'No'] });
+    expect(r.answered).toBe(true);
+    expect(r.matchedId).toBe('require_sponsorship');
+    expect(r.answer).toBe('Yes');
   });
 
   it('builds a plan and flags unknown fields for the user', () => {

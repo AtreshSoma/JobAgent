@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Workday-style Fixture Application Form</title>
+</head>
+<body>
+  <h1>Apply: Senior Data Engineer</h1>
+  <form id="application_form">
+    <!-- Combined name control: must receive the FULL name, not just the surname.
+         (Regression: the substring "last name" used to win here.) -->
+    <label for="legal_name">Legal First and Last Name</label>
+    <input id="legal_name" name="legal_name" type="text" />
+
+    <!-- Long question containing "United States": the word "state" must NOT be
+         matched inside "States" and write the candidate's State here. This is a
+         screening question and must be answered "Yes". -->
+    <label for="sponsor">Do you now or will you in the future need an employer to sponsor you for a visa to work in the United States?</label>
+    <select id="sponsor" name="sponsor">
+      <option value="">Select...</option>
+      <option value="Yes">Yes</option>
+      <option value="No">No</option>
+    </select>
+
+    <!-- Another long question containing "United States". -->
+    <label for="work_auth">Are you authorized to work in the United States?</label>
+    <textarea id="work_auth" name="work_auth"></textarea>
+
+    <!-- Long acknowledgement containing "stated": "state" must NOT match inside
+         "stated" and write the candidate's State here. No confident answer
+         exists, so the field must be LEFT BLANK for the human. -->
+    <label for="ack">I acknowledge carefully reading the posted job description and fully understand the stated responsibilities and duties associated with this position.</label>
+    <input id="ack" name="ack" type="text" />
+
+    <!-- The genuine State field still classifies and fills correctly. -->
+    <label for="state">State</label>
+    <input id="state" name="state" type="text" />
+
+    <button id="submit_app" type="button">Submit application</button>
+  </form>
+</body>
+</html>

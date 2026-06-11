@@ -54,6 +54,12 @@ CREATE TABLE IF NOT EXISTS jobs (
   output_folder_path TEXT,
   applied INTEGER DEFAULT 0,
   applied_at TEXT,
+  user_decision TEXT,
+  decided_at TEXT,
+  assist_filled_count INTEGER,
+  assist_blockers TEXT,
+  notes TEXT,
+  submitted_confirmation TEXT,
   created_at TEXT,
   updated_at TEXT
 );
@@ -107,7 +113,9 @@ const JOB_COLUMNS = [
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
   'ats_platform', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
   'cover_letter_path', 'application_packet_path', 'output_folder_path',
-  'applied', 'applied_at', 'created_at', 'updated_at',
+  'applied', 'applied_at', 'user_decision', 'decided_at',
+  'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
+  'created_at', 'updated_at',
 ];
 
 /**
@@ -138,10 +146,14 @@ function applyMigrations(db) {
     }
   }
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
-  for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path']) {
+  for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
+    'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }
+  }
+  if (!jobCols.has('assist_filled_count')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN assist_filled_count INTEGER');
   }
 }
 
@@ -209,6 +221,23 @@ export class Database {
     if (status) { clauses.push('status = ?'); params.push(status); }
     const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
     return this.db.prepare(`SELECT * FROM jobs${where} ORDER BY score DESC`).all(...params);
+  }
+
+  /**
+   * Record a USER decision on a job (dashboard actions). Decisions are the
+   * human's own triage state — they never overwrite pipeline status.
+   * @param {string} id job id
+   * @param {'shortlisted'|'rejected'|'archived'|null} decision null clears it
+   */
+  setUserDecision(id, decision) {
+    const allowed = new Set(['shortlisted', 'rejected', 'archived', null]);
+    if (!allowed.has(decision)) {
+      throw new Error(`invalid user decision: ${decision} (use shortlisted/rejected/archived/null)`);
+    }
+    this.db.prepare(
+      'UPDATE jobs SET user_decision = ?, decided_at = ?, updated_at = ? WHERE id = ?',
+    ).run(decision, decision ? nowIso() : null, nowIso(), id);
+    return this.getJob(id);
   }
 
   /** @param {string} id */

@@ -156,6 +156,25 @@ describe('fieldFiller.applyValue (combobox/typeahead)', () => {
     expect(res.error).toMatch(/no matching option/);
   });
 
+  it('refuses to auto-pick a non-matching option for a long/sentence value', async () => {
+    // Regression: a long value (e.g. an acknowledgement sentence typed into a
+    // dropdown) must NOT commit a random first option — it leaves the field
+    // unfilled and clears the stray filter text instead of choosing wrongly.
+    const longValue = 'I acknowledge that I have carefully read the entire job description and understand it';
+    const page = makeComboboxPage({
+      inputSelector: '#ack',
+      optionMap: { '[role="option"]': ['Yes', 'No'] },
+      keyboard: true,
+    });
+    const res = await applyValue(page, { kind: 'combobox', selector: '#ack' }, longValue);
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/no option matches/);
+    // It must NOT have clicked any option, and it must have cleared the input.
+    expect(page.calls.some((c) => c.action === 'optionClick')).toBe(false);
+    expect(page.calls.some((c) => c.action === 'press')).toBe(false);
+    expect(page.calls).toContainEqual({ selector: '#ack', action: 'fill', value: '' });
+  });
+
   it('refuses to act when the combobox selector is not unique', async () => {
     const page = makeComboboxPage({ inputSelector: '#other' });
     const res = await applyValue(page, { kind: 'combobox', selector: '#loc' }, 'x');

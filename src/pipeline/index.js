@@ -303,8 +303,12 @@ function reportRow(job, discovery, extra = {}) {
   };
 }
 
-/** Build, persist, and enqueue an application packet for one strong job. */
-async function preparePacket({ config, db, logger, job, score, tier, deps, counters }) {
+/**
+ * Build, persist, and enqueue an application packet for one job.
+ * Exported so "Prepare selected" (dashboard) can prepare specific jobs the
+ * human chose, not only the tiers the pipeline auto-selects.
+ */
+export async function preparePacket({ config, db, logger, job, score, tier, deps, counters }) {
   const now = deps.now ?? new Date();
   // Professional, recruiter-friendly output location for every artifact:
   //   applications/output/{Company}/{Title}_{Date}/...

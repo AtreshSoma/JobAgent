@@ -184,33 +184,54 @@ const ATS_FRAME_RE = /(greenhouse\.io|grnhse|lever\.co|myworkdayjobs|ashbyhq|ici
  * is a drop-in scope for the fillers). Otherwise — including unit-test fakes
  * with no `frames()` — returns the page unchanged.
  *
+ * Embedded ATS iframes load asynchronously, so a single look at `page.frames()`
+ * can race the iframe's navigation and silently fall back to the (empty) host
+ * document. We therefore poll briefly: as long as an ATS-looking embed exists
+ * but has no scannable fields yet, or a child frame is still on about:blank,
+ * retry until `timeoutMs` elapses. Pages with no embeds return immediately.
+ *
  * @param {object} page Playwright page (or a fake)
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=3000] how long to wait for an embed to load
+ * @param {number} [options.pollMs=150] delay between polls
  * @returns {Promise<object>} the page or an embedded form frame
  */
-export async function resolveFormScope(page) {
+export async function resolveFormScope(page, { timeoutMs = 3000, pollMs = 150 } = {}) {
   if (!page || typeof page.frames !== 'function') return page;
-  let frames;
-  try { frames = page.frames(); } catch { return page; }
-  if (!Array.isArray(frames) || frames.length === 0) return page;
+  const deadline = Date.now() + timeoutMs;
 
-  // Only consider CHILD frames (skip the main frame) whose URL looks like an
-  // embedded ATS form. Prefer one that actually contains fillable fields.
-  const embeds = frames.filter((f) => {
-    if (!f || typeof f.parentFrame !== 'function') return false;
-    let parent = null;
-    try { parent = f.parentFrame(); } catch { return false; }
-    if (!parent) return false;
-    let url = '';
-    try { url = f.url() || ''; } catch { url = ''; }
-    return ATS_FRAME_RE.test(url);
-  });
+  for (;;) {
+    let frames;
+    try { frames = page.frames(); } catch { return page; }
+    if (!Array.isArray(frames) || frames.length === 0) return page;
 
-  for (const frame of embeds) {
-    try {
-      const fields = await scanFields(frame);
-      if (fields.length > 0) return frame;
-    } catch { /* try the next embed */ }
+    // Only consider CHILD frames (skip the main frame). Track which look like
+    // an embedded ATS form and which haven't navigated anywhere yet.
+    const embeds = [];
+    let pendingChild = false;
+    for (const f of frames) {
+      if (!f || typeof f.parentFrame !== 'function') continue;
+      let parent = null;
+      try { parent = f.parentFrame(); } catch { continue; }
+      if (!parent) continue;
+      let url = '';
+      try { url = f.url() || ''; } catch { url = ''; }
+      if (ATS_FRAME_RE.test(url)) embeds.push(f);
+      else if (url === '' || url === 'about:blank') pendingChild = true;
+    }
+
+    for (const frame of embeds) {
+      try {
+        const fields = await scanFields(frame);
+        if (fields.length > 0) return frame;
+      } catch { /* try the next embed */ }
+    }
+
+    // Nothing fillable yet. If no embed exists (and none could still appear),
+    // this is a plain top-level form — return the page without waiting.
+    if (embeds.length === 0 && !pendingChild) return page;
+    if (Date.now() >= deadline) return page;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
-  return page;
 }
 

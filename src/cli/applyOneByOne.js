@@ -21,7 +21,7 @@ import { relative } from 'node:path';
 
 import { assistApply } from '../automation/applyRunner.js';
 import { createBrowserSession } from '../automation/browser.js';
-import { loadPacket } from './commands.js';
+import { loadPacket, recordAssistResult } from './commands.js';
 import { listPending, APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { parseSelection } from './guided.js';
 import { isAggregatorHost } from '../search/adapters/apify.js';
@@ -205,7 +205,7 @@ export async function runApply({ config, db, logger, options = {}, deps = {} } =
         packet, config, mode: 'LIVE_ASSIST', approval, options, deps: captureDeps,
       });
       results.push(result);
-      try { db.upsertJob({ id: job.id, status: result.status }); } catch { /* ignore */ }
+      recordAssistResult(db, job.id, result);
       logger?.event?.(EVENT_TYPES.PREFILL_STARTED, {
         jobId: job.id,
         message: `apply ${result.status}`,

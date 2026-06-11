@@ -68,7 +68,53 @@ describe('domScanner.resolveFormScope', () => {
     const emptyAts = makeFrame({ url: 'https://greenhouse.io/embed', parent: main, fields: [] });
     const ad = makeFrame({ url: 'https://doubleclick.net/ad', parent: main, fields: [{ kind: 'text', selector: '#x', options: [] }] });
     const page = { frames: () => [main, emptyAts, ad] };
-    expect(await resolveFormScope(page)).toBe(page);
+    expect(await resolveFormScope(page, { timeoutMs: 100, pollMs: 10 })).toBe(page);
+  });
+
+  // Regression: an ATS iframe that loads ASYNCHRONOUSLY used to be missed by
+  // the single-pass scan, so the assistant silently fell back to the empty host
+  // page and filled nothing. resolveFormScope now polls until the embed is ready.
+  it('waits for an embedded ATS frame whose fields appear after a beat', async () => {
+    const main = makeFrame({ url: 'https://jobs.dropbox.com/listing/1', parent: null });
+    let loaded = false;
+    const embed = {
+      url: () => 'https://boards.greenhouse.io/embed/job_app?token=1',
+      parentFrame: () => main,
+      evaluate: async () => (loaded ? [{ kind: 'text', selector: '#first', label: 'First Name', options: [] }] : []),
+    };
+    const page = { frames: () => [main, embed] };
+    setTimeout(() => { loaded = true; }, 30);
+    expect(await resolveFormScope(page, { timeoutMs: 2000, pollMs: 10 })).toBe(embed);
+  });
+
+  it('waits for a child frame still on about:blank to navigate to the ATS form', async () => {
+    const main = makeFrame({ url: 'https://example.com/careers', parent: null });
+    let navigated = false;
+    const child = {
+      url: () => (navigated ? 'https://boards.greenhouse.io/embed/job_app' : 'about:blank'),
+      parentFrame: () => main,
+      evaluate: async () => (navigated ? [{ kind: 'text', selector: '#email', label: 'Email', options: [] }] : []),
+    };
+    const page = { frames: () => [main, child] };
+    setTimeout(() => { navigated = true; }, 30);
+    expect(await resolveFormScope(page, { timeoutMs: 2000, pollMs: 10 })).toBe(child);
+  });
+
+  it('gives up after the timeout when the embed never produces fields', async () => {
+    const main = makeFrame({ url: 'https://example.com/careers', parent: null });
+    const embed = makeFrame({ url: 'https://greenhouse.io/embed', parent: main, fields: [] });
+    const page = { frames: () => [main, embed] };
+    const started = Date.now();
+    expect(await resolveFormScope(page, { timeoutMs: 80, pollMs: 10 })).toBe(page);
+    expect(Date.now() - started).toBeLessThan(1500);
+  });
+
+  it('returns immediately (no polling delay) for a plain top-level form page', async () => {
+    const main = makeFrame({ url: 'https://example.com/apply', parent: null });
+    const page = { frames: () => [main] };
+    const started = Date.now();
+    expect(await resolveFormScope(page)).toBe(page); // default 3s timeout NOT consumed
+    expect(Date.now() - started).toBeLessThan(500);
   });
 });
 

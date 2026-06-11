@@ -22,6 +22,8 @@ env/
 
 # --- Local data & generated artifacts ---
 data/*.db
+data/*.db-shm
+data/*.db-wal
 data/found_jobs.json
 data/scored_jobs.json
 data/queued_jobs.json
@@ -38,8 +40,8 @@ logs/*
 !logs/.gitkeep
 !logs/README.md
 
-# --- Reports ---
-reports/
+# --- Reports (generated output at the repo root ONLY — never src/reports/) ---
+/reports/
 
 # --- Playwright ---
 playwright-report/
