@@ -103,6 +103,30 @@ describe('workday adapter', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('clamps pageSize to 20 (Workday public CXS rejects limit > 20 with HTTP 400)', async () => {
+    let sentLimit = null;
+    const fetchImpl = vi.fn().mockImplementation(async (_url, opts) => {
+      sentLimit = JSON.parse(opts.body).limit;
+      return jsonResponse({ total: 1, jobPostings: [{ title: 'A', externalPath: '/x/A', bulletFields: ['R1'] }] });
+    });
+    await workday.run(
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 30, fetchDetails: false }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(sentLimit).toBe(20);
+  });
+
+  it('uses the configured company display name (falls back to the tenant slug)', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      total: 1, jobPostings: [{ title: 'Data Engineer', externalPath: '/x/DE', bulletFields: ['R1'] }],
+    }));
+    const { jobs } = await workday.run(
+      { tenants: [{ host: 'tmobile.wd1.myworkdayjobs.com', tenant: 'tmobile', site: 'External', company: 'T-Mobile', fetchDetails: false }] },
+      { fetchImpl, maxRetries: 0 },
+    );
+    expect(jobs[0].company).toBe('T-Mobile');
+  });
+
   it('captures HTTP errors without throwing', async () => {
     const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) });
     const { jobs, errors } = await workday.run(

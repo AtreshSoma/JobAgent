@@ -84,8 +84,13 @@ function validateTenant(t = {}) {
     host,
     tenant,
     site,
+    // Optional human company name for the board/tracker; falls back to the slug.
+    company: String(t.company ?? t.name ?? '').trim() || tenant,
     locale: String(t.locale ?? '').trim(),
-    pageSize: Number.isFinite(t.pageSize) && t.pageSize > 0 ? Math.min(t.pageSize, 100) : 20,
+    // Workday's PUBLIC CXS endpoint hard-caps `limit` at 20 and returns HTTP 400
+    // for anything larger. Clamp here so a generous config value never breaks
+    // the request — pagination still walks the full result set across pages.
+    pageSize: Number.isFinite(t.pageSize) && t.pageSize > 0 ? Math.min(t.pageSize, 20) : 20,
     searchText: String(t.searchText ?? '').trim(),
     fetchDetails: t.fetchDetails !== false,
   };
@@ -222,7 +227,7 @@ export function mapJob(p, cfg) {
   return normalizeJob({
     source: 'workday',
     sourceJobId: String(p.bulletFields?.[0] ?? p.externalPath ?? p.title ?? ''),
-    company: cfg.tenant,
+    company: cfg.company ?? cfg.tenant,
     title: p.title ?? '',
     location,
     url,

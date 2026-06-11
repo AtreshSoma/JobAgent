@@ -197,12 +197,24 @@
     {
       "id": "workday-public",
       "adapter": "workday",
-      "enabled": false,
-      "priority": 7,
-      "tenants": [],
+      "enabled": true,
+      "priority": 3,
+      "tenants": [
+        { "host": "tmobile.wd1.myworkdayjobs.com", "tenant": "tmobile", "site": "External", "company": "T-Mobile", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "nvidia.wd5.myworkdayjobs.com", "tenant": "nvidia", "site": "NVIDIAExternalCareerSite", "company": "NVIDIA", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "salesforce.wd12.myworkdayjobs.com", "tenant": "salesforce", "site": "External_Career_Site", "company": "Salesforce", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "adobe.wd5.myworkdayjobs.com", "tenant": "adobe", "site": "external_experienced", "company": "Adobe", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "mastercard.wd1.myworkdayjobs.com", "tenant": "mastercard", "site": "CorporateCareers", "company": "Mastercard", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "paypal.wd1.myworkdayjobs.com", "tenant": "paypal", "site": "jobs", "company": "PayPal", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "cvshealth.wd1.myworkdayjobs.com", "tenant": "cvshealth", "site": "CVS_Health_Careers", "company": "CVS Health", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "comcast.wd5.myworkdayjobs.com", "tenant": "comcast", "site": "Comcast_Careers", "company": "Comcast", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "target.wd5.myworkdayjobs.com", "tenant": "target", "site": "targetcareers", "company": "Target", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "blackrock.wd1.myworkdayjobs.com", "tenant": "blackrock", "site": "BlackRock_Professional", "company": "BlackRock", "searchText": "data engineer", "pageSize": 20 },
+        { "host": "workday.wd5.myworkdayjobs.com", "tenant": "workday", "site": "Workday", "company": "Workday", "searchText": "data engineer", "pageSize": 20 }
+      ],
       "rateLimitMs": 4000,
       "options": {
-        "note": "DISCOVERY. Public Workday CXS career-site endpoints only. Add tenants like { host: 'company.wd1.myworkdayjobs.com', tenant: 'company', site: 'External', pageSize: 20 }. No login, no CAPTCHA bypass, no private endpoints."
+        "note": "DISCOVERY. Public Workday CXS career-site endpoints only — the same JSON each company's public career page loads. No login, no CAPTCHA bypass, no private endpoints. Each tenant is verified-reachable and returns data roles; a tenant that goes 404/422/500 is logged and skipped, never crashes the run. searchText focuses the public search box on data-engineering roles; fetchDetails (default) pulls the full JD so scoring is accurate. Add more via scripts/probe-workday*.mjs to confirm host/tenant/site before listing."
       }
     },
     {
