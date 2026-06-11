@@ -7,6 +7,7 @@ import {
   APP_STATUS,
   gradeFromScore, postedConfidence, resumeStatusOf, progressFor,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
+  BOARD_VIEWS, countViews, explainStatus,
 } from '../../src/dashboard/data.js';
 
 const NOW = new Date('2026-06-04T12:00:00Z');
@@ -456,5 +457,98 @@ describe('submission records and reports', () => {
     expect(listBoardJobs(db, { now: NOW, resumeStatus: 'tailored' }).map((r) => r.id)).toEqual(['r1']);
     expect(listBoardJobs(db, { now: NOW, resumeStatus: 'none' }).map((r) => r.id))
       .toEqual(expect.arrayContaining(['r2', 'r3']));
+  });
+});
+
+describe('section-tab views: counts always equal what the board shows', () => {
+  let db;
+  beforeEach(() => {
+    db = openDatabase({ path: ':memory:' });
+    // best (strong + recommend, open), shortlisted, needs_review, approved,
+    // ready_for_submit, blocked, submitted, rejected (closed), discarded (closed).
+    db.upsertJob({ id: 'best', company: 'Best', title: 'DE', url: 'u', score: 92, tier: 'Priority' });
+    db.upsertJob({ id: 'short', company: 'Short', title: 'DE', url: 'u', score: 88, tier: 'Apply', user_decision: 'shortlisted' });
+    db.upsertJob({ id: 'rev', company: 'Rev', title: 'DE', url: 'u', score: 84, tier: 'Apply', application_packet_path: '/p.json' });
+    db.insertApproval({ id: 'a-rev', job_id: 'rev', packet_path: '/p.json', approval_status: 'pending_review' });
+    db.upsertJob({ id: 'appr', company: 'Appr', title: 'DE', url: 'u', score: 86, tier: 'Apply', application_packet_path: '/p2.json' });
+    db.insertApproval({ id: 'a-appr', job_id: 'appr', packet_path: '/p2.json', approval_status: 'approved' });
+    db.upsertJob({ id: 'ready', company: 'Ready', title: 'DE', url: 'u', score: 90, tier: 'Apply', status: 'ready_for_submit' });
+    db.upsertJob({ id: 'blk', company: 'Blk', title: 'DE', url: 'u', score: 80, tier: 'Apply', status: 'assist_blocked' });
+    db.upsertJob({ id: 'sub', company: 'Sub', title: 'DE', url: 'u', score: 91, tier: 'Apply', applied: 1, applied_at: NOW.toISOString(), status: 'submitted' });
+    db.upsertJob({ id: 'rej', company: 'Rej', title: 'DE', url: 'u', score: 70, tier: 'Queue', user_decision: 'rejected' });
+    db.upsertJob({ id: 'disc', company: 'Disc', title: 'DE', url: 'u', score: 30, tier: 'Discard', status: 'discarded' });
+  });
+  afterEach(() => db.close());
+
+  it('every stats.views count equals listBoardJobs(view=key).length', () => {
+    const s = dashboardStats(db, { now: NOW });
+    for (const key of Object.keys(BOARD_VIEWS)) {
+      const rows = listBoardJobs(db, { now: NOW, view: key, limit: 100000 });
+      expect(rows.length, `view "${key}"`).toBe(s.views[key]);
+    }
+  });
+
+  it('assigns each job to the right view buckets', () => {
+    const s = dashboardStats(db, { now: NOW });
+    expect(s.views.best).toBe(1);          // only "best" (strong, recommend, open, not submitted)
+    expect(s.views.shortlisted).toBe(1);
+    expect(s.views.needs_review).toBe(1);
+    expect(s.views.ready_apply).toBe(2);   // approved + ready_for_submit
+    expect(s.views.blocked).toBe(1);
+    expect(s.views.submitted).toBe(1);
+    // "all" excludes the closed (rejected + discarded) jobs — 9 seeded, 2 closed.
+    expect(s.views.all).toBe(7);
+  });
+
+  it('the Ready-to-apply view returns approved AND ready_for_submit (the old 19-vs-0 bug)', () => {
+    const ids = listBoardJobs(db, { now: NOW, view: 'ready_apply' }).map((r) => r.id).sort();
+    expect(ids).toEqual(['appr', 'ready']);
+  });
+
+  it('Blocked and Submitted views are not hidden by the default closed filter', () => {
+    expect(listBoardJobs(db, { now: NOW, view: 'blocked' }).map((r) => r.id)).toEqual(['blk']);
+    expect(listBoardJobs(db, { now: NOW, view: 'submitted' }).map((r) => r.id)).toEqual(['sub']);
+  });
+
+  it('countViews over rows matches dashboardStats.views', () => {
+    const rows = listBoardJobs(db, { now: NOW, hideClosed: false, limit: 100000 });
+    const counts = countViews(rows);
+    const s = dashboardStats(db, { now: NOW });
+    expect(counts).toEqual(s.views);
+  });
+});
+
+describe('explainStatus + boardRow.statusReason', () => {
+  let db;
+  beforeEach(() => { db = openDatabase({ path: ':memory:' }); });
+  afterEach(() => db.close());
+
+  it('explains a blocked job WITH a recorded reason', () => {
+    expect(explainStatus({ assist_blockers: ['captcha detected'] }, APP_STATUS.BLOCKED))
+      .toContain('captcha detected');
+  });
+
+  it('explains a blocked job WITHOUT a recorded reason honestly', () => {
+    const r = explainStatus({ assist_blockers: null }, APP_STATUS.BLOCKED);
+    expect(r).toContain('not recorded');
+    expect(r.toLowerCase()).toContain('re-run');
+  });
+
+  it('distinguishes a user rejection from a packet rejection', () => {
+    expect(explainStatus({ user_decision: 'rejected' }, APP_STATUS.REJECTED)).toContain('You rejected');
+    expect(explainStatus({}, APP_STATUS.REJECTED, { approval_status: 'rejected' })).toContain('packet was rejected');
+  });
+
+  it('explains discarded with the stored reason, date-unconfirmed, and skipped', () => {
+    expect(explainStatus({ discard_reason: 'junior role' }, APP_STATUS.DISCARDED)).toContain('junior role');
+    expect(explainStatus({}, APP_STATUS.DATE_UNCONFIRMED)).toContain('freshness');
+    expect(explainStatus({}, APP_STATUS.SKIPPED)).toContain('skipped');
+  });
+
+  it('boardRow surfaces statusReason for a blocked job', () => {
+    db.upsertJob({ id: 'b', company: 'B', title: 'DE', url: 'u', status: 'assist_blocked',
+      assist_blockers: ['resume: upload input not found'] });
+    const [row] = listBoardJobs(db, { now: NOW, view: 'blocked' });
+    expect(row.statusReason).toContain('resume: upload input not found');
   });
 });

@@ -169,6 +169,44 @@ export function lastActionFor(job = {}, appStatus = '') {
   return { at: job.created_at ?? null, label: 'discovered' };
 }
 
+/**
+ * Plain-language explanation of WHY a job sits in its current status — the
+ * answer to "why is this blocked / rejected / discarded?". Honest about the
+ * common case where an older assisted-fill attempt stopped at a wall but did
+ * not record the specific reason.
+ *
+ * @param {object} job jobs-table row
+ * @param {string} appStatus derived board status
+ * @param {object|null} approval latest approval row
+ * @returns {string|null} a human reason, or null when none applies
+ */
+export function explainStatus(job = {}, appStatus = '', approval = null) {
+  const blockers = jsonList(job.assist_blockers);
+  switch (appStatus) {
+    case APP_STATUS.BLOCKED:
+      if (blockers.length) return `Assisted fill stopped: ${blockers.join('; ')}`;
+      return 'An assisted-fill attempt stopped at an application wall (login, CAPTCHA, an account step, '
+        + 'or a question it will not guess). The specific reason was not recorded — open the posting to finish '
+        + 'manually, or re-run assisted fill to capture the current blocker.';
+    case APP_STATUS.REJECTED:
+      if (job.user_decision === 'rejected') return 'You rejected this job.';
+      if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return 'Its prepared packet was rejected, so it will not be applied to.';
+      return 'Rejected.';
+    case APP_STATUS.DISCARDED:
+      return job.discard_reason
+        ? `Filtered out during scoring: ${job.discard_reason}`
+        : 'Filtered out during scoring (below threshold or an exclusion rule matched).';
+    case APP_STATUS.DATE_UNCONFIRMED:
+      return 'No reliable posting date was found, so its freshness cannot be trusted — verify before relying on "posted" age.';
+    case APP_STATUS.SKIPPED:
+      return 'You skipped this during an assisted-apply pass.';
+    case APP_STATUS.ARCHIVED:
+      return 'You archived this job.';
+    default:
+      return null;
+  }
+}
+
 /** An Error carrying the HTTP status the server should reply with. */
 function httpError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
@@ -198,6 +236,47 @@ function dayOf(value) {
   return String(value ?? '').slice(0, 10);
 }
 
+/** Statuses considered "closed" — hidden from the default board. */
+export const CLOSED_STATUSES = Object.freeze([
+  APP_STATUS.ARCHIVED, APP_STATUS.REJECTED, APP_STATUS.DISCARDED,
+]);
+const CLOSED_SET = new Set(CLOSED_STATUSES);
+
+/**
+ * The single source of truth for the section tabs. Each view is a predicate
+ * over a decorated board row. Because the SAME predicates drive both the tab
+ * COUNTS and the board FILTER, a tab's badge always equals the number of rows
+ * shown when you click it (fixing the old "Ready to submit: 19" badge over a
+ * board of 0 rows).
+ */
+export const BOARD_VIEWS = Object.freeze({
+  all: (r) => !CLOSED_SET.has(r.appStatus),
+  // "Best matches" = strong, recommended jobs still awaiting your triage. Once
+  // you shortlist/prepare them they move to their stage tab, so this list never
+  // overlaps the other tabs — it is purely "new strong opportunities to act on".
+  best: (r) => r.fit === 'strong' && r.grade?.recommend === true
+    && (r.appStatus === APP_STATUS.SCORED || r.appStatus === APP_STATUS.DISCOVERED),
+  shortlisted: (r) => r.appStatus === APP_STATUS.SHORTLISTED,
+  needs_review: (r) => r.appStatus === APP_STATUS.NEEDS_REVIEW,
+  // "Ready to apply": packet approved (ready to auto-fill) OR already filled and
+  // waiting for your manual submit. Both need a human action next.
+  ready_apply: (r) => r.appStatus === APP_STATUS.APPROVED || r.appStatus === APP_STATUS.READY_FOR_SUBMIT,
+  blocked: (r) => r.appStatus === APP_STATUS.BLOCKED,
+  submitted: (r) => r.appStatus === APP_STATUS.SUBMITTED,
+});
+
+/** Count rows per board view (each equals what clicking that tab shows). */
+export function countViews(rows = []) {
+  const counts = {};
+  for (const key of Object.keys(BOARD_VIEWS)) counts[key] = 0;
+  for (const r of rows) {
+    for (const [key, pred] of Object.entries(BOARD_VIEWS)) {
+      if (pred(r)) counts[key] += 1;
+    }
+  }
+  return counts;
+}
+
 /** Decorate one db row with all derived board fields. */
 function boardRow(job, approval, now) {
   const matched = jsonList(job.matched_keywords);
@@ -225,6 +304,7 @@ function boardRow(job, approval, now) {
     postedConfidence: postedConfidence(job),
     appStatus,
     progress: progressFor(appStatus),
+    statusReason: explainStatus(job, appStatus, approval),
     lastAction: lastActionFor(job, appStatus),
     userDecision: job.user_decision ?? null,
     atsPlatform: job.ats_platform ?? null,
@@ -299,6 +379,9 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     bySponsorship: {},
     daily: [],
     nextActions: [],
+    // Section-tab counts — derived from the SAME predicates the board filters by,
+    // so each tab badge equals exactly what clicking it shows.
+    views: Object.fromEntries(Object.keys(BOARD_VIEWS).map((k) => [k, 0])),
   };
 
   let strongUntriaged = 0;
@@ -341,6 +424,12 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     if (Number(job.applied) === 1) stats.bySource[source].submitted += 1;
 
     stats.byStatus[status] = (stats.byStatus[status] ?? 0) + 1;
+
+    // Section-tab counts via the shared board-view predicates.
+    const viewRow = { appStatus: status, fit, grade: gradeFromScore(typeof job.score === 'number' ? job.score : null) };
+    for (const [key, pred] of Object.entries(BOARD_VIEWS)) {
+      if (pred(viewRow)) stats.views[key] += 1;
+    }
 
     const spon = job.sponsorship ?? 'Unclassified';
     if (!stats.bySponsorship[spon]) stats.bySponsorship[spon] = { count: 0, strong: 0 };
@@ -452,6 +541,11 @@ export function listBoardJobs(db, filters = {}) {
     rows = rows.filter((r) => [r.company, r.title, r.location]
       .some((v) => String(v ?? '').toLowerCase().includes(q)));
   }
+  // Section-tab view: a curated predicate that scopes the board to exactly the
+  // jobs counted by that tab's badge. Applied before the other filters.
+  if (filters.view && BOARD_VIEWS[filters.view]) {
+    rows = rows.filter(BOARD_VIEWS[filters.view]);
+  }
   if (filters.fit) rows = rows.filter((r) => r.fit === filters.fit);
   if (filters.appStatus) rows = rows.filter((r) => r.appStatus === filters.appStatus);
   if (filters.source) rows = rows.filter((r) => r.source === filters.source);
@@ -462,9 +556,10 @@ export function listBoardJobs(db, filters = {}) {
   if (filters.last24h === true || filters.last24h === 'true') {
     rows = rows.filter((r) => r.postedLast24h);
   }
-  if (hideClosed && !filters.appStatus) {
-    rows = rows.filter((r) => ![APP_STATUS.ARCHIVED, APP_STATUS.REJECTED, APP_STATUS.DISCARDED]
-      .includes(r.appStatus));
+  // Hide closed jobs by default — but never override an explicit status/view
+  // request (e.g. the Blocked/Submitted tabs, or a "rejected" status filter).
+  if (hideClosed && !filters.appStatus && !filters.view) {
+    rows = rows.filter((r) => !CLOSED_SET.has(r.appStatus));
   }
 
   rows.sort(SORTS[filters.sort] ?? SORTS.score);

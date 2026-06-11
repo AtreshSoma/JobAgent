@@ -63,6 +63,8 @@
   @media (max-width: 1180px) { main { grid-template-columns: 1fr; } }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
            gap: 9px; margin-bottom: 14px; }
+  .tilehead { grid-column: 1 / -1; color: var(--dim); font-size: 11px; text-transform: uppercase;
+           letter-spacing: .5px; margin-bottom: -2px; }
   .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
           padding: 9px 12px; cursor: pointer; transition: border-color .12s; }
   .tile:hover { border-color: var(--accent); }
@@ -371,15 +373,10 @@ function esc(s) {
 
 /* ── tiles (grouped: pipeline funnel + activity) ── */
 const TILES = [
-  ['jobsTracked', 'Jobs tracked', '', {}],
   ['strongFit', 'Strong fit', 'good', { fit: 'strong' }],
-  ['shortlisted', 'Shortlisted', 'accent', { appStatus: 'shortlisted' }],
-  ['pendingReview', 'Needs review', 'warn', { appStatus: 'needs_review' }],
-  ['readyForSubmit', 'Ready to submit', 'warn', { appStatus: 'ready_for_submit' }],
-  ['submittedTotal', 'Submitted', 'good', { appStatus: 'submitted' }],
-  ['blocked', 'Blocked', 'bad', { appStatus: 'blocked' }],
-  ['discoveredLast24h', 'New (24h)', 'accent', {}],
-  ['dateUnconfirmed', 'Date unconfirmed', 'warn', { appStatus: 'date_unconfirmed' }],
+  ['mediumFit', 'Medium fit', 'warn', { fit: 'medium' }],
+  ['weakFit', 'Weak fit', '', { fit: 'weak' }],
+  ['dateUnconfirmed', 'Needs date check', 'warn', { appStatus: 'date_unconfirmed' }],
 ];
 function relTime(iso) {
   if (!iso) return null;
@@ -393,23 +390,23 @@ function relTime(iso) {
 async function loadStats() {
   const s = await api('/api/stats');
   lastStats = s;
-  $('tiles').innerHTML = TILES.map(([key, label, tone, filter]) =>
+  $('tiles').innerHTML = '<div class="tilehead">Fit &amp; data quality</div>' + TILES.map(([key, label, tone, filter]) =>
     `<div class="tile ${tone}" onclick='applyTileFilter(${JSON.stringify(filter)})'>
        <div class="n">${s.totals[key] ?? 0}</div><div class="l">${esc(label)}</div></div>`).join('');
-  // Freshness line — explains the discovered-vs-posted distinction so "0
-  // discovered today" next to "many posted last 24h" is never confusing.
+  // Freshness line — discovery activity only (fit/pipeline counts live in the
+  // tabs + tiles, so nothing is shown twice). Explains discovered-vs-posted.
   const last = relTime(s.lastDiscoveryAt);
   $('freshness').innerHTML =
-    `<b>${s.totals.discoveredLast24h ?? 0}</b> found in last 24h `
+    `<b>${s.totals.jobsTracked ?? 0}</b> jobs tracked `
+    + `<span class="sep"></span> <b>${s.totals.discoveredLast24h ?? 0}</b> found in last 24h `
     + `· last discovery <b>${last ?? 'never'}</b> `
-    + `<span class="sep"></span> <b>${s.totals.postedLast24h ?? 0}</b> roles posted by employers in last 24h `
-    + `<span class="sep"></span> <b>${s.totals.strongFit ?? 0}</b> strong-fit `
-    + `· <b>${s.totals.submittedTotal ?? 0}</b> submitted by you`;
+    + `<span class="sep"></span> <b>${s.totals.postedLast24h ?? 0}</b> posted by employers in last 24h`;
+  renderTabs();
   $('srcRows').innerHTML = Object.entries(s.bySource)
     .sort((a, b) => b[1].found - a[1].found)
     .map(([src, v]) => `<tr><td>${esc(src)}</td><td>${v.found}</td><td>${v.strong}</td>
          <td>${v.prepared}</td><td>${v.submitted}</td></tr>`).join('')
-    || '<tr><td colspan="5" class="muted">No jobs yet — click Discover or Find & Prepare.</td></tr>';
+    || '<tr><td colspan="5" class="muted">No jobs yet — click Find New Jobs or Auto-Prepare Best.</td></tr>';
   const sel = $('source');
   const cur = sel.value;
   sel.innerHTML = '<option value="">All sources</option>' + Object.keys(s.bySource)
@@ -428,44 +425,44 @@ async function loadStats() {
     : '<div class="muted">All caught up — nothing waiting on you.</div>');
 }
 
-/* ── section tabs ── */
+/* ── section tabs (pipeline-stage navigation; counts come from stats.views so
+      each badge equals exactly what clicking the tab shows on the board) ── */
 const TABS = [
-  ['all', 'All jobs', null, null],
-  ['bestMatches', 'Best matches', { fit: 'strong' }, false],
-  ['needsReview', 'Needs review', { appStatus: 'needs_review' }, false],
-  ['readyForSubmit', 'Ready to submit', { appStatus: 'ready_for_submit' }, true],
-  ['blocked', 'Blocked', { appStatus: 'blocked' }, true],
-  ['recentlySubmitted', 'Submitted', { appStatus: 'submitted' }, false],
+  ['all', 'All jobs', false],
+  ['best', 'Best matches', false],
+  ['shortlisted', 'Shortlisted', false],
+  ['needs_review', 'Needs review', false],
+  ['ready_apply', 'Ready to apply', true],
+  ['blocked', 'Blocked', true],
+  ['submitted', 'Submitted', false],
 ];
 let activeTab = 'all';
-async function loadSections() {
-  let sec;
-  try { sec = await api('/api/sections'); } catch { return; }
-  lastSections = sec;
-  $('tabs').innerHTML = TABS.map(([key, label, , urgent]) => {
-    const count = key === 'all' ? (lastStats?.totals?.jobsTracked ?? '') : (sec.counts?.[key] ?? 0);
+function renderTabs() {
+  const views = lastStats?.views ?? {};
+  $('tabs').innerHTML = TABS.map(([key, label, urgent]) => {
+    const count = views[key] ?? 0;
     const u = urgent && count > 0 ? ' urgent' : '';
     return `<button class="tab${activeTab === key ? ' active' : ''}${u}" onclick="setTab('${key}')">
       ${esc(label)} <span class="badge">${count}</span></button>`;
   }).join('');
-  // Blocked-by-reason breakdown.
+}
+async function loadSections() {
+  let sec;
+  try { sec = await api('/api/sections'); } catch { return; }
+  lastSections = sec;
+  // Blocked-by-reason breakdown (tab counts now come from /api/stats views).
   $('blockRows').innerHTML = (sec.blockedByReason ?? []).length
     ? sec.blockedByReason.map((b) =>
-        `<tr><td>${esc(b.reason)}</td><td>${b.count}</td></tr>`).join('')
+        `<tr><td title="${esc(b.reason)}">${esc(b.reason)}</td><td>${b.count}</td></tr>`).join('')
     : '<tr><td colspan="2" class="muted">None blocked</td></tr>';
 }
 function setTab(key) {
   activeTab = key;
-  const def = TABS.find((t) => t[0] === key);
-  // Reset board filters, then apply the tab's filter.
-  $('fit').value = ''; $('appStatus').value = ''; $('last24h').checked = false;
-  $('remoteOnly').checked = false; $('q').value = '';
-  $('hideClosed').checked = !(def && def[2] && ['submitted'].includes(def[2].appStatus));
-  if (def && def[2]) {
-    if (def[2].fit) $('fit').value = def[2].fit;
-    if (def[2].appStatus) { $('appStatus').value = def[2].appStatus; $('hideClosed').checked = false; }
-  }
-  loadSections(); loadJobs();
+  // The tab's view is the sole scope — clear manual filters so the badge count
+  // and the visible rows always agree.
+  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus']) $(id).value = '';
+  $('last24h').checked = false; $('remoteOnly').checked = false; $('hideClosed').checked = true;
+  renderTabs(); loadJobs();
 }
 
 function applyTileFilter(f) {
@@ -476,7 +473,7 @@ function applyTileFilter(f) {
   if (f.appStatus && ['rejected', 'archived', 'discarded', 'submitted'].includes(f.appStatus)) {
     $('hideClosed').checked = false;
   }
-  loadSections(); loadJobs();
+  renderTabs(); loadJobs();
 }
 function resetFilters() {
   activeTab = 'all';
@@ -489,6 +486,7 @@ function resetFilters() {
 /* ── board ── */
 function filterParams() {
   const p = new URLSearchParams();
+  if (activeTab && activeTab !== 'all') p.set('view', activeTab);
   if ($('q').value) p.set('q', $('q').value);
   if ($('fit').value) p.set('fit', $('fit').value);
   if ($('appStatus').value) p.set('appStatus', $('appStatus').value);
@@ -539,12 +537,16 @@ async function loadJobs() {
       <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span></td>
       <td class="muted">${esc(j.atsPlatform ?? '—')}</td>
       <td>${progressBar(j.progress)}</td>
-      <td class="st-${j.appStatus}">${j.appStatus.replace(/_/g, ' ')}</td>
+      <td class="st-${j.appStatus}" title="${esc(j.statusReason ?? '')}">${j.appStatus.replace(/_/g, ' ')}${j.statusReason ? ' <span class="muted" style="cursor:help">ⓘ</span>' : ''}</td>
     </tr>`).join('');
   syncSelAll();
 }
 
 /* ── detail ── */
+function fitLabel(fit) {
+  return ({ strong: 'strong fit (priority)', medium: 'medium fit (queue)',
+    weak: 'weak fit (near-miss)', no_fit: 'no fit', unscored: 'unscored' }[fit]) || fit;
+}
 function nextBestAction(j) {
   // The single most useful thing to do next, with a one-click button.
   if (j.appStatus === 'submitted') return { text: 'Submitted — no further action.', btn: '' };
@@ -554,8 +556,9 @@ function nextBestAction(j) {
     btn: `<button class="small primary" onclick="act('${esc(j.id)}','assist','Browser opening — stops before submit')">▶ Fill in browser</button>` };
   if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting in the browser — review and submit, then mark it.',
     btn: `<button class="small primary" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>` };
-  if (j.appStatus === 'blocked') return { text: 'Blocked (login / CAPTCHA / a question needs you). Open the posting and finish it manually.',
-    btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>` };
+  if (j.appStatus === 'blocked') return { text: 'An assisted-fill attempt stopped at an application wall. Open the posting and finish it manually, or re-run assisted fill to capture the current blocker.',
+    btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
+      + ` <button class="small" onclick="act('${esc(j.id)}','assist','Re-running assisted fill — it stops before submit')">↻ Re-try assisted fill</button>` };
   if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit, undecided — shortlist it to prepare a tailored resume.',
     btn: `<button class="small primary" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
   if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — prepare its tailored resume packet next.',
@@ -592,7 +595,8 @@ async function select(id) {
         <div class="muted">${esc(j.location ?? '')}${j.remote ? ' · remote' : ''} · ${esc(j.postedLabel)} · via ${esc(j.source)}
           ${j.atsPlatform ? '· ATS: ' + esc(j.atsPlatform) : ''}</div>
         <div style="margin-top:6px">
-          <span class="chip ${j.fit}">${g ? g.label : 'unscored'} ${j.score != null ? '· ' + j.score + '/100' : ''}</span>
+          ${j.score != null ? `<span class="chip" title="Skills-match score and letter grade">score ${j.score}/100${g ? ' · grade ' + g.letter : ''}</span>` : '<span class="chip unscored">unscored</span>'}
+          <span class="chip ${j.fit}" title="Fit tier (may be downgraded by the sponsorship gate)">${esc(fitLabel(j.fit))}</span>
           <span class="chip ${esc(j.sponsorship ?? '')}">sponsorship: ${esc(j.sponsorship ?? 'unknown')}</span>
           <span class="chip st-${j.appStatus}">${j.appStatus.replace(/_/g,' ')}</span>
         </div>
@@ -600,6 +604,9 @@ async function select(id) {
     </div>
 
     ${stepper(j.progress)}
+
+    ${j.statusReason && ['blocked','rejected','discarded','skipped','date_unconfirmed'].includes(j.appStatus)
+      ? `<h3>Why it's ${j.appStatus.replace(/_/g, ' ')}</h3><div class="why st-blocked">${esc(j.statusReason)}</div>` : ''}
 
     <h3>Next best action</h3>
     <div class="nba">${esc(nba.text)}${nba.btn ? `<div style="margin-top:8px">${nba.btn}</div>` : ''}</div>
@@ -980,14 +987,20 @@ async function showCompare() {
 
 /* ── boot ── */
 function refresh() {
-  // stats first so the "All jobs" tab badge (jobsTracked) is known before tabs render.
+  // stats first so the section-tab badges (stats.views) render before the board.
   loadStats().then(loadSections).catch(() => {});
   loadJobs().catch(() => {});
 }
-for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
-  $(id).addEventListener('change', loadJobs);
+// Manually changing a filter steps out of any active section tab, so the board
+// and the tab badges never silently disagree.
+function onFilterChange() {
+  if (activeTab !== 'all') { activeTab = 'all'; renderTabs(); }
+  loadJobs();
 }
-let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(loadJobs, 250); });
+for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
+  $(id).addEventListener('change', onFilterChange);
+}
+let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(onFilterChange, 250); });
 // pollRun() runs continuously (fast while a run is active, slow when idle) so it
 // doubles as a health ping: the connection indicator recovers and the board
 // reloads automatically once the server is restarted or a run finishes.
