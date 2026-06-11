@@ -6,7 +6,7 @@ import {
   applyDecision, approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   APP_STATUS,
   gradeFromScore, postedConfidence, resumeStatusOf, progressFor,
-  dashboardSections, setJobNote, buildExportRows, exportRowsToCsv,
+  dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
 } from '../../src/dashboard/data.js';
 
 const NOW = new Date('2026-06-04T12:00:00Z');
@@ -375,5 +375,86 @@ describe('notes + rich CSV export', () => {
 
   it('exportRowsToCsv returns just a header when there are no rows', () => {
     expect(exportRowsToCsv([]).trim().startsWith('Company,Role')).toBe(true);
+  });
+});
+
+describe('submission records and reports', () => {
+  let db;
+  beforeEach(() => {
+    db = openDatabase({ path: ':memory:' });
+    db.upsertJob({
+      id: 'r1', company: 'Acme', title: 'Sr DE', url: 'http://a', source: 'greenhouse',
+      score: 90, tier: 'Priority', sponsorship: 'Confirmed', status: 'ready_for_submit',
+      application_packet_path: '/p/r1.json', notes: 'called recruiter',
+    });
+    db.upsertJob({
+      id: 'r2', company: 'Globex', title: 'DE', url: 'http://b', source: 'ashby',
+      score: 70, tier: 'Queue', sponsorship: 'Likely', status: 'assist_blocked',
+      assist_blockers: ['captcha detected'],
+    });
+    db.upsertJob({
+      id: 'r3', company: 'Initech', title: 'BI Eng', url: 'http://c', source: 'lever',
+      score: 80, tier: 'Apply', status: 'skipped',
+    });
+  });
+  afterEach(() => db.close());
+
+  it('markSubmittedByHuman records confirmation number and appends a note', () => {
+    const NOW2 = new Date('2026-06-05T10:00:00Z');
+    const r = markSubmittedByHuman(db, 'r1', {
+      confirmationNumber: ' REQ-777 ', note: 'via Workday', now: NOW2,
+    });
+    expect(r.confirmationNumber).toBe('REQ-777');
+    const job = db.getJob('r1');
+    expect(job.submitted_confirmation).toBe('REQ-777');
+    // Existing notes are preserved; the submission note is appended with a stamp.
+    expect(job.notes).toContain('called recruiter');
+    expect(job.notes).toContain('[submitted 2026-06-05 10:00] via Workday');
+    expect(Number(job.applied)).toBe(1);
+  });
+
+  it('markSubmittedByHuman without details still works (both optional)', () => {
+    const r = markSubmittedByHuman(db, 'r3', {});
+    expect(r.confirmationNumber).toBeNull();
+    expect(db.getJob('r3').notes ?? '').not.toContain('[submitted');
+  });
+
+  it('buildReports assembles every section consistently with the board', () => {
+    markSubmittedByHuman(db, 'r1', { confirmationNumber: 'C-1', now: NOW });
+    const rep = buildReports(db, { now: NOW });
+    // Application log holds submitted + blocked + skipped, newest first.
+    const statuses = rep.applicationLog.map((r) => r.appStatus);
+    expect(statuses).toContain('submitted');
+    expect(statuses).toContain('blocked');
+    expect(statuses).toContain('skipped');
+    const submitted = rep.applicationLog.find((r) => r.appStatus === 'submitted');
+    expect(submitted.confirmation).toBe('C-1');
+    expect(rep.blockedJobs).toHaveLength(1);
+    expect(rep.blockedJobs[0].blockers).toEqual(['captcha detected']);
+    expect(rep.skippedJobs).toHaveLength(1);
+    expect(rep.sponsorshipSummary.find((s) => s.confidence === 'Confirmed').jobs).toBe(1);
+    const gh = rep.sourcePerformance.find((s) => s.source === 'greenhouse');
+    expect(gh).toMatchObject({ found: 1, strong: 1, submitted: 1, strongRate: 100 });
+    expect(rep.dailySummary.daily).toHaveLength(7);
+  });
+
+  it('buildReports on an empty database returns empty-but-valid sections', () => {
+    const empty = openDatabase({ path: ':memory:' });
+    try {
+      const rep = buildReports(empty, { now: NOW });
+      expect(rep.applicationLog).toEqual([]);
+      expect(rep.blockedJobs).toEqual([]);
+      expect(rep.sourcePerformance).toEqual([]);
+      expect(rep.dailySummary.totals.jobsTracked).toBe(0);
+    } finally { empty.close(); }
+  });
+
+  it('listBoardJobs filters by ATS platform and resume status', () => {
+    db.upsertJob({ id: 'r1', ats_platform: 'greenhouse', resume_docx_path: '/r/r1.docx' });
+    db.upsertJob({ id: 'r2', ats_platform: 'workday' });
+    expect(listBoardJobs(db, { now: NOW, ats: 'greenhouse' }).map((r) => r.id)).toEqual(['r1']);
+    expect(listBoardJobs(db, { now: NOW, resumeStatus: 'tailored' }).map((r) => r.id)).toEqual(['r1']);
+    expect(listBoardJobs(db, { now: NOW, resumeStatus: 'none' }).map((r) => r.id))
+      .toEqual(expect.arrayContaining(['r2', 'r3']));
   });
 });

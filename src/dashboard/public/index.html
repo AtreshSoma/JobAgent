@@ -150,6 +150,20 @@
     background-size: 400% 100%; animation: sk 1.2s infinite; }
   @keyframes sk { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
+  #reports { position: fixed; inset: 5% 7%; background: var(--panel); z-index: 40;
+             border: 1px solid var(--accent); border-radius: 12px; padding: 18px;
+             overflow: auto; display: none; }
+  #reports h2 { margin-top: 0; }
+  #reports h3 { margin: 18px 0 6px; }
+  #reports table { margin-bottom: 6px; }
+  #submitModal { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 45;
+                 display: none; align-items: center; justify-content: center; }
+  #submitModal.show { display: flex; }
+  #submitModal .box { background: var(--panel); border: 1px solid var(--accent);
+                      border-radius: 12px; padding: 20px; width: 420px; max-width: 92vw; }
+  #submitModal input, #submitModal textarea { width: 100%; background: var(--panel2);
+    color: var(--text); border: 1px solid var(--line); border-radius: 7px;
+    padding: 7px 9px; font: inherit; margin: 4px 0 10px; box-sizing: border-box; }
   #compare { position: fixed; inset: 6% 8%; background: var(--panel); z-index: 40;
              border: 1px solid var(--accent); border-radius: 12px; padding: 18px;
              overflow: auto; display: none; box-shadow: var(--shadow); }
@@ -182,14 +196,18 @@
   <span class="spacer"></span>
   <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
   <span id="runStatus"></span>
-  <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')" title="Search job boards for new roles">Discover</button>
-  <button id="btnScore" class="runBtn" onclick="runPhase('score')" title="Score discovered jobs against your profile">Score</button>
-  <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')" title="Discover, score and tailor resumes — end to end">Find &amp; Prepare</button>
+  <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')"
+    title="Search every configured job board, then normalize and de-duplicate. No scoring, no packets.">Find New Jobs</button>
+  <button id="btnScore" class="runBtn" onclick="runPhase('score')"
+    title="Recompute fit, sponsorship likelihood, seniority, location/remote fit, freshness, and ease of applying for every discovered job.">Re-score Jobs</button>
+  <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')"
+    title="Full pass: find new jobs, re-score, and tailor a resume packet for every strong match. To prepare specific jobs instead, select rows and use “Prepare selected”.">Auto-Prepare Best</button>
   <span class="menu">
-    <button class="ghost" onclick="toggleMenu(event)" title="Export your pipeline">⬇ Export ▾</button>
+    <button class="ghost" onclick="toggleMenu(event)" title="View reports first, then export">📊 Reports ▾</button>
     <div class="menu-pop" id="exportMenu">
-      <button onclick="exportJobs();closeMenus()">All jobs + scores (CSV)</button>
-      <button onclick="exportCsv();closeMenus()">Application tracker (CSV)</button>
+      <button onclick="openReports();closeMenus()">View reports…</button>
+      <button onclick="exportJobs();closeMenus()">Export: all jobs + scores (CSV)</button>
+      <button onclick="exportCsv();closeMenus()">Export: application tracker (CSV)</button>
     </div>
   </span>
 </header>
@@ -218,6 +236,14 @@
         <option>Confirmed</option><option>Likely</option><option>Unconfirmed</option>
         <option>Unlikely</option></select>
       <select id="source"><option value="">All sources</option></select>
+      <select id="ats"><option value="">Any ATS</option>
+        <option>greenhouse</option><option>lever</option><option>workday</option>
+        <option>icims</option><option>taleo</option><option>smartrecruiters</option>
+        <option>jobvite</option><option>generic</option></select>
+      <select id="resumeStatus"><option value="">Any resume</option>
+        <option value="tailored">Resume: tailored</option>
+        <option value="prepared">Resume: packet only</option>
+        <option value="none">Resume: none</option></select>
       <select id="sort"><option value="score">Sort: score</option>
         <option value="posted">Sort: newest posted</option>
         <option value="company">Sort: company</option>
@@ -266,10 +292,26 @@
 </main>
 
 <div id="compare"></div>
+<div id="reports"></div>
+<div id="submitModal">
+  <div class="box">
+    <h2 style="margin-top:0">Record your manual submission</h2>
+    <div class="muted" id="submitModalJob" style="margin-bottom:8px"></div>
+    <label>Confirmation number <span class="muted">(optional — from the ATS confirmation page/email)</span></label>
+    <input id="submitConf" type="text" placeholder="e.g. REQ-2026-12345">
+    <label>Note <span class="muted">(optional)</span></label>
+    <textarea id="submitNote" rows="3" placeholder="e.g. submitted via Workday, confirmation sent to my email"></textarea>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="small" onclick="closeSubmitModal()">Cancel</button>
+      <button class="small primary" onclick="confirmSubmitted()">✓ I submitted this myself</button>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
 <div id="selbar">
   <span id="selCount">0 selected</span>
   <button id="autoApplyBtn" class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply</button>
+  <button class="small" onclick="batchPrepare()" title="Tailor a resume + build an application packet for each selected job (your pick overrides the auto-prepare tiers; packets still need your approval)">📄 Prepare selected</button>
   <button class="small" onclick="batchApprove()" title="Approve prepared packets">✓ Approve</button>
   <button class="small" onclick="batchDecide('shortlisted')">★ Shortlist</button>
   <button class="small" onclick="batchDecide('rejected')">✕ Reject</button>
@@ -438,7 +480,7 @@ function applyTileFilter(f) {
 }
 function resetFilters() {
   activeTab = 'all';
-  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'source']) $(id).value = '';
+  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus']) $(id).value = '';
   $('last24h').checked = false; $('remoteOnly').checked = false; $('hideClosed').checked = true;
   $('sort').value = 'score';
   loadSections(); loadJobs();
@@ -452,6 +494,8 @@ function filterParams() {
   if ($('appStatus').value) p.set('appStatus', $('appStatus').value);
   if ($('sponsorship').value) p.set('sponsorship', $('sponsorship').value);
   if ($('source').value) p.set('source', $('source').value);
+  if ($('ats').value) p.set('ats', $('ats').value);
+  if ($('resumeStatus').value) p.set('resumeStatus', $('resumeStatus').value);
   p.set('sort', $('sort').value);
   if ($('last24h').checked) p.set('last24h', 'true');
   if ($('remoteOnly').checked) p.set('remote', 'true');
@@ -509,12 +553,13 @@ function nextBestAction(j) {
   if (j.appStatus === 'approved') return { text: 'Approved. Open it in the browser — it fills the form and stops before submit.',
     btn: `<button class="small primary" onclick="act('${esc(j.id)}','assist','Browser opening — stops before submit')">▶ Fill in browser</button>` };
   if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting in the browser — review and submit, then mark it.',
-    btn: `<button class="small primary" onclick="act('${esc(j.id)}','mark-submitted','Recorded as submitted by you')">I submitted it myself</button>` };
+    btn: `<button class="small primary" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>` };
   if (j.appStatus === 'blocked') return { text: 'Blocked (login / CAPTCHA / a question needs you). Open the posting and finish it manually.',
     btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>` };
   if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit, undecided — shortlist it to prepare a tailored resume.',
     btn: `<button class="small primary" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
-  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — run Find & Prepare to build its tailored packet.', btn: '' };
+  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — prepare its tailored resume packet next.',
+    btn: `<button class="small primary" onclick="prepareOne('${esc(j.id)}')">📄 Prepare packet</button>` };
   if (['no_fit', 'weak'].includes(j.fit)) return { text: 'Low fit — likely not worth your time. Reject to keep the board focused.',
     btn: `<button class="small" onclick="decide('${esc(j.id)}','rejected')">✕ Reject</button>` };
   return { text: 'Review the fit and sponsorship below, then shortlist or reject.', btn: '' };
@@ -568,8 +613,12 @@ async function select(id) {
       ${j.approvalStatus === 'pending_review'
         ? `<button class="small" onclick="act('${esc(j.id)}','reject-packet','Packet rejected')">Reject packet</button>` : ''}
       ${['ready_for_submit','blocked','approved'].includes(j.appStatus)
-        ? `<button class="small" onclick="act('${esc(j.id)}','mark-submitted','Recorded as submitted by you')">Mark submitted</button>` : ''}
+        ? `<button class="small" onclick="markSubmittedFlow('${esc(j.id)}')">Mark submitted</button>` : ''}
     </div>
+
+    ${j.appStatus === 'submitted' ? `<h3>Submission record</h3>
+      <div class="why">Submitted by you on ${esc((j.appliedAt ?? '').slice(0, 16).replace('T', ' '))}
+        ${j.submittedConfirmation ? `<br>Confirmation #: <b>${esc(j.submittedConfirmation)}</b>` : ''}</div>` : ''}
 
     <h3>Why this ${j.fit === 'strong' ? 'is' : j.fit === 'no_fit' ? 'is NOT' : 'may be'} a fit</h3>
     <div class="why">${esc(j.explanation ?? j.discardReason ?? 'Not scored yet — run Score.')}</div>
@@ -603,6 +652,106 @@ function renderPacket(p) {
     <h3>Pre-fill plan (every value comes from your config)</h3>
     <ul class="plan">${plan || '<li class="muted">no known fields detected yet</li>'}</ul>
     ${needs ? `<h3>Questions left for you</h3><ul class="plan">${needs}</ul>` : ''}`;
+}
+
+/* ── manual submission flow ── */
+let submitJobId = null;
+function markSubmittedFlow(id) {
+  submitJobId = id;
+  const j = jobsById[id];
+  $('submitModalJob').textContent = j ? `${j.company} — ${j.title}` : id;
+  $('submitConf').value = '';
+  $('submitNote').value = '';
+  $('submitModal').classList.add('show');
+}
+function closeSubmitModal() { $('submitModal').classList.remove('show'); submitJobId = null; }
+async function confirmSubmitted() {
+  if (!submitJobId) return;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(submitJobId)}/mark-submitted`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        confirmationNumber: $('submitConf').value,
+        note: $('submitNote').value,
+      }),
+    });
+    const id = submitJobId;
+    closeSubmitModal();
+    toast('Recorded as submitted by you');
+    refresh(); select(id);
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ── prepare selected ── */
+async function batchPrepare() {
+  const ids = selIds();
+  if (!ids.length) return;
+  if (isRunning) { toast('A run is in progress — wait for it to finish.', true); return; }
+  try {
+    const r = await api('/api/prepare-batch', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: ids }) });
+    toast(`Preparing ${r.queued} packet(s) — tailored resumes + approval queue…`);
+    pollRun();
+  } catch (e) { toast(e.message, true); }
+}
+async function prepareOne(id) {
+  if (isRunning) { toast('A run is in progress — wait for it to finish.', true); return; }
+  try {
+    await api('/api/prepare-batch', { method: 'POST',
+      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: [id] }) });
+    toast('Preparing the packet — tailored resume + approval queue…');
+    pollRun();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ── reports drawer ── */
+function rTable(headers, rows) {
+  if (!rows.length) return '<div class="muted">None.</div>';
+  return `<table class="srcTable"><thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+    <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+}
+const jobCell = (r) => `<b>${esc(r.company)}</b> — ${esc(r.title)}`;
+async function openReports() {
+  $('reports').style.display = 'block';
+  $('reports').innerHTML = '<h2>Reports</h2><div class="skeleton"></div><div class="skeleton"></div>';
+  let rep;
+  try { rep = await api('/api/reports'); }
+  catch (e) { $('reports').innerHTML = `<h2>Reports</h2><div class="st-blocked">${esc(e.message)}</div>
+    <button class="small" onclick="$('reports').style.display='none'">Close</button>`; return; }
+  const t = rep.dailySummary.totals;
+  $('reports').innerHTML = `
+    <button style="float:right" onclick="$('reports').style.display='none'">Close</button>
+    <h2>Reports <span class="muted" style="font-size:12px">generated ${esc(rep.generatedAt.slice(0, 16).replace('T', ' '))}</span></h2>
+    <div class="actions" style="margin-bottom:6px">
+      <button class="small" onclick="exportJobs()">⬇ All jobs + scores (CSV)</button>
+      <button class="small" onclick="exportCsv()">⬇ Application tracker (CSV)</button>
+    </div>
+    <h3>Daily summary</h3>
+    ${rTable(['Day', 'Found', 'Prepared', 'Submitted'],
+      rep.dailySummary.daily.map((d) => [esc(d.day), d.discovered, d.prepared, d.submitted]))}
+    <div class="muted">Today: ${t.discoveredToday} found · ${t.preparedToday} prepared · ${t.submittedToday} submitted by you · ${t.pendingReview} awaiting review · ${t.blocked} blocked</div>
+    <h3>Application log (${rep.applicationLog.length})</h3>
+    ${rTable(['Job', 'Status', 'When', 'Confirmation #', 'Blockers', 'Notes'],
+      rep.applicationLog.map((r) => [jobCell(r),
+        `<span class="st-${esc(r.appStatus)}">${esc(r.appStatus.replace(/_/g, ' '))}</span>`,
+        esc((r.appliedAt ?? '').slice(0, 16).replace('T', ' ') || '—'),
+        esc(r.confirmation ?? '—'),
+        esc((r.blockers ?? []).join('; ') || '—'),
+        esc((r.notes ?? '').slice(0, 80) || '—')]))}
+    <h3>Prepared packets awaiting action (${rep.preparedPackets.length})</h3>
+    ${rTable(['Job', 'Grade', 'Sponsorship', 'Status'],
+      rep.preparedPackets.map((r) => [jobCell(r), esc(r.grade?.letter ?? '—'), esc(r.sponsorship ?? '—'),
+        esc(r.appStatus.replace(/_/g, ' '))]))}
+    <h3>Blocked (${rep.blockedJobs.length})</h3>
+    ${rTable(['Job', 'Blockers'], rep.blockedJobs.map((r) => [jobCell(r), esc((r.blockers ?? []).join('; ') || '—')]))}
+    <h3>Skipped (${rep.skippedJobs.length})</h3>
+    ${rTable(['Job', 'Notes'], rep.skippedJobs.map((r) => [jobCell(r), esc(r.notes || '—')]))}
+    <h3>Sponsorship summary</h3>
+    ${rTable(['Confidence', 'Jobs', 'Strong fit'],
+      rep.sponsorshipSummary.map((s) => [esc(s.confidence), s.jobs, s.strongFit]))}
+    <h3>Source performance</h3>
+    ${rTable(['Source', 'Found', 'Strong', 'Strong rate', 'Prepared', 'Submitted'],
+      rep.sourcePerformance.map((s) => [esc(s.source), s.found, s.strong, `${s.strongRate}%`, s.prepared, s.submitted]))}`;
 }
 
 /* ── actions ── */
@@ -835,7 +984,7 @@ function refresh() {
   loadStats().then(loadSections).catch(() => {});
   loadJobs().catch(() => {});
 }
-for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
+for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
   $(id).addEventListener('change', loadJobs);
 }
 let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(loadJobs, 250); });

@@ -22,7 +22,7 @@ import { readFileSync } from 'node:fs';
 import { runSearch } from '../search/index.js';
 import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { sourceKind } from '../search/sources.js';
-import { runPipeline } from '../pipeline/index.js';
+import { runPipeline, preparePacket } from '../pipeline/index.js';
 import { writeFoundJobs } from '../outputs.js';
 import { emptyCounters } from '../outputs.js';
 import { LIFECYCLE } from '../lifecycle.js';
@@ -95,6 +95,64 @@ export async function runScore({ config, db, logger, deps = {} } = {}) {
  */
 export async function runPrepareApps({ config, db, logger, deps = {} } = {}) {
   return runPipeline({ config, db, logger, mode: 'PREPARE', deps });
+}
+
+/** Parse a TEXT column that may hold a JSON array. */
+function dbList(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch { return []; }
+  }
+  return [];
+}
+
+/**
+ * PREPARE SELECTED — build packets for SPECIFIC jobs the human chose on the
+ * dashboard, using their already-stored score/keywords. Unlike the pipeline,
+ * this does not re-discover or re-score; it prepares exactly what was asked,
+ * even below the auto-prepare tiers (the human's choice overrides the tiers —
+ * but never the safety gates: packets still enter the approval queue).
+ *
+ * @param {object} args { config, db, logger, jobIds, deps }
+ * @returns {Promise<{ prepared: Array<{jobId, packetPath}>, failed: Array<{jobId, error}> }>}
+ */
+export async function preparePacketsForJobs({ config, db, logger, jobIds = [], deps = {} } = {}) {
+  const prepared = [];
+  const failed = [];
+  const counters = { jobs_prepared: 0 };
+
+  for (const jobId of jobIds) {
+    const row = db.getJob(jobId);
+    if (!row) { failed.push({ jobId, error: 'unknown job id' }); continue; }
+    if (Number(row.applied) === 1) {
+      failed.push({ jobId, error: 'already submitted — not re-preparing' });
+      continue;
+    }
+    const job = {
+      id: row.id, source: row.source, company: row.company, title: row.title,
+      location: row.location, url: row.url, jdText: row.jd_text ?? '',
+      postedAt: row.posted_at, applicantCount: row.applicant_count,
+      employmentType: row.employment_type,
+    };
+    const score = {
+      total: typeof row.score === 'number' ? row.score : 0,
+      matchedKeywords: dbList(row.matched_keywords),
+      missingKeywords: dbList(row.missing_keywords),
+    };
+    try {
+      const packetPath = await preparePacket({
+        config, db, logger, job, score, tier: row.tier ?? 'Queue', deps, counters,
+      });
+      prepared.push({ jobId, packetPath });
+    } catch (err) {
+      failed.push({ jobId, error: err.message });
+      logger?.error?.(`prepare-selected failed: ${err.message}`, {}, jobId);
+    }
+  }
+  return { prepared, failed, counters };
 }
 
 /**

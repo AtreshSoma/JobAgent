@@ -380,3 +380,71 @@ describe('command-center endpoints (sections, notes, export, decide-batch)', () 
     expect(r.body.failed[0].error).toMatch(/invalid decision/);
   });
 });
+
+describe('reports, prepare-selected, and submission-record endpoints', () => {
+  let db;
+  let dash;
+  const get = (p) => fetch(dash.url + p).then(async (r) => ({ status: r.status, body: await r.json() }));
+  const post = (p, body) => fetch(dash.url + p, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+
+  beforeEach(async () => {
+    db = openDatabase({ path: ':memory:' });
+    db.upsertJob({
+      id: 'p1', company: 'Acme', title: 'Sr DE', url: 'http://a', source: 'greenhouse',
+      score: 88, tier: 'Priority', sponsorship: 'Confirmed', status: 'ready_for_submit',
+      application_packet_path: '/p/p1.json',
+    });
+    db.upsertJob({ id: 'p2', company: 'Globex', title: 'DE', url: 'http://b', source: 'ashby', score: 70, tier: 'Queue' });
+    dash = await startDashboard({
+      config: {}, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        prepareForJobsFn: async ({ jobIds }) => ({
+          prepared: jobIds.map((jobId) => ({ jobId, packetPath: `/p/${jobId}.json` })),
+          failed: [],
+        }),
+      },
+    });
+  });
+  afterEach(async () => { await dash.close(); db.close(); });
+
+  it('GET /api/reports returns the full reports bundle', async () => {
+    const { status, body } = await get('/api/reports');
+    expect(status).toBe(200);
+    expect(body.dailySummary.daily).toHaveLength(7);
+    expect(Array.isArray(body.applicationLog)).toBe(true);
+    expect(Array.isArray(body.sourcePerformance)).toBe(true);
+    expect(body.sourcePerformance.find((s) => s.source === 'greenhouse')).toBeDefined();
+  });
+
+  it('POST /api/prepare-batch prepares the selected jobs asynchronously', async () => {
+    const started = await post('/api/prepare-batch', { jobIds: ['p2'] });
+    expect(started.status).toBe(202);
+    await new Promise((r) => setTimeout(r, 20));
+    const s = (await get('/api/run/status')).body;
+    expect(s.running).toBe(false);
+    expect(s.lastResult).toMatchObject({ phase: 'prepare-selected', counters: { jobs_prepared: 1 } });
+    expect((await post('/api/prepare-batch', {})).status).toBe(400); // no ids
+  });
+
+  it('mark-submitted accepts a confirmation number and note', async () => {
+    const r = await post('/api/jobs/p1/mark-submitted', {
+      confirmationNumber: 'REQ-9', note: 'submitted via Greenhouse',
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.confirmationNumber).toBe('REQ-9');
+    const job = db.getJob('p1');
+    expect(job.submitted_confirmation).toBe('REQ-9');
+    expect(job.notes).toContain('submitted via Greenhouse');
+    expect(Number(job.applied)).toBe(1);
+  });
+
+  it('GET /api/jobs supports the ATS filter', async () => {
+    db.upsertJob({ id: 'p1', ats_platform: 'greenhouse' });
+    const { body } = await get('/api/jobs?ats=greenhouse');
+    expect(body.jobs.map((j) => j.id)).toEqual(['p1']);
+  });
+});

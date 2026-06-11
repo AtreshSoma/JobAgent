@@ -39,9 +39,12 @@ import { fileURLToPath } from 'node:url';
 import {
   dashboardStats, listBoardJobs, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
-  dashboardSections, setJobNote, buildExportRows, exportRowsToCsv,
+  dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
 } from './data.js';
-import { runDiscover, runScore, runPrepareApps, loadPacket, recordAssistResult } from '../cli/commands.js';
+import {
+  runDiscover, runScore, runPrepareApps, loadPacket, recordAssistResult,
+  preparePacketsForJobs,
+} from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { writeJobTracker } from '../reports/jobTracker.js';
@@ -297,6 +300,9 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method === 'GET' && path === '/api/sections') {
       return sendJson(res, 200, dashboardSections(db, { now: nowDate() }));
     }
+    if (req.method === 'GET' && path === '/api/reports') {
+      return sendJson(res, 200, buildReports(db, { now: nowDate() }));
+    }
     if (req.method === 'GET' && path === '/api/export/jobs.csv') {
       const csv = exportRowsToCsv(buildExportRows(db, { now: nowDate() }));
       res.writeHead(200, {
@@ -342,6 +348,36 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       refreshTracker();
       return sendJson(res, 200, { approved, failed });
     }
+    if (req.method === 'POST' && path === '/api/prepare-batch') {
+      const body = await readBody(req);
+      const ids = Array.isArray(body.jobIds) ? [...new Set(body.jobIds.filter(Boolean))] : [];
+      if (ids.length === 0) return sendJson(res, 400, { error: 'select at least one job to prepare' });
+      if (runState.running) {
+        return sendJson(res, 409, { error: `busy: ${runState.phase} is in progress` });
+      }
+      Object.assign(runState, {
+        running: true, phase: `prepare-selected (${ids.length})`,
+        startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
+      });
+      (async () => {
+        try {
+          const prepareImpl = deps.prepareForJobsFn ?? preparePacketsForJobs;
+          const r = await prepareImpl({ config, db, logger, jobIds: ids, deps });
+          refreshTracker();
+          runState.lastResult = {
+            phase: 'prepare-selected',
+            counters: { jobs_prepared: r.prepared.length },
+            prepared: r.prepared, failed: r.failed,
+          };
+        } catch (err) {
+          runState.lastError = `prepare-selected failed: ${err.message}`;
+        } finally {
+          runState.running = false;
+          runState.finishedAt = new Date().toISOString();
+        }
+      })();
+      return sendJson(res, 202, { started: true, queued: ids.length });
+    }
     if (req.method === 'POST' && path === '/api/decide-batch') {
       const body = await readBody(req);
       const ids = Array.isArray(body.jobIds) ? [...new Set(body.jobIds.filter(Boolean))] : [];
@@ -380,7 +416,12 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         return sendJson(res, 200, result);
       }
       if (req.method === 'POST' && action === 'mark-submitted') {
-        const result = markSubmittedByHuman(db, jobId, { now: nowDate() });
+        const body = await readBody(req);
+        const result = markSubmittedByHuman(db, jobId, {
+          now: nowDate(),
+          confirmationNumber: body.confirmationNumber,
+          note: body.note,
+        });
         refreshTracker();
         return sendJson(res, 200, result);
       }

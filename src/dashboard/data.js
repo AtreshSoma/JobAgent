@@ -241,6 +241,7 @@ function boardRow(job, approval, now) {
     resumePath: job.resume_path ?? null,
     coverLetterPath: job.cover_letter_path ?? null,
     notes: job.notes ?? null,
+    submittedConfirmation: job.submitted_confirmation ?? null,
     appliedAt: job.applied_at ?? null,
     createdAt: job.created_at ?? null,
     updatedAt: job.updated_at ?? null,
@@ -455,6 +456,8 @@ export function listBoardJobs(db, filters = {}) {
   if (filters.appStatus) rows = rows.filter((r) => r.appStatus === filters.appStatus);
   if (filters.source) rows = rows.filter((r) => r.source === filters.source);
   if (filters.sponsorship) rows = rows.filter((r) => r.sponsorship === filters.sponsorship);
+  if (filters.ats) rows = rows.filter((r) => (r.atsPlatform ?? 'unknown') === filters.ats);
+  if (filters.resumeStatus) rows = rows.filter((r) => r.resumeStatus === filters.resumeStatus);
   if (filters.remote === true || filters.remote === 'true') rows = rows.filter((r) => r.remote);
   if (filters.last24h === true || filters.last24h === 'true') {
     rows = rows.filter((r) => r.postedLast24h);
@@ -564,17 +567,33 @@ export function rejectJobPacket(db, jobId) {
  * Record that the HUMAN manually submitted this application. This is the only
  * path to "submitted" — the system never sets it on its own.
  *
+ * Optionally captures a submission record: the ATS confirmation number and a
+ * free-text note (e.g. which email the confirmation went to). The note is
+ * appended to the job's existing notes with a timestamp, never overwriting.
+ *
  * @param {import('../logging/db.js').Database} db
  * @param {string} jobId
- * @param {object} [deps] { now }
- * @returns {{ id: string, appStatus: string, appliedAt: string }}
+ * @param {object} [details]
+ * @param {string} [details.confirmationNumber]
+ * @param {string} [details.note]
+ * @param {Date} [details.now]
+ * @returns {{ id: string, appStatus: string, appliedAt: string, confirmationNumber: string|null }}
  */
-export function markSubmittedByHuman(db, jobId, deps = {}) {
+export function markSubmittedByHuman(db, jobId, details = {}) {
   const job = db.getJob(jobId);
   if (!job) throw httpError(404, `unknown job id: ${jobId}`);
-  const appliedAt = (deps.now ?? new Date()).toISOString();
-  db.upsertJob({ id: jobId, applied: 1, applied_at: appliedAt, status: 'submitted' });
-  return { id: jobId, appStatus: APP_STATUS.SUBMITTED, appliedAt };
+  const appliedAt = (details.now ?? new Date()).toISOString();
+  const confirmation = String(details.confirmationNumber ?? '').trim().slice(0, 200) || null;
+
+  const patch = { id: jobId, applied: 1, applied_at: appliedAt, status: 'submitted' };
+  if (confirmation) patch.submitted_confirmation = confirmation;
+  const note = String(details.note ?? '').trim().slice(0, 2000);
+  if (note) {
+    const stamp = appliedAt.slice(0, 16).replace('T', ' ');
+    patch.notes = job.notes ? `${job.notes}\n[submitted ${stamp}] ${note}` : `[submitted ${stamp}] ${note}`;
+  }
+  db.upsertJob(patch);
+  return { id: jobId, appStatus: APP_STATUS.SUBMITTED, appliedAt, confirmationNumber: confirmation };
 }
 
 /**
@@ -762,4 +781,70 @@ export function exportRowsToCsv(rows = []) {
   const header = EXPORT_COLUMNS.map(([, label]) => csvCell(label)).join(',');
   const body = rows.map((r) => EXPORT_COLUMNS.map(([key]) => csvCell(r[key])).join(',')).join('\r\n');
   return body ? `${header}\r\n${body}\r\n` : `${header}\r\n`;
+}
+
+/* ───────────────────────────── reports ───────────────────────────── */
+
+/** Compact row for report lists (what a reviewer needs, nothing more). */
+function reportRow(r) {
+  return {
+    id: r.id, company: r.company, title: r.title, url: r.url, source: r.source,
+    score: r.score, grade: r.grade, sponsorship: r.sponsorship,
+    appStatus: r.appStatus, postedLabel: r.postedLabel,
+    appliedAt: r.appliedAt, confirmation: r.submittedConfirmation,
+    blockers: r.assistBlockers ?? [], notes: r.notes ?? '',
+  };
+}
+
+/**
+ * Build the view-first reports bundle for the Reports drawer: read it on
+ * screen FIRST, then export. All sections derive from the same board rows so
+ * the numbers always reconcile with the table and tiles.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {object} [options]
+ * @param {Date} [options.now]
+ * @returns {object} { generatedAt, dailySummary, applicationLog, preparedPackets,
+ *                     blockedJobs, skippedJobs, sponsorshipSummary, sourcePerformance }
+ */
+export function buildReports(db, { now = new Date() } = {}) {
+  const stats = dashboardStats(db, { now });
+  const rows = listBoardJobs(db, { now, hideClosed: false, limit: 100000 });
+
+  const byStatus = (status) => rows.filter((r) => r.appStatus === status).map(reportRow);
+
+  // Application log: every job the human acted on (or that stopped), newest first.
+  const LOG_STATUSES = new Set([
+    APP_STATUS.SUBMITTED, APP_STATUS.SKIPPED, APP_STATUS.BLOCKED,
+    APP_STATUS.REJECTED, APP_STATUS.ARCHIVED, APP_STATUS.READY_FOR_SUBMIT,
+  ]);
+  const applicationLog = rows
+    .filter((r) => LOG_STATUSES.has(r.appStatus))
+    .sort((a, b) => String(b.appliedAt ?? b.updatedAt ?? '')
+      .localeCompare(String(a.appliedAt ?? a.updatedAt ?? '')))
+    .map(reportRow);
+
+  const sponsorshipSummary = Object.entries(stats.bySponsorship)
+    .map(([confidence, v]) => ({ confidence, jobs: v.count, strongFit: v.strong }))
+    .sort((a, b) => b.jobs - a.jobs);
+
+  const sourcePerformance = Object.entries(stats.bySource)
+    .map(([source, v]) => ({
+      source, found: v.found, strong: v.strong, prepared: v.prepared, submitted: v.submitted,
+      // Conversion: how much of what a source finds is actually worth acting on.
+      strongRate: v.found ? Math.round((v.strong / v.found) * 100) : 0,
+    }))
+    .sort((a, b) => b.found - a.found);
+
+  return {
+    generatedAt: now.toISOString(),
+    dailySummary: { totals: stats.totals, daily: stats.daily },
+    applicationLog,
+    preparedPackets: byStatus(APP_STATUS.NEEDS_REVIEW)
+      .concat(byStatus(APP_STATUS.APPROVED)),
+    blockedJobs: byStatus(APP_STATUS.BLOCKED),
+    skippedJobs: byStatus(APP_STATUS.SKIPPED),
+    sponsorshipSummary,
+    sourcePerformance,
+  };
 }
