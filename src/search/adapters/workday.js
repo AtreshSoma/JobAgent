@@ -27,6 +27,8 @@
 
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { fetchWithTimeout } from '../../utils/httpClient.js';
 
 export const adapterId = 'workday';
 
@@ -36,33 +38,62 @@ const MAX_PAGES = 50;
 /** Hard cap on per-job detail GETs per tenant (runaway protection). */
 const MAX_DETAIL_FETCHES = 200;
 
+/** Default number of tenants fetched in parallel. */
+const DEFAULT_TENANT_CONCURRENCY = 6;
+
+/** Default number of list pages fetched in parallel per tenant. */
+const DEFAULT_PAGE_CONCURRENCY = 4;
+
+/**
+ * Default number of per-job detail GETs in flight per tenant. Bounded
+ * concurrency (NOT a fixed inter-request delay) is the politeness mechanism —
+ * this is the single biggest discovery speedup, since the old code serialized
+ * every detail fetch behind a shared rate-limit key.
+ */
+const DEFAULT_DETAIL_CONCURRENCY = 6;
+
 /**
  * @param {object} source jobboards entry: { tenants: object[] }
  * @param {object} ctx
  * @param {typeof fetch} [ctx.fetchImpl]
  * @param {{ wait: Function }} [ctx.rateLimiter]
  * @param {number} [ctx.maxRetries]
+ * @param {number} [ctx.boardConcurrency] tenants in parallel
+ * @param {number} [ctx.pageConcurrency] list pages in parallel per tenant
+ * @param {number} [ctx.detailConcurrency] detail GETs in parallel per tenant
+ * @param {number} [ctx.requestTimeoutMs]
  * @returns {Promise<{ jobs: object[], errors: Array<object> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
   const tenants = Array.isArray(source.tenants) ? source.tenants : [];
+  const tenantConcurrency = ctx.boardConcurrency ?? DEFAULT_TENANT_CONCURRENCY;
+  const pageConcurrency = ctx.pageConcurrency ?? DEFAULT_PAGE_CONCURRENCY;
+  const detailConcurrency = ctx.detailConcurrency ?? DEFAULT_DETAIL_CONCURRENCY;
   const jobs = [];
   const errors = [];
 
-  for (const tenant of tenants) {
+  // Tenants are independent public career sites — fetch them in parallel.
+  const perTenant = await mapWithConcurrency(tenants, tenantConcurrency, async (tenant) => {
     const cfg = validateTenant(tenant);
     if (cfg.error) {
-      errors.push({ tenant: tenant?.tenant ?? null, error: cfg.error });
-      continue;
+      return { jobs: [], errors: [{ tenant: tenant?.tenant ?? null, error: cfg.error }] };
     }
     try {
-      const { jobs: found, errors: detailErrors } = await fetchTenant(cfg, { fetchImpl, rateLimiter, maxRetries, rateLimitMs: source.rateLimitMs });
-      jobs.push(...found);
-      for (const e of detailErrors) errors.push({ tenant: cfg.tenant, site: cfg.site, ...e });
+      const { jobs: found, errors: detailErrors } = await fetchTenant(cfg, {
+        fetchImpl, rateLimiter, maxRetries, rateLimitMs: source.rateLimitMs,
+        requestTimeoutMs, pageConcurrency, detailConcurrency,
+      });
+      return { jobs: found, errors: detailErrors.map((e) => ({ tenant: cfg.tenant, site: cfg.site, ...e })) };
     } catch (err) {
-      errors.push({ tenant: cfg.tenant, site: cfg.site, error: err.message });
+      return { jobs: [], errors: [{ tenant: cfg.tenant, site: cfg.site, error: err.message }] };
     }
+  });
+
+  for (const r of perTenant) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    errors.push(...r.errors);
   }
 
   if (tenants.length === 0) {
@@ -98,43 +129,75 @@ function validateTenant(t = {}) {
 
 /** Page through one tenant/site's public CXS jobs endpoint. */
 async function fetchTenant(cfg, ctx) {
-  const { fetchImpl, rateLimiter, maxRetries, rateLimitMs } = ctx;
+  const { fetchImpl, rateLimiter, maxRetries, rateLimitMs, requestTimeoutMs, pageConcurrency, detailConcurrency } = ctx;
   const endpoint = `https://${cfg.host}/wday/cxs/${encodeURIComponent(cfg.tenant)}/${encodeURIComponent(cfg.site)}/jobs`;
-  const out = [];
   const errors = [];
-  let offset = 0;
-  let total = Infinity;
-  let detailCount = 0;
 
-  for (let page = 0; page < MAX_PAGES && offset < total; page += 1) {
-    if (rateLimiter) await rateLimiter.wait(`workday:${cfg.tenant}`, rateLimitMs);
-    const body = { limit: cfg.pageSize, offset, searchText: cfg.searchText, appliedFacets: {} };
-    const data = await withRetry(() => postJson(fetchImpl, endpoint, body), { maxRetries });
+  // Page 0 — fetched first so we learn `total` and can fan out the rest.
+  if (rateLimiter) await rateLimiter.wait(`workday:${cfg.tenant}`, rateLimitMs);
+  const first = await withRetry(
+    () => postJson(fetchImpl, endpoint, pageBody(cfg, 0), requestTimeoutMs),
+    { maxRetries },
+  );
+  const firstPostings = Array.isArray(first.jobPostings) ? first.jobPostings : [];
+  const total = Number.isFinite(first.total) ? first.total : firstPostings.length;
+  const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / cfg.pageSize)));
 
-    total = Number.isFinite(data.total) ? data.total : (data.jobPostings?.length ?? 0);
-    const postings = Array.isArray(data.jobPostings) ? data.jobPostings : [];
-    if (postings.length === 0) break;
-
-    for (const p of postings) {
-      const job = mapJob(p, cfg);
-      if (cfg.fetchDetails && detailCount < MAX_DETAIL_FETCHES) {
-        detailCount += 1;
-        const note = await enrichWithDetail(job, p, cfg, ctx);
-        if (note) errors.push(note);
-      }
-      out.push(job);
+  // Remaining pages have computable offsets, so fetch them concurrently
+  // (bounded) instead of walking 4s apart one page at a time.
+  const remainingOffsets = [];
+  for (let page = 1; page < pageCount; page += 1) remainingOffsets.push(page * cfg.pageSize);
+  const restPages = await mapWithConcurrency(remainingOffsets, pageConcurrency, async (offset) => {
+    try {
+      // Unique key per offset so the rate limiter never serializes parallel pages.
+      if (rateLimiter) await rateLimiter.wait(`workday-page:${cfg.tenant}:${offset}`, rateLimitMs);
+      const data = await withRetry(
+        () => postJson(fetchImpl, endpoint, pageBody(cfg, offset), requestTimeoutMs),
+        { maxRetries },
+      );
+      return { postings: Array.isArray(data.jobPostings) ? data.jobPostings : [], error: null };
+    } catch (err) {
+      return { postings: [], error: { offset, error: err.message } };
     }
-    offset += postings.length;
+  });
+
+  const postings = [...firstPostings];
+  for (const r of restPages) {
+    if (!r) continue;
+    postings.push(...r.postings);
+    if (r.error) errors.push(r.error);
   }
+
+  const out = postings.map((p) => mapJob(p, cfg));
+
+  // Enrich up to MAX_DETAIL_FETCHES jobs with their full JD via the per-job
+  // PUBLIC detail endpoint — concurrently (bounded). This replaces the old
+  // strictly-serial path that dominated discovery runtime.
+  if (cfg.fetchDetails) {
+    const pairs = out
+      .slice(0, MAX_DETAIL_FETCHES)
+      .map((job, i) => ({ job, posting: postings[i] }));
+    const notes = await mapWithConcurrency(pairs, detailConcurrency, ({ job, posting }) =>
+      enrichWithDetail(job, posting, cfg, { fetchImpl, maxRetries, requestTimeoutMs }));
+    for (const note of notes) {
+      if (note) errors.push(note);
+    }
+  }
+
   return { jobs: out, errors };
 }
 
-async function postJson(fetchImpl, url, body) {
-  const res = await fetchImpl(url, {
+/** Build the CXS list-request body for a given offset. */
+function pageBody(cfg, offset) {
+  return { limit: cfg.pageSize, offset, searchText: cfg.searchText, appliedFacets: {} };
+}
+
+async function postJson(fetchImpl, url, body, requestTimeoutMs) {
+  const res = await fetchWithTimeout(fetchImpl, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
-  });
+  }, requestTimeoutMs);
   if (!res.ok) {
     const e = new Error(`Workday HTTP ${res.status} for ${url}`);
     e.status = res.status;
@@ -157,11 +220,11 @@ async function postJson(fetchImpl, url, body) {
  * @param {object} job normalized summary job (mutated in place on success)
  * @param {object} posting raw CXS posting
  * @param {object} cfg validated tenant config
- * @param {object} ctx { fetchImpl, rateLimiter, maxRetries, rateLimitMs }
+ * @param {object} ctx { fetchImpl, maxRetries, requestTimeoutMs }
  * @returns {Promise<object|null>}
  */
 export async function enrichWithDetail(job, posting, cfg, ctx) {
-  const { fetchImpl, rateLimiter, maxRetries, rateLimitMs } = ctx;
+  const { fetchImpl, maxRetries, requestTimeoutMs } = ctx;
   const externalPath = String(posting.externalPath ?? '').trim();
   if (!externalPath) {
     job.rawMetadata.summaryOnly = true;
@@ -170,8 +233,7 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
   const path = externalPath.startsWith('/') ? externalPath : `/${externalPath}`;
   const url = `https://${cfg.host}/wday/cxs/${encodeURIComponent(cfg.tenant)}/${encodeURIComponent(cfg.site)}${path}`;
   try {
-    if (rateLimiter) await rateLimiter.wait(`workday-detail:${cfg.tenant}`, rateLimitMs);
-    const data = await withRetry(() => getJson(fetchImpl, url), { maxRetries });
+    const data = await withRetry(() => getJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
     const info = data?.jobPostingInfo ?? {};
     const desc = info.jobDescription ?? info.jobDescriptionText ?? '';
     const text = htmlToText(desc);
@@ -195,8 +257,8 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
   }
 }
 
-async function getJson(fetchImpl, url) {
-  const res = await fetchImpl(url, { headers: { Accept: 'application/json' } });
+async function getJson(fetchImpl, url, requestTimeoutMs) {
+  const res = await fetchWithTimeout(fetchImpl, url, { headers: { Accept: 'application/json' } }, requestTimeoutMs);
   if (!res.ok) {
     const e = new Error(`Workday detail HTTP ${res.status} for ${url}`);
     e.status = res.status;

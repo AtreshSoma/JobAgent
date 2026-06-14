@@ -7,8 +7,13 @@
 
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { fetchWithTimeout } from '../../utils/httpClient.js';
 
 export const adapterId = 'greenhouse';
+
+/** Default number of boards to fetch in parallel when ctx omits a ceiling. */
+const DEFAULT_BOARD_CONCURRENCY = 8;
 
 /**
  * @param {object} source jobboards source entry ({ boards: string[] })
@@ -16,31 +21,39 @@ export const adapterId = 'greenhouse';
  * @param {typeof fetch} [ctx.fetchImpl]
  * @param {{ wait: Function }} [ctx.rateLimiter]
  * @param {number} [ctx.maxRetries]
+ * @param {number} [ctx.boardConcurrency]
+ * @param {number} [ctx.requestTimeoutMs]
  * @returns {Promise<{ jobs: object[], errors: Array<{board: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
+  const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
   const errors = [];
 
-  for (const token of boards) {
+  // Boards are independent public endpoints — fetch them in parallel (bounded).
+  const perBoard = await mapWithConcurrency(boards, concurrency, async (token) => {
     try {
       if (rateLimiter) await rateLimiter.wait(`greenhouse:${token}`, source.rateLimitMs);
       const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs?content=true`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url), { maxRetries });
-      for (const j of data.jobs ?? []) {
-        jobs.push(mapJob(j, token));
-      }
+      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      return { jobs: (data.jobs ?? []).map((j) => mapJob(j, token)), error: null };
     } catch (err) {
-      errors.push({ board: token, error: err.message });
+      return { jobs: [], error: { board: token, error: err.message } };
     }
+  });
+
+  for (const r of perBoard) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    if (r.error) errors.push(r.error);
   }
   return { jobs, errors };
 }
 
-async function fetchJson(fetchImpl, url) {
-  const res = await fetchImpl(url);
+async function fetchJson(fetchImpl, url, requestTimeoutMs) {
+  const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
   if (!res.ok) {
     const e = new Error(`Greenhouse HTTP ${res.status} for ${url}`);
     e.status = res.status;

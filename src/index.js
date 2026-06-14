@@ -37,6 +37,7 @@ import {
 } from './cli/commands.js';
 import { runGuided } from './cli/guided.js';
 import { runApply } from './cli/applyOneByOne.js';
+import { runWatch } from './cli/watch.js';
 import { runDoctor, printDoctorReport, requiredProfileGaps } from './cli/doctor.js';
 import { ui } from './cli/ui.js';
 import { formatPostedRelative } from './utils/dates.js';
@@ -74,7 +75,7 @@ const VALID_MODES = new Set(['DRY_RUN', 'PREPARE', 'LIVE_ASSIST']);
 /** Phase commands handled by the dispatcher (vs. the legacy mode path). */
 const COMMANDS = new Set([
   'go', 'start', 'dashboard', 'ui',
-  'discover', 'score', 'prepare-apps', 'assist', 'apply', 'end-to-end', 'live-submit',
+  'discover', 'score', 'prepare-apps', 'assist', 'apply', 'watch', 'end-to-end', 'live-submit',
   'approvals', 'approve', 'reject', 'packets', 'packet', 'report',
 ]);
 
@@ -242,6 +243,28 @@ async function runCommand(command, parsed, env) {
         const options = { all: parsed.flags.has('all') };
         const r = await runApply({ config, db, logger, options });
         return { command, ...r };
+      }
+      case 'watch': {
+        const options = {
+          intervalMinutes: Number(parsed.options.interval ?? env.WATCH_INTERVAL_MINUTES ?? 20),
+          freeOnly: parsed.flags.has('free-only') || parsed.flags.has('freeOnly'),
+          once: parsed.flags.has('once'),
+          freshAlertMinutes: Number(parsed.options['fresh-alert'] ?? env.WATCH_FRESH_ALERT_MINUTES ?? 60),
+        };
+        logger.startRun('PREPARE');
+        // Stop cleanly on Ctrl+C: flip a flag the watch loop checks between
+        // (and during) its inter-cycle sleep.
+        let stop = false;
+        const onSignal = () => { stop = true; };
+        process.on('SIGINT', onSignal);
+        process.on('SIGTERM', onSignal);
+        try {
+          const r = await runWatch({ config, db, logger, options, deps: { shouldStop: () => stop } });
+          return { command, ...r };
+        } finally {
+          process.off('SIGINT', onSignal);
+          process.off('SIGTERM', onSignal);
+        }
       }
       case 'live-submit': {
         ui.heading('Live Submit');

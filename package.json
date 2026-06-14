@@ -20,6 +20,7 @@
     "prepare-apps": "node src/index.js prepare-apps",
     "assist": "node src/index.js assist",
     "apply": "node src/index.js apply",
+    "watch": "node src/index.js watch",
     "end-to-end": "node src/index.js end-to-end",
     "approvals": "node src/index.js approvals",
     "approve": "node src/index.js approve",

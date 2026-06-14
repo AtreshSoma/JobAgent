@@ -7,8 +7,13 @@
 
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { fetchWithTimeout } from '../../utils/httpClient.js';
 
 export const adapterId = 'lever';
+
+/** Default number of boards to fetch in parallel when ctx omits a ceiling. */
+const DEFAULT_BOARD_CONCURRENCY = 8;
 
 /**
  * @param {object} source jobboards source entry ({ boards: string[] })
@@ -16,31 +21,39 @@ export const adapterId = 'lever';
  * @param {typeof fetch} [ctx.fetchImpl]
  * @param {{ wait: Function }} [ctx.rateLimiter]
  * @param {number} [ctx.maxRetries]
+ * @param {number} [ctx.boardConcurrency]
+ * @param {number} [ctx.requestTimeoutMs]
  * @returns {Promise<{ jobs: object[], errors: Array<{board: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
+  const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
   const errors = [];
 
-  for (const company of boards) {
+  const perBoard = await mapWithConcurrency(boards, concurrency, async (company) => {
     try {
       if (rateLimiter) await rateLimiter.wait(`lever:${company}`, source.rateLimitMs);
       const url = `https://api.lever.co/v0/postings/${encodeURIComponent(company)}?mode=json`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url), { maxRetries });
-      for (const j of Array.isArray(data) ? data : []) {
-        jobs.push(mapJob(j, company));
-      }
+      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      const list = Array.isArray(data) ? data : [];
+      return { jobs: list.map((j) => mapJob(j, company)), error: null };
     } catch (err) {
-      errors.push({ board: company, error: err.message });
+      return { jobs: [], error: { board: company, error: err.message } };
     }
+  });
+
+  for (const r of perBoard) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    if (r.error) errors.push(r.error);
   }
   return { jobs, errors };
 }
 
-async function fetchJson(fetchImpl, url) {
-  const res = await fetchImpl(url);
+async function fetchJson(fetchImpl, url, requestTimeoutMs) {
+  const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
   if (!res.ok) {
     const e = new Error(`Lever HTTP ${res.status} for ${url}`);
     e.status = res.status;

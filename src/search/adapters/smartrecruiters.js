@@ -11,10 +11,15 @@
 
 import { normalizeJob } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { fetchWithTimeout } from '../../utils/httpClient.js';
 
 export const adapterId = 'smartrecruiters';
 
 const PAGE_LIMIT = 100;
+
+/** Default number of companies to fetch in parallel when ctx omits a ceiling. */
+const DEFAULT_BOARD_CONCURRENCY = 8;
 
 /**
  * @param {object} source jobboards source entry ({ boards: string[] } — SmartRecruiters company identifiers)
@@ -22,31 +27,38 @@ const PAGE_LIMIT = 100;
  * @param {typeof fetch} [ctx.fetchImpl]
  * @param {{ wait: Function }} [ctx.rateLimiter]
  * @param {number} [ctx.maxRetries]
+ * @param {number} [ctx.boardConcurrency]
+ * @param {number} [ctx.requestTimeoutMs]
  * @returns {Promise<{ jobs: object[], errors: Array<{company: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
   const companies = Array.isArray(source.boards) ? source.boards : [];
+  const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
   const errors = [];
 
-  for (const company of companies) {
+  const perCompany = await mapWithConcurrency(companies, concurrency, async (company) => {
     try {
       if (rateLimiter) await rateLimiter.wait(`smartrecruiters:${company}`, source.rateLimitMs);
       const url = `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(company)}/postings?limit=${PAGE_LIMIT}`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url), { maxRetries });
-      for (const p of data.content ?? []) {
-        jobs.push(mapPosting(p, company));
-      }
+      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      return { jobs: (data.content ?? []).map((p) => mapPosting(p, company)), error: null };
     } catch (err) {
-      errors.push({ company, error: err.message });
+      return { jobs: [], error: { company, error: err.message } };
     }
+  });
+
+  for (const r of perCompany) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    if (r.error) errors.push(r.error);
   }
   return { jobs, errors };
 }
 
-async function fetchJson(fetchImpl, url) {
-  const res = await fetchImpl(url);
+async function fetchJson(fetchImpl, url, requestTimeoutMs) {
+  const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
   if (!res.ok) {
     const e = new Error(`SmartRecruiters HTTP ${res.status} for ${url}`);
     e.status = res.status;

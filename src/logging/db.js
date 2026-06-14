@@ -131,6 +131,11 @@ export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
   }
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL;');
+  // With WAL, NORMAL is the recommended high-throughput durability setting: it
+  // is safe across process crashes (only risks a power loss) and avoids an
+  // fsync on every commit. Discovery persists thousands of rows per run, so the
+  // default FULL setting would otherwise dominate runtime with disk syncs.
+  db.exec('PRAGMA synchronous = NORMAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA_SQL);
   applyMigrations(db);
@@ -170,9 +175,47 @@ export class Database {
   constructor(handle) {
     /** @type {DatabaseSync} */
     this.db = handle;
+    /**
+     * Prepared-statement cache. Discovery upserts thousands of rows per run,
+     * each via getJob + INSERT…ON CONFLICT; re-preparing identical SQL every
+     * call is wasted work, so we memoize by SQL text.
+     * @type {Map<string, import('node:sqlite').StatementSync>}
+     */
+    this._stmtCache = new Map();
+  }
+
+  /** Prepare (and cache) a statement by its SQL text. */
+  prepareCached(sql) {
+    let stmt = this._stmtCache.get(sql);
+    if (!stmt) {
+      stmt = this.db.prepare(sql);
+      this._stmtCache.set(sql, stmt);
+    }
+    return stmt;
+  }
+
+  /**
+   * Run `fn` inside a single transaction. Commits on success, rolls back on
+   * throw. Used to batch the thousands of per-job upserts a discovery run makes
+   * into one durable write instead of thousands.
+   * @template T
+   * @param {() => T} fn
+   * @returns {T}
+   */
+  transaction(fn) {
+    this.db.exec('BEGIN');
+    try {
+      const result = fn();
+      this.db.exec('COMMIT');
+      return result;
+    } catch (err) {
+      try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw err;
+    }
   }
 
   close() {
+    this._stmtCache.clear();
     this.db.close();
   }
 
@@ -199,13 +242,35 @@ export class Database {
 
     const sql = `INSERT INTO jobs (${cols.join(', ')}) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET ${updates}`;
-    this.db.prepare(sql).run(params);
+    this.prepareCached(sql).run(params);
     return this.getJob(job.id);
   }
 
   /** @param {string} id */
   getJob(id) {
-    return this.db.prepare('SELECT * FROM jobs WHERE id = ?').get(id) ?? null;
+    return this.prepareCached('SELECT * FROM jobs WHERE id = ?').get(id) ?? null;
+  }
+
+  /**
+   * Return a Set of all job ids that have been APPLIED to. Loading them once is
+   * far cheaper than calling getJob() per discovered job during dedup (a
+   * discovery run examines thousands of jobs every time).
+   * @returns {Set<string>}
+   */
+  getAppliedJobIds() {
+    const rows = this.db.prepare('SELECT id FROM jobs WHERE applied = 1').all();
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Return a Set of EVERY job id currently known to the database (any status).
+   * Watch mode snapshots this before a cycle so it can tell which jobs are
+   * brand-new this cycle (worth alerting on) vs. already-seen.
+   * @returns {Set<string>}
+   */
+  getKnownJobIds() {
+    const rows = this.db.prepare('SELECT id FROM jobs').all();
+    return new Set(rows.map((r) => r.id));
   }
 
   /**

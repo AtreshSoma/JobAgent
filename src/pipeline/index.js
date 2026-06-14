@@ -60,6 +60,10 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   const searchFn = deps.searchFn ?? runSearch;
 
   logger.event(EVENT_TYPES.SEARCH_START, { message: 'Starting search' });
+  // Preload the set of already-APPLIED job ids ONCE (cheap) rather than issuing
+  // a per-job SELECT during dedup — a discovery run examines thousands of jobs.
+  const excludeApplied = config?.runtime?.excludeAlreadyApplied !== false;
+  const appliedIds = excludeApplied ? db.getAppliedJobIds() : null;
   const { jobs, duplicates, errors } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
@@ -67,11 +71,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
     // are re-discovered so DRY_RUN -> PREPARE -> LIVE_ASSIST can build on them.
     // Honors runtime.excludeAlreadyApplied (default true).
-    existsInDb: (job) => {
-      if (config?.runtime?.excludeAlreadyApplied === false) return false;
-      const existing = db.getJob(job.id);
-      return Boolean(existing && existing.applied);
-    },
+    existsInDb: (job) => (appliedIds ? appliedIds.has(job.id) : false),
   });
   logger.event(EVENT_TYPES.SEARCH_END, {
     message: `Search complete: ${jobs.length} jobs, ${duplicates.length} dupes, ${errors.length} errors`,
@@ -207,7 +207,11 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
 
     // 5. PREPARE / LIVE_ASSIST: build a packet for strong, sponsorship-cleared roles.
     let packetPath = null;
-    if (mode !== 'DRY_RUN' && PREPARE_TIERS.has(tier)) {
+    // An optional prepareFilter lets watch mode tailor ONLY brand-new jobs each
+    // cycle (skip re-tailoring already-prepared ones). Defaults to preparing all
+    // eligible tiers, so normal runs are unchanged.
+    const shouldPrepare = typeof deps.prepareFilter === 'function' ? deps.prepareFilter(job) : true;
+    if (mode !== 'DRY_RUN' && PREPARE_TIERS.has(tier) && shouldPrepare) {
       packetPath = await preparePacket({ config, db, logger, job, score, tier, deps, counters });
       if (packetPath) {
         lifecycle = LIFECYCLE.PREPARED;

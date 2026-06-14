@@ -9,6 +9,7 @@
  */
 
 import { createRateLimiter } from '../utils/rateLimiter.js';
+import { mapSettled } from '../utils/concurrency.js';
 import { deduplicate } from './deduplicator.js';
 import { classifyDiscovery } from './discoveryFilter.js';
 import { sourceKind } from './sources.js';
@@ -42,6 +43,9 @@ export const ADAPTERS = {
   smartrecruiters,
 };
 
+/** How many independent sources to run concurrently by default. */
+const DEFAULT_SOURCE_CONCURRENCY = 6;
+
 /**
  * Run all enabled sources and return deduplicated jobs.
  *
@@ -64,37 +68,65 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   });
   const maxRetries = ctx.maxRetries ?? defaults.maxRetries ?? 3;
 
+  // Concurrency ceilings are politeness limits, never evasion. Source-level
+  // fans out across independent connectors; per-adapter ceilings (boards /
+  // pages / details / actors) are threaded through ctx so each adapter throttles
+  // its own internal fan-out. A request timeout stops a single hung endpoint
+  // from stalling the whole run.
+  const sourceConcurrency = ctx.sourceConcurrency ?? defaults.sourceConcurrency ?? DEFAULT_SOURCE_CONCURRENCY;
+  const adapterCtx = {
+    ...ctx,
+    rateLimiter,
+    maxRetries,
+    requestTimeoutMs: ctx.requestTimeoutMs ?? defaults.requestTimeoutMs,
+    boardConcurrency: ctx.boardConcurrency ?? defaults.boardConcurrency,
+    pageConcurrency: ctx.pageConcurrency ?? defaults.pageConcurrency,
+    detailConcurrency: ctx.detailConcurrency ?? defaults.detailConcurrency,
+    actorConcurrency: ctx.actorConcurrency ?? defaults.actorConcurrency,
+  };
+
   const sources = [...(jobboards?.sources ?? [])]
     .filter((s) => s.enabled)
     .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99));
+
+  // Run all enabled sources concurrently (bounded). mapSettled preserves input
+  // order, so results are gathered in priority order — collection and dedup
+  // stay deterministic regardless of which source finishes first.
+  const settled = await mapSettled(sources, sourceConcurrency, async (source) => {
+    const mod = ADAPTERS[source.adapter];
+    if (!mod || typeof mod.run !== 'function') {
+      return { jobs: [], errors: [{ error: `Unknown adapter: ${source.adapter}` }] };
+    }
+    hooks.onSource?.({ phase: 'start', source: source.id, adapter: source.adapter });
+    const result = await mod.run(source, adapterCtx);
+    const jobs = result.jobs ?? [];
+    hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: jobs.length });
+    return { jobs, errors: result.errors ?? [] };
+  });
 
   const collected = [];
   const errors = [];
   const perSource = [];
 
-  for (const source of sources) {
-    const mod = ADAPTERS[source.adapter];
-    if (!mod || typeof mod.run !== 'function') {
-      errors.push({ source: source.id, error: `Unknown adapter: ${source.adapter}` });
-      continue;
+  for (let i = 0; i < settled.length; i += 1) {
+    const source = sources[i];
+    const r = settled[i];
+    // The mapper above only throws if an adapter throws synchronously after the
+    // start hook; treat that as a single source-level error so other sources
+    // (already gathered) are never lost.
+    const payload = r.ok ? r.value : { jobs: [], errors: [{ error: r.error?.message ?? 'source failed' }] };
+    collected.push(...payload.jobs);
+    for (const e of payload.errors) {
+      const tagged = { source: source.id, ...e };
+      errors.push(tagged);
+      hooks.onError?.(tagged);
     }
-    hooks.onSource?.({ phase: 'start', source: source.id, adapter: source.adapter });
-    try {
-      const result = await mod.run(source, { ...ctx, rateLimiter, maxRetries });
-      const jobs = result.jobs ?? [];
-      collected.push(...jobs);
-      for (const e of result.errors ?? []) {
-        errors.push({ source: source.id, ...e });
-        hooks.onError?.({ source: source.id, ...e });
-      }
-      perSource.push({ source: source.id, adapter: source.adapter, found: jobs.length, errors: (result.errors ?? []).length });
-      hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: jobs.length });
-    } catch (err) {
-      // An adapter throwing should not stop other sources.
-      errors.push({ source: source.id, error: err.message });
-      perSource.push({ source: source.id, adapter: source.adapter, found: 0, errors: 1 });
-      hooks.onError?.({ source: source.id, error: err.message });
-    }
+    perSource.push({
+      source: source.id,
+      adapter: source.adapter,
+      found: payload.jobs.length,
+      errors: payload.errors.length,
+    });
   }
 
   const { unique, duplicates } = deduplicate(collected, { existsInDb });

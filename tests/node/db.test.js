@@ -49,6 +49,46 @@ describe('db (node:sqlite, in-memory)', () => {
     expect(db.countAppliedOn('2026-06-04')).toBe(2);
   });
 
+  it('returns the set of every known job id (for watch incremental detection)', () => {
+    db.upsertJob({ id: 'a', status: 'scored' });
+    db.upsertJob({ id: 'b', status: 'discarded' });
+    db.upsertJob({ id: 'c', status: 'prepared' });
+    const known = db.getKnownJobIds();
+    expect(known).toBeInstanceOf(Set);
+    expect(known.has('a')).toBe(true);
+    expect(known.has('b')).toBe(true);
+    expect(known.has('c')).toBe(true);
+    expect(known.has('missing')).toBe(false);
+    expect(known.size).toBe(3);
+  });
+
+  it('returns the set of applied job ids for fast dedup', () => {
+    db.upsertJob({ id: 'a', applied: 1, applied_at: '2026-06-04T10:00:00Z' });
+    db.upsertJob({ id: 'b', score: 80 }); // not applied
+    db.upsertJob({ id: 'c', applied: 1, applied_at: '2026-06-05T10:00:00Z' });
+    const ids = db.getAppliedJobIds();
+    expect(ids).toBeInstanceOf(Set);
+    expect(ids.has('a')).toBe(true);
+    expect(ids.has('c')).toBe(true);
+    expect(ids.has('b')).toBe(false);
+    expect(ids.size).toBe(2);
+  });
+
+  it('commits a batch of writes inside a transaction', () => {
+    db.transaction(() => {
+      for (let i = 0; i < 5; i += 1) db.upsertJob({ id: `t${i}`, score: i });
+    });
+    expect(db.listJobs({}).length).toBe(5);
+  });
+
+  it('rolls back a transaction on error, leaving no partial writes', () => {
+    expect(() => db.transaction(() => {
+      db.upsertJob({ id: 'ok', score: 1 });
+      throw new Error('boom');
+    })).toThrow('boom');
+    expect(db.getJob('ok')).toBeNull();
+  });
+
   it('records run_log lifecycle', () => {
     db.insertRunLog({ run_id: 'r1', mode: 'DRY_RUN', started_at: '2026-06-04T00:00:00Z', jobs_found: 0 });
     db.updateRunLog('r1', { jobs_found: 5, ended_at: '2026-06-04T00:05:00Z' });

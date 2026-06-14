@@ -24,10 +24,27 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { getSecret } from '../../utils/credentialManager.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { fetchWithTimeout } from '../../utils/httpClient.js';
 
 export const adapterId = 'apify';
 
 const API_BASE = 'https://api.apify.com/v2';
+
+/**
+ * How many actors to run concurrently. Conservative by default: Apify's free
+ * tier limits concurrent actor runs, and run-sync calls are heavy. Override via
+ * ctx.actorConcurrency.
+ */
+const DEFAULT_ACTOR_CONCURRENCY = 3;
+
+/**
+ * Apify `run-sync-get-dataset-items` EXECUTES an actor (e.g. scraping Indeed)
+ * and can legitimately take a minute or two. It must NOT inherit the short
+ * board-API request timeout, or runs would be aborted mid-scrape. Use a
+ * generous dedicated ceiling instead (override via ctx.actorTimeoutMs).
+ */
+const DEFAULT_ACTOR_TIMEOUT_MS = 180_000;
 
 /**
  * @param {object} source jobboards source entry
@@ -39,6 +56,8 @@ const API_BASE = 'https://api.apify.com/v2';
  * @param {typeof fetch} [ctx.fetchImpl]
  * @param {{ wait: Function }} [ctx.rateLimiter]
  * @param {number} [ctx.maxRetries]
+ * @param {number} [ctx.actorConcurrency]
+ * @param {number} [ctx.actorTimeoutMs]
  * @param {NodeJS.ProcessEnv} [ctx.env]
  * @returns {Promise<{ jobs: object[], errors: Array<{actor?: string, error: string}> }>}
  */
@@ -48,6 +67,8 @@ export async function run(source = {}, ctx = {}) {
   const actors = Array.isArray(options.actors) ? options.actors : [];
   const tokenEnv = options.tokenEnv || 'APIFY_TOKEN';
   const maxItems = Number.isFinite(options.maxItemsPerActor) ? options.maxItemsPerActor : 100;
+  const concurrency = ctx.actorConcurrency ?? DEFAULT_ACTOR_CONCURRENCY;
+  const actorTimeoutMs = ctx.actorTimeoutMs ?? DEFAULT_ACTOR_TIMEOUT_MS;
 
   const jobs = [];
   const errors = [];
@@ -63,21 +84,31 @@ export async function run(source = {}, ctx = {}) {
     return { jobs, errors };
   }
 
-  for (const actor of actors) {
+  // Actors are independent runs — execute them in parallel (bounded), since a
+  // run-sync call can take many seconds each.
+  const perActor = await mapWithConcurrency(actors, concurrency, async (actor) => {
     const label = actor.label || actor.actorId || actor.datasetId || 'apify';
     try {
       if (rateLimiter) await rateLimiter.wait(`apify:${label}`, source.rateLimitMs);
       const items = await withRetry(
-        () => fetchItems(fetchImpl, actor, token, maxItems),
+        () => fetchItems(fetchImpl, actor, token, maxItems, actorTimeoutMs),
         { maxRetries },
       );
+      const mapped = [];
       for (const item of items) {
         const job = mapItem(item, actor);
-        if (job) jobs.push(job);
+        if (job) mapped.push(job);
       }
+      return { jobs: mapped, error: null };
     } catch (err) {
-      errors.push({ actor: label, error: err.message });
+      return { jobs: [], error: { actor: label, error: err.message } };
     }
+  });
+
+  for (const r of perActor) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    if (r.error) errors.push(r.error);
   }
 
   return { jobs, errors };
@@ -89,9 +120,10 @@ export async function run(source = {}, ctx = {}) {
  * @param {object} actor
  * @param {string} token
  * @param {number} maxItems
+ * @param {number} [timeoutMs]
  * @returns {Promise<object[]>}
  */
-async function fetchItems(fetchImpl, actor, token, maxItems) {
+async function fetchItems(fetchImpl, actor, token, maxItems, timeoutMs) {
   const headers = {
     Authorization: `Bearer ${token}`,
     Accept: 'application/json',
@@ -100,7 +132,7 @@ async function fetchItems(fetchImpl, actor, token, maxItems) {
   // Mode 2: read items from an existing dataset.
   if (actor.datasetId) {
     const url = `${API_BASE}/datasets/${encodeURIComponent(actor.datasetId)}/items?clean=true&limit=${maxItems}`;
-    return fetchJson(fetchImpl, url, { headers });
+    return fetchJson(fetchImpl, url, { headers }, timeoutMs);
   }
 
   // Mode 1: run the actor and read its dataset items in one call.
@@ -112,14 +144,14 @@ async function fetchItems(fetchImpl, actor, token, maxItems) {
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/json' },
       body: JSON.stringify(actor.input ?? {}),
-    });
+    }, timeoutMs);
   }
 
   throw new Error('Apify actor entry needs either `actorId` (to run) or `datasetId` (to read).');
 }
 
-async function fetchJson(fetchImpl, url, init = {}) {
-  const res = await fetchImpl(url, init);
+async function fetchJson(fetchImpl, url, init = {}, timeoutMs) {
+  const res = await fetchWithTimeout(fetchImpl, url, init, timeoutMs);
   if (!res.ok) {
     const e = new Error(`Apify HTTP ${res.status} for ${stripQuery(url)}`);
     e.status = res.status;
@@ -157,7 +189,7 @@ export function mapItem(item, actor = {}) {
   const company = coerce(pick(item, fm.company, ['companyName', 'company', 'organization', 'employer', 'employerName', 'companyTitle']));
   const location = formatLocation(pick(item, fm.location, ['location', 'jobLocation', 'place', 'formattedLocation', 'city']));
   const rawJd = coerce(pick(item, fm.jdText, ['descriptionText', 'description', 'jobDescription', 'descriptionHtml', 'snippet']));
-  const postedAt = coerce(pick(item, fm.postedAt, ['postedAt', 'publishedAt', 'postingDateParsed', 'datePosted', 'datePublished', 'dateOnIndeed', 'date', 'postedTime']));
+  const postedAt = coerce(pick(item, fm.postedAt, ['postedAt', 'publishedAt', 'postingDateParsed', 'datePosted', 'postedDate', 'datePublished', 'dateOnIndeed', 'date', 'postedTime']));
   const employmentType = coerce(pick(item, fm.employmentType, ['employmentType', 'contractType', 'jobType', 'jobTypes', 'workType']));
   const applicantCount = coerce(pick(item, fm.applicantCount, ['applicantsCount', 'applicationsCount', 'applicants', 'numApplicants']));
   const sourceJobId = coerce(pick(item, fm.id, ['id', 'jobId', 'jobkey', 'key', 'refNum', 'externalId']));

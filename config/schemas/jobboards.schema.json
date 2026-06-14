@@ -28,6 +28,31 @@
         "requestTimeoutMs": {
           "type": "integer",
           "minimum": 0
+        },
+        "sourceConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many independent sources to run in parallel."
+        },
+        "boardConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many boards/tenants/companies one adapter fetches in parallel."
+        },
+        "pageConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many paginated list pages a single tenant fetches in parallel (Workday)."
+        },
+        "detailConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many per-job detail requests run in parallel per tenant (Workday)."
+        },
+        "actorConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many Apify actors run in parallel."
         }
       }
     },

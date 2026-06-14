@@ -184,6 +184,60 @@ describe('workday adapter', () => {
     expect(jobs[0].jdText).toContain('Azure');
     expect(errors[0].error).toMatch(/kept summaryOnly/);
   });
+
+  it('fetches remaining list pages in parallel after learning the total', async () => {
+    const seenOffsets = [];
+    const fetchImpl = vi.fn().mockImplementation(async (_url, opts) => {
+      const body = JSON.parse(opts.body);
+      seenOffsets.push(body.offset);
+      return jsonResponse({
+        total: 6,
+        jobPostings: Array.from({ length: 2 }, (_, i) => ({
+          title: `Role ${body.offset + i}`,
+          externalPath: `/x/Role-${body.offset + i}`,
+          bulletFields: [`R${body.offset + i}`],
+        })),
+      });
+    });
+    const { jobs } = await workday.run(
+      { tenants: [{ host: 'h.wd1.myworkdayjobs.com', tenant: 't', site: 's', pageSize: 2, fetchDetails: false }] },
+      { fetchImpl, maxRetries: 0, pageConcurrency: 4 },
+    );
+    // total 6 / pageSize 2 => 3 pages at offsets 0, 2, 4 (gathered in any order).
+    expect([...seenOffsets].sort((a, b) => a - b)).toEqual([0, 2, 4]);
+    expect(jobs).toHaveLength(6);
+  });
+
+  it('fetches per-job details concurrently instead of serializing them', async () => {
+    let detailInFlight = 0;
+    let detailMaxInFlight = 0;
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).endsWith('/jobs')) {
+        return jsonResponse({
+          total: 4,
+          jobPostings: Array.from({ length: 4 }, (_, i) => ({
+            title: `Data Engineer ${i}`,
+            externalPath: `/job/Remote/DE-${i}_R-${i}`,
+            bulletFields: [`R-${i}`],
+          })),
+        });
+      }
+      detailInFlight += 1;
+      detailMaxInFlight = Math.max(detailMaxInFlight, detailInFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      detailInFlight -= 1;
+      return jsonResponse({ jobPostingInfo: { jobDescription: '<p>Azure Databricks PySpark</p>' } });
+    });
+    const { jobs, errors } = await workday.run(
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 20 }] },
+      { fetchImpl, maxRetries: 0, detailConcurrency: 4 },
+    );
+    expect(errors).toHaveLength(0);
+    expect(jobs).toHaveLength(4);
+    expect(jobs.every((j) => j.jdText.includes('Azure Databricks'))).toBe(true);
+    // The old code serialized every detail fetch; now they overlap.
+    expect(detailMaxInFlight).toBeGreaterThan(1);
+  });
 });
 
 describe('genericPublicPage adapter', () => {
@@ -362,6 +416,42 @@ describe('apify adapter', () => {
     const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
     expect(jobs[0].url).toBe('https://www.indeed.com/viewjob?jk=zzz');
   });
+
+  it('maps a LinkedIn-shaped item and carries its posting date (postedDate -> postedAt)', async () => {
+    // Real valig~linkedin-jobs-scraper output shape. The critical assertion is
+    // that postedDate is captured: an undated job is shunted to the unknown-date
+    // review bucket and never scored, so losing this date silently breaks
+    // LinkedIn discovery.
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      {
+        id: 4376433358,
+        title: 'Data Engineer (Python/Spark)',
+        companyName: 'Take-Two Interactive',
+        location: 'Austin, TX',
+        url: 'https://www.linkedin.com/jobs/view/data-engineer-python-spark-at-take-two-interactive-4376433358',
+        postedDate: '2026-06-12T00:00:00.000Z',
+        postedTimeAgo: '2 hours ago',
+        applyType: 'EXTERNAL',
+        applyUrl: '',
+        applicationsCount: 'Over 200 applicants',
+        descriptionHtml: '<p>Build <b>Spark</b> pipelines with Python.</p>',
+      },
+    ]));
+    const source = { options: { actors: [{ actorId: 'valig~linkedin-jobs-scraper', source: 'linkedin' }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0]).toMatchObject({
+      source: 'apify',
+      title: 'Data Engineer (Python/Spark)',
+      company: 'Take-Two Interactive',
+      location: 'Austin, TX',
+    });
+    expect(jobs[0].postedAt).toBe('2026-06-12T00:00:00.000Z');
+    expect(jobs[0].jdText).toContain('Spark');
+    expect(jobs[0].rawMetadata.provider).toBe('linkedin');
+    // No external apply link present -> keep the LinkedIn posting URL.
+    expect(jobs[0].url).toContain('linkedin.com/jobs/view/');
+  });
 });
 
 describe('runSearch orchestration', () => {
@@ -374,16 +464,21 @@ describe('runSearch orchestration', () => {
         { id: 'off', adapter: 'lever', enabled: false, priority: 1, boards: ['y'] },
       ],
     };
-    let call = 0;
-    const fetchImpl = vi.fn().mockImplementation(async () => {
-      call += 1;
-      if (call === 1) return jsonResponse({ jobs: [{ id: 1, title: 'SDE', company_name: 'Acme', content: 'Azure' }] });
+    // Key responses by URL (NOT a global call counter): sources now run
+    // concurrently, so a counter would be racy. The 'acme' board succeeds, the
+    // 'x' board fails — deterministically, whichever finishes first.
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).includes('/boards/acme/')) {
+        return jsonResponse({ jobs: [{ id: 1, title: 'SDE', company_name: 'Acme', content: 'Azure' }] });
+      }
       return { ok: false, status: 500, json: async () => ({}) };
     });
     const { jobs, errors, perSource } = await runSearch({ jobboards, ctx: { fetchImpl } });
     expect(jobs).toHaveLength(1);
     expect(errors.length).toBeGreaterThanOrEqual(1); // the 'bad' source failed
     expect(perSource.find((p) => p.source === 'gh').found).toBe(1);
+    // Results are gathered in priority order regardless of completion order.
+    expect(perSource.map((p) => p.source)).toEqual(['gh', 'bad']);
   });
 
   it('dedupes across sources and attaches permissive discovery signals', async () => {
