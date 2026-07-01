@@ -26,6 +26,7 @@ import { applyFreshnessFilter } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
+import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
 import { explainScore, TIERS } from '../scoring/explainScore.js';
 import { compareJobsForQueue } from '../scoring/jobRanking.js';
@@ -119,7 +120,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     counters.jobs_discarded += 1;
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'discarded', discard_reason: `stale: ${reason}` });
+    persistJob(db, job, { status: 'discarded', discard_reason: `stale: ${reason}` }, config.exclusions?.employmentTypes);
     discovered.push(discoveredRow(job, discovery, {
       keptForScoring: false, discardReason: `stale: ${reason}`, lifecycle: LIFECYCLE.HARD_DISCARDED,
     }));
@@ -132,7 +133,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     counters.jobs_unknown_date_review += 1;
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'unknown_date_review', discard_reason: 'unknown posting date' });
+    persistJob(db, job, { status: 'unknown_date_review', discard_reason: 'unknown posting date' }, config.exclusions?.employmentTypes);
     const dRow = discoveredRow(job, discovery, {
       keptForScoring: false, discardReason: 'unknown posting date',
       lifecycle: LIFECYCLE.UNKNOWN_DATE_REVIEW,
@@ -152,7 +153,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     const exclusion = applyExclusions(job, config.exclusions, { now });
     if (exclusion.excluded) {
       counters.jobs_discarded += 1;
-      persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason });
+      persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason }, config.exclusions?.employmentTypes);
       logger.event(EVENT_TYPES.EXCLUSION_MATCHED, {
         jobId: job.id, message: exclusion.reason, meta: { category: exclusion.category },
       });
@@ -184,7 +185,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       score: score.total, tier, sponsorship: sponsorship.status,
       matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
       explanation, status: tier === TIERS.DISCARD ? 'discarded' : 'scored',
-    });
+    }, config.exclusions?.employmentTypes);
     logger.event(EVENT_TYPES.SCORE_EXPLAINED, {
       jobId: job.id, message: `${score.total}/100 -> ${tier}`,
       meta: { score: score.total, tier, sponsorship: sponsorship.status, sponsorshipGated, posted: formatPostedRelative(job.postedAt, now) },
@@ -417,7 +418,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     ats_platform: packet.ats.platform,
     ats_score: resumeAtsReport?.match_score ?? null,
     ats_band: resumeAtsReport?.band ?? null,
-  });
+  }, config.exclusions?.employmentTypes);
 
   enqueueForApproval(db, { packet, packetPath });
   counters.jobs_prepared += 1;
@@ -440,7 +441,7 @@ function defaultWrite(dir, path, text) {
   writeFileSync(path, text, 'utf8');
 }
 
-function persistJob(db, job, fields) {
+function persistJob(db, job, fields = {}, markers = {}) {
   db.upsertJob({
     id: job.id,
     source: job.source,
@@ -452,6 +453,7 @@ function persistJob(db, job, fields) {
     posted_at: job.postedAt,
     applicant_count: job.applicantCount,
     employment_type: job.employmentType,
+    employment_category: classifyEmployment(job, markers).category,
     ...fields,
   });
 }

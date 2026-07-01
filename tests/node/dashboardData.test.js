@@ -153,6 +153,20 @@ describe('stats, board, decisions against a seeded db', () => {
     expect(row.appStatus).toBe(APP_STATUS.NEEDS_REVIEW);
   });
 
+  it('exposes employment category on the board row and filters by it', () => {
+    db.upsertJob({ id: 'strong', employment_category: 'full_time' });
+    db.upsertJob({ id: 'medium', employment_category: 'contract' });
+    const [strong] = listBoardJobs(db, { now: NOW, q: 'acme' });
+    expect(strong.employmentCategory).toBe('full_time');
+    expect(strong.employmentLabel).toBe('Full-time');
+
+    expect(listBoardJobs(db, { now: NOW, employmentType: 'contract' }).map((r) => r.id)).toEqual(['medium']);
+    expect(listBoardJobs(db, { now: NOW, employmentType: 'full_time' }).map((r) => r.id)).toEqual(['strong']);
+    // Jobs with no category fall into the 'unknown' bucket for filtering.
+    expect(listBoardJobs(db, { now: NOW, employmentType: 'unknown', hideClosed: false }).map((r) => r.id).sort())
+      .toEqual(['done', 'nofit']);
+  });
+
   it('jobDetail merges the packet JSON and flags unreadable packets', () => {
     const packet = {
       id: 'pk', ats: { platform: 'greenhouse' }, blockers: ['1 screening field(s) need user input'],

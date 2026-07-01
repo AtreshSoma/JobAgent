@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   posted_at TEXT,
   applicant_count INTEGER,
   employment_type TEXT,
+  employment_category TEXT,
   score INTEGER,
   tier TEXT,
   sponsorship TEXT,
@@ -111,7 +112,7 @@ CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
 /** Columns allowed for the jobs table (whitelist for safe upserts). */
 const JOB_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'jd_text', 'posted_at',
-  'applicant_count', 'employment_type', 'score', 'tier', 'sponsorship',
+  'applicant_count', 'employment_type', 'employment_category', 'score', 'tier', 'sponsorship',
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
   'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
   'cover_letter_path', 'application_packet_path', 'output_folder_path',
@@ -154,7 +155,8 @@ function applyMigrations(db) {
   }
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
   for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
-    'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation', 'ats_band']) {
+    'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation', 'ats_band',
+    'employment_category']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }

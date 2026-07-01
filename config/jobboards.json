@@ -102,6 +102,78 @@
               "datePosted": "7",
               "limit": 20
             }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-teksystems",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer TEKsystems",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-robert-half",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer Robert Half",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-randstad",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer Randstad",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-insight-global",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer Insight Global",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-apex-systems",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer Apex Systems",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
+          },
+          {
+            "actorId": "valig~indeed-jobs-scraper",
+            "label": "indeed-data-eng-kforce",
+            "source": "indeed",
+            "input": {
+              "title": "Data Engineer Kforce",
+              "location": "United States",
+              "country": "us",
+              "datePosted": "7",
+              "limit": 20
+            }
           }
         ]
       }

@@ -126,5 +126,52 @@
     "skipOlderThanDays": 14,
     "flagOlderThanDays": 7,
     "highApplicantThreshold": 200
+  },
+  "employmentTypes": {
+    "_note": "Deterministic Full-time vs Contract categorization (src/scoring/employmentClassifier.js). Multi-word phrases only, so incidental words like 'data contract' never mis-tag a role. Absence of any contract/part-time signal implies full-time (defaultToFullTime). This CATEGORIZES for the dashboard; it does not discard (see employmentMismatch for hard exclusions).",
+    "defaultToFullTime": true,
+    "contractToHire": [
+      "contract to hire",
+      "contract-to-hire",
+      "contract to permanent",
+      "temp to perm",
+      "temp-to-perm",
+      "temporary to permanent"
+    ],
+    "contract": [
+      "contract position",
+      "contract role",
+      "contract opportunity",
+      "contract assignment",
+      "contract engagement",
+      "w2 contract",
+      "w-2 contract",
+      "1099 contract",
+      "corp to corp",
+      "corp-to-corp",
+      "c2c",
+      "month contract",
+      "months contract",
+      "contract (w2)",
+      "fixed term",
+      "fixed-term",
+      "temporary position",
+      "temporary role",
+      "temporary assignment",
+      "staff augmentation"
+    ],
+    "partTime": [
+      "part time",
+      "part-time",
+      "parttime"
+    ],
+    "fullTime": [
+      "full time",
+      "full-time",
+      "fulltime",
+      "permanent",
+      "direct hire",
+      "direct-hire"
+    ]
   }
 }

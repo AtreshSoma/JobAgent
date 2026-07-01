@@ -251,28 +251,34 @@
     <div class="tiles" id="tiles"></div>
     <div class="filters">
       <input type="text" id="q" placeholder="Search company / title / location…">
-      <select id="fit"><option value="">All fits</option>
+      <select id="fit" title="Filter by fit tier" aria-label="Filter by fit tier"><option value="">All fits</option>
         <option value="strong">Strong</option><option value="medium">Medium</option>
         <option value="weak">Weak</option><option value="no_fit">No fit</option></select>
-      <select id="appStatus"><option value="">All statuses</option>
+      <select id="appStatus" title="Filter by application status" aria-label="Filter by application status"><option value="">All statuses</option>
         <option>discovered</option><option>scored</option><option>shortlisted</option>
         <option>needs_review</option><option>approved</option><option>ready_for_submit</option>
         <option>blocked</option><option>skipped</option><option>submitted</option>
         <option>rejected</option><option>archived</option><option>discarded</option>
         <option>date_unconfirmed</option></select>
-      <select id="sponsorship"><option value="">Any sponsorship</option>
+      <select id="sponsorship" title="Filter by sponsorship likelihood" aria-label="Filter by sponsorship likelihood"><option value="">Any sponsorship</option>
         <option>Confirmed</option><option>Likely</option><option>Unconfirmed</option>
         <option>Unlikely</option></select>
-      <select id="source"><option value="">All sources</option></select>
-      <select id="ats"><option value="">Any ATS</option>
+      <select id="employmentType" title="Filter by employment type (Full-time vs Contract)" aria-label="Filter by employment type"><option value="">Any type</option>
+        <option value="full_time">Full-time</option>
+        <option value="contract">Contract</option>
+        <option value="contract_to_hire">Contract-to-hire</option>
+        <option value="part_time">Part-time</option>
+        <option value="unknown">Type: unknown</option></select>
+      <select id="source" title="Filter by discovery source" aria-label="Filter by discovery source"><option value="">All sources</option></select>
+      <select id="ats" title="Filter by detected ATS platform" aria-label="Filter by ATS platform"><option value="">Any ATS</option>
         <option>greenhouse</option><option>lever</option><option>workday</option>
         <option>icims</option><option>taleo</option><option>smartrecruiters</option>
         <option>jobvite</option><option>generic</option></select>
-      <select id="resumeStatus"><option value="">Any resume</option>
+      <select id="resumeStatus" title="Filter by resume/packet status" aria-label="Filter by resume status"><option value="">Any resume</option>
         <option value="tailored">Resume: tailored</option>
         <option value="prepared">Resume: packet only</option>
         <option value="none">Resume: none</option></select>
-      <select id="sort"><option value="score">Sort: score</option>
+      <select id="sort" title="Sort the board" aria-label="Sort the board"><option value="score">Sort: score</option>
         <option value="posted">Sort: newest posted</option>
         <option value="company">Sort: company</option>
         <option value="updated">Sort: recently updated</option></select>
@@ -284,7 +290,7 @@
     <table>
       <thead><tr>
         <th><input type="checkbox" id="selAll" title="Select all visible" onclick="toggleSelectAll(this.checked)"></th>
-        <th>Grade</th><th>Company / Role</th><th>Sponsor</th><th>Posted</th>
+        <th>Grade</th><th>Company / Role</th><th>Sponsor</th><th>Type</th><th>Posted</th>
         <th>Resume</th><th>ATS</th><th>Progress</th><th>Status</th>
       </tr></thead>
       <tbody id="rows"></tbody>
@@ -486,7 +492,7 @@ function setTab(key) {
   activeTab = key;
   // The tab's view is the sole scope — clear manual filters so the badge count
   // and the visible rows always agree.
-  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus']) $(id).value = '';
+  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'employmentType', 'source', 'ats', 'resumeStatus']) $(id).value = '';
   $('last24h').checked = false; $('remoteOnly').checked = false; $('hideClosed').checked = true;
   renderTabs(); loadJobs();
 }
@@ -503,7 +509,7 @@ function applyTileFilter(f) {
 }
 function resetFilters() {
   activeTab = 'all';
-  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus']) $(id).value = '';
+  for (const id of ['q', 'fit', 'appStatus', 'sponsorship', 'employmentType', 'source', 'ats', 'resumeStatus']) $(id).value = '';
   $('last24h').checked = false; $('remoteOnly').checked = false; $('hideClosed').checked = true;
   $('sort').value = 'score';
   loadSections(); loadJobs();
@@ -517,6 +523,7 @@ function filterParams() {
   if ($('fit').value) p.set('fit', $('fit').value);
   if ($('appStatus').value) p.set('appStatus', $('appStatus').value);
   if ($('sponsorship').value) p.set('sponsorship', $('sponsorship').value);
+  if ($('employmentType').value) p.set('employmentType', $('employmentType').value);
   if ($('source').value) p.set('source', $('source').value);
   if ($('ats').value) p.set('ats', $('ats').value);
   if ($('resumeStatus').value) p.set('resumeStatus', $('resumeStatus').value);
@@ -529,6 +536,16 @@ function filterParams() {
 function gradeBadge(g) {
   if (!g) return '<span class="grade none">—</span>';
   return `<span class="grade ${g.letter}" title="${esc(g.label)} · score">${g.letter}</span>`;
+}
+function typeChip(j) {
+  const cat = j.employmentCategory ?? 'unknown';
+  const label = j.employmentLabel ?? (cat === 'unknown' ? '—' : cat);
+  if (cat === 'unknown') return '<span class="chip" title="Employment type unknown">—</span>';
+  // Contract-style roles get a warning tone (often C2C/temp, may not suit a
+  // sponsorship-seeking candidate); full-time is the neutral/expected default.
+  const isContract = cat === 'contract' || cat === 'contract_to_hire' || cat === 'part_time';
+  const tone = isContract ? 'Unlikely' : 'Confirmed';
+  return `<span class="chip ${tone}" title="Employment type: ${esc(label)}">${esc(label)}</span>`;
 }
 function progressBar(pr) {
   if (!pr) return '';
@@ -545,7 +562,7 @@ async function loadJobs() {
   for (const j of jobs) jobsById[j.id] = j;
   if (!jobs.length) {
     const tot = lastStats?.totals?.jobsTracked ?? 0;
-    $('rows').innerHTML = `<tr><td colspan="9"><div class="empty">
+    $('rows').innerHTML = `<tr><td colspan="10"><div class="empty">
       <div class="big">${tot === 0 ? 'No jobs yet' : 'Nothing matches these filters'}</div>
       ${tot === 0 ? 'Click <b>Find &amp; Prepare</b> to discover, score and tailor in one pass.'
         : 'Try <a href="#" onclick="resetFilters();return false">Reset filters</a>.'}</div></td></tr>`;
@@ -559,6 +576,7 @@ async function loadJobs() {
       <td><b>${esc(j.company)}</b>${j.remote ? ' <span class="rs">remote</span>' : ''}<br>
         <span class="muted">${esc(j.title)}</span></td>
       <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span></td>
+      <td>${typeChip(j)}</td>
       <td><span class="dot ${j.postedConfidence}" title="posting date ${j.postedConfidence}"></span>${esc(j.postedLabel)}${j.postedLast24h ? ' <span class="chip strong">new</span>' : ''}</td>
       <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span></td>
       <td class="muted">${esc(j.atsPlatform ?? '—')}</td>
@@ -624,6 +642,7 @@ async function select(id) {
           ${j.score != null ? `<span class="chip" title="Skills-match score and letter grade">score ${j.score}/100${g ? ' · grade ' + g.letter : ''}</span>` : '<span class="chip unscored">unscored</span>'}
           <span class="chip ${j.fit}" title="Fit tier (may be downgraded by the sponsorship gate)">${esc(fitLabel(j.fit))}</span>
           <span class="chip ${esc(j.sponsorship ?? '')}">sponsorship: ${esc(j.sponsorship ?? 'unknown')}</span>
+          ${j.employmentLabel ? `<span class="chip" title="Employment type (Full-time vs Contract)">type: ${esc(j.employmentLabel)}</span>` : ''}
           <span class="chip st-${j.appStatus}">${j.appStatus.replace(/_/g,' ')}</span>
         </div>
       </div>

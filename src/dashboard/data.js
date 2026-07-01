@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs';
 
 import { APPROVAL_STATUS, approve, reject } from '../apply/approvalQueue.js';
 import { isWithinLast24Hours, formatPostedRelative } from '../utils/dates.js';
+import { EMPLOYMENT_LABELS } from '../scoring/employmentClassifier.js';
 
 /** Derived application statuses shown on the board (ordered by precedence). */
 export const APP_STATUS = Object.freeze({
@@ -297,6 +298,8 @@ function boardRow(job, approval, now) {
     fit: fitBucket(job.tier),
     sponsorship: job.sponsorship ?? null,
     employmentType: job.employment_type ?? null,
+    employmentCategory: job.employment_category ?? null,
+    employmentLabel: EMPLOYMENT_LABELS[job.employment_category] ?? null,
     remote: /\bremote\b/.test(haystack),
     postedAt: job.posted_at ?? null,
     postedLabel: formatPostedRelative(job.posted_at, now),
@@ -524,6 +527,7 @@ const SORTS = {
  * @param {string} [filters.appStatus] APP_STATUS value
  * @param {string} [filters.source]
  * @param {string} [filters.sponsorship]
+ * @param {string} [filters.employmentType] full_time|contract|contract_to_hire|part_time|unknown
  * @param {boolean} [filters.last24h] only roles posted in the last 24 hours
  * @param {boolean} [filters.hideClosed] hide archived/rejected/discarded (default true)
  * @param {string} [filters.sort=score] score|posted|company|updated
@@ -552,6 +556,7 @@ export function listBoardJobs(db, filters = {}) {
   if (filters.appStatus) rows = rows.filter((r) => r.appStatus === filters.appStatus);
   if (filters.source) rows = rows.filter((r) => r.source === filters.source);
   if (filters.sponsorship) rows = rows.filter((r) => r.sponsorship === filters.sponsorship);
+  if (filters.employmentType) rows = rows.filter((r) => (r.employmentCategory ?? 'unknown') === filters.employmentType);
   if (filters.ats) rows = rows.filter((r) => (r.atsPlatform ?? 'unknown') === filters.ats);
   if (filters.resumeStatus) rows = rows.filter((r) => r.resumeStatus === filters.resumeStatus);
   if (filters.remote === true || filters.remote === 'true') rows = rows.filter((r) => r.remote);
@@ -720,6 +725,7 @@ function sectionRow(row) {
     postedConfidence: row.postedConfidence, atsPlatform: row.atsPlatform,
     resumeStatus: row.resumeStatus, progress: row.progress, remote: row.remote,
     atsScore: row.atsScore, atsBand: row.atsBand,
+    employmentCategory: row.employmentCategory, employmentLabel: row.employmentLabel,
     appliedAt: row.appliedAt,
   };
 }

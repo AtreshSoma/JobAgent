@@ -32,6 +32,7 @@ import {
 } from '../apply/approvalQueue.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
+import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
 import { assistApply } from '../automation/applyRunner.js';
@@ -170,6 +171,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
     id: job.id, source: job.source, company: job.company, title: job.title,
     location: job.location, url: job.url, jd_text: job.jdText, posted_at: job.postedAt,
     applicant_count: job.applicantCount, employment_type: job.employmentType,
+    employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
     score: score.total, tier, sponsorship: sponsorship.status,
     matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
     explanation: fullExplanation, status: tier === 'Discard' ? 'discarded' : 'scored',
