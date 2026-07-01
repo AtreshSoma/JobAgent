@@ -170,6 +170,24 @@ describe('stats, board, decisions against a seeded db', () => {
     expect(jobDetail(db, 'nope', { now: NOW })).toBeNull();
   });
 
+  it('surfaces the persisted ATS score on the board row and the packet report in detail', () => {
+    db.upsertJob({ id: 'strong', ats_score: 82, ats_band: 'strong' });
+    const [row] = listBoardJobs(db, { now: NOW, q: 'acme' });
+    expect(row.atsScore).toBe(82);
+    expect(row.atsBand).toBe('strong');
+
+    const packet = {
+      id: 'pk', ats: { platform: 'greenhouse' }, blockers: [], resumeTailored: true,
+      prefill: { plan: [], needsUser: [] }, screeningPlan: { answered: [] },
+      stopBeforeSubmit: true, submitReady: false,
+      atsReport: { match_score: 82, band: 'strong', tier1: { missing: ['adf'], ratio: 0.8 },
+        recommendations: ['Add ADF if you have it'], ats_safety: { issues: [] } },
+    };
+    const detail = jobDetail(db, 'strong', { now: NOW, readFileImpl: () => JSON.stringify(packet) });
+    expect(detail.packet.atsReport.match_score).toBe(82);
+    expect(detail.packet.atsReport.tier1.missing).toEqual(['adf']);
+  });
+
   it('applyDecision validates input and round-trips through appStatus', () => {
     expect(applyDecision(db, 'medium', 'shortlisted').appStatus).toBe(APP_STATUS.SHORTLISTED);
     expect(applyDecision(db, 'medium', 'rejected').appStatus).toBe(APP_STATUS.REJECTED);

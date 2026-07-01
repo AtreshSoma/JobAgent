@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   missing_keywords TEXT,
   explanation TEXT,
   ats_platform TEXT,
+  ats_score INTEGER,
+  ats_band TEXT,
   status TEXT,
   resume_path TEXT,
   resume_docx_path TEXT,
@@ -111,7 +113,7 @@ const JOB_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'jd_text', 'posted_at',
   'applicant_count', 'employment_type', 'score', 'tier', 'sponsorship',
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
-  'ats_platform', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
+  'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
   'cover_letter_path', 'application_packet_path', 'output_folder_path',
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
@@ -152,13 +154,16 @@ function applyMigrations(db) {
   }
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
   for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
-    'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation']) {
+    'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation', 'ats_band']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }
   }
   if (!jobCols.has('assist_filled_count')) {
     db.exec('ALTER TABLE jobs ADD COLUMN assist_filled_count INTEGER');
+  }
+  if (!jobCols.has('ats_score')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN ats_score INTEGER');
   }
 }
 

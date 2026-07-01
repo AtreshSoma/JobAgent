@@ -309,6 +309,8 @@ function boardRow(job, approval, now) {
     userDecision: job.user_decision ?? null,
     atsPlatform: job.ats_platform ?? null,
     resumeStatus: resumeStatusOf(job),
+    atsScore: job.ats_score == null || job.ats_score === '' ? null : Number(job.ats_score),
+    atsBand: job.ats_band ?? null,
     explanation: job.explanation ?? null,
     discardReason: job.discard_reason ?? null,
     matchedKeywords: matched,
@@ -593,6 +595,7 @@ export function jobDetail(db, jobId, deps = {}) {
         blockers: full.blockers ?? [],
         resumeTailored: Boolean(full.resumeTailored),
         resumeWarning: full.resumeWarning ?? null,
+        atsReport: full.atsReport ?? null,
         prefillPlan: full.prefill?.plan ?? [],
         needsUser: full.prefill?.needsUser ?? [],
         screeningAnswered: full.screeningPlan?.answered ?? [],
@@ -716,6 +719,7 @@ function sectionRow(row) {
     postedLabel: row.postedLabel, postedLast24h: row.postedLast24h,
     postedConfidence: row.postedConfidence, atsPlatform: row.atsPlatform,
     resumeStatus: row.resumeStatus, progress: row.progress, remote: row.remote,
+    atsScore: row.atsScore, atsBand: row.atsBand,
     appliedAt: row.appliedAt,
   };
 }

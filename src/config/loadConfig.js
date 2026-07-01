@@ -30,6 +30,7 @@ export const CONFIG_FILES = {
   screeningAnswers: 'screening_answers.json',
   humanizerPatterns: 'humanizer_patterns.json',
   coverLetter: 'cover_letter.json',
+  atsResume: 'ats_resume.json',
 };
 
 /** Which config names have a schema and must be validated. */

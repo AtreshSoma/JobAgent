@@ -49,6 +49,8 @@ def _run(request: dict) -> dict:
     output_name = request.get("output_filename") or None
     job = request.get("job") or {}
     keywords = request.get("keywords") or []
+    vocabulary = request.get("vocabulary") or []
+    ats_config = request.get("ats_config") or {}
     add_summary_line = bool(request.get("add_summary_line", False))
     export_pdf = bool(request.get("export_pdf", False))
 
@@ -83,6 +85,15 @@ def _run(request: dict) -> dict:
     except Exception as err:  # noqa: BLE001 - validation must never break tailoring
         validation = {"ok": True, "issues": [], "warnings": [f"validation skipped: {err}"]}
 
+    # ATS readiness report: tier the JD's keywords, lint the generated resume for
+    # ATS-hostile formatting, and produce an honest "will this get picked?" readout.
+    # Wrapped so an analysis failure never breaks the tailoring contract.
+    ats_report = None
+    try:
+        ats_report = _build_ats_report(result["output_path"], job, vocabulary, ats_config)
+    except Exception as err:  # noqa: BLE001 - ATS analysis is best-effort
+        ats_report = {"error": f"ats report skipped: {type(err).__name__}: {err}"}
+
     return {
         "ok": True,
         "output_path": result["output_path"],
@@ -91,8 +102,35 @@ def _run(request: dict) -> dict:
         "emphasized": result.get("emphasized"),
         "summary_line": result.get("summary_line"),
         "validation": validation,
+        "ats_report": ats_report,
         "error": None,
     }
+
+
+def _build_ats_report(resume_path, job, vocabulary, ats_config):
+    """Tier JD keywords, lint the resume, and compose the ATS readiness report."""
+    from jdKeywords import extract_jd_keywords
+    from atsLint import lint_resume
+    from atsReport import build_ats_report
+    from keywordAudit import read_docx_text
+
+    jd_keywords = extract_jd_keywords(
+        job.get("jd_text", ""),
+        job.get("title", ""),
+        vocabulary,
+        required_markers=ats_config.get("requiredMarkers"),
+        preferred_markers=ats_config.get("preferredMarkers"),
+        outcome_signals=ats_config.get("outcomeSignals"),
+        acronym_pairs=ats_config.get("acronymPairs"),
+    )
+    lint = lint_resume(resume_path, config=ats_config)
+    resume_text = read_docx_text(resume_path)
+    report = build_ats_report(resume_text, jd_keywords, lint, config=ats_config)
+    # Carry the tiering forward so reviewers can see exactly what the JD demanded.
+    report["jd_tier1"] = jd_keywords.get("tier1", [])
+    report["jd_tier2"] = jd_keywords.get("tier2", [])
+    return report
+
 
 
 def main() -> int:

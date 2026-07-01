@@ -28,6 +28,9 @@
     "packets": "node src/index.js packets",
     "packet": "node src/index.js packet",
     "tracker": "node scripts/tracker.mjs",
+    "learn": "node interview-prep/serve.mjs",
+    "prep": "node interview-prep/serve.mjs",
+    "prep:pdf": "node interview-prep/build-pdf.mjs",
     "dry-run": "node src/index.js --mode=DRY_RUN",
     "live-assist": "node src/index.js --mode=LIVE_ASSIST",
     "report": "node src/index.js --report",
@@ -48,6 +51,7 @@
     "playwright": "~1.56.1"
   },
   "devDependencies": {
+    "marked": "^18.0.5",
     "vitest": "^2.1.1"
   }
 }

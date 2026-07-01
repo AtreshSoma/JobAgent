@@ -1,0 +1,357 @@
+/* Module 02 — Python & PySpark */
+(function () {
+  window.__COURSE = window.__COURSE || { modules: [] };
+  window.__COURSE.modules.push({
+    id: "python",
+    title: "Python & PySpark",
+    icon: "🐍",
+    summary: "Python in 207 roles, PySpark in 54+. Generators, the GIL, the DataFrame API, joins, skew, and dedup.",
+    topics: [
+      {
+        id: "datastructures",
+        title: "Python Data Structures",
+        tagline: "Pick the right one",
+        search: "python list dict set tuple complexity hashmap data structures",
+        blocks: [
+          { p: "Choosing the right structure is the difference between an O(n) and an O(1) lookup — interviewers watch for this in coding screens." },
+          { table: { headers: ["Structure", "Lookup", "Use for"], rows: [
+            ["<code>list</code>", "O(n) by value", "Ordered sequences, append"],
+            ["<code>dict</code>", "O(1) by key", "Lookups, grouping, counting"],
+            ["<code>set</code>", "O(1) membership", "Dedup, “seen?” checks"],
+            ["<code>tuple</code>", "O(n)", "Immutable fixed records / keys"],
+          ] } },
+          { scenario: { title: "Aggregate revenue by country", body: "Given millions of records, sum revenue per country. A <code>defaultdict(float)</code> gives O(1) updates and reads — far better than scanning a list each time." } },
+          { code: "from collections import defaultdict\n\ntotals = defaultdict(float)\nfor rec in records:\n    totals[rec['country']] += rec['amount']", lang: "python" },
+          { key: "Reach for <code>dict</code>/<code>set</code> whenever you need fast lookups, grouping, or de-duplication. <code>collections.Counter</code> and <code>defaultdict</code> remove boilerplate." },
+          { analogy: "A <code>dict</code> is a <strong>coat-check counter</strong>: hand over your ticket (the key) and you get your coat back instantly, no matter how many coats there are. A <code>list</code> is searching every pocket in the room until you find it — fine for a few items, painful for millions." },
+          { example: { title: "Count the most common words", body: "<code>collections.Counter</code> is a dict subclass purpose-built for tallying — it turns a frequency count into one line and hands you <code>.most_common()</code> for free." } },
+          { code: "from collections import Counter
+
+words = ['etl', 'spark', 'etl', 'sql', 'etl', 'spark']
+counts = Counter(words)
+print(counts.most_common(2))   # [('etl', 3), ('spark', 2)]", lang: "python" },
+          { tryit: { title: "Your turn", body: "Given a list of integers, return the first value that does not repeat. Hint: one pass with a <code>Counter</code>, then a second pass to find the first count of 1 — O(n) total." } },
+          { qa: [
+            { q: "Why is a <code>dict</code> lookup O(1) but a <code>list</code> lookup O(n)?", a: "A dict hashes the key to jump straight to a bucket, so the time barely grows with size. A list has no index by value — it must scan element by element until it finds a match." },
+            { q: "<code>list</code> vs <code>tuple</code> — when does it matter?", a: "Tuples are immutable, so they're hashable and can be dict keys or set members (e.g. a <code>(country, year)</code> composite key). Use a list when the sequence will change." },
+            { q: "When would you pick a <code>set</code> over a <code>dict</code>?", a: "When you only care about membership ('have I seen this id before?') and don't need a value attached. Sets give O(1) 'seen?' checks and easy de-duplication." },
+          ] },
+        ],
+      },
+      {
+        id: "generators",
+        title: "Generators & Big Files",
+        tagline: "Constant memory",
+        search: "python generator yield iterator lazy streaming large file memory",
+        blocks: [
+          { p: "A generator (<code>yield</code>, or iterating a file object) produces items one at a time, using <strong>constant memory</strong> regardless of input size — essential for data engineering." },
+          { scenario: { title: "Process a 50GB NDJSON file", body: "Loading the whole file into a list would crash with out-of-memory. Iterating the file object streams one line at a time, so memory stays flat." } },
+          { code: "import json\nfrom collections import defaultdict\n\ndef revenue_by_country(path):\n    totals = defaultdict(float)\n    with open(path, encoding='utf-8') as f:\n        for line in f:               # streams one line at a time\n            rec = json.loads(line)\n            totals[rec['country']] += rec.get('amount', 0.0)\n    return dict(totals)", lang: "python" },
+          { key: "If an interviewer mentions a “large” or “huge” file, they're testing whether you stream (generator) instead of loading everything into memory." },
+          { pitfall: "A generator is single-use — once consumed it's exhausted. Wrap it in <code>list()</code> only if you genuinely need to iterate twice (and the data fits in memory)." },
+          { analogy: "A generator is a <strong>tap</strong>, not a <strong>bucket</strong>. A list fills the whole bucket up front (all rows in memory); a generator gives you one cup at a time, so you can drink from a river without owning a reservoir." },
+          { steps: [
+            "<strong>Open the source</strong> lazily — a file object, DB cursor, or <code>yield</code> loop produces items on demand.",
+            "<strong>Process one item</strong>, let it go out of scope, then pull the next — memory stays flat.",
+            "<strong>Finish when the source is empty</strong> — no giant list ever existed.",
+          ] },
+          { example: { title: "Chain generators into a pipeline", body: "Generators compose: parse → filter → transform, each stage streaming into the next. Nothing materializes the full dataset, so a 50GB file flows through a few MB of RAM." } },
+          { code: "def read_lines(path):
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            yield line
+
+def parse(lines):
+    for line in lines:
+        yield json.loads(line)
+
+big = (rec for rec in parse(read_lines('events.ndjson'))
+       if rec.get('amount', 0) > 0)
+# nothing has run yet — consume `big` one record at a time", lang: "python" },
+          { tryit: { title: "Your turn", body: "Write a generator <code>batched(iterable, n)</code> that yields lists of up to <code>n</code> items — handy for sending rows to an API in chunks without loading them all." } },
+          { qa: [
+            { q: "Generator vs list comprehension — what's the difference?", a: "<code>[x for x in xs]</code> builds the whole list in memory now; <code>(x for x in xs)</code> builds a generator that produces values lazily. Same syntax, very different memory profile." },
+            { q: "What does 'lazy' mean here?", a: "Work is deferred until you actually pull a value. The generator does nothing until iterated, so you only pay for the items you consume." },
+            { q: "How do you process a file too big for RAM?", a: "Iterate the file object (or a generator) line by line so memory stays constant, and aggregate into a small structure like a dict — never <code>f.readlines()</code> the whole thing." },
+          ] },
+        ],
+      },
+      {
+        id: "gil",
+        title: "Concurrency & the GIL",
+        tagline: "Threads vs processes",
+        search: "python gil global interpreter lock threads multiprocessing async concurrency io bound cpu bound",
+        blocks: [
+          { p: "The <strong>Global Interpreter Lock (GIL)</strong> lets only one thread execute Python bytecode at a time. This shapes every concurrency decision in Python." },
+          { table: { headers: ["Workload", "Best tool", "Why"], rows: [
+            ["I/O-bound (API, network, disk)", "Threads / <code>asyncio</code>", "GIL releases during I/O waits"],
+            ["CPU-bound (parsing, math)", "<code>multiprocessing</code> / Spark", "Bypasses the GIL with separate processes"],
+          ] } },
+          { scenario: { title: "Pull 500 API endpoints faster", body: "Each call blocks on the network, so threads help — while one waits, another runs. A <code>ThreadPoolExecutor</code> cuts wall-clock time dramatically." } },
+          { code: "from concurrent.futures import ThreadPoolExecutor, as_completed\n\ndef fetch_all(ids, fetch_one):\n    out = []\n    with ThreadPoolExecutor(max_workers=16) as ex:\n        futures = [ex.submit(fetch_one, i) for i in ids]\n        for fut in as_completed(futures):\n            out.append(fut.result())\n    return out", lang: "python" },
+          { tip: "Say it crisply: “Threads for I/O-bound, processes (or Spark) for CPU-bound, because the GIL serializes Python bytecode but releases during I/O.” That one sentence answers the whole question." },
+          { analogy: "The GIL is a <strong>single microphone in a meeting room</strong>: only one thread can 'speak' (run Python bytecode) at a time. But when a speaker steps out to make a phone call (I/O wait), they hand the mic over — so threads still help I/O-bound work, just not CPU-bound work." },
+          { example: { title: "CPU-bound work needs processes", body: "Hashing or parsing a million files is CPU-bound — threads would just pass the one mic around. <code>ProcessPoolExecutor</code> spins up separate Python processes, each with its own GIL, so they run truly in parallel across cores." } },
+          { code: "from concurrent.futures import ProcessPoolExecutor
+
+def heavy(n):
+    return sum(i * i for i in range(n))   # CPU-bound
+
+with ProcessPoolExecutor() as ex:
+    results = list(ex.map(heavy, [10_000_000] * 8))", lang: "python" },
+          { tryit: { title: "Your turn", body: "For each task, pick threads or processes: (a) download 1,000 URLs, (b) compute SHA-256 of 1,000 large files. Justify each choice in one sentence using the GIL." } },
+          { qa: [
+            { q: "What exactly is the GIL?", a: "The Global Interpreter Lock is a mutex in CPython that allows only one thread to execute Python bytecode at a time, which simplifies memory management but prevents threads from running CPU work in parallel." },
+            { q: "Does the GIL make threads useless?", a: "No — for I/O-bound work the GIL is released while a thread waits on the network or disk, so other threads run. Threads shine for APIs, DB calls, and file I/O." },
+            { q: "How does <code>multiprocessing</code> get around it?", a: "Each process has its own interpreter and its own GIL, so CPU-bound work runs on multiple cores. The cost is inter-process communication overhead and no shared memory by default." },
+          ] },
+        ],
+      },
+      {
+        id: "ingestion",
+        title: "Resilient Ingestion",
+        tagline: "Retries & APIs",
+        search: "python retry exponential backoff api pagination idempotency resilient ingestion error handling",
+        blocks: [
+          { p: "Real pipelines pull from flaky APIs. Interviewers love asking how you make ingestion resilient." },
+          { concept: "The toolkit: <strong>timeouts</strong>, <strong>retries with exponential backoff + jitter</strong>, <strong>pagination</strong> with cursors, <strong>idempotency keys</strong>, and a <strong>dead-letter</strong> path for records that keep failing." },
+          { scenario: { title: "An API randomly times out", body: "Instead of failing the whole job on a transient error, retry with growing delays (and a little randomness so many workers don't retry in lockstep)." } },
+          { code: "import random, time\n\ndef with_retry(fn, retries=5, base=0.5):\n    for attempt in range(retries):\n        try:\n            return fn()\n        except (TimeoutError, ConnectionError):\n            if attempt == retries - 1:\n                raise\n            time.sleep(base * (2 ** attempt) + random.uniform(0, 0.25))", lang: "python" },
+          { key: "Exponential backoff prevents hammering a struggling service; jitter prevents the “thundering herd” of synchronized retries. Always cap the attempts and re-raise on the last one." },
+          { analogy: "Backoff is <strong>knocking on a door politely</strong>: if no one answers, you wait a little longer before each knock instead of pounding non-stop. Jitter is everyone in the queue waiting a slightly <em>different</em> amount, so you don't all knock at the exact same instant." },
+          { steps: [
+            "<strong>Set a timeout</strong> so a hung call fails fast instead of blocking forever.",
+            "<strong>Retry transient errors</strong> with exponential backoff + jitter; give up after a capped number of attempts.",
+            "<strong>Paginate</strong> with a cursor so you fetch the whole result set without missing or duplicating pages.",
+            "<strong>Dead-letter</strong> records that keep failing so one bad row never blocks the batch.",
+          ] },
+          { example: { title: "Cursor pagination done right", body: "APIs cap page size, so you loop, passing the previous response's <code>next_cursor</code> until it's empty. Using the cursor (not an offset) avoids skipped or repeated rows when data shifts mid-pull." } },
+          { code: "def fetch_all(client):
+    cursor, out = None, []
+    while True:
+        page = with_retry(lambda: client.get(cursor=cursor))
+        out.extend(page['items'])
+        cursor = page.get('next_cursor')
+        if not cursor:
+            return out", lang: "python" },
+          { tryit: { title: "Your turn", body: "Extend <code>with_retry</code> so that after the final failed attempt it writes the failing record to a <em>dead-letter</em> list instead of raising — letting the rest of the batch finish." } },
+          { qa: [
+            { q: "What is an idempotency key and why does it matter?", a: "A stable id (often a hash of the record) you send with each write so retries don't create duplicates — the server recognizes it has already processed that key. Essential when retries can fire after a partial success." },
+            { q: "Why add jitter to backoff?", a: "Without it, many workers that failed at the same moment all retry at the same moment — a 'thundering herd' that re-overwhelms the service. Random jitter spreads the retries out." },
+            { q: "Which errors should you retry?", a: "Transient ones: timeouts, connection resets, HTTP 429/503. Do NOT blindly retry 400/401/404 — those are client errors that will fail again and waste time." },
+          ] },
+        ],
+      },
+      {
+        id: "dataframe",
+        title: "PySpark DataFrame API",
+        tagline: "Distributed data",
+        search: "pyspark dataframe api select withcolumn filter groupby join functions",
+        blocks: [
+          { p: "A Spark DataFrame is a distributed, lazily-evaluated table. You describe transformations with the DataFrame API; Spark runs them across a cluster." },
+          { table: { headers: ["pandas", "PySpark"], rows: [
+            ["<code>df[df.x &gt; 0]</code>", "<code>df.filter(F.col('x') &gt; 0)</code>"],
+            ["<code>df.assign(y=…)</code>", "<code>df.withColumn('y', …)</code>"],
+            ["<code>df.groupby('k').agg(…)</code>", "<code>df.groupBy('k').agg(…)</code>"],
+            ["<code>pd.merge(a, b, on='k')</code>", "<code>a.join(b, 'k')</code>"],
+            ["In-memory, single node", "Distributed, lazy, cluster"],
+          ] } },
+          { scenario: { title: "Clean and aggregate sales", body: "Filter out refunds, add a net column, and total by region — the bread-and-butter of a transformation job." } },
+          { code: "from pyspark.sql import functions as F\n\nresult = (sales\n    .filter(F.col('status') != 'refunded')\n    .withColumn('net', F.col('price') * F.col('qty'))\n    .groupBy('region')\n    .agg(F.sum('net').alias('revenue'))\n    .orderBy(F.col('revenue').desc()))", lang: "python" },
+          { tip: "If asked “you only know pandas?”, map the APIs out loud (table above) and add: “same operations — Spark just runs them lazily and distributed.”" },
+          { analogy: "pandas is <strong>cooking one dish yourself</strong> in your kitchen (one machine, all in memory). PySpark is <strong>running a restaurant kitchen</strong>: you write the recipe (the DataFrame plan) and a brigade of cooks (executors) prepares it in parallel across many stations." },
+          { example: { title: "Read, clean, enrich, write", body: "A typical job reads a table, filters bad rows, derives a column, joins a dimension, and writes — all expressed as a fluent chain that Spark optimizes as one plan." } },
+          { code: "from pyspark.sql import functions as F
+
+orders = spark.read.table('bronze.orders')
+clean = (orders
+    .where(F.col('status') != 'test')
+    .withColumn('order_date', F.to_date('order_ts'))
+    .join(F.broadcast(spark.table('dim.customer')), 'customer_id', 'left'))
+clean.write.mode('overwrite').saveAsTable('silver.orders')", lang: "python" },
+          { tryit: { title: "Your turn", body: "Translate this pandas line to PySpark: <code>df.groupby('region')['net'].sum().reset_index()</code>. Which two methods replace <code>groupby</code> and the sum?" } },
+          { qa: [
+            { q: "When should you use Spark instead of pandas?", a: "When data is too big for one machine's memory, or you need parallel compute / cluster scale. For small data that fits in RAM, pandas is simpler and faster to iterate on." },
+            { q: "How do you inspect a DataFrame's structure?", a: "<code>df.printSchema()</code> for columns and types, <code>df.show(5, truncate=False)</code> for a peek, and <code>df.explain()</code> for the physical plan." },
+            { q: "Is <code>withColumn</code> mutating the DataFrame?", a: "No — DataFrames are immutable. <code>withColumn</code> returns a new DataFrame describing the added column; the original is unchanged." },
+          ] },
+        ],
+      },
+      {
+        id: "lazy",
+        title: "Lazy Evaluation",
+        tagline: "Transformations vs actions",
+        search: "pyspark lazy evaluation transformation action dag catalyst trigger",
+        blocks: [
+          { p: "Spark is <strong>lazy</strong>: transformations build a plan (DAG) but don't run. Only an <strong>action</strong> triggers execution — which lets Catalyst optimize the whole pipeline at once." },
+          { table: { headers: ["Transformations (lazy)", "Actions (trigger run)"], rows: [
+            ["<code>select</code>, <code>filter</code>, <code>withColumn</code>", "<code>count()</code>"],
+            ["<code>join</code>, <code>groupBy</code>", "<code>collect()</code>, <code>show()</code>"],
+            ["<code>orderBy</code>, <code>distinct</code>", "<code>write</code>, <code>toPandas()</code>"],
+          ] } },
+          { scenario: { title: "“Why didn't my filter run?”", body: "You call <code>.filter()</code> and nothing happens — because it's lazy. Execution starts only when you call an action like <code>.show()</code> or <code>.write</code>." } },
+          { key: "Laziness is a feature: by deferring until an action, Spark can push filters down, prune columns, and reorder joins across the entire DAG." },
+          { pitfall: "Calling <code>collect()</code> or <code>toPandas()</code> pulls all data to the <strong>driver</strong> and can OOM it. Only collect small results." },
+          { analogy: "Lazy evaluation is <strong>writing a shopping list before going to the store</strong>. You jot down every item (transformations), and only when you actually leave (an action) do you plan the most efficient route and shop — buying everything in one optimized trip instead of driving back for each item." },
+          { steps: [
+            "<strong>Transformations build a DAG</strong> — <code>select</code>, <code>filter</code>, <code>join</code> just record intent; nothing runs.",
+            "<strong>An action triggers a job</strong> — <code>count</code>, <code>show</code>, <code>write</code> demand a result.",
+            "<strong>Catalyst optimizes the whole plan</strong> — pushes filters down, prunes columns, reorders joins.",
+            "<strong>Tasks execute</strong> across the cluster and return the result.",
+          ] },
+          { example: { title: "Why caching exists", body: "Because Spark re-runs the plan for <em>each</em> action, a DataFrame used by three actions is computed three times. <code>df.cache()</code> materializes it once so the later actions reuse it." } },
+          { tryit: { title: "Your turn", body: "Given <code>a = df.filter(...)</code> then <code>a.count()</code> then <code>a.show()</code>, how many times is the filter computed — and what one line would fix it?" } },
+          { qa: [
+            { q: "Transformation vs action — give the rule.", a: "A transformation returns another DataFrame and is lazy (filter, select, join). An action returns a value or writes data and triggers execution (count, collect, show, write)." },
+            { q: "Why is laziness a good thing?", a: "It lets Catalyst see the entire pipeline before running, so it can push filters to the source, read fewer columns, and pick better join strategies — optimizations impossible if each step ran eagerly." },
+            { q: "What's the danger of <code>collect()</code>?", a: "It brings every row to the single driver node. On a large dataset that blows the driver's memory. Prefer writing to storage, or collect only after aggregating to a tiny result." },
+          ] },
+        ],
+      },
+      {
+        id: "joins-broadcast",
+        title: "Joins & Broadcast",
+        tagline: "Avoid the shuffle",
+        search: "pyspark join broadcast sort merge shuffle hash autobroadcast",
+        blocks: [
+          { p: "Joining two large tables triggers a <strong>shuffle</strong> (expensive network + disk). If one side is small, a <strong>broadcast join</strong> ships it to every executor and skips the shuffle entirely." },
+          { scenario: { title: "Join a 1TB fact to a 5MB dimension", body: "The dimension easily fits in memory. Broadcasting it avoids shuffling the huge fact table — often turning minutes into seconds." } },
+          { code: "from pyspark.sql import functions as F\n\nenriched = big_fact.join(\n    F.broadcast(small_dim),\n    on='product_id',\n    how='left')", lang: "python" },
+          { key: "Default strategy is sort-merge join for two big tables, broadcast hash join when one side is under the threshold (~10MB). Hint <code>F.broadcast()</code> when you know a side is small." },
+          { pitfall: "Broadcasting a table that's actually large will OOM the executors. Only broadcast genuinely small dimensions." },
+          { analogy: "A broadcast join is <strong>photocopying a small lookup sheet for every worker</strong> so each can match locally. A shuffle (sort-merge) join is <strong>shipping both giant filing cabinets to a central sorting room</strong> — correct, but slow and network-heavy." },
+          { steps: [
+            "<strong>Sort-merge (shuffle)</strong> — both sides are repartitioned by the join key across the network, sorted, then merged. Needed when both are large.",
+            "<strong>Broadcast hash</strong> — the small side is collected and copied to every executor; the big side is joined in place with no shuffle.",
+            "<strong>AQE</strong> can switch a planned sort-merge to broadcast at runtime once it sees the real (small) size.",
+          ] },
+          { example: { title: "Let AQE decide automatically", body: "With Adaptive Query Execution on, Spark measures actual partition sizes mid-run and will auto-broadcast a side that turns out small — you often don't need the manual hint, but it's good to know both." } },
+          { tryit: { title: "Your turn", body: "You join a 2TB events table to a 3MB country-code lookup. Which join will Spark prefer, and what one function guarantees it?" } },
+          { qa: [
+            { q: "Sort-merge vs broadcast join — when is each used?", a: "Sort-merge for two large tables (both get shuffled). Broadcast when one side is small enough to copy to every executor, eliminating the shuffle of the large side." },
+            { q: "What controls the auto-broadcast threshold?", a: "<code>spark.sql.autoBroadcastJoinThreshold</code> (default ~10MB). Tables estimated under it are broadcast automatically; set it to -1 to disable." },
+            { q: "Why can broadcasting backfire?", a: "If the 'small' side is actually large, copying it to every executor floods their memory and OOMs the job. Only force a broadcast for genuinely small dimensions." },
+          ] },
+        ],
+      },
+      {
+        id: "partitioning",
+        title: "Partitioning",
+        tagline: "repartition vs coalesce",
+        search: "pyspark partitioning repartition coalesce shuffle partitions parallelism small files",
+        blocks: [
+          { p: "Partitions are the unit of parallelism — one task per partition. Controlling them controls performance and output file sizes." },
+          { table: { headers: ["", "<code>repartition(n)</code>", "<code>coalesce(n)</code>"], rows: [
+            ["Shuffle", "Full shuffle", "No full shuffle (merges)"],
+            ["Direction", "Increase or decrease", "Decrease only"],
+            ["Balance", "Even", "May be uneven"],
+            ["Use for", "Fix skew, increase parallelism", "Reduce small output files"],
+          ] } },
+          { scenario: { title: "Too many tiny output files", body: "Your job writes 2,000 small files. Use <code>coalesce(50)</code> before writing to merge partitions cheaply — without a full shuffle." } },
+          { code: "# Reduce output files without a full shuffle\n(df.coalesce(50)\n   .write.mode('overwrite')\n   .parquet('/lake/gold/daily_sales'))\n\n# Partition data on disk for pruning at read time\n(df.write.partitionBy('event_date')\n   .format('delta').saveAsTable('gold.events'))", lang: "python" },
+          { pitfall: "Don't <code>partitionBy</code> a high-cardinality column (like user_id) on write — you'll create millions of tiny files. Partition on low-cardinality keys like date." },
+          { analogy: "Partitions are <strong>checkout lanes at a supermarket</strong>. Too few lanes and shoppers queue (under-parallelized); too many lanes each with one shopper and you waste cashiers opening and closing them (tiny-file overhead). You want enough lanes to keep everyone busy and balanced." },
+          { example: { title: "Partition on disk for read pruning", body: "Writing <code>partitionBy('event_date')</code> lays data out in per-date folders. A later query filtered to one day reads only that folder — the engine 'prunes' the rest, scanning a fraction of the data." } },
+          { code: "# Disk layout enables partition pruning at read time
+(df.write.partitionBy('event_date')
+   .format('delta').mode('overwrite')
+   .saveAsTable('gold.events'))
+
+# Later: only the 2025-06-01 folder is scanned
+spark.table('gold.events').where("event_date = '2025-06-01'")", lang: "python" },
+          { tryit: { title: "Your turn", body: "A nightly job writes 2,000 tiny Parquet files. Which method merges them before writing without a full shuffle — and what number would you pass?" } },
+          { qa: [
+            { q: "<code>repartition</code> vs <code>coalesce</code>?", a: "<code>repartition(n)</code> does a full shuffle and can increase or decrease partitions evenly (good for fixing skew). <code>coalesce(n)</code> only decreases, merging partitions without a full shuffle (good for reducing output files)." },
+            { q: "How many shuffle partitions should you use?", a: "Aim for partitions of roughly 100–200MB each. The old default of 200 (<code>spark.sql.shuffle.partitions</code>) is often wrong for your data size; tune it or rely on AQE coalescing." },
+            { q: "What's the 'small files problem'?", a: "Thousands of tiny files make the engine open/close many file handles and store lots of metadata, slowing reads. Compact them (coalesce on write, or Delta <code>OPTIMIZE</code>)." },
+          ] },
+        ],
+      },
+      {
+        id: "skew",
+        title: "Data Skew & Salting",
+        tagline: "The straggler task",
+        search: "pyspark data skew salting hot key straggler aqe skew join",
+        blocks: [
+          { p: "Skew happens when one key has far more rows than others, so one task runs forever while the rest finish — the classic “99% done, stuck on one task” symptom." },
+          { concept: "<strong>Salting</strong> spreads a hot key across N buckets by appending a random salt, so no single task is overloaded. The small side is replicated across all N salts to match." },
+          { scenario: { title: "One customer has 80% of the orders", body: "A join on <code>customer_id</code> stalls because one mega-customer dominates a partition. Salt the key into 16 buckets to balance the work." } },
+          { code: "from pyspark.sql import functions as F\n\nN = 16\nbig_salted = big.withColumn('salt', (F.rand() * N).cast('int'))\nsmall_exploded = small.withColumn(\n    'salt', F.explode(F.array([F.lit(i) for i in range(N)])))\n\njoined = big_salted.join(small_exploded,\n    on=['join_key', 'salt']).drop('salt')", lang: "python" },
+          { tip: "First mention the free fix: “I'd enable AQE skew-join handling (<code>spark.sql.adaptive.skewJoin.enabled</code>).” Then, if needed, salt manually. Knowing both shows depth." },
+          { analogy: "Data skew is <strong>one supermarket lane with a 40-item shopper</strong> while the other lanes sit empty. Everyone finishes except that one lane, and the whole store can't close until it does. Salting splits that giant order across several lanes." },
+          { steps: [
+            "<strong>Spot the hot key</strong> — one task runs far longer (the '99% stuck on one task' symptom).",
+            "<strong>Salt the big side</strong> — append a random bucket number so the hot key spreads across N partitions.",
+            "<strong>Replicate the small side</strong> — explode it across all N salts so every bucket can still match.",
+            "<strong>Join on key + salt</strong>, then drop the salt.",
+          ] },
+          { example: { title: "Let AQE try first", body: "Adaptive Query Execution can detect skewed partitions at runtime and split them automatically — the zero-code first move. Manual salting is the fallback for severe, known skew." } },
+          { tryit: { title: "Your turn", body: "A join on <code>customer_id</code> stalls because one customer owns 80% of rows. Sketch the salting: how many buckets, and how does the small side change to keep results correct?" } },
+          { qa: [
+            { q: "What is data skew?", a: "An uneven distribution of rows across keys, so one partition/task handles far more data than others and becomes a straggler that dominates the job's runtime." },
+            { q: "How do you detect it?", a: "In the Spark UI, one task in a stage takes much longer and shuffles much more data than its peers. Skewed input distributions (a dominant key) are the usual cause." },
+            { q: "What's the downside of salting?", a: "It adds complexity and replicates the small side N times (more shuffle for it). Use it only when AQE skew handling isn't enough, and pick N just large enough to balance the hot key." },
+          ] },
+        ],
+      },
+      {
+        id: "windows-dedup",
+        title: "Windows & Dedup in PySpark",
+        tagline: "The Silver pattern",
+        search: "pyspark window row_number dedup deduplicate silver medallion clean cast",
+        blocks: [
+          { p: "The same Top-N-per-group pattern from SQL appears constantly in PySpark — it's the core of Bronze→Silver cleanup: cast types, validate, and keep the latest row per key." },
+          { scenario: { title: "Silver-layer claims cleanup", body: "Raw claims arrive with duplicates and string types. Cast, flag quality, and keep only the latest record per <code>claim_id</code> — exactly the pattern in production medallion pipelines." } },
+          { code: "from pyspark.sql import functions as F, Window\n\nw = Window.partitionBy('claim_id').orderBy(F.col('ingest_ts').desc())\n\nsilver = (bronze\n    .withColumn('amount', F.col('amount').cast('decimal(18,2)'))\n    .withColumn('service_date', F.to_date('service_date'))\n    .withColumn('is_valid',\n        (F.col('amount') > 0) & F.col('service_date').isNotNull())\n    .withColumn('rn', F.row_number().over(w))\n    .filter(F.col('rn') == 1).drop('rn'))", lang: "python" },
+          { key: "Partition by the business key, order by latest ingest, keep <code>rn == 1</code>. This dedup-to-latest is the single most reused PySpark snippet in real pipelines." },
+          { analogy: "Dedup-to-latest is <strong>keeping only the most recent photo of each person</strong> in your camera roll. You group every shot by who's in it (partition by key), sort newest-first (order by timestamp), and keep just the top one." },
+          { example: { title: "Why a window beats dropDuplicates here", body: "<code>dropDuplicates(['claim_id'])</code> keeps an <em>arbitrary</em> row per key — you can't control which. The window + <code>row_number()</code> lets you say 'keep the latest by ingest time', which is what production actually needs." } },
+          { code: "from pyspark.sql import functions as F, Window
+
+w = Window.partitionBy('claim_id').orderBy(F.col('ingest_ts').desc())
+latest = (bronze
+    .withColumn('rn', F.row_number().over(w))
+    .filter(F.col('rn') == 1)
+    .drop('rn'))", lang: "python" },
+          { tryit: { title: "Your turn", body: "Change the snippet to keep the <em>earliest</em> record per <code>claim_id</code> instead of the latest. What single change do you make — and where?" } },
+          { qa: [
+            { q: "<code>dropDuplicates</code> vs <code>row_number()</code> dedup — which and when?", a: "<code>dropDuplicates</code> is fine when any surviving row will do. Use the <code>row_number()</code> window when you must keep a <em>specific</em> row (latest, highest amount), because it lets you define the ordering." },
+            { q: "Where does this fit in the medallion architecture?", a: "It's the heart of the Bronze→Silver step: cast raw types, validate, and collapse duplicates to one clean, current row per business key before serving Gold." },
+          ] },
+        ],
+      },
+      {
+        id: "udfs",
+        title: "UDFs — Use Sparingly",
+        tagline: "Prefer native functions",
+        search: "pyspark udf user defined function pandas udf vectorized catalyst performance",
+        blocks: [
+          { p: "A Python UDF runs your code row-by-row, serializing data to Python and back — which breaks Catalyst optimization and is slow. Prefer built-in <code>F.*</code> functions; if you must, use a <strong>vectorized (pandas) UDF</strong>." },
+          { table: { headers: ["Option", "Speed", "When"], rows: [
+            ["Native <code>F.*</code> functions", "Fastest", "Almost always — first choice"],
+            ["Pandas / vectorized UDF", "Fast (Arrow batches)", "Custom logic that needs Python"],
+            ["Plain Python UDF", "Slow", "Last resort"],
+          ] } },
+          { scenario: { title: "“Should I write a UDF for this?”", body: "Most transformations you'd reach for a UDF — string cleanup, date math, conditional logic — already exist as native functions (<code>regexp_replace</code>, <code>when/otherwise</code>, <code>to_date</code>). Use those and stay fast." } },
+          { tip: "If asked about UDFs, lead with: “I avoid Python UDFs because they break Catalyst and pushdown — I use native functions, and a vectorized pandas UDF only when I truly need custom Python.”" },
+          { analogy: "A plain Python UDF is <strong>stopping the assembly line to hand each item to a human</strong> for a tweak — slow, and the line can't optimize around it. Native <code>F.*</code> functions are the machine doing it inline at full speed." },
+          { example: { title: "Replace a UDF with native logic", body: "Tier-bucketing looks like UDF territory, but <code>when/otherwise</code> expresses it natively — staying inside Catalyst, vectorized, and pushdown-friendly." } },
+          { code: "from pyspark.sql import functions as F
+
+# Avoid: a Python UDF for simple branching
+# tier = udf(lambda a: 'hi' if a > 100 else 'lo')
+
+# Prefer: native, vectorized, optimizable
+df = df.withColumn('tier',
+    F.when(F.col('amount') > 100, 'hi').otherwise('lo'))", lang: "python" },
+          { tryit: { title: "Your turn", body: "Rewrite a UDF that uppercases and trims a name using only native functions. Hint: <code>F.upper</code> and <code>F.trim</code> compose in one expression." } },
+          { qa: [
+            { q: "Why are Python UDFs slow?", a: "Each row is serialized from the JVM to a Python process and back, which is expensive and opaque to Catalyst — so filter pushdown and other optimizations stop at the UDF boundary." },
+            { q: "What's a pandas (vectorized) UDF?", a: "A UDF that receives data in Arrow-encoded batches and processes them with pandas/NumPy, so per-row serialization overhead nearly vanishes. Much faster than a plain UDF when you genuinely need Python." },
+            { q: "When is a UDF actually acceptable?", a: "When the logic can't be expressed with native functions — e.g. calling a custom library or model. Even then, prefer a vectorized pandas UDF over a row-at-a-time one." },
+          ] },
+        ],
+      },
+    ],
+  });
+})();

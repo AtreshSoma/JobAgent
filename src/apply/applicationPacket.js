@@ -40,7 +40,7 @@ import { nowIso } from '../utils/dates.js';
 export function buildApplicationPacket({
   job, score, tier, candidate, screeningAnswers,
   resumePath, resumeTailored = false, resumeWarning = null,
-  resumePdfPath = null, resumeValidation = null,
+  resumePdfPath = null, resumeValidation = null, atsReport = null,
   coverLetter, coverLetterPath, formFields = [], html = '',
 }) {
   const ats = detectAts({ url: job.url, html });
@@ -86,6 +86,7 @@ export function buildApplicationPacket({
     resumeWarning: resumeWarning ?? null,
     resumePdfPath: resumePdfPath ?? null,
     resumeValidation: resumeValidation ?? null,
+    atsReport: atsReport ?? null,
     coverLetterPath: coverLetterPath ?? null,
     coverLetterGenerated: Boolean(coverLetter?.generated),
     ats,

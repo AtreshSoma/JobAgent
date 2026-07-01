@@ -16,6 +16,7 @@ export const SCHEMA_FILES = {
   exclusions: 'exclusions.schema.json',
   jobboards: 'jobboards.schema.json',
   coverLetter: 'cover_letter.schema.json',
+  atsResume: 'ats_resume.schema.json',
 };
 
 /**

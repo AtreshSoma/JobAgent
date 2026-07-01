@@ -204,6 +204,14 @@ yourself, and only with real information.
 
 ### The dashboard (recommended cockpit)
 
+**Easiest start (Windows): double-click `start-dashboard.cmd`** in the
+`job-agent` folder. It installs dependencies on first run, starts the server
+from the right place (no matter where you launch it from), and opens your
+browser automatically once it's ready. Pass a port to override the default,
+e.g. `start-dashboard.cmd 5000`. Stop it with Ctrl+C.
+
+Or from a terminal in this folder:
+
 ```bash
 npm run dashboard     # then open http://127.0.0.1:4646
 ```

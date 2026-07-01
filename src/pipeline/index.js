@@ -334,6 +334,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   let resumeTailored = false;
   let resumeWarning = null;
   let resumeValidation = null;
+  let resumeAtsReport = null;
   const tailorFn = typeof deps.tailorFn === 'function' ? deps.tailorFn : tailorResumeForJob;
   try {
     // exportPdf — also emit a PDF alongside the .docx when enabled (most ATS
@@ -358,6 +359,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     resumeTailored = Boolean(tailored?.tailored);
     resumeWarning = tailored?.warning ?? null;
     resumeValidation = tailored?.validation ?? null;
+    resumeAtsReport = tailored?.atsReport ?? null;
     // A resume that fails hard validation (empty/unreadable/no sections/no
     // contact) must not be silently submitted — surface it as a warning so the
     // packet carries a blocker and the submit gate withholds.
@@ -368,7 +370,10 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     if (resumeTailored) {
       logger.event(EVENT_TYPES.RESUME_GENERATED, {
         jobId: job.id, message: `tailored resume (${tailored.emphasized ?? 0} emphasized)`,
-        meta: { output_path: resumePath, pdf_path: resumePdfPath, validation: resumeValidation },
+        meta: {
+          output_path: resumePath, pdf_path: resumePdfPath, validation: resumeValidation,
+          atsScore: resumeAtsReport?.match_score ?? null, atsBand: resumeAtsReport?.band ?? null,
+        },
       });
     } else if (resumeWarning) {
       logger.event(EVENT_TYPES.RESUME_GENERATED, {
@@ -399,6 +404,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     screeningAnswers: config.screeningAnswers,
     resumePath, coverLetter: cover, coverLetterPath,
     resumeTailored, resumeWarning, resumePdfPath, resumeValidation,
+    atsReport: resumeAtsReport,
     formFields: job.formFields ?? [],
     html: job.html ?? '',
   });
@@ -409,6 +415,8 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     resume_pdf_path: resumePdfPath,
     application_packet_path: packetPath, output_folder_path: outPaths.folder,
     ats_platform: packet.ats.platform,
+    ats_score: resumeAtsReport?.match_score ?? null,
+    ats_band: resumeAtsReport?.band ?? null,
   });
 
   enqueueForApproval(db, { packet, packetPath });

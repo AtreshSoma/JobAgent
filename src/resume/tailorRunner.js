@@ -49,6 +49,29 @@ export function keywordsForJob(score = {}) {
 }
 
 /**
+ * Flatten the scoring config's keyword vocabulary into one de-duplicated list.
+ * This grounds the JD keyword tiering: the ATS report only tiers terms from this
+ * known data-engineering vocabulary, so it never invents random words.
+ * @param {object} [scoring] parsed config/scoring.json
+ * @returns {string[]}
+ */
+export function vocabularyFromScoring(scoring = {}) {
+  const kw = scoring.keywords ?? {};
+  const seen = new Set();
+  const out = [];
+  for (const list of Object.values(kw)) {
+    if (!Array.isArray(list)) continue;
+    for (const term of list) {
+      const key = String(term).toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(term);
+    }
+  }
+  return out;
+}
+
+/**
  * Run the Python tailor for one job.
  *
  * @param {object} args
@@ -79,6 +102,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     emphasized: null,
     summaryLine: null,
     validation: null,
+    atsReport: null,
     warning: null,
     usedFallback: true,
   };
@@ -97,6 +121,9 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
       jd_text: job.jdText ?? '',
     },
     keywords: keywordsForJob(score),
+    // Vocabulary + ATS rules drive the deterministic ATS readiness report.
+    vocabulary: vocabularyFromScoring(config.scoring),
+    ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
     add_summary_line: options.addSummaryLine === true,
     export_pdf: options.exportPdf === true,
@@ -121,6 +148,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     emphasized: response.emphasized ?? null,
     summaryLine: response.summary_line ?? null,
     validation: response.validation ?? null,
+    atsReport: response.ats_report ?? null,
     warning: null,
     usedFallback: false,
   };

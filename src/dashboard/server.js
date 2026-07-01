@@ -34,7 +34,7 @@
 
 import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, normalize, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -287,6 +287,24 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       res.end(html);
       return;
     }
+    // Interview-prep mini-site, mounted under /learn (a separate hash-routed SPA).
+    // Redirect the bare path to /learn/ so the SPA's relative asset URLs resolve
+    // under /learn/assets/ rather than the dashboard root.
+    if (req.method === 'GET' && path === '/learn') {
+      res.writeHead(302, { location: '/learn/' });
+      res.end();
+      return;
+    }
+    if (req.method === 'GET' && path === '/learn/') {
+      const html = readFileSync(join(PUBLIC_DIR, 'learn', 'index.html'), 'utf8');
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end(html);
+      return;
+    }
+    // Static assets (css/js/img/fonts) for the dashboard and the /learn mini-site.
+    if (req.method === 'GET' && (path.startsWith('/assets/') || path.startsWith('/learn/assets/'))) {
+      return serveStatic(res, path);
+    }
     if (req.method === 'GET' && path === '/api/stats') {
       return sendJson(res, 200, dashboardStats(db, { now: nowDate() }));
     }
@@ -511,6 +529,55 @@ export function installProcessSafetyNet({ runState, logger, proc = process } = {
 function sendJson(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+/** Minimal MIME map for the bundled SPA assets. */
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.woff': 'font/woff',
+  '.woff2': 'font/woff2',
+};
+
+/**
+ * Serve a static file from PUBLIC_DIR. Defends against path traversal by
+ * resolving the request and rejecting anything that escapes PUBLIC_DIR
+ * (OWASP A01/A03). Returns 404 for missing files, 403 for escapes.
+ *
+ * @param {import('node:http').ServerResponse} res
+ * @param {string} urlPath request pathname (e.g. "/assets/js/app.js")
+ */
+function serveStatic(res, urlPath) {
+  let rel;
+  try { rel = decodeURIComponent(urlPath); }
+  catch { rel = urlPath; }
+  const abs = normalize(join(PUBLIC_DIR, rel));
+  if (abs !== PUBLIC_DIR && !abs.startsWith(PUBLIC_DIR + sep)) {
+    return sendJson(res, 403, { error: 'forbidden' });
+  }
+  let buf;
+  try {
+    buf = readFileSync(abs);
+  } catch (err) {
+    if (err.code === 'ENOENT' || err.code === 'EISDIR') {
+      return sendJson(res, 404, { error: `not found: ${urlPath}` });
+    }
+    throw err;
+  }
+  const type = MIME_TYPES[extname(abs).toLowerCase()] ?? 'application/octet-stream';
+  res.writeHead(200, { 'content-type': type });
+  res.end(buf);
 }
 
 /** Read and parse a JSON request body (empty body -> {}). */

@@ -70,6 +70,18 @@ function postedLabel(row) {
   return `Posted: ${formatPostedRelative(row?.postedAt ?? row?.posted_at ?? null)}`;
 }
 
+/** Colored "ATS NN%" chip from a job row's persisted ats_score/ats_band. */
+function atsLabel(row) {
+  const score = row?.ats_score;
+  if (score === null || score === undefined || score === '') return '';
+  const n = Number(score);
+  if (!Number.isFinite(n)) return '';
+  const text = `ATS ${n}%`;
+  if (n >= 70 && n < 90) return ui.c.green(text);
+  if (n >= 90) return ui.c.yellow(text);
+  return ui.c.yellow(text);
+}
+
 const VALID_MODES = new Set(['DRY_RUN', 'PREPARE', 'LIVE_ASSIST']);
 
 /** Phase commands handled by the dispatcher (vs. the legacy mode path). */
@@ -499,7 +511,14 @@ function summarizePrepare(r, db, config) {
   ui.blank();
   const prepared = (r.scoredJobs ?? []).filter((j) => j.status === 'prepared');
   if (prepared.length) {
-    ui.list('Awaiting your approval', prepared.map((j) => `${jobLabel(j)}  ${ui.c.dim(postedLabel(j))}`));
+    ui.list('Awaiting your approval', prepared.map((j) => {
+      const row = db?.getJob?.(j.id);
+      const ats = atsLabel(row);
+      return `${jobLabel(j)}  ${ui.c.dim(postedLabel(j))}${ats ? `  ${ats}` : ''}`;
+    }));
+    ui.blank();
+    ui.note('ATS = estimated keyword match for that posting (target band ~70-85%). '
+      + 'Open a packet to see required terms you are missing:  npm run packet -- <id>');
   } else {
     ui.note('No new packets were prepared (nothing reached the prepare threshold).');
   }
