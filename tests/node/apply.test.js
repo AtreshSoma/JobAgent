@@ -295,4 +295,10 @@ describe('approvalQueue (compliance gate)', () => {
     const row = db.getApproval(id);
     expect(isClearedForAssist(row).clearedForAssist).toBe(false);
   });
+
+  it('approving or rejecting an unknown id fails loudly instead of pretending success', () => {
+    enqueueForApproval(db, { packet, packetPath: '/tmp/p1.json' });
+    expect(() => approve(db, 'no-such-id')).toThrow(/no approval found/i);
+    expect(() => reject(db, 'no-such-id')).toThrow(/no approval found/i);
+  });
 });

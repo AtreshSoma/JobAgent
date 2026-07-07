@@ -376,7 +376,9 @@ export function getPacket(db, idOrJobId, deps = {}) {
 /* ------------------------------- helpers --------------------------------- */
 
 function isoDate(now) {
-  return (now ?? new Date()).toISOString().slice(0, 10);
+  // deps.now may be a Date OR a clock function (dashboard/tests inject both).
+  const d = typeof now === 'function' ? now() : now ?? new Date();
+  return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -389,12 +391,22 @@ function isoDate(now) {
 export function recordAssistResult(db, jobId, result) {
   if (!jobId) return;
   try {
-    db.upsertJob({
+    const patch = {
       id: jobId,
       status: result.status,
       assist_filled_count: Array.isArray(result.filled) ? result.filled.length : null,
       assist_blockers: Array.isArray(result.blockers) ? result.blockers : [],
-    });
+    };
+    // Auto-submit (explicit per-run opt-in) is the ONE automated path to
+    // applied=1 — the runner only sets result.submitted after clicking the
+    // final Submit on a clean form at the human's request.
+    if (result.submitted === true) {
+      patch.applied = 1;
+      patch.applied_at = new Date().toISOString();
+      patch.status = 'submitted';
+      patch.submitted_confirmation = 'auto-submitted — verify the ATS confirmation email';
+    }
+    db.upsertJob(patch);
   } catch {
     /* job may not be persisted in some flows; ignore */
   }

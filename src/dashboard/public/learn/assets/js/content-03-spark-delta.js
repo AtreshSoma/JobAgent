@@ -143,11 +143,7 @@
           { pitfall: "Never run <code>VACUUM … RETAIN 0 HOURS</code> in production — it deletes files that running queries and time travel still need, and can corrupt concurrent readers. Keep the default 7-day retention." },
           { analogy: "Think of table maintenance as <strong>tidying a messy desk</strong>. <code>OPTIMIZE</code> staples loose sticky-notes (small files) into neat pages. <code>ZORDER</code> files related notes next to each other so you find them fast. <code>VACUUM</code> shreds old drafts — but only ones older than your retention, so you don't bin a page someone is still reading." },
           { example: { title: "Z-ORDER turns full scans into skips", body: "Z-ordering on <code>customer_id</code> physically clusters each customer's rows into the same files. A query filtered to one customer then reads only a handful of files via data-skipping, instead of scanning the whole table." } },
-          { code: "-- Compact small files and cluster for skipping
-OPTIMIZE gold.sales ZORDER BY (customer_id, sale_date);
-
--- Reclaim space from files older than retention
-VACUUM gold.sales RETAIN 168 HOURS;   -- 7 days (the safe default)", lang: "sql" },
+          { code: "-- Compact small files and cluster for skipping\nOPTIMIZE gold.sales ZORDER BY (customer_id, sale_date);\n\n-- Reclaim space from files older than retention\nVACUUM gold.sales RETAIN 168 HOURS;   -- 7 days (the safe default)", lang: "sql" },
           { tryit: { title: "Your turn", body: "Customer-filtered dashboards slowed down as hourly writes piled up thousands of small files. Which two commands fix it, and which column would you Z-ORDER by?" } },
           { qa: [
             { q: "<code>OPTIMIZE</code> vs <code>VACUUM</code> — what's the difference?", a: "<code>OPTIMIZE</code> compacts many small files into right-sized ones to speed up reads. <code>VACUUM</code> permanently deletes files no longer referenced by the log (past the retention window) to reclaim storage — they solve different problems." },

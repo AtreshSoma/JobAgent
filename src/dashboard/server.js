@@ -43,7 +43,7 @@ import {
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
 } from './data.js';
 import {
-  runDiscover, runScore, runPrepareApps, loadPacket, recordAssistResult,
+  runScore, runPrepareApps, loadPacket, recordAssistResult,
   preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
@@ -67,7 +67,12 @@ const RUN_PHASES = new Set(['discover', 'score', 'prepare']);
  */
 export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
   const runners = {
-    discover: deps.discoverFn ?? (() => runDiscover({ config, logger, deps })),
+    // "Find New Jobs" must leave jobs ON THE BOARD. The bare discover phase
+    // only writes data/found_jobs.json — never the SQLite DB the board reads —
+    // so the button appeared to do nothing (header stuck at "0 found in last
+    // 24h" no matter how many jobs the run found). Route it through the
+    // scoring pipeline, which discovers, scores, AND persists in one pass.
+    discover: deps.discoverFn ?? (() => runScore({ config, db, logger, deps })),
     score: deps.scoreFn ?? (() => runScore({ config, db, logger, deps })),
     prepare: deps.prepareFn ?? (() => runPrepareApps({ config, db, logger, deps })),
   };
@@ -192,17 +197,29 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
   }
 
   /**
-   * Auto-apply across a chosen set of jobs, ONE browser at a time. Each job is
-   * filled and advanced through safe Next/Continue steps, then left on the final
-   * page — the human still reviews and clicks Submit. Nothing is auto-submitted.
+   * Auto-apply across a chosen set of jobs — fully orchestrated, ONE browser at
+   * a time. For each job this now runs the WHOLE chain a human used to click
+   * through by hand:
    *
-   * Jobs that are not human-approved are skipped (never silently filled). The
+   *   1. PREPARE  — jobs without a packet get a tailored resume + packet built
+   *   2. APPROVE  — clicking Auto-apply IS the explicit human approval
+   *   3. FILL     — open the posting, fill every known field, advance safe
+   *                 Next/Continue steps, and STOP before the final Submit
+   *
+   * Nothing is ever auto-submitted — the browser is left open on the final page
+   * for the human to review and click Submit. Jobs whose packet cannot be
+   * prepared/loaded are reported in `skipped`, never silently dropped. The
    * batch runs in the background; the UI polls /api/run/status for progress.
    *
+   * When `runOpts.autoSubmit` is true (an explicit, per-run human choice), the
+   * runner also clicks the final Submit — but only on a completely clean form
+   * and under the daily application cap; see applyRunner.tryAutoSubmit.
+   *
    * @param {string[]} jobIds
-   * @returns {{ started: true, queued: number, skipped: string[] }}
+   * @param {{ autoSubmit?: boolean }} [runOpts]
+   * @returns {{ started: true, queued: number }}
    */
-  function startAssistBatch(jobIds) {
+  function startAssistBatch(jobIds, runOpts = {}) {
     if (runState.running) {
       const err = new Error(`busy: ${runState.phase} is in progress`);
       err.statusCode = 409;
@@ -214,37 +231,56 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       err.statusCode = 400;
       throw err;
     }
-    const queue = [];
-    const skipped = [];
-    for (const jobId of ids) {
-      const approval = db.getApprovalByJob?.(jobId);
-      if (!approval || approval.approval_status !== APPROVAL_STATUS.APPROVED) {
-        skipped.push(jobId);
-        continue;
-      }
-      const loaded = deps.loadPacketImpl ? deps.loadPacketImpl(approval) : loadPacket(approval);
-      if (!loaded) { skipped.push(jobId); continue; }
-      queue.push({ jobId, packet: reconcilePacket(loaded, jobId), approval });
-    }
-    if (queue.length === 0) {
-      const err = new Error('none of the selected jobs are approved — approve them first');
-      err.statusCode = 400;
-      throw err;
-    }
     Object.assign(runState, {
-      running: true, phase: `assist-batch (0/${queue.length})`,
+      running: true, phase: `auto-apply (0/${ids.length})`,
       startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
     });
     (async () => {
       const results = [];
-      let done = 0;
+      const skipped = [];
+      let queueLen = 0;
       try {
+        // 1. Prepare packets for jobs that don't have one yet (tailored resume
+        //    + application packet). Failures are honest skips, not crashes.
+        const needPacket = ids.filter((id) => !db.getApprovalByJob?.(id));
+        if (needPacket.length) {
+          runState.phase = `auto-apply — preparing ${needPacket.length} packet(s)…`;
+          const prepareImpl = deps.prepareForJobsFn ?? preparePacketsForJobs;
+          const prep = await prepareImpl({ config, db, logger, jobIds: needPacket, deps });
+          for (const f of prep.failed ?? []) skipped.push({ jobId: f.jobId, reason: f.error });
+        }
+
+        // 2+3. Approve (the click is the approval) and fill, one at a time.
+        const queue = [];
+        for (const jobId of ids) {
+          if (skipped.some((s) => s.jobId === jobId)) continue;
+          let approval = db.getApprovalByJob?.(jobId);
+          if (!approval) { skipped.push({ jobId, reason: 'no packet could be prepared' }); continue; }
+          if (approval.approval_status !== APPROVAL_STATUS.APPROVED) {
+            approveJobPacket(db, jobId);
+            approval = db.getApprovalByJob(jobId);
+          }
+          const loaded = deps.loadPacketImpl ? deps.loadPacketImpl(approval) : loadPacket(approval);
+          if (!loaded) { skipped.push({ jobId, reason: 'packet file unreadable' }); continue; }
+          queue.push({ jobId, packet: reconcilePacket(loaded, jobId), approval });
+        }
+        queueLen = queue.length;
+
+        let done = 0;
+        const autoSubmit = runOpts.autoSubmit === true;
+        // Seed the daily cap from what was already submitted today, and bump
+        // it as this batch submits, so one batch can never blow past the cap.
+        let dailyCount = db.countAppliedOn?.(new Date().toISOString().slice(0, 10)) ?? 0;
         for (const { jobId, packet, approval } of queue) {
-          runState.phase = `assist-batch (${done + 1}/${queue.length}) — ${jobId}`;
+          runState.phase = `auto-apply (${done + 1}/${queue.length}) — ${jobId}`;
           try {
-            const result = await assistFn({ packet, config, mode: 'LIVE_ASSIST', approval, options: {}, deps });
+            const result = await assistFn({
+              packet, config, mode: 'LIVE_ASSIST', approval, dailyCount,
+              options: { autoSubmit }, deps,
+            });
             recordAssistResult(db, jobId, result);
-            results.push({ jobId, status: result.status, blockers: result.blockers ?? [] });
+            if (result.submitted === true) dailyCount += 1;
+            results.push({ jobId, status: result.status, submitted: result.submitted === true, blockers: result.blockers ?? [] });
           } catch (err) {
             results.push({ jobId, status: 'failed', error: err.message });
           }
@@ -256,14 +292,14 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         // A background batch failure must NEVER escape — an unhandled rejection
         // here would crash the whole dashboard process (the UI would then only
         // ever show "Failed to fetch").
-        runState.lastError = `assist-batch failed: ${err.message}`;
-        runState.lastResult = { phase: 'assist-batch', total: queue.length, skipped, results };
+        runState.lastError = `auto-apply failed: ${err.message}`;
+        runState.lastResult = { phase: 'assist-batch', total: queueLen, skipped, results };
       } finally {
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
       }
     })();
-    return { started: true, queued: queue.length, skipped };
+    return { started: true, queued: ids.length };
   }
 
   /** Current time: injectable as a function for deterministic tests. */
@@ -353,7 +389,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     }
     if (req.method === 'POST' && path === '/api/assist-batch') {
       const body = await readBody(req);
-      return sendJson(res, 202, startAssistBatch(body.jobIds));
+      return sendJson(res, 202, startAssistBatch(body.jobIds, { autoSubmit: body.autoSubmit === true }));
     }
     if (req.method === 'POST' && path === '/api/approve-batch') {
       const body = await readBody(req);
@@ -458,6 +494,12 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       }
       if (req.method === 'POST' && action === 'assist') {
         return sendJson(res, 202, await startAssist(jobId));
+      }
+      // One-click end-to-end: prepare (if needed) -> approve -> fill; submits
+      // only when the body explicitly opts in. Same orchestration as the batch.
+      if (req.method === 'POST' && action === 'auto-apply') {
+        const body = await readBody(req);
+        return sendJson(res, 202, startAssistBatch([jobId], { autoSubmit: body.autoSubmit === true }));
       }
     }
 
@@ -584,15 +626,22 @@ function serveStatic(res, urlPath) {
 function readBody(req) {
   return new Promise((resolve, reject) => {
     let data = '';
+    let tooLarge = false;
     req.on('data', (chunk) => {
+      if (tooLarge) return;
       data += chunk;
-      if (data.length > 1_000_000) reject(Object.assign(new Error('body too large'), { statusCode: 413 }));
+      if (data.length > 1_000_000) {
+        tooLarge = true;
+        reject(Object.assign(new Error('body too large'), { statusCode: 413 }));
+        req.destroy(); // stop buffering — the promise is already settled
+      }
     });
     req.on('end', () => {
+      if (tooLarge) return;
       if (!data.trim()) return resolve({});
       try { resolve(JSON.parse(data)); }
       catch { reject(Object.assign(new Error('invalid JSON body'), { statusCode: 400 })); }
     });
-    req.on('error', reject);
+    req.on('error', (err) => { if (!tooLarge) reject(err); });
   });
 }

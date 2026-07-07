@@ -25,11 +25,7 @@
           { key: "Reach for <code>dict</code>/<code>set</code> whenever you need fast lookups, grouping, or de-duplication. <code>collections.Counter</code> and <code>defaultdict</code> remove boilerplate." },
           { analogy: "A <code>dict</code> is a <strong>coat-check counter</strong>: hand over your ticket (the key) and you get your coat back instantly, no matter how many coats there are. A <code>list</code> is searching every pocket in the room until you find it — fine for a few items, painful for millions." },
           { example: { title: "Count the most common words", body: "<code>collections.Counter</code> is a dict subclass purpose-built for tallying — it turns a frequency count into one line and hands you <code>.most_common()</code> for free." } },
-          { code: "from collections import Counter
-
-words = ['etl', 'spark', 'etl', 'sql', 'etl', 'spark']
-counts = Counter(words)
-print(counts.most_common(2))   # [('etl', 3), ('spark', 2)]", lang: "python" },
+          { code: "from collections import Counter\n\nwords = ['etl', 'spark', 'etl', 'sql', 'etl', 'spark']\ncounts = Counter(words)\nprint(counts.most_common(2))   # [('etl', 3), ('spark', 2)]", lang: "python" },
           { tryit: { title: "Your turn", body: "Given a list of integers, return the first value that does not repeat. Hint: one pass with a <code>Counter</code>, then a second pass to find the first count of 1 — O(n) total." } },
           { qa: [
             { q: "Why is a <code>dict</code> lookup O(1) but a <code>list</code> lookup O(n)?", a: "A dict hashes the key to jump straight to a bucket, so the time barely grows with size. A list has no index by value — it must scan element by element until it finds a match." },
@@ -56,18 +52,7 @@ print(counts.most_common(2))   # [('etl', 3), ('spark', 2)]", lang: "python" },
             "<strong>Finish when the source is empty</strong> — no giant list ever existed.",
           ] },
           { example: { title: "Chain generators into a pipeline", body: "Generators compose: parse → filter → transform, each stage streaming into the next. Nothing materializes the full dataset, so a 50GB file flows through a few MB of RAM." } },
-          { code: "def read_lines(path):
-    with open(path, encoding='utf-8') as f:
-        for line in f:
-            yield line
-
-def parse(lines):
-    for line in lines:
-        yield json.loads(line)
-
-big = (rec for rec in parse(read_lines('events.ndjson'))
-       if rec.get('amount', 0) > 0)
-# nothing has run yet — consume `big` one record at a time", lang: "python" },
+          { code: "def read_lines(path):\n    with open(path, encoding='utf-8') as f:\n        for line in f:\n            yield line\n\ndef parse(lines):\n    for line in lines:\n        yield json.loads(line)\n\nbig = (rec for rec in parse(read_lines('events.ndjson'))\n       if rec.get('amount', 0) > 0)\n# nothing has run yet — consume `big` one record at a time", lang: "python" },
           { tryit: { title: "Your turn", body: "Write a generator <code>batched(iterable, n)</code> that yields lists of up to <code>n</code> items — handy for sending rows to an API in chunks without loading them all." } },
           { qa: [
             { q: "Generator vs list comprehension — what's the difference?", a: "<code>[x for x in xs]</code> builds the whole list in memory now; <code>(x for x in xs)</code> builds a generator that produces values lazily. Same syntax, very different memory profile." },
@@ -92,13 +77,7 @@ big = (rec for rec in parse(read_lines('events.ndjson'))
           { tip: "Say it crisply: “Threads for I/O-bound, processes (or Spark) for CPU-bound, because the GIL serializes Python bytecode but releases during I/O.” That one sentence answers the whole question." },
           { analogy: "The GIL is a <strong>single microphone in a meeting room</strong>: only one thread can 'speak' (run Python bytecode) at a time. But when a speaker steps out to make a phone call (I/O wait), they hand the mic over — so threads still help I/O-bound work, just not CPU-bound work." },
           { example: { title: "CPU-bound work needs processes", body: "Hashing or parsing a million files is CPU-bound — threads would just pass the one mic around. <code>ProcessPoolExecutor</code> spins up separate Python processes, each with its own GIL, so they run truly in parallel across cores." } },
-          { code: "from concurrent.futures import ProcessPoolExecutor
-
-def heavy(n):
-    return sum(i * i for i in range(n))   # CPU-bound
-
-with ProcessPoolExecutor() as ex:
-    results = list(ex.map(heavy, [10_000_000] * 8))", lang: "python" },
+          { code: "from concurrent.futures import ProcessPoolExecutor\n\ndef heavy(n):\n    return sum(i * i for i in range(n))   # CPU-bound\n\nwith ProcessPoolExecutor() as ex:\n    results = list(ex.map(heavy, [10_000_000] * 8))", lang: "python" },
           { tryit: { title: "Your turn", body: "For each task, pick threads or processes: (a) download 1,000 URLs, (b) compute SHA-256 of 1,000 large files. Justify each choice in one sentence using the GIL." } },
           { qa: [
             { q: "What exactly is the GIL?", a: "The Global Interpreter Lock is a mutex in CPython that allows only one thread to execute Python bytecode at a time, which simplifies memory management but prevents threads from running CPU work in parallel." },
@@ -126,14 +105,7 @@ with ProcessPoolExecutor() as ex:
             "<strong>Dead-letter</strong> records that keep failing so one bad row never blocks the batch.",
           ] },
           { example: { title: "Cursor pagination done right", body: "APIs cap page size, so you loop, passing the previous response's <code>next_cursor</code> until it's empty. Using the cursor (not an offset) avoids skipped or repeated rows when data shifts mid-pull." } },
-          { code: "def fetch_all(client):
-    cursor, out = None, []
-    while True:
-        page = with_retry(lambda: client.get(cursor=cursor))
-        out.extend(page['items'])
-        cursor = page.get('next_cursor')
-        if not cursor:
-            return out", lang: "python" },
+          { code: "def fetch_all(client):\n    cursor, out = None, []\n    while True:\n        page = with_retry(lambda: client.get(cursor=cursor))\n        out.extend(page['items'])\n        cursor = page.get('next_cursor')\n        if not cursor:\n            return out", lang: "python" },
           { tryit: { title: "Your turn", body: "Extend <code>with_retry</code> so that after the final failed attempt it writes the failing record to a <em>dead-letter</em> list instead of raising — letting the rest of the batch finish." } },
           { qa: [
             { q: "What is an idempotency key and why does it matter?", a: "A stable id (often a hash of the record) you send with each write so retries don't create duplicates — the server recognizes it has already processed that key. Essential when retries can fire after a partial success." },
@@ -161,14 +133,7 @@ with ProcessPoolExecutor() as ex:
           { tip: "If asked “you only know pandas?”, map the APIs out loud (table above) and add: “same operations — Spark just runs them lazily and distributed.”" },
           { analogy: "pandas is <strong>cooking one dish yourself</strong> in your kitchen (one machine, all in memory). PySpark is <strong>running a restaurant kitchen</strong>: you write the recipe (the DataFrame plan) and a brigade of cooks (executors) prepares it in parallel across many stations." },
           { example: { title: "Read, clean, enrich, write", body: "A typical job reads a table, filters bad rows, derives a column, joins a dimension, and writes — all expressed as a fluent chain that Spark optimizes as one plan." } },
-          { code: "from pyspark.sql import functions as F
-
-orders = spark.read.table('bronze.orders')
-clean = (orders
-    .where(F.col('status') != 'test')
-    .withColumn('order_date', F.to_date('order_ts'))
-    .join(F.broadcast(spark.table('dim.customer')), 'customer_id', 'left'))
-clean.write.mode('overwrite').saveAsTable('silver.orders')", lang: "python" },
+          { code: "from pyspark.sql import functions as F\n\norders = spark.read.table('bronze.orders')\nclean = (orders\n    .where(F.col('status') != 'test')\n    .withColumn('order_date', F.to_date('order_ts'))\n    .join(F.broadcast(spark.table('dim.customer')), 'customer_id', 'left'))\nclean.write.mode('overwrite').saveAsTable('silver.orders')", lang: "python" },
           { tryit: { title: "Your turn", body: "Translate this pandas line to PySpark: <code>df.groupby('region')['net'].sum().reset_index()</code>. Which two methods replace <code>groupby</code> and the sum?" } },
           { qa: [
             { q: "When should you use Spark instead of pandas?", a: "When data is too big for one machine's memory, or you need parallel compute / cluster scale. For small data that fits in RAM, pandas is simpler and faster to iterate on." },
@@ -252,13 +217,7 @@ clean.write.mode('overwrite').saveAsTable('silver.orders')", lang: "python" },
           { pitfall: "Don't <code>partitionBy</code> a high-cardinality column (like user_id) on write — you'll create millions of tiny files. Partition on low-cardinality keys like date." },
           { analogy: "Partitions are <strong>checkout lanes at a supermarket</strong>. Too few lanes and shoppers queue (under-parallelized); too many lanes each with one shopper and you waste cashiers opening and closing them (tiny-file overhead). You want enough lanes to keep everyone busy and balanced." },
           { example: { title: "Partition on disk for read pruning", body: "Writing <code>partitionBy('event_date')</code> lays data out in per-date folders. A later query filtered to one day reads only that folder — the engine 'prunes' the rest, scanning a fraction of the data." } },
-          { code: "# Disk layout enables partition pruning at read time
-(df.write.partitionBy('event_date')
-   .format('delta').mode('overwrite')
-   .saveAsTable('gold.events'))
-
-# Later: only the 2025-06-01 folder is scanned
-spark.table('gold.events').where("event_date = '2025-06-01'")", lang: "python" },
+          { code: "# Disk layout enables partition pruning at read time\n(df.write.partitionBy('event_date')\n   .format('delta').mode('overwrite')\n   .saveAsTable('gold.events'))\n\n# Later: only the 2025-06-01 folder is scanned\nspark.table('gold.events').where(\"event_date = '2025-06-01'\")", lang: "python" },
           { tryit: { title: "Your turn", body: "A nightly job writes 2,000 tiny Parquet files. Which method merges them before writing without a full shuffle — and what number would you pass?" } },
           { qa: [
             { q: "<code>repartition</code> vs <code>coalesce</code>?", a: "<code>repartition(n)</code> does a full shuffle and can increase or decrease partitions evenly (good for fixing skew). <code>coalesce(n)</code> only decreases, merging partitions without a full shuffle (good for reducing output files)." },
@@ -306,13 +265,7 @@ spark.table('gold.events').where("event_date = '2025-06-01'")", lang: "python" }
           { key: "Partition by the business key, order by latest ingest, keep <code>rn == 1</code>. This dedup-to-latest is the single most reused PySpark snippet in real pipelines." },
           { analogy: "Dedup-to-latest is <strong>keeping only the most recent photo of each person</strong> in your camera roll. You group every shot by who's in it (partition by key), sort newest-first (order by timestamp), and keep just the top one." },
           { example: { title: "Why a window beats dropDuplicates here", body: "<code>dropDuplicates(['claim_id'])</code> keeps an <em>arbitrary</em> row per key — you can't control which. The window + <code>row_number()</code> lets you say 'keep the latest by ingest time', which is what production actually needs." } },
-          { code: "from pyspark.sql import functions as F, Window
-
-w = Window.partitionBy('claim_id').orderBy(F.col('ingest_ts').desc())
-latest = (bronze
-    .withColumn('rn', F.row_number().over(w))
-    .filter(F.col('rn') == 1)
-    .drop('rn'))", lang: "python" },
+          { code: "from pyspark.sql import functions as F, Window\n\nw = Window.partitionBy('claim_id').orderBy(F.col('ingest_ts').desc())\nlatest = (bronze\n    .withColumn('rn', F.row_number().over(w))\n    .filter(F.col('rn') == 1)\n    .drop('rn'))", lang: "python" },
           { tryit: { title: "Your turn", body: "Change the snippet to keep the <em>earliest</em> record per <code>claim_id</code> instead of the latest. What single change do you make — and where?" } },
           { qa: [
             { q: "<code>dropDuplicates</code> vs <code>row_number()</code> dedup — which and when?", a: "<code>dropDuplicates</code> is fine when any surviving row will do. Use the <code>row_number()</code> window when you must keep a <em>specific</em> row (latest, highest amount), because it lets you define the ordering." },
@@ -336,14 +289,7 @@ latest = (bronze
           { tip: "If asked about UDFs, lead with: “I avoid Python UDFs because they break Catalyst and pushdown — I use native functions, and a vectorized pandas UDF only when I truly need custom Python.”" },
           { analogy: "A plain Python UDF is <strong>stopping the assembly line to hand each item to a human</strong> for a tweak — slow, and the line can't optimize around it. Native <code>F.*</code> functions are the machine doing it inline at full speed." },
           { example: { title: "Replace a UDF with native logic", body: "Tier-bucketing looks like UDF territory, but <code>when/otherwise</code> expresses it natively — staying inside Catalyst, vectorized, and pushdown-friendly." } },
-          { code: "from pyspark.sql import functions as F
-
-# Avoid: a Python UDF for simple branching
-# tier = udf(lambda a: 'hi' if a > 100 else 'lo')
-
-# Prefer: native, vectorized, optimizable
-df = df.withColumn('tier',
-    F.when(F.col('amount') > 100, 'hi').otherwise('lo'))", lang: "python" },
+          { code: "from pyspark.sql import functions as F\n\n# Avoid: a Python UDF for simple branching\n# tier = udf(lambda a: 'hi' if a > 100 else 'lo')\n\n# Prefer: native, vectorized, optimizable\ndf = df.withColumn('tier',\n    F.when(F.col('amount') > 100, 'hi').otherwise('lo'))", lang: "python" },
           { tryit: { title: "Your turn", body: "Rewrite a UDF that uppercases and trims a name using only native functions. Hint: <code>F.upper</code> and <code>F.trim</code> compose in one expression." } },
           { qa: [
             { q: "Why are Python UDFs slow?", a: "Each row is serialized from the JVM to a Python process and back, which is expensive and opaque to Catalyst — so filter pushdown and other optimizations stop at the UDF boundary." },

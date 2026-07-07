@@ -5,9 +5,11 @@
  *   1. Required folders and key files exist.
  *   2. Configuration loads and validates against its JSON schemas.
  *   3. The local SQLite database opens.
- *   4. SAFETY: the codebase contains no auto-submit path — there must be no
- *      LIVE_SUBMIT mode, no auto-approve, and no auto-submit countdown. This
- *      assistant only ever fills forms and stops before the final Submit.
+ *   4. SAFETY: submission stays gated. The legacy always-on auto-submit
+ *      surface (LIVE_SUBMIT mode, submit countdowns) must not exist, and the
+ *      one legitimate submit path — applyRunner's tryAutoSubmit — must remain
+ *      strictly behind the explicit per-run `options.autoSubmit === true`
+ *      opt-in. By default the assistant fills and stops before Submit.
  *
  * Exits with code 0 when healthy, 1 when any check fails. Read-only: it never
  * writes or deletes anything.
@@ -111,7 +113,7 @@ check('database opens', () => {
   }
 });
 
-check('no auto-submit code (safety)', () => {
+check('no legacy auto-submit surface (safety)', () => {
   const offenders = [];
   for (const d of SAFETY_SCAN_DIRS) {
     for (const file of walkJsFiles(join(ROOT, d))) {
@@ -123,7 +125,21 @@ check('no auto-submit code (safety)', () => {
     }
   }
   if (offenders.length) throw new Error(`forbidden auto-submit references: ${offenders.join('; ')}`);
-  return 'clean — no auto-submit path';
+  return 'clean';
+});
+
+check('submit path is opt-in gated (safety)', () => {
+  // The ONLY automated submit lives in applyRunner.tryAutoSubmit and must be
+  // guarded by the explicit per-run flag. If the guard line ever disappears
+  // while a submit click remains, this fails loudly.
+  const runner = readFileSync(join(ROOT, 'src', 'automation', 'applyRunner.js'), 'utf8');
+  if (!/const autoSubmit = options\.autoSubmit === true;/.test(runner)) {
+    throw new Error('applyRunner no longer gates submission on options.autoSubmit === true');
+  }
+  if (!/if \(!autoSubmit\) return false;/.test(runner)) {
+    throw new Error('tryAutoSubmit no longer short-circuits when the opt-in flag is absent');
+  }
+  return 'submission requires options.autoSubmit === true per run';
 });
 
 let failed = 0;

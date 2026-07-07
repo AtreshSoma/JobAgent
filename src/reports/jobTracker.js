@@ -47,6 +47,7 @@ export function submitStatus(job = {}, approval = null) {
   if (job.status === 'skipped') return 'Skipped by you';
   if (job.status === 'ready_for_submit') return 'Filled — ready to submit';
   if (job.status === 'assist_blocked') return 'Filled — needs you (login/extra fields)';
+  if (job.status === 'failed') return 'Assist failed — open & apply manually';
   if (approval?.approval_status === 'approved') return 'Approved — not yet submitted';
   if (approval?.approval_status === 'rejected') return 'Rejected by you';
   if (job.application_packet_path) return 'Prepared — awaiting your approval';
@@ -96,7 +97,10 @@ export function writeJobTracker(db, root) {
       resumeGenerated,
       typeof job.assist_filled_count === 'number' ? job.assist_filled_count : '',
       jsonList(job.assist_blockers).join('; '),
-      job.discard_reason ?? '',
+      // The human's own notes come first; the pipeline's discard reason is
+      // appended so neither ever hides the other.
+      [job.notes, job.discard_reason ? `Discarded: ${job.discard_reason}` : '']
+        .filter(Boolean).join(' | '),
       job.location, job.ats_platform ?? '', job.resume_path ?? '',
       job.cover_letter_path ?? '', job.id,
     ].map(csvField).join(',');

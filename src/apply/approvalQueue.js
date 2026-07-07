@@ -65,6 +65,22 @@ export function listPending(db) {
 }
 
 /**
+ * Fail loudly when the approval id does not exist. Without this, approving a
+ * mistyped id "succeeds" (the UPDATE matches zero rows) and the CLI reports a
+ * packet as approved when nothing changed.
+ * @param {import('../logging/db.js').Database} db
+ * @param {string} approvalId
+ */
+function assertApprovalExists(db, approvalId) {
+  if (typeof db.getApproval !== 'function') return;
+  if (!db.getApproval(approvalId)) {
+    throw new Error(
+      `no approval found with id "${approvalId}" — run "npm run approvals" to list valid ids`,
+    );
+  }
+}
+
+/**
  * Record an explicit human approval. This does NOT submit anything; it only
  * marks the packet as human-approved.
  * @param {import('../logging/db.js').Database} db
@@ -72,6 +88,7 @@ export function listPending(db) {
  * @returns {{ id: string, status: string }}
  */
 export function approve(db, approvalId) {
+  assertApprovalExists(db, approvalId);
   db.updateApprovalStatus(approvalId, {
     approval_status: APPROVAL_STATUS.APPROVED,
     approved_by_user: 1,
@@ -82,6 +99,7 @@ export function approve(db, approvalId) {
 
 /** Record a human rejection. */
 export function reject(db, approvalId) {
+  assertApprovalExists(db, approvalId);
   db.updateApprovalStatus(approvalId, {
     approval_status: APPROVAL_STATUS.REJECTED,
     approved_by_user: 0,

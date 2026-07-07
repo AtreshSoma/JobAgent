@@ -4,12 +4,17 @@
  * Given a prepared+approved packet, this opens the application page, runs the
  * safety guards, fills known fields, uploads the resume/cover letter, applies
  * config-backed screening answers, and advances through safe multi-step
- * navigation (Next / Continue / Review). It ALWAYS stops before the final
- * submit — a human reviews the filled form and clicks Submit themselves. This
- * assistant never clicks a final Submit/Apply/Finish/Complete control and has
- * no auto-submit path. Anything risky (CAPTCHA / login / MFA / bot wall /
- * unknown required question) ends the run as `assist_blocked` with the browser
- * left open for the human.
+ * navigation (Next / Continue / Review). By DEFAULT it stops before the final
+ * submit — a human reviews the filled form and clicks Submit themselves.
+ *
+ * Final submission is opt-in PER RUN: when the human explicitly enables
+ * options.autoSubmit, the runner clicks the final Submit — but only on a
+ * completely clean form (zero blockers, all required fields filled, truthful
+ * sponsorship answers, a unique confidently-identified submit control) and
+ * only under the configured daily application cap. Anything risky (CAPTCHA /
+ * login / MFA / bot wall / unknown required question) still ends the run as
+ * `assist_blocked` with the browser left open for the human — auto-submit
+ * never overrides a guard or fabricates an answer.
  *
  * All browser interaction is injectable (`deps.createSession`) so the core flow
  * is unit-testable with a fake page and exercisable with real Playwright against
@@ -120,6 +125,31 @@ export async function assistApply({
     const candidate = config?.candidate ?? {};
     const screeningAnswers = config?.screeningAnswers ?? {};
     const inspectPage = deps.inspectPage ?? inspectCurrentPage;
+
+    // ── Opt-in final submit ─────────────────────────────────────────────
+    // Default behavior is unchanged: fill and STOP before submit. The final
+    // Submit is clicked ONLY when the human explicitly chose auto-submit for
+    // THIS run (options.autoSubmit), and only on a completely clean form:
+    // zero blockers, all required fields filled, truthful sponsorship
+    // answers, a confidently-identified unique submit control, and the
+    // daily application cap not yet reached.
+    const autoSubmit = options.autoSubmit === true;
+    const dailyCap = Math.max(1, Number(config?.runtime?.maxApplicationsPerDay ?? 15) || 15);
+    const tryAutoSubmit = async (scope) => {
+      if (!autoSubmit) return false;
+      if (result.blockers.length > 0) return false;
+      if (!result.sponsorshipTruthful || !result.requiredFieldsFilled) return false;
+      if (!result.submitSelector || !result.submitSelectorConfident) return false;
+      if ((dailyCount ?? 0) >= dailyCap) {
+        result.note = `daily application cap reached (${dailyCap}) — filled but left for you to submit`;
+        return false;
+      }
+      const clicked = await clickAndSettle(scope, { selector: result.submitSelector, text: 'Submit' }, deps);
+      if (!clicked) return false;
+      result.submitted = true;
+      result.status = LIFECYCLE.SUBMITTED;
+      return true;
+    };
 
     // Blockers that persist across every step (packet-level + sponsorship).
     const baseBlockers = [...result.blockers];
@@ -247,9 +277,15 @@ export async function assistApply({
       }
 
       // Look for a safe forward control. If none exists, this is the final page:
-      // everything is filled and ready — the human reviews and clicks Submit.
+      // everything is filled and ready — submit automatically ONLY if the human
+      // opted in for this run AND the form is completely clean; otherwise stop
+      // for the human to review and click Submit.
       const advance = await findAdvanceControl(scope);
       if (!advance || step === maxSteps - 1) {
+        if (await tryAutoSubmit(scope)) {
+          result.sessionLeftOpen = !headless; // leave the confirmation page visible
+          return result;
+        }
         result.status = LIFECYCLE.READY_FOR_SUBMIT;
         result.sessionLeftOpen = !headless;
         return result;
@@ -257,6 +293,10 @@ export async function assistApply({
 
       const clicked = await clickAndSettle(scope, advance, deps);
       if (!clicked) {
+        if (await tryAutoSubmit(scope)) {
+          result.sessionLeftOpen = !headless;
+          return result;
+        }
         result.status = LIFECYCLE.READY_FOR_SUBMIT;
         result.sessionLeftOpen = !headless;
         return result;
@@ -270,6 +310,16 @@ export async function assistApply({
     result.sessionLeftOpen = !headless;
     return result;
   } catch (err) {
+    // The human closing the assist browser window is a normal, deliberate act
+    // (they finished the application by hand, or decided "not now") — NOT a
+    // failure and NOT a wall. Report it as ready_for_submit so the dashboard
+    // prompts "did you submit it?" instead of scaring them with "blocked".
+    if (isBrowserClosedError(err)) {
+      result.status = LIFECYCLE.READY_FOR_SUBMIT;
+      result.browserClosedByUser = true;
+      result.note = 'Browser was closed during assist — if you finished and submitted the application yourself, mark it Submitted; otherwise re-run auto-apply.';
+      return result;
+    }
     result.status = LIFECYCLE.FAILED;
     result.blockers.push(`assist error: ${err.message}`);
     return result;
@@ -286,4 +336,10 @@ export async function assistApply({
 async function safeCount(page, selector) {
   if (!selector) return 0;
   try { return await page.locator(selector).count(); } catch { return 0; }
+}
+
+/** True when an assist error means the HUMAN closed the browser/tab/window. */
+export function isBrowserClosedError(err) {
+  return /target (page|context|browser).*(closed|crashed)|browser has been closed|page.*has been closed|context.*has been closed|target closed/i
+    .test(String(err?.message ?? err ?? ''));
 }

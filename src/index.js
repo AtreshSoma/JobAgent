@@ -201,8 +201,8 @@ async function runCommand(command, parsed, env) {
         const uninstallSafetyNet = installProcessSafetyNet({ runState: dash.runState, logger });
         ui.heading('JobAgent Dashboard');
         ui.success(`Running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
-        ui.note('Discover, score, review, approve, and assist from the browser.');
-        ui.note('Nothing is ever auto-submitted — you review and click Submit yourself.');
+        ui.note('Discover, score, review, approve, and auto-apply from the browser.');
+        ui.note('By default it stops before Submit; auto-submit only runs when you explicitly opt in per run.');
         ui.blank();
         ui.note('Press Ctrl+C to stop.');
         // Keep the process alive until the user stops it; close the server
@@ -535,10 +535,13 @@ function summarizePrepare(r, db, config) {
 }
 
 function summarizeAssist(r, db) {
+  // Count what actually happened: skipped approvals never increment
+  // jobs_assisted, so subtracting them (the old approach) could go negative.
+  const ready = (r.results ?? []).filter((x) => x.status === 'ready_for_submit').length;
   ui.blank();
   ui.stats([
     ['Assisted', r.counters.jobs_assisted, r.counters.jobs_assisted ? 'good' : 'muted'],
-    ['Ready to submit', r.counters.jobs_assisted - (r.counters.jobs_skipped_already_applied ?? 0), 'good'],
+    ['Ready to submit', ready, ready ? 'good' : 'muted'],
   ]);
   ui.blank();
   if (!r.counters.jobs_assisted) {

@@ -95,10 +95,11 @@ export function detectBlocker({ html = '', url = '', status } = {}) {
     return block('bot', 'HTTP 429 (rate limited)', ['http:429']);
   }
 
-  // URL-based login redirect.
+  // URL-based login redirect. Each hint must end at a path/query boundary so
+  // "/auth" never matches "/author…" and "/signin" never matches a longer slug.
   const urlLower = url.toLowerCase();
   for (const hint of LOGIN_URL_HINTS) {
-    if (urlLower.includes(hint)) {
+    if (hintMatchesUrl(urlLower, hint)) {
       signals.push(`url:${hint}`);
     }
   }
@@ -128,6 +129,25 @@ export function detectBlocker({ html = '', url = '', status } = {}) {
 
 function block(kind, reason, signals) {
   return { blocked: true, kind, reason, signals };
+}
+
+/**
+ * True when a login hint appears in the URL at a segment boundary — followed
+ * by / ? # & . or the end of the string. Prevents substring false positives
+ * like "/auth" matching a legitimate "/authors" or "/authorized-dealers" page.
+ * @param {string} urlLower lowercased URL
+ * @param {string} hint one of LOGIN_URL_HINTS
+ * @returns {boolean}
+ */
+function hintMatchesUrl(urlLower, hint) {
+  let from = 0;
+  for (;;) {
+    const idx = urlLower.indexOf(hint, from);
+    if (idx === -1) return false;
+    const next = urlLower[idx + hint.length];
+    if (next === undefined || '/?#&.'.includes(next)) return true;
+    from = idx + 1;
+  }
 }
 
 /** True when the page is safe to interact with (no blocker detected). */

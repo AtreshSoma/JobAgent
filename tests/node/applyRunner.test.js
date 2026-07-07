@@ -67,6 +67,86 @@ describe('assistApply', () => {
     expect(r.blockers).toContain('packet has no application URL');
   });
 
+  it('auto-submit (opt-in) clicks the final Submit on a completely clean form', async () => {
+    const page = makeFakePage(KNOWN);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: { maxApplicationsPerDay: 15 }, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true, autoSubmit: true },
+      deps: { ...sessionDeps(page), wait: async () => {} },
+    });
+    expect(r.status).toBe(LIFECYCLE.SUBMITTED);
+    expect(r.submitted).toBe(true);
+    expect(page.record.clicks).toEqual([{ selector: '#submit_app' }]);
+  });
+
+  it('auto-submit REFUSES when the form has blockers (falls back to ready_for_submit)', async () => {
+    // Remove the resume upload target so uploads produce a blocker.
+    const page = makeFakePage(['#email', '#first_name', '#submit_app']);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: {}, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true, autoSubmit: true },
+      deps: { ...sessionDeps(page), wait: async () => {} },
+    });
+    expect(r.submitted).toBe(false);
+    expect(page.record.clicks).toHaveLength(0); // never clicked Submit
+  });
+
+  it('auto-submit REFUSES beyond the daily application cap', async () => {
+    const page = makeFakePage(KNOWN);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: { maxApplicationsPerDay: 5 }, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      dailyCount: 5, // cap already reached today
+      options: { headless: true, autoSubmit: true },
+      deps: { ...sessionDeps(page), wait: async () => {} },
+    });
+    expect(r.status).toBe(LIFECYCLE.READY_FOR_SUBMIT);
+    expect(r.submitted).toBe(false);
+    expect(page.record.clicks).toHaveLength(0);
+    expect(r.note).toMatch(/daily application cap/);
+  });
+
+  it('WITHOUT the opt-in flag a clean form still stops before submit', async () => {
+    const page = makeFakePage(KNOWN);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: {}, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true },
+      deps: { ...sessionDeps(page), wait: async () => {} },
+    });
+    expect(r.status).toBe(LIFECYCLE.READY_FOR_SUBMIT);
+    expect(r.submitted).toBe(false);
+    expect(page.record.clicks).toHaveLength(0);
+  });
+
+  it('treats the human closing the browser as ready_for_submit, not blocked/failed', async () => {
+    const page = makeFakePage(KNOWN);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: {}, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true },
+      deps: {
+        createSession: async () => ({ page, close: async () => {} }),
+        openPage: async () => { throw new Error('Target page, context or browser has been closed'); },
+      },
+    });
+    expect(r.status).toBe(LIFECYCLE.READY_FOR_SUBMIT);
+    expect(r.browserClosedByUser).toBe(true);
+    expect(r.blockers.some((b) => /assist error/.test(b))).toBe(false);
+  });
+
   it('fills fields + uploads then STOPS at ready_for_submit (never submits)', async () => {
     const page = makeFakePage(KNOWN);
     const r = await assistApply({

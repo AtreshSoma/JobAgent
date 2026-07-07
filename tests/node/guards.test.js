@@ -26,6 +26,15 @@ describe('detectBlocker', () => {
     expect(v.kind).toBe('login');
   });
 
+  it('does not mistake /author-like paths for a /auth login redirect', () => {
+    expect(detectBlocker({ html: 'welcome', url: 'https://jobs.example.com/authors-program' }).blocked).toBe(false);
+    expect(detectBlocker({ html: 'welcome', url: 'https://example.com/careers/authorized-roles' }).blocked).toBe(false);
+    expect(detectBlocker({ html: 'welcome', url: 'https://example.com/signing-bonus-jobs' }).blocked).toBe(false);
+    // Real auth paths still trip the guard.
+    expect(detectBlocker({ html: 'welcome', url: 'https://example.com/auth/callback' }).blocked).toBe(true);
+    expect(detectBlocker({ html: 'welcome', url: 'https://example.com/auth' }).blocked).toBe(true);
+  });
+
   it('detects an MFA prompt', () => {
     const v = detectBlocker({ html: 'Enter the verification code we sent to your phone' });
     expect(v.blocked).toBe(true);

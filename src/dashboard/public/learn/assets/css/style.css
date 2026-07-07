@@ -287,6 +287,9 @@ tbody tr:nth-child(even) { background: color-mix(in srgb, var(--bg) 55%, transpa
 .hero .eyebrow { color: #93c5fd; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; font-size: 12.5px; }
 .hero h1 { font-size: 38px; margin: 10px 0 12px; line-height: 1.12; letter-spacing: -1px; position: relative; }
 .hero p { color: #cbd5e1; max-width: 620px; font-size: 16px; position: relative; }
+/* .page strong is dark ink for light surfaces — inside the dark hero it was
+   nearly invisible; force light ink for any emphasis inside the hero. */
+.hero strong, .page .hero strong { color: #fff; }
 .hero .cta { margin-top: 22px; display: flex; gap: 12px; flex-wrap: wrap; position: relative; }
 .hero .btn.light { background: #fff; color: var(--brand-d); }
 .hero .btn.outline { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.3); }

@@ -90,4 +90,27 @@ describe('browser automation against a local fixture form', () => {
     expect(nav.guard.blocked).toBe(true);
     expect(nav.guard.kind).toBe('captcha');
   }, 60000);
+
+  it('reuses ONE live persistent context per profile — a new TAB per assist, so consecutive auto-applies never fight over the profile lock', async (ctx) => {
+    if (!available) return ctx.skip();
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const dir = mkdtempSync(join(tmpdir(), 'ja-profile-'));
+    const s1 = await createBrowserSession({ headless: true, userDataDir: dir });
+    try {
+      // Leave s1 "open for review" (exactly what assist does), then start the
+      // next job: it must attach to the SAME context with a fresh tab instead
+      // of a doomed second launch on the locked profile.
+      const s2 = await createBrowserSession({ headless: true, userDataDir: dir });
+      expect(s2.context).toBe(s1.context);
+      expect(s2.page).not.toBe(s1.page);
+      const nav = await openApplicationPage(s2.page, FORM_URL); // and it can navigate
+      expect(nav.guard.blocked).toBe(false);
+      await s2.close();                                   // closes only its tab
+      expect(s1.page.isClosed()).toBe(false);             // review tab untouched
+    } finally {
+      try { await s1.context.close(); } catch { /* ignore */ }
+      try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+    }
+  }, 60000);
 });

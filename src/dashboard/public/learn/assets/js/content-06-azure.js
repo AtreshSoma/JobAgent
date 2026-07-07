@@ -65,14 +65,7 @@
           { key: "Dedicated = reserved MPP for steady high-concurrency; serverless = on-demand SQL over the lake for ad-hoc. Choose by workload predictability." },
           { analogy: "Table distribution is <strong>seating guests at a wedding</strong>. If you seat each family (rows sharing a join key) at the same table (compute node), they chat without anyone crossing the room. A bad seating plan means constant walking back and forth — that 'walking' is data movement across the network, the main thing that slows MPP joins." },
           { example: { title: "HASH the fact, REPLICATE the dimension", body: "Distribute a billion-row fact <code>HASH</code> on its join key so matching rows sit on the same node, and <code>REPLICATE</code> a small dimension to every node. The join then runs locally with zero shuffle — the single biggest Synapse tuning lever." } },
-          { code: "-- Co-locate the join, avoid data movement
-CREATE TABLE fct_sales
-WITH (DISTRIBUTION = HASH(customer_key), CLUSTERED COLUMNSTORE INDEX)
-AS SELECT * FROM staging.sales;
-
-CREATE TABLE dim_customer
-WITH (DISTRIBUTION = REPLICATE)
-AS SELECT * FROM staging.customer;", lang: "sql" },
+          { code: "-- Co-locate the join, avoid data movement\nCREATE TABLE fct_sales\nWITH (DISTRIBUTION = HASH(customer_key), CLUSTERED COLUMNSTORE INDEX)\nAS SELECT * FROM staging.sales;\n\nCREATE TABLE dim_customer\nWITH (DISTRIBUTION = REPLICATE)\nAS SELECT * FROM staging.customer;", lang: "sql" },
           { tryit: { title: "Your turn", body: "A join between a huge fact and a 50k-row dimension is slow with lots of data movement. What distribution do you give each table, and why does that remove the shuffle?" } },
           { qa: [
             { q: "Dedicated vs serverless SQL pool?", a: "Dedicated is a provisioned MPP warehouse with reserved compute — best for steady, high-concurrency BI. Serverless is pay-per-query T-SQL over lake files — best for ad-hoc exploration without managing capacity." },

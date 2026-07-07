@@ -56,6 +56,9 @@ export function deriveAppStatus(job = {}, approval = null) {
   if (job.user_decision === 'rejected') return APP_STATUS.REJECTED;
   if (job.status === 'skipped') return APP_STATUS.SKIPPED;
   if (job.status === 'assist_blocked') return APP_STATUS.BLOCKED;
+  // An assist that errored out is surfaced as blocked (needs the human), never
+  // silently downgraded to "approved" by the fall-through below.
+  if (job.status === 'failed') return APP_STATUS.BLOCKED;
   if (job.status === 'ready_for_submit') return APP_STATUS.READY_FOR_SUBMIT;
   if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return APP_STATUS.REJECTED;
   if (approval?.approval_status === APPROVAL_STATUS.APPROVED) return APP_STATUS.APPROVED;
@@ -232,6 +235,42 @@ function approvalsByJob(db) {
   return map;
 }
 
+/*
+ * Decoration cache.
+ *
+ * Every dashboard endpoint decorates the FULL jobs table per request; at tens
+ * of thousands of rows that is ~1s of blocked event loop each, and the page's
+ * initial burst (stats + sections + jobs + status) queues them back-to-back —
+ * the UI reads as frozen. Cache the expensive computations, keyed by:
+ *   - SQLite total_changes() for this connection — any write (upsert, decision,
+ *     approval, note) bumps it, so mutations invalidate instantly, and
+ *   - a 30s time bucket — `now`-derived fields (postedLabel, last-24h flags)
+ *     refresh on their own even with no writes.
+ * Per-Database WeakMap so tests with separate in-memory DBs never collide.
+ */
+const _memo = new WeakMap();
+function cached(db, kind, now, compute) {
+  let changes = -1;
+  try { changes = db.db.prepare('SELECT total_changes() AS c').get().c; }
+  catch { return compute(); /* exotic db stub (tests) — skip caching */ }
+  const at = typeof now?.getTime === 'function' ? now.getTime() : Date.now();
+  const key = `${changes}:${Math.floor(at / 30_000)}`;
+  let slot = _memo.get(db);
+  if (!slot) { slot = {}; _memo.set(db, slot); }
+  if (slot[kind]?.key === key) return slot[kind].val;
+  const val = compute();
+  slot[kind] = { key, val };
+  return val;
+}
+
+/** All jobs decorated as board rows (cached — see above). */
+function allBoardRows(db, now) {
+  return cached(db, 'rows', now, () => {
+    const approvals = approvalsByJob(db);
+    return db.listJobs({}).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+  });
+}
+
 /** ISO date prefix (YYYY-MM-DD) of a date. */
 function dayOf(value) {
   return String(value ?? '').slice(0, 10);
@@ -342,6 +381,10 @@ function boardRow(job, approval, now) {
  * @returns {object}
  */
 export function dashboardStats(db, { now = new Date() } = {}) {
+  return cached(db, 'stats', now, () => computeDashboardStats(db, now));
+}
+
+function computeDashboardStats(db, now) {
   const jobs = db.listJobs({});
   const approvals = approvalsByJob(db);
   const today = dayOf(now.toISOString());
@@ -402,7 +445,10 @@ export function dashboardStats(db, { now = new Date() } = {}) {
     if (job.created_at && (!stats.lastDiscoveryAt || job.created_at > stats.lastDiscoveryAt)) {
       stats.lastDiscoveryAt = job.created_at;
     }
-    if (isWithinLast24Hours(job.posted_at, now)) stats.totals.postedLast24h += 1;
+    // Posted-in-last-24h counts ACTIONABLE jobs only (not discarded/closed) so
+    // the header chip always reconciles with what the board's "last 24h"
+    // filter shows — a big raw count over a mostly-hidden board reads as a bug.
+    if (isWithinLast24Hours(job.posted_at, now) && !CLOSED_SET.has(status)) stats.totals.postedLast24h += 1;
     if (fit === 'strong') stats.totals.strongFit += 1;
     if (fit === 'medium') stats.totals.mediumFit += 1;
     if (fit === 'weak') stats.totals.weakFit += 1;
@@ -537,10 +583,9 @@ const SORTS = {
  */
 export function listBoardJobs(db, filters = {}) {
   const now = filters.now ?? new Date();
-  const approvals = approvalsByJob(db);
   const hideClosed = filters.hideClosed !== false && filters.hideClosed !== 'false';
 
-  let rows = db.listJobs({}).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+  let rows = allBoardRows(db, now);
 
   if (filters.q) {
     const q = String(filters.q).toLowerCase();
@@ -760,8 +805,7 @@ function blockerReason(row) {
  * }}
  */
 export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
-  const approvals = approvalsByJob(db);
-  const rows = db.listJobs({}).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+  const rows = allBoardRows(db, now);
   const byScore = (a, b) => (b.score ?? -1) - (a.score ?? -1);
   const is = (r, ...statuses) => statuses.includes(r.appStatus);
 
@@ -836,8 +880,7 @@ export const EXPORT_COLUMNS = Object.freeze([
  * @returns {object[]}
  */
 export function buildExportRows(db, { now = new Date(), includeClosed = true } = {}) {
-  const approvals = approvalsByJob(db);
-  let rows = db.listJobs({}).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+  let rows = allBoardRows(db, now);
   if (!includeClosed) {
     const closed = [APP_STATUS.ARCHIVED, APP_STATUS.DISCARDED];
     rows = rows.filter((r) => !closed.includes(r.appStatus));

@@ -32,6 +32,33 @@ import { detectBlocker } from './guards.js';
  * @param {object} [options.deps.chromium] inject a Playwright browser type (testing)
  * @returns {Promise<{ browser: object, context: object, page: object, close: Function }>}
  */
+/**
+ * Live persistent contexts by userDataDir.
+ *
+ * A Chromium profile can only be opened by ONE browser process at a time, and
+ * assist deliberately leaves each review window open for the human. Without
+ * reuse, the SECOND auto-apply in a row spawns a launch against the locked
+ * profile that dies instantly ("Target ... has been closed") — the browser
+ * appears but never navigates or fills. Reusing the live context and giving
+ * each job its own TAB is the only way consecutive auto-applies work.
+ * Keyed by the chromium implementation too, so injected test fakes never leak
+ * between tests.
+ */
+const liveProfiles = new Map(); // userDataDir -> { context, chromium, closed }
+
+/** A session backed by the SHARED profile context: close() closes only its tab. */
+function sharedSession(context, page) {
+  return {
+    browser: context.browser?.() ?? null,
+    context,
+    page,
+    shared: true,
+    async close() {
+      try { await page.close(); } catch { /* ignore */ }
+    },
+  };
+}
+
 export async function createBrowserSession({
   headless = false, slowMo = 0, channel = null, userDataDir = null, deps = {},
 } = {}) {
@@ -39,24 +66,40 @@ export async function createBrowserSession({
 
   // Persistent profile: reuse a real, signed-in browser profile.
   if (userDataDir) {
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      headless,
-      slowMo,
-      ...(channel ? { channel } : {}),
-      acceptDownloads: false,
-    });
-    const page = context.pages()[0] ?? (await context.newPage());
-    return {
-      browser: context.browser?.() ?? null,
-      context,
-      page,
-      async close() {
-        try { await context.close(); } catch { /* ignore */ }
-      },
-    };
+    const entry = liveProfiles.get(userDataDir);
+    if (entry && !entry.closed && entry.chromium === chromium) {
+      try {
+        const page = await entry.context.newPage();
+        return sharedSession(entry.context, page);
+      } catch {
+        // The human closed the whole window since last time — relaunch below.
+        liveProfiles.delete(userDataDir);
+      }
+    }
+    try {
+      const context = await chromium.launchPersistentContext(userDataDir, {
+        headless,
+        slowMo,
+        ...(channel ? { channel } : {}),
+        acceptDownloads: false,
+      });
+      const e = { context, chromium, closed: false };
+      context.once?.('close', () => {
+        e.closed = true;
+        if (liveProfiles.get(userDataDir) === e) liveProfiles.delete(userDataDir);
+      });
+      liveProfiles.set(userDataDir, e);
+      const page = context.pages()[0] ?? (await context.newPage());
+      return sharedSession(context, page);
+    } catch {
+      // The profile is locked by a browser this process does NOT own (e.g. a
+      // review window survived a server restart). Fall back to an ISOLATED
+      // context so the fill still navigates — saved logins just won't apply
+      // to this one run.
+    }
   }
 
-  // Isolated context (default).
+  // Isolated context (default, and the locked-profile fallback).
   const browser = await chromium.launch({ headless, slowMo, ...(channel ? { channel } : {}) });
   const context = await browser.newContext({ acceptDownloads: false });
   const page = await context.newPage();

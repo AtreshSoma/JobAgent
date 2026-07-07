@@ -85,9 +85,7 @@
           { tip: "Say: “I've orchestrated with ADF and Databricks Workflows — the Airflow concepts (DAGs, operators, sensors, backfills, retries) map 1:1, so I'd pick it up fast.” The Gap Areas module has a full Airflow DAG." },
           { analogy: "An orchestrator is the <strong>conductor of an orchestra</strong>: the musicians (tasks) can each play, but the conductor cues them in the right order and waits for one section to finish before the next comes in. The <strong>DAG</strong> is the musical score — it encodes who plays when." },
           { example: { title: "A tiny DAG, in words and code", body: "'Wait for the export file, then load Bronze, then build Silver.' Each arrow is a dependency; if Load fails, Silver doesn't run, and the orchestrator retries Load on its own schedule." } },
-          { code: "# Airflow-style dependency wiring
-wait_for_file >> load_bronze >> build_silver >> build_gold
-# each task: retries, an SLA, and alerting on failure", lang: "python" },
+          { code: "# Airflow-style dependency wiring\nwait_for_file >> load_bronze >> build_silver >> build_gold\n# each task: retries, an SLA, and alerting on failure", lang: "python" },
           { tryit: { title: "Your turn", body: "Model this as a DAG: a transform that must not start until an upstream CSV lands in storage, then writes a table, then refreshes a dashboard. Which task type 'waits', and why must the tasks be idempotent for a backfill?" } },
           { qa: [
             { q: "What is a DAG and why acyclic?", a: "A Directed Acyclic Graph of tasks with dependencies. 'Acyclic' means no loops — so there's always a valid execution order and the run is guaranteed to finish rather than cycle forever." },

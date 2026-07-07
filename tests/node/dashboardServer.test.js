@@ -45,7 +45,9 @@ describe('dashboard server API', () => {
         discoverFn: async () => ({ counters: { jobs_found: 5 } }),
         scoreFn: async () => ({ counters: { jobs_scored: 3 } }),
         prepareFn: async () => ({ counters: { jobs_prepared: 1 } }),
-        assistFn: async () => ({ status: 'ready_for_submit', blockers: [] }),
+        assistFn: async ({ options }) => (options?.autoSubmit
+          ? { status: 'submitted', submitted: true, blockers: [] }
+          : { status: 'ready_for_submit', blockers: [] }),
         loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
       },
     });
@@ -177,7 +179,9 @@ describe('dashboard batch actions + CSV export', () => {
       config: { root: '/fake/root' }, db, logger: null, port: 0,
       deps: {
         now: () => NOW,
-        assistFn: async () => ({ status: 'ready_for_submit', blockers: [] }),
+        assistFn: async ({ options }) => (options?.autoSubmit
+          ? { status: 'submitted', submitted: true, blockers: [] }
+          : { status: 'ready_for_submit', blockers: [] }),
         loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
         // Avoid touching the real filesystem in tests.
         writeJobTrackerImpl: () => { trackerWrites += 1; return { path: '/fake/root/data/job_tracker.csv' }; },
@@ -208,22 +212,54 @@ describe('dashboard batch actions + CSV export', () => {
     expect(db.getApprovalByJob('j1').approval_status).toBe('approved');
   });
 
-  it('assist-batch fills approved jobs one at a time and never submits', async () => {
-    await post('/api/jobs/j1/approve');
+  it('auto-apply orchestrates prepare -> approve -> fill and never submits', async () => {
+    // j1 has a packet awaiting review (NOT pre-approved); j2 has no packet and
+    // no preparable config in this test env. One click must handle both
+    // honestly: fill j1 end-to-end, report j2 as skipped with a reason.
     const r = await post('/api/assist-batch', { jobIds: ['j1', 'j2'] });
     expect(r.status).toBe(202);
-    expect(r.body.queued).toBe(1);       // only j1 is approved
-    expect(r.body.skipped).toEqual(['j2']);
-    await new Promise((res) => setTimeout(res, 30));
+    expect(r.body.queued).toBe(2);
+    await new Promise((res) => setTimeout(res, 60));
     const run = (await fetch(dash.url + '/api/run/status').then((x) => x.json()));
     expect(run.running).toBe(false);
     expect(run.lastResult.phase).toBe('assist-batch');
-    expect(Number(db.getJob('j1').applied)).toBe(0); // batch fill NEVER submits
+    // The click IS the approval — j1 was auto-approved and filled.
+    expect(db.getApprovalByJob('j1').approval_status).toBe('approved');
+    expect(run.lastResult.results.map((x) => x.jobId)).toEqual(['j1']);
+    expect(run.lastResult.skipped.map((s) => s.jobId)).toContain('j2');
+    expect(Number(db.getJob('j1').applied)).toBe(0); // auto-apply NEVER submits
   });
 
-  it('assist-batch rejects an empty or fully-unapproved selection', async () => {
+  it('auto-apply rejects an empty selection; unpreparable jobs are skipped, not 400s', async () => {
     expect((await post('/api/assist-batch', { jobIds: [] })).status).toBe(400);
-    expect((await post('/api/assist-batch', { jobIds: ['j2'] })).status).toBe(400);
+    const r = await post('/api/assist-batch', { jobIds: ['j2'] });
+    expect(r.status).toBe(202);
+    await new Promise((res) => setTimeout(res, 60));
+    const run = await fetch(dash.url + '/api/run/status').then((x) => x.json());
+    expect(run.lastResult.skipped.map((s) => s.jobId)).toEqual(['j2']);
+    expect(run.lastResult.results).toEqual([]);
+  });
+
+  it('POST /api/jobs/:id/auto-apply runs the full chain for one job', async () => {
+    const r = await post('/api/jobs/j1/auto-apply');
+    expect(r.status).toBe(202);
+    await new Promise((res) => setTimeout(res, 60));
+    expect(db.getApprovalByJob('j1').approval_status).toBe('approved');
+    const run = await fetch(dash.url + '/api/run/status').then((x) => x.json());
+    expect(run.lastResult.results[0]).toMatchObject({ jobId: 'j1', status: 'ready_for_submit' });
+    expect(Number(db.getJob('j1').applied)).toBe(0);
+  });
+
+  it('auto-apply submits ONLY with the explicit per-run autoSubmit opt-in', async () => {
+    // Without the flag: fills and stops (asserted above). With it: submitted.
+    const r = await post('/api/jobs/j1/auto-apply', { autoSubmit: true });
+    expect(r.status).toBe(202);
+    await new Promise((res) => setTimeout(res, 60));
+    const job = db.getJob('j1');
+    expect(Number(job.applied)).toBe(1);
+    expect(job.status).toBe('submitted');
+    const run = await fetch(dash.url + '/api/run/status').then((x) => x.json());
+    expect(run.lastResult.results[0]).toMatchObject({ jobId: 'j1', submitted: true });
   });
 
   it('reconciles a stale packet URL to the live DB job URL before assisting', async () => {

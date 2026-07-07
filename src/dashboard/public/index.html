@@ -6,87 +6,125 @@
 <title>JobAgent — Dashboard</title>
 <style>
   :root {
-    --bg: #0e1116; --panel: #161b22; --panel2: #1c232d; --line: #2a3340;
-    --text: #e6ebf2; --dim: #8b97a7; --accent: #4da3ff; --good: #3ecf8e;
-    --warn: #f5b94f; --bad: #f4736f; --chip: #232c38; --shadow: 0 6px 24px rgba(0,0,0,.45);
+    --bg: #0b0e13; --panel: #131920; --panel2: #1a222c; --line: #253040;
+    --hair: #1d2632; --text: #e9eef5; --dim: #97a4b6; --faint: #5f6d80;
+    --accent: #4da3ff; --accent-ink: #06121f; --good: #3ecf8e; --warn: #f0b44c;
+    --bad: #f4736f; --chip: #212b38;
+    --shadow: 0 8px 28px rgba(0,0,0,.5); --shadow-sm: 0 2px 10px rgba(0,0,0,.35);
+    --r-sm: 7px; --r-md: 10px; --r-lg: 14px;
   }
   * { box-sizing: border-box; }
+  html { scrollbar-color: var(--line) var(--bg); }
   body { margin: 0; background: var(--bg); color: var(--text);
-         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  header { display: flex; align-items: center; gap: 14px; padding: 12px 22px;
+         font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+         -webkit-font-smoothing: antialiased; }
+  .num, .tile .n, .badge, .tab .badge, td.r { font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
+
+  /* ── Header ── */
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 22px;
            border-bottom: 1px solid var(--line); position: sticky; top: 0;
-           background: rgba(14,17,22,.92); backdrop-filter: blur(8px); z-index: 15; }
-  header h1 { font-size: 16px; margin: 0; letter-spacing: .3px; display: flex; align-items: center; gap: 7px; }
-  header h1::before { content: ''; width: 9px; height: 9px; border-radius: 3px;
-    background: linear-gradient(135deg, var(--accent), var(--good)); }
-  header .safety { color: var(--dim); font-size: 12px; }
+           background: rgba(11,14,19,.9); -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); z-index: 15; }
+  header h1 { font-size: 15.5px; margin: 0; letter-spacing: .2px; display: flex; align-items: center; gap: 9px; font-weight: 700; }
+  header h1::before { content: ''; width: 22px; height: 22px; border-radius: 7px; flex: none;
+    background: linear-gradient(135deg, var(--accent) 10%, #7cc7ff 55%, var(--good));
+    box-shadow: 0 0 0 1px rgba(124,199,255,.25), 0 2px 8px rgba(77,163,255,.35);
+    -webkit-mask: radial-gradient(circle at 32% 32%, #000 96%, #000 100%); }
+  header .safety { color: var(--faint); font-size: 11.5px; border: 1px solid var(--hair);
+    border-radius: 20px; padding: 2px 10px; white-space: nowrap; }
   header .spacer { flex: 1; }
+  .btnrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+
   button { background: var(--panel2); color: var(--text); border: 1px solid var(--line);
-           border-radius: 7px; padding: 6px 12px; cursor: pointer; font: inherit; }
+           border-radius: var(--r-sm); padding: 6px 13px; cursor: pointer; font: inherit;
+           transition: border-color .12s, background .12s, transform .05s; }
   button:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #04101f; font-weight: 600; }
-  button.ghost { background: transparent; }
-  button.small { padding: 3px 9px; font-size: 12px; border-radius: 6px; }
-  button:disabled { opacity: .45; cursor: not-allowed; }
+  button:active { transform: translateY(1px); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 650; }
+  button.primary:hover { background: #66b1ff; }
+  button.ghost { background: transparent; border-color: transparent; color: var(--dim); }
+  button.ghost:hover { color: var(--text); border-color: var(--line); }
+  button.small { padding: 3px 10px; font-size: 12px; border-radius: 6px; }
+  button:disabled { opacity: .45; cursor: not-allowed; transform: none; }
   .menu { position: relative; display: inline-block; }
-  .menu-pop { position: absolute; right: 0; top: 110%; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 9px; padding: 6px; display: none; flex-direction: column; gap: 4px; min-width: 210px;
+  .menu-pop { position: absolute; right: 0; top: 115%; background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--r-md); padding: 6px; display: none; flex-direction: column; gap: 2px; min-width: 230px;
     box-shadow: var(--shadow); z-index: 30; }
   .menu-pop.show { display: flex; }
-  .menu-pop button { text-align: left; border-color: transparent; }
-  #runStatus { font-size: 12px; color: var(--warn); min-width: 150px; text-align: right; }
+  .menu-pop button { text-align: left; border-color: transparent; background: transparent; }
+  .menu-pop button:hover { background: var(--panel2); }
+  #runStatus { font-size: 12px; color: var(--warn); max-width: 300px; text-align: right;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #runStatus.busy { color: var(--accent); }
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
   #runStatus.busy::before { content: ''; display: inline-block; width: 7px; height: 7px;
-    border-radius: 50%; background: var(--accent); margin-right: 5px; animation: pulse 1s infinite; }
+    border-radius: 50%; background: var(--accent); margin-right: 6px; animation: pulse 1s infinite; }
 
-  /* Freshness / context bar */
-  .ctxbar { display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-    padding: 9px 22px; border-bottom: 1px solid var(--line); background: var(--panel);
+  /* ── Context strip: key numbers as quiet stat chips ── */
+  .ctxbar { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap;
+    padding: 10px 22px; border-bottom: 1px solid var(--hair); background: var(--panel);
     font-size: 12.5px; color: var(--dim); }
+  #freshness { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+  .ctxbar .stat { display: inline-flex; align-items: baseline; gap: 7px; border: 1px solid var(--hair);
+    background: var(--bg); border-radius: var(--r-sm); padding: 5px 12px; }
+  .ctxbar .stat b { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .ctxbar .stat.hot b { color: var(--good); }
+  .ctxbar .stat .l { font-size: 11px; text-transform: uppercase; letter-spacing: .4px; color: var(--faint); }
   .ctxbar b { color: var(--text); }
-  .ctxbar .sep { width: 1px; height: 16px; background: var(--line); }
+  .ctxbar .sep { width: 1px; background: var(--hair); margin: 2px 2px; }
 
-  /* Section tabs */
-  .tabs { display: flex; gap: 4px; padding: 10px 22px 0; flex-wrap: wrap; }
-  .tab { background: transparent; border: 1px solid transparent; border-bottom: none;
-    color: var(--dim); padding: 7px 13px; border-radius: 8px 8px 0 0; cursor: pointer; font: inherit;
-    display: flex; align-items: center; gap: 7px; }
-  .tab:hover { color: var(--text); }
-  .tab.active { color: var(--text); background: var(--panel); border-color: var(--line); font-weight: 600; }
+  /* ── Section tabs: segmented control ── */
+  .tabs { display: flex; gap: 4px; padding: 12px 22px 0; flex-wrap: wrap; }
+  .tab { background: transparent; border: 1px solid transparent; color: var(--dim);
+    padding: 6px 13px; border-radius: 20px; cursor: pointer; font: inherit; font-size: 13px;
+    display: flex; align-items: center; gap: 7px; transition: color .12s, background .12s; }
+  .tab:hover { color: var(--text); background: var(--panel); }
+  .tab.active { color: var(--text); background: var(--panel2); border-color: var(--line); font-weight: 600; }
   .tab .badge { background: var(--chip); color: var(--dim); border-radius: 11px; padding: 0 7px;
-    font-size: 11px; min-width: 18px; text-align: center; }
-  .tab.active .badge { background: var(--accent); color: #04101f; }
+    font-size: 11px; min-width: 20px; text-align: center; line-height: 17px; }
+  .tab.active .badge { background: var(--accent); color: var(--accent-ink); }
   .tab.urgent .badge { background: var(--warn); color: #2a1c00; }
 
-  main { display: grid; grid-template-columns: 1fr 440px; gap: 18px; padding: 16px 22px; }
-  @media (max-width: 1180px) { main { grid-template-columns: 1fr; } }
-  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
-           gap: 9px; margin-bottom: 14px; }
-  .tilehead { grid-column: 1 / -1; color: var(--dim); font-size: 11px; text-transform: uppercase;
-           letter-spacing: .5px; margin-bottom: -2px; }
-  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-          padding: 9px 12px; cursor: pointer; transition: border-color .12s; }
-  .tile:hover { border-color: var(--accent); }
-  .tile .n { font-size: 21px; font-weight: 700; }
-  .tile .l { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  main { display: grid; grid-template-columns: minmax(0,1fr) 430px; gap: 18px; padding: 16px 22px 40px; }
+  @media (max-width: 1180px) { main { grid-template-columns: minmax(0,1fr); } }
+
+  /* ── Stat tiles ── */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+           gap: 10px; margin-bottom: 14px; }
+  .tilehead { grid-column: 1 / -1; color: var(--faint); font-size: 11px; text-transform: uppercase;
+           letter-spacing: .6px; margin-bottom: -2px; }
+  .tile { background: var(--panel); border: 1px solid var(--hair); border-radius: var(--r-md);
+          padding: 11px 14px; cursor: pointer; transition: border-color .12s, transform .12s; }
+  .tile:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .tile .n { font-size: 24px; font-weight: 700; line-height: 1.15; }
+  .tile .l { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .45px; margin-top: 2px; }
   .tile.good .n { color: var(--good); } .tile.warn .n { color: var(--warn); }
   .tile.bad .n { color: var(--bad); } .tile.accent .n { color: var(--accent); }
 
+  /* ── Filters ── */
   .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
-  .filters input, .filters select { background: var(--panel2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; font: inherit; }
-  .filters input[type=text] { width: 210px; }
-  .filters label { color: var(--dim); font-size: 12px; display: flex; gap: 5px; align-items: center; }
+  .filters input, .filters select { background: var(--panel2); color: var(--text); height: 32px;
+    border: 1px solid var(--line); border-radius: var(--r-sm); padding: 5px 9px; font: inherit; font-size: 13px; }
+  .filters input:hover, .filters select:hover { border-color: var(--accent); }
+  .filters input[type=text] { width: 230px; }
+  .filters label { color: var(--dim); font-size: 12px; display: flex; gap: 5px; align-items: center;
+    border: 1px solid var(--hair); border-radius: 20px; padding: 4px 11px; cursor: pointer;
+    -webkit-user-select: none; user-select: none; }
+  .filters label:hover { color: var(--text); border-color: var(--line); }
+  .filters input[type=checkbox] { accent-color: var(--accent); }
   .filters .clearf { margin-left: auto; }
 
-  table { width: 100%; border-collapse: collapse; background: var(--panel);
-          border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-  th { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  /* ── Board table ── */
+  .boardwrap { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-md);
+    overflow: auto; box-shadow: var(--shadow-sm); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 9px 11px; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+  thead th { color: var(--faint); font-size: 10.5px; text-transform: uppercase; letter-spacing: .55px;
+    background: var(--panel); position: sticky; top: 0; z-index: 2; }
   tbody tr:last-child td { border-bottom: none; }
+  tr.job { transition: background .1s; }
   tr.job:hover { background: var(--panel2); cursor: pointer; }
-  tr.selected { background: #20304a !important; }
+  tr.selected { background: #1d2c44 !important; box-shadow: inset 3px 0 0 var(--accent); }
 
   .chip { display: inline-block; background: var(--chip); border-radius: 20px;
           padding: 1px 9px; font-size: 11.5px; white-space: nowrap; }
@@ -101,91 +139,95 @@
   .muted { color: var(--dim); }
 
   /* Letter grade badge */
-  .grade { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
-    border-radius: 7px; font-weight: 800; font-size: 13px; }
-  .grade.A { background: rgba(62,207,142,.18); color: var(--good); }
-  .grade.B { background: rgba(77,163,255,.18); color: var(--accent); }
-  .grade.C { background: rgba(245,185,79,.18); color: var(--warn); }
-  .grade.D, .grade.F { background: rgba(244,115,111,.16); color: var(--bad); }
-  .grade.none { background: var(--chip); color: var(--dim); font-size: 11px; }
-  .gradebig { width: 46px; height: 46px; border-radius: 10px; font-size: 22px; }
+  .grade { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px;
+    border-radius: 8px; font-weight: 800; font-size: 13px; }
+  .grade.A { background: rgba(62,207,142,.16); color: var(--good); box-shadow: inset 0 0 0 1px rgba(62,207,142,.35); }
+  .grade.B { background: rgba(77,163,255,.16); color: var(--accent); box-shadow: inset 0 0 0 1px rgba(77,163,255,.32); }
+  .grade.C { background: rgba(240,180,76,.15); color: var(--warn); box-shadow: inset 0 0 0 1px rgba(240,180,76,.3); }
+  .grade.D, .grade.F { background: rgba(244,115,111,.14); color: var(--bad); box-shadow: inset 0 0 0 1px rgba(244,115,111,.3); }
+  .grade.none { background: var(--chip); color: var(--faint); font-size: 11px; box-shadow: none; }
+  .gradebig { width: 48px; height: 48px; border-radius: 12px; font-size: 23px; }
 
-  /* Posted-confidence dot */
   .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
   .dot.confirmed { background: var(--good); } .dot.unconfirmed { background: var(--warn); }
-  /* Resume + ATS mini chips */
-  .rs { font-size: 11px; padding: 1px 7px; border-radius: 5px; background: var(--chip); }
-  .rs.tailored { color: var(--good); } .rs.prepared { color: var(--accent); } .rs.none { color: var(--dim); }
+  .rs { font-size: 11px; padding: 1px 8px; border-radius: 5px; background: var(--chip); white-space: nowrap; }
+  .rs.tailored { color: var(--good); } .rs.prepared { color: var(--accent); } .rs.none { color: var(--faint); }
 
-  /* Progress mini bar + stepper */
   .bar { height: 5px; background: var(--chip); border-radius: 3px; overflow: hidden; min-width: 64px; }
   .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
   .bar.off > i { background: var(--bad); }
-  .stepper { display: flex; gap: 4px; margin: 6px 0 2px; }
+  .stepper { display: flex; gap: 4px; margin: 10px 0 2px; }
   .stepper .s { flex: 1; height: 6px; border-radius: 3px; background: var(--chip); }
   .stepper .s.done { background: var(--accent); } .stepper .s.now { background: var(--good); }
-  .steplabels { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); }
+  .steplabels { display: flex; justify-content: space-between; font-size: 10px; color: var(--faint); }
 
-  aside .panel, .card { background: var(--panel); border: 1px solid var(--line);
-                 border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
-  aside h2 { font-size: 14px; margin: 0 0 8px; }
-  aside h3, .card h3 { font-size: 12px; color: var(--dim); text-transform: uppercase;
-             letter-spacing: .4px; margin: 14px 0 5px; }
+  /* ── Analytics cards under the board ── */
+  .analytics { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px; margin-top: 20px; }
+  .analytics .card { margin: 0; padding: 12px 14px; min-width: 0; }
+  .analytics h3 { margin: 0 0 8px; }
+  .analytics .scroll { overflow-x: auto; }
+  .srcTable { width: 100%; }
+  .srcTable td, .srcTable th { padding: 4px 8px; font-size: 12.5px; border-bottom: 1px solid var(--hair); }
+  .srcTable thead th { position: static; }
+  .srcTable td.r { text-align: right; }
+  .mini { position: relative; display: inline-block; min-width: 56px; height: 6px;
+    background: var(--chip); border-radius: 3px; vertical-align: middle; }
+  .mini > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); opacity: .75; }
+
+  aside .panel, .card { background: var(--panel); border: 1px solid var(--hair);
+                 border-radius: var(--r-md); padding: 14px 16px; margin-bottom: 14px; box-shadow: var(--shadow-sm); }
+  aside h2 { font-size: 14.5px; margin: 0 0 8px; }
+  aside h3, .card h3 { font-size: 11px; color: var(--faint); text-transform: uppercase;
+             letter-spacing: .55px; margin: 16px 0 6px; }
   .kw { display: inline-block; margin: 2px 3px 0 0; }
   .actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
   .why { white-space: pre-wrap; background: var(--panel2); border-radius: 8px;
          padding: 9px 11px; font-size: 13px; }
-  ul.plan { margin: 4px 0; padding-left: 18px; } ul.plan li { margin: 2px 0; }
-  .srcTable td, .srcTable th { padding: 4px 8px; font-size: 12.5px; }
-  .nba { background: linear-gradient(135deg, rgba(77,163,255,.16), rgba(62,207,142,.10));
-    border: 1px solid var(--accent); border-radius: 9px; padding: 10px 12px; margin: 4px 0 2px; }
+  ul.plan { margin: 4px 0; padding-left: 18px; } ul.plan li { margin: 3px 0; }
+  .nba { background: linear-gradient(135deg, rgba(77,163,255,.14), rgba(62,207,142,.08));
+    border: 1px solid rgba(77,163,255,.55); border-radius: var(--r-md); padding: 11px 13px; margin: 4px 0 2px; }
   .nba b { color: var(--accent); }
   .notes textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
     border-radius: 8px; padding: 8px; font: inherit; resize: vertical; min-height: 54px; }
   a { color: var(--accent); }
 
-  /* Empty + loading states */
-  .empty { text-align: center; color: var(--dim); padding: 38px 16px; }
-  .empty .big { font-size: 15px; color: var(--text); margin-bottom: 6px; }
+  .empty { text-align: center; color: var(--dim); padding: 42px 16px; }
+  .empty .big { font-size: 15px; color: var(--text); margin-bottom: 6px; font-weight: 600; }
   .skeleton { height: 40px; border-radius: 8px; margin: 6px 0;
     background: linear-gradient(90deg, var(--panel) 25%, var(--panel2) 50%, var(--panel) 75%);
     background-size: 400% 100%; animation: sk 1.2s infinite; }
   @keyframes sk { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 
   #reports { position: fixed; inset: 5% 7%; background: var(--panel); z-index: 40;
-             border: 1px solid var(--accent); border-radius: 12px; padding: 18px;
-             overflow: auto; display: none; }
+             border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px;
+             overflow: auto; display: none; box-shadow: var(--shadow); }
   #reports h2 { margin-top: 0; }
   #reports h3 { margin: 18px 0 6px; }
   #reports table { margin-bottom: 6px; }
-  #submitModal { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 45;
-                 display: none; align-items: center; justify-content: center; }
-  #submitModal.show { display: flex; }
-  #submitModal .box { background: var(--panel); border: 1px solid var(--accent);
-                      border-radius: 12px; padding: 20px; width: 420px; max-width: 92vw; }
-  #submitModal input, #submitModal textarea { width: 100%; background: var(--panel2);
-    color: var(--text); border: 1px solid var(--line); border-radius: 7px;
-    padding: 7px 9px; font: inherit; margin: 4px 0 10px; box-sizing: border-box; }
-  #addUrlModal { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 45;
-                 display: none; align-items: center; justify-content: center; }
-  #addUrlModal.show { display: flex; }
-  #addUrlModal .box { background: var(--panel); border: 1px solid var(--accent);
-                      border-radius: 12px; padding: 20px; width: 460px; max-width: 92vw; }
-  #addUrlModal input { width: 100%; background: var(--panel2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 7px; padding: 8px 10px; font: inherit; box-sizing: border-box; }
+  #submitModal, #addUrlModal { position: fixed; inset: 0; background: rgba(4,7,12,.62); z-index: 45;
+                 display: none; align-items: center; justify-content: center;
+                 -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px); }
+  #submitModal.show, #addUrlModal.show { display: flex; }
+  #submitModal .box, #addUrlModal .box { background: var(--panel); border: 1px solid var(--line);
+                      border-radius: var(--r-lg); padding: 22px; width: 440px; max-width: 92vw; box-shadow: var(--shadow); }
+  #addUrlModal .box { width: 480px; }
+  #submitModal input, #submitModal textarea, #addUrlModal input { width: 100%; background: var(--panel2);
+    color: var(--text); border: 1px solid var(--line); border-radius: var(--r-sm);
+    padding: 8px 10px; font: inherit; margin: 4px 0 10px; box-sizing: border-box; }
   #compare { position: fixed; inset: 6% 8%; background: var(--panel); z-index: 40;
-             border: 1px solid var(--accent); border-radius: 12px; padding: 18px;
+             border: 1px solid var(--line); border-radius: var(--r-lg); padding: 20px;
              overflow: auto; display: none; box-shadow: var(--shadow); }
   #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-           background: var(--panel2); border: 1px solid var(--accent); padding: 8px 16px;
-           border-radius: 8px; display: none; z-index: 50; box-shadow: var(--shadow); }
+           background: var(--panel2); border: 1px solid var(--accent); padding: 9px 18px;
+           border-radius: var(--r-md); display: none; z-index: 50; box-shadow: var(--shadow); font-size: 13px; }
   #selbar { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
-            background: var(--panel); border: 1px solid var(--accent); padding: 9px 14px;
-            border-radius: 10px; display: none; z-index: 35; align-items: center; gap: 8px;
+            background: var(--panel); border: 1px solid var(--line); padding: 9px 14px;
+            border-radius: var(--r-lg); display: none; z-index: 35; align-items: center; gap: 8px;
             box-shadow: var(--shadow); flex-wrap: wrap; max-width: 94vw; }
   #selbar.show { display: flex; }
-  #selCount { color: var(--accent); font-weight: 600; margin-right: 4px; }
-  .conn { font-size: 12px; font-weight: 600; margin-right: 6px; white-space: nowrap; }
+  #selCount { color: var(--accent); font-weight: 600; margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .conn { font-size: 12px; font-weight: 600; margin-right: 2px; white-space: nowrap; }
   .conn.ok { color: var(--good); }
   .conn.down { color: var(--bad); }
   #offline { position: fixed; top: 0; left: 0; right: 0; z-index: 60; display: none;
@@ -201,28 +243,30 @@
   <button class="small" onclick="location.reload()">Reload</button></div>
 <header>
   <h1>JobAgent</h1>
-  <span class="safety">local-only · never auto-submits · you click Submit</span>
+  <span class="safety" title="Runs only on 127.0.0.1. By default it stops before Submit; auto-submit is an explicit choice you make per run, and only fires on a completely clean form.">local-only · submit is your call</span>
   <span class="spacer"></span>
   <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
   <span id="runStatus"></span>
-  <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')"
-    title="Search every configured job board, then normalize and de-duplicate. No scoring, no packets.">Find New Jobs</button>
-  <button id="btnScore" class="runBtn" onclick="runPhase('score')"
-    title="Recompute fit, sponsorship likelihood, seniority, location/remote fit, freshness, and ease of applying for every discovered job.">Re-score Jobs</button>
-  <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')"
-    title="Full pass: find new jobs, re-score, and tailor a resume packet for every strong match. To prepare specific jobs instead, select rows and use “Prepare selected”.">Auto-Prepare Best</button>
-  <button id="btnAddUrl" onclick="openAddUrl()"
-    title="Add a specific posting from any public job URL (e.g. Microsoft, Amazon, Apple) — it is scored and tracked like a discovered job.">＋ Add job by URL</button>
-  <button class="ghost" onclick="window.open('/learn/','_blank','noopener')"
-    title="Open the Data Engineer Interview Academy — a self-paced interview-prep course built from your application data.">🎓 Interview Prep ↗</button>
-  <span class="menu">
-    <button class="ghost" onclick="toggleMenu(event)" title="View reports first, then export">📊 Reports ▾</button>
-    <div class="menu-pop" id="exportMenu">
-      <button onclick="openReports();closeMenus()">View reports…</button>
-      <button onclick="exportJobs();closeMenus()">Export: all jobs + scores (CSV)</button>
-      <button onclick="exportCsv();closeMenus()">Export: application tracker (CSV)</button>
-    </div>
-  </span>
+  <div class="btnrow">
+    <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')"
+      title="Search every configured job board, score each match against your profile, and update the board — new postings appear here when it finishes.">Find New Jobs</button>
+    <button id="btnScore" class="runBtn ghost" onclick="runPhase('score')"
+      title="Recompute fit, sponsorship likelihood, seniority, location/remote fit, freshness, and ease of applying for every discovered job.">Re-score</button>
+    <button id="btnPrepare" class="runBtn primary" onclick="runPhase('prepare')"
+      title="Full pass: find new jobs, re-score, and tailor a resume packet for every strong match. To prepare specific jobs instead, select rows and use “Prepare selected”.">Auto-Prepare Best</button>
+    <button id="btnAddUrl" onclick="openAddUrl()"
+      title="Add a specific posting from any public job URL (e.g. Microsoft, Amazon, Apple) — it is scored and tracked like a discovered job.">＋ Add by URL</button>
+    <button class="ghost" onclick="window.open('/learn/','_blank','noopener')"
+      title="Open the Data Engineer Interview Academy — a self-paced interview-prep course built from your application data.">🎓 Interview Prep</button>
+    <span class="menu">
+      <button class="ghost" onclick="toggleMenu(event)" title="View reports first, then export">📊 Reports ▾</button>
+      <div class="menu-pop" id="exportMenu">
+        <button onclick="openReports();closeMenus()">View reports…</button>
+        <button onclick="exportJobs();closeMenus()">Export: all jobs + scores (CSV)</button>
+        <button onclick="exportCsv();closeMenus()">Export: application tracker (CSV)</button>
+      </div>
+    </span>
+  </div>
 </header>
 
 <div id="addUrlModal">
@@ -287,33 +331,35 @@
       <label><input type="checkbox" id="hideClosed" checked> hide closed</label>
       <button class="small clearf" onclick="resetFilters()">Reset</button>
     </div>
-    <table>
-      <thead><tr>
-        <th><input type="checkbox" id="selAll" title="Select all visible" onclick="toggleSelectAll(this.checked)"></th>
-        <th>Grade</th><th>Company / Role</th><th>Sponsor</th><th>Type</th><th>Posted</th>
-        <th>Resume</th><th>ATS</th><th>Progress</th><th>Status</th>
-      </tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:18px;margin-top:18px">
-      <div>
+    <div class="boardwrap">
+      <table>
+        <thead><tr>
+          <th><input type="checkbox" id="selAll" title="Select all visible" onclick="toggleSelectAll(this.checked)"></th>
+          <th>Grade</th><th>Company / Role</th><th>Sponsor</th><th>Type</th><th>Posted</th>
+          <th>Resume</th><th>ATS</th><th>Progress</th><th>Status</th>
+        </tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <div class="analytics">
+      <div class="card">
         <h3>Source performance</h3>
-        <table class="srcTable"><thead><tr><th>Source</th><th>Found</th><th>Strong</th>
-          <th>Prepared</th><th>Submitted</th></tr></thead><tbody id="srcRows"></tbody></table>
+        <div class="scroll"><table class="srcTable"><thead><tr><th>Source</th><th>Found</th><th>Strong</th>
+          <th>Prepared</th><th>Submitted</th></tr></thead><tbody id="srcRows"></tbody></table></div>
       </div>
-      <div>
+      <div class="card">
         <h3>Sponsorship feasibility</h3>
-        <table class="srcTable"><thead><tr><th>Confidence</th><th>Jobs</th><th>Strong fit</th></tr></thead>
-          <tbody id="sponRows"></tbody></table>
+        <div class="scroll"><table class="srcTable"><thead><tr><th>Confidence</th><th>Jobs</th><th>Strong fit</th></tr></thead>
+          <tbody id="sponRows"></tbody></table></div>
       </div>
-      <div>
+      <div class="card">
         <h3>Blocked by reason</h3>
-        <table class="srcTable"><thead><tr><th>Reason</th><th>Jobs</th></tr></thead><tbody id="blockRows"></tbody></table>
+        <div class="scroll"><table class="srcTable"><thead><tr><th>Reason</th><th>Jobs</th></tr></thead><tbody id="blockRows"></tbody></table></div>
       </div>
-      <div>
+      <div class="card">
         <h3>Daily progress (last 7 days)</h3>
-        <table class="srcTable"><thead><tr><th>Day</th><th>Found</th><th>Prepared</th>
-          <th>Submitted</th></tr></thead><tbody id="dailyRows"></tbody></table>
+        <div class="scroll"><table class="srcTable"><thead><tr><th>Day</th><th>Found</th><th>Prepared</th>
+          <th>Submitted</th></tr></thead><tbody id="dailyRows"></tbody></table></div>
       </div>
     </div>
   </section>
@@ -419,25 +465,34 @@ function relTime(iso) {
   if (h < 24) return `${h}h ago`;
   return `${d}d ago`;
 }
+const fmt = (n) => Number(n ?? 0).toLocaleString('en-US');
+/** A tiny horizontal bar scaled against the column max (single-hue = magnitude). */
+function miniBar(value, max) {
+  const pct = max > 0 ? Math.round((value / max) * 100) : 0;
+  return `<span class="mini" title="${fmt(value)}"><i style="width:${pct}%"></i></span>`;
+}
 async function loadStats() {
   const s = await api('/api/stats');
   lastStats = s;
   $('tiles').innerHTML = '<div class="tilehead">Fit &amp; data quality</div>' + TILES.map(([key, label, tone, filter]) =>
     `<div class="tile ${tone}" onclick='applyTileFilter(${JSON.stringify(filter)})'>
-       <div class="n">${s.totals[key] ?? 0}</div><div class="l">${esc(label)}</div></div>`).join('');
-  // Freshness line — discovery activity only (fit/pipeline counts live in the
-  // tabs + tiles, so nothing is shown twice). Explains discovered-vs-posted.
+       <div class="n">${fmt(s.totals[key])}</div><div class="l">${esc(label)}</div></div>`).join('');
+  // Freshness strip — discovery activity as scannable stat chips (fit/pipeline
+  // counts live in the tabs + tiles, so nothing is shown twice).
   const last = relTime(s.lastDiscoveryAt);
+  const found24 = s.totals.discoveredLast24h ?? 0;
+  const posted24 = s.totals.postedLast24h ?? 0;
   $('freshness').innerHTML =
-    `<b>${s.totals.jobsTracked ?? 0}</b> jobs tracked `
-    + `<span class="sep"></span> <b>${s.totals.discoveredLast24h ?? 0}</b> found in last 24h `
-    + `· last discovery <b>${last ?? 'never'}</b> `
-    + `<span class="sep"></span> <b>${s.totals.postedLast24h ?? 0}</b> posted by employers in last 24h`;
+    `<span class="stat"><b>${fmt(s.totals.jobsTracked)}</b><span class="l">jobs tracked</span></span>`
+    + `<span class="stat${found24 ? ' hot' : ''}"><b>${fmt(found24)}</b><span class="l">found in last 24h</span></span>`
+    + `<span class="stat${posted24 ? ' hot' : ''}"><b>${fmt(posted24)}</b><span class="l">posted in last 24h</span></span>`
+    + `<span class="stat"><b>${last ?? 'never'}</b><span class="l">last discovery</span></span>`;
   renderTabs();
-  $('srcRows').innerHTML = Object.entries(s.bySource)
-    .sort((a, b) => b[1].found - a[1].found)
-    .map(([src, v]) => `<tr><td>${esc(src)}</td><td>${v.found}</td><td>${v.strong}</td>
-         <td>${v.prepared}</td><td>${v.submitted}</td></tr>`).join('')
+  const srcEntries = Object.entries(s.bySource).sort((a, b) => b[1].found - a[1].found);
+  const srcMax = Math.max(0, ...srcEntries.map(([, v]) => v.found));
+  $('srcRows').innerHTML = srcEntries
+    .map(([src, v]) => `<tr><td>${esc(src)}</td><td class="num">${fmt(v.found)} ${miniBar(v.found, srcMax)}</td><td class="num">${fmt(v.strong)}</td>
+         <td class="num">${fmt(v.prepared)}</td><td class="num">${fmt(v.submitted)}</td></tr>`).join('')
     || '<tr><td colspan="5" class="muted">No jobs yet — click Find New Jobs or Auto-Prepare Best.</td></tr>';
   const sel = $('source');
   const cur = sel.value;
@@ -446,11 +501,12 @@ async function loadStats() {
   $('sponRows').innerHTML = Object.entries(s.bySponsorship ?? {})
     .sort((a, b) => b[1].count - a[1].count)
     .map(([k, v]) => `<tr><td><span class="chip ${esc(k)}">${esc(k)}</span></td>
-         <td>${v.count}</td><td>${v.strong}</td></tr>`).join('')
+         <td class="num">${fmt(v.count)}</td><td class="num">${fmt(v.strong)}</td></tr>`).join('')
     || '<tr><td colspan="3" class="muted">—</td></tr>';
+  const dayMax = Math.max(0, ...(s.daily ?? []).map((d) => d.discovered));
   $('dailyRows').innerHTML = (s.daily ?? [])
-    .map((d) => `<tr><td>${esc(d.day)}</td><td>${d.discovered}</td>
-         <td>${d.prepared}</td><td>${d.submitted}</td></tr>`).join('');
+    .map((d) => `<tr><td class="muted">${esc(d.day.slice(5))}</td><td class="num">${fmt(d.discovered)} ${miniBar(d.discovered, dayMax)}</td>
+         <td class="num">${fmt(d.prepared)}</td><td class="num">${fmt(d.submitted)}</td></tr>`).join('');
   $('nextActions').innerHTML = '<h2>Today\u2019s priorities</h2>' + ((s.nextActions ?? []).length
     ? '<ul class="plan">' + s.nextActions.map((a) =>
         `<li>${a.filter ? `<a href="#" onclick='applyTileFilter(${JSON.stringify(a.filter)});return false'>${esc(a.text)}</a>` : esc(a.text)}</li>`).join('') + '</ul>'
@@ -552,11 +608,16 @@ function progressBar(pr) {
   if (pr.offRamp) return `<div class="bar off" title="${esc(pr.stage)}"><i style="width:100%"></i></div>`;
   return `<div class="bar" title="${esc(pr.stage)} (${pr.percent}%)"><i style="width:${pr.percent}%"></i></div>`;
 }
+let jobsReqSeq = 0;
 async function loadJobs() {
-  $('rows').innerHTML = '<tr><td colspan="9"><div class="skeleton"></div><div class="skeleton"></div></td></tr>';
+  // Sequence guard: with a large board a slow, older /api/jobs response can
+  // resolve AFTER a newer filtered one and clobber it. Only the latest wins.
+  const seq = ++jobsReqSeq;
+  $('rows').innerHTML = '<tr><td colspan="10"><div class="skeleton"></div><div class="skeleton"></div></td></tr>';
   let jobs;
   try { ({ jobs } = await api('/api/jobs?' + filterParams())); }
-  catch (e) { $('rows').innerHTML = `<tr><td colspan="9" class="empty">${esc(e.message)}</td></tr>`; return; }
+  catch (e) { if (seq === jobsReqSeq) $('rows').innerHTML = `<tr><td colspan="10" class="empty">${esc(e.message)}</td></tr>`; return; }
+  if (seq !== jobsReqSeq) return; // superseded by a newer filter change
   visibleIds = jobs.map((j) => j.id);
   jobsById = {};
   for (const j of jobs) jobsById[j.id] = j;
@@ -564,8 +625,8 @@ async function loadJobs() {
     const tot = lastStats?.totals?.jobsTracked ?? 0;
     $('rows').innerHTML = `<tr><td colspan="10"><div class="empty">
       <div class="big">${tot === 0 ? 'No jobs yet' : 'Nothing matches these filters'}</div>
-      ${tot === 0 ? 'Click <b>Find &amp; Prepare</b> to discover, score and tailor in one pass.'
-        : 'Try <a href="#" onclick="resetFilters();return false">Reset filters</a>.'}</div></td></tr>`;
+      ${tot === 0 ? 'Click <b>Find New Jobs</b> to discover and score postings, or <b>Auto-Prepare Best</b> to also tailor packets.'
+        : 'Try <a href="#" onclick="resetFilters();return false">Reset filters</a> — or run <b>Find New Jobs</b> if the board looks stale.'}</div></td></tr>`;
     syncSelAll(); return;
   }
   $('rows').innerHTML = jobs.map((j) => `
@@ -573,7 +634,7 @@ async function loadJobs() {
       <td onclick="event.stopPropagation()"><input type="checkbox"
           ${selectedIds.has(j.id) ? 'checked' : ''} onchange="toggleSelect('${esc(j.id)}', this.checked)"></td>
       <td>${gradeBadge(j.grade)}<div class="muted" style="font-size:10px">${j.score ?? '—'}</div></td>
-      <td><b>${esc(j.company)}</b>${j.remote ? ' <span class="rs">remote</span>' : ''}<br>
+      <td><b>${esc(j.company || 'Company on posting')}</b>${j.remote ? ' <span class="rs">remote</span>' : ''}<br>
         <span class="muted">${esc(j.title)}</span></td>
       <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span></td>
       <td>${typeChip(j)}</td>
@@ -591,25 +652,68 @@ function fitLabel(fit) {
   return ({ strong: 'strong fit (priority)', medium: 'medium fit (queue)',
     weak: 'weak fit (near-miss)', no_fit: 'no fit', unscored: 'unscored' }[fit]) || fit;
 }
+/** True when a URL is a job-aggregator page that walls off automated filling. */
+function isAggregatorUrl(u) {
+  return /https?:\/\/[^/]*\b(indeed|linkedin|glassdoor|ziprecruiter|simplyhired|monster|dice)\.[a-z.]+/i.test(u || '');
+}
+const AUTO_APPLY_BTN = (id, label = '⚡ Auto-apply') =>
+  `<button class="small primary" onclick="autoApplyOne('${esc(id)}')"
+     title="One click: tailor a packet if needed, approve it, open the posting in a browser, fill everything it can, and stop before Submit for your review.">${label}</button>`;
 function nextBestAction(j) {
   // The single most useful thing to do next, with a one-click button.
   if (j.appStatus === 'submitted') return { text: 'Submitted — no further action.', btn: '' };
-  if (j.appStatus === 'needs_review') return { text: 'Review the packet below, then approve it to enable assisted fill.',
-    btn: `<button class="small primary" onclick="act('${esc(j.id)}','approve','Packet approved')">✓ Approve packet</button>` };
+  if (j.appStatus === 'needs_review') return { text: 'Auto-apply approves this packet and fills the application in a browser — you review and click Submit.',
+    btn: AUTO_APPLY_BTN(j.id)
+      + ` <button class="small" onclick="act('${esc(j.id)}','approve','Packet approved')">✓ Approve only</button>` };
   if (j.appStatus === 'approved') return { text: 'Approved. Open it in the browser — it fills the form and stops before submit.',
     btn: `<button class="small primary" onclick="act('${esc(j.id)}','assist','Browser opening — stops before submit')">▶ Fill in browser</button>` };
-  if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting in the browser — review and submit, then mark it.',
-    btn: `<button class="small primary" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>` };
-  if (j.appStatus === 'blocked') return { text: 'An assisted-fill attempt stopped at an application wall. Open the posting and finish it manually, or re-run assisted fill to capture the current blocker.',
-    btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
-      + ` <button class="small" onclick="act('${esc(j.id)}','assist','Re-running assisted fill — it stops before submit')">↻ Re-try assisted fill</button>` };
-  if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit, undecided — shortlist it to prepare a tailored resume.',
-    btn: `<button class="small primary" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
-  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — prepare its tailored resume packet next.',
-    btn: `<button class="small primary" onclick="prepareOne('${esc(j.id)}')">📄 Prepare packet</button>` };
+  if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting — review the browser tab and click Submit, then record it here. (If you closed the browser, re-run auto-apply any time.)',
+    btn: `<button class="small primary" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>`
+      + ` ${AUTO_APPLY_BTN(j.id, '↻ Re-fill')}` };
+  if (j.appStatus === 'blocked') {
+    if (isAggregatorUrl(j.url)) return {
+      text: 'This is an Indeed/LinkedIn-style aggregator link — those sites wall off automated form filling (CAPTCHA/verification), so auto-apply cannot fill it. Open it yourself to apply; if it redirects you to the company’s own site, apply there and mark it submitted here.',
+      btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
+        + ` <button class="small" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>` };
+    return { text: 'An assisted-fill attempt stopped at an application wall (login / CAPTCHA / a question it refuses to guess). Open the posting to finish manually, or re-run auto-apply to capture the current blocker.',
+      btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
+        + ` ${AUTO_APPLY_BTN(j.id, '↻ Re-try auto-apply')}` };
+  }
+  if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit — auto-apply tailors the resume, fills the application, and stops before Submit.',
+    btn: AUTO_APPLY_BTN(j.id) + ` <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
+  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — auto-apply prepares the tailored packet and fills the application in one go.',
+    btn: AUTO_APPLY_BTN(j.id) + ` <button class="small" onclick="prepareOne('${esc(j.id)}')">📄 Prepare only</button>` };
   if (['no_fit', 'weak'].includes(j.fit)) return { text: 'Low fit — likely not worth your time. Reject to keep the board focused.',
     btn: `<button class="small" onclick="decide('${esc(j.id)}','rejected')">✕ Reject</button>` };
+  if (j.appStatus === 'scored' || j.appStatus === 'discovered') return { text: 'Looks reasonable? Auto-apply handles everything up to the final Submit click.',
+    btn: AUTO_APPLY_BTN(j.id) };
   return { text: 'Review the fit and sponsorship below, then shortlist or reject.', btn: '' };
+}
+/** Ask once per action whether to also click the final Submit. */
+function askAutoSubmit(count = 1) {
+  return confirm(
+    `Also click the final SUBMIT automatically for ${count === 1 ? 'this job' : count + ' jobs'}?\n\n`
+    + 'OK — after filling, it clicks Submit — but ONLY on a completely clean form '
+    + '(every required field filled, no unanswered questions, truthful sponsorship answers) '
+    + 'and within your daily application cap. Anything uncertain is left open for you.\n\n'
+    + 'Cancel — fill only; you review each form and click Submit yourself.');
+}
+async function autoApplyOne(id) {
+  if (isRunning) { toast('A run is in progress — wait for it to finish.', true); return; }
+  if (isAggregatorUrl(jobsById[id]?.url)) {
+    toast('Aggregator link — it will hit a verification wall. Open the posting instead.', true); return;
+  }
+  const autoSubmit = askAutoSubmit(1);
+  try {
+    await api(`/api/jobs/${encodeURIComponent(id)}/auto-apply`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ autoSubmit }),
+    });
+    toast(autoSubmit
+      ? 'Auto-applying — filling, and submitting automatically if the form is completely clean.'
+      : 'Auto-applying — tailoring if needed, then filling in a browser. It stops before Submit.');
+    pollRun();
+  } catch (e) { toast(e.message, true); }
 }
 function stepper(pr) {
   if (!pr) return '';
@@ -635,7 +739,7 @@ async function select(id) {
     <div style="display:flex;gap:12px;align-items:flex-start">
       <span class="grade gradebig ${g ? g.letter : 'none'}">${g ? g.letter : '—'}</span>
       <div style="flex:1">
-        <h2 style="margin:0">${esc(j.company)} — ${esc(j.title)}</h2>
+        <h2 style="margin:0">${esc(j.company || 'Company on posting')} — ${esc(j.title)}</h2>
         <div class="muted">${esc(j.location ?? '')}${j.remote ? ' · remote' : ''} · ${esc(j.postedLabel)} · via ${esc(j.source)}
           ${j.atsPlatform ? '· ATS: ' + esc(j.atsPlatform) : ''}</div>
         <div style="margin-top:6px">
@@ -869,13 +973,17 @@ async function runPhase(phase) {
 function prettyResult(r) {
   if (!r) return '';
   if (r.phase === 'assist-batch') {
-    const ok = (r.results || []).filter((x) => x.status !== 'failed').length;
-    return `auto-apply done · ${ok}/${r.total ?? (r.results || []).length} filled (review &amp; submit)`;
+    const list = r.results || [];
+    const ok = list.filter((x) => x.status !== 'failed').length;
+    const sub = list.filter((x) => x.submitted).length;
+    return sub > 0
+      ? `auto-apply done · ${sub} submitted · ${ok - sub} left for your review`
+      : `auto-apply done · ${ok}/${r.total ?? list.length} filled (review &amp; submit)`;
   }
   if (r.phase === 'assist') return `assist done · ${r.status ?? ''}`;
   const c = r.counters || {};
   if (r.phase === 'prepare') return `prepared ${c.jobs_prepared ?? 0} · scored ${c.jobs_scored ?? 0}`;
-  if (r.phase === 'discover') return `found ${c.jobs_found ?? 0}`;
+  if (r.phase === 'discover') return `found ${c.jobs_found ?? 0} · scored ${c.jobs_scored ?? 0} — board updated`;
   if (r.phase === 'score') return `scored ${c.jobs_scored ?? 0}`;
   return `${r.phase ?? 'run'} done`;
 }
@@ -990,14 +1098,16 @@ async function batchAutoApply() {
   if (skippable.length) {
     warn = `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
   }
-  if (!confirm(`Auto-apply ${actionable.length} job(s)?${warn}\n\nIt will approve any prepared packets, open each in a browser, fill the form and advance safe steps — then STOP before submit so you review and click Submit yourself. Nothing is auto-submitted.`)) return;
+  if (!confirm(`Auto-apply ${actionable.length} job(s)?${warn}\n\nFor each job it will: tailor a resume packet if one doesn't exist yet, approve it, open the posting in a browser, and fill everything it can.`)) return;
+  const autoSubmit = askAutoSubmit(actionable.length);
   try {
-    // Approve any prepared-but-unapproved packets first; ignore those without one.
-    await api('/api/approve-batch', { method: 'POST',
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: actionable }) });
+    // The server orchestrates the whole chain (prepare -> approve -> fill[-> submit]).
     const r = await api('/api/assist-batch', { method: 'POST',
-      headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jobIds: actionable }) });
-    toast(`Auto-applying ${r.queued} job(s) — browser opens one at a time, stops before submit${r.skipped.length ? ` · ${r.skipped.length} skipped (not approved)` : ''}`);
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ jobIds: actionable, autoSubmit }) });
+    toast(autoSubmit
+      ? `Auto-applying ${r.queued} job(s) — clean forms are submitted automatically; anything uncertain is left open for you.`
+      : `Auto-applying ${r.queued} job(s) — preparing where needed, then filling one browser at a time. Stops before submit.`);
     pollRun();
   } catch (e) { toast(e.message, true); }
 }
@@ -1075,7 +1185,7 @@ function onFilterChange() {
   if (activeTab !== 'all') { activeTab = 'all'; renderTabs(); }
   loadJobs();
 }
-for (const id of ['fit', 'appStatus', 'sponsorship', 'source', 'ats', 'resumeStatus', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
+for (const id of ['fit', 'appStatus', 'sponsorship', 'employmentType', 'source', 'ats', 'resumeStatus', 'sort', 'last24h', 'remoteOnly', 'hideClosed']) {
   $(id).addEventListener('change', onFilterChange);
 }
 let qTimer; $('q').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(onFilterChange, 250); });
