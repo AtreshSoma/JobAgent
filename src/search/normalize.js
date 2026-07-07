@@ -68,11 +68,13 @@ export function htmlToText(html) {
     .replace(/<\s*\/\s*(p|div|li|h[1-6])\s*>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
-    .replace(/&amp;/gi, '&')
     .replace(/&lt;/gi, '<')
     .replace(/&gt;/gi, '>')
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&quot;/gi, '"')
+    // &amp; is decoded LAST so "&amp;lt;" yields the literal text "&lt;"
+    // instead of double-decoding into a fake "<" tag character.
+    .replace(/&amp;/gi, '&')
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();

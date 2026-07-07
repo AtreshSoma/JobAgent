@@ -39,6 +39,25 @@ describe('greenhouse adapter', () => {
     expect(jobs).toHaveLength(0);
     expect(errors[0].board).toBe('missing');
   });
+
+  it('decodes the HTML-ESCAPED content the real board API returns', async () => {
+    // The live Greenhouse boards API escapes `content` (&lt;p&gt;…&lt;/p&gt;);
+    // the JD text must come out clean, with no literal tags left behind.
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+      jobs: [{ id: 9, title: 'Data Engineer', company_name: 'Acme',
+        location: { name: 'Remote' }, absolute_url: 'http://x',
+        content: '&lt;p&gt;Build &amp;amp; run Azure pipelines&lt;/p&gt;&lt;ul&gt;&lt;li&gt;PySpark&lt;/li&gt;&lt;/ul&gt;' }],
+    }));
+    const { jobs } = await greenhouse.run({ boards: ['acme'] }, { fetchImpl });
+    expect(jobs[0].jdText).not.toMatch(/<\/?(p|ul|li)>/);
+    expect(jobs[0].jdText).toContain('Build & run Azure pipelines');
+    expect(jobs[0].jdText).toContain('PySpark');
+  });
+
+  it('leaves already-unescaped content untouched', () => {
+    expect(greenhouse.unescapeHtmlPayload('<p>Azure</p>')).toBe('<p>Azure</p>');
+    expect(greenhouse.unescapeHtmlPayload('plain text, no markup')).toBe('plain text, no markup');
+  });
 });
 
 describe('lever adapter', () => {

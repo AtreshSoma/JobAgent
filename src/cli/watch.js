@@ -135,6 +135,9 @@ export async function runWatch({ config, db, logger, options = {}, deps = {} } =
  * The original config object is never mutated.
  */
 export function withWatchOverrides(config, options = {}) {
+  // Note: the runtime's includeLast3DaysFallback is intentionally preserved —
+  // when a 24h cycle finds too few dated jobs, widening to 3 days keeps watch
+  // useful on quiet days (tests encode this contract).
   const runtime = { ...(config.runtime ?? {}), jobFreshnessMode: 'LAST_24_HOURS' };
   let jobboards = config.jobboards;
   if (options.freeOnly === true) {

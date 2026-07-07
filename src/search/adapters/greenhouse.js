@@ -62,6 +62,26 @@ async function fetchJson(fetchImpl, url, requestTimeoutMs) {
   return res.json();
 }
 
+/**
+ * Greenhouse's board API returns `content` as HTML-ESCAPED markup
+ * (e.g. "&lt;p&gt;…&lt;/p&gt;"). Decode entities once — but only when the
+ * payload has escaped tags and no real ones — so htmlToText can strip the
+ * markup instead of leaving literal "<p>" tags in the JD text.
+ * @param {string} content
+ * @returns {string}
+ */
+export function unescapeHtmlPayload(content) {
+  const s = String(content ?? '');
+  if (!s || /<[a-z][\s\S]*>/i.test(s) || !/&lt;\s*\/?\s*[a-z]/i.test(s)) return s;
+  return s
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&');
+}
+
 /** Map one Greenhouse job to the normalized shape. */
 export function mapJob(j, token) {
   return normalizeJob({
@@ -71,7 +91,7 @@ export function mapJob(j, token) {
     title: j.title ?? '',
     location: j.location?.name ?? '',
     url: j.absolute_url ?? '',
-    jdText: htmlToText(j.content ?? ''),
+    jdText: htmlToText(unescapeHtmlPayload(j.content ?? '')),
     postedAt: j.updated_at ?? j.first_published ?? null,
     employmentType: '',
     rawMetadata: { board: token, departments: j.departments ?? [] },

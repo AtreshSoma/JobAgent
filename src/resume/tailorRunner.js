@@ -16,6 +16,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /** Default master resume location (never overwritten). */
 export function masterResumePath(root) {
@@ -222,7 +223,10 @@ function invokePython(request, deps = {}) {
 
 /** Absolute path to the python CLI script. */
 function scriptPath() {
-  return new URL('./tailor_cli.py', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
+  // fileURLToPath handles Windows drive letters AND percent-encoded characters
+  // (spaces, unicode) — the old .pathname hack broke when the repo lived under
+  // a path with a space, silently falling back to the untailored master resume.
+  return fileURLToPath(new URL('./tailor_cli.py', import.meta.url));
 }
 
 /** Tolerate banner/log lines: parse the last non-empty line as JSON. */
