@@ -257,6 +257,34 @@ describe('workday adapter', () => {
     // The old code serialized every detail fetch; now they overlap.
     expect(detailMaxInFlight).toBeGreaterThan(1);
   });
+
+  it('bounds optional detail requests and reuses a stored full description', async () => {
+    const postings = Array.from({ length: 5 }, (_, i) => ({
+      title: `Data Engineer ${i}`,
+      externalPath: `/job/Remote/DE-${i}_R-${i}`,
+      bulletFields: [`R-${i}`],
+    }));
+    const cfg = { host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', company: 'acme', locale: '' };
+    const cachedJob = workday.mapJob(postings[0], cfg);
+    const fetchImpl = vi.fn().mockImplementation(async (url) => {
+      if (String(url).endsWith('/jobs')) return jsonResponse({ total: 5, jobPostings: postings });
+      return jsonResponse({ jobPostingInfo: { jobDescription: '<p>New full description from Workday</p>' } });
+    });
+    const { jobs } = await workday.run(
+      { tenants: [{ ...cfg, pageSize: 20 }], maxDetailFetches: 2, hostSpacingMs: 0 },
+      {
+        fetchImpl, maxRetries: 0,
+        workdayDetailCache: new Map([[cachedJob.id, {
+          jdText: 'Previously stored full description '.repeat(10),
+          postedAt: '2026-06-01',
+        }]]),
+      },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(3); // one list + only two uncached details
+    expect(jobs[0].rawMetadata.detailReused).toBe(true);
+    expect(jobs[0].jdText).toContain('Previously stored');
+    expect(jobs.filter((job) => job.rawMetadata.detailFetched)).toHaveLength(2);
+  });
 });
 
 describe('genericPublicPage adapter', () => {
@@ -471,6 +499,36 @@ describe('apify adapter', () => {
     // No external apply link present -> keep the LinkedIn posting URL.
     expect(jobs[0].url).toContain('linkedin.com/jobs/view/');
   });
+
+  it('reuses a successful configured actor result and stops queued actors on cancel', async () => {
+    apify.clearApifyResultCache();
+    let cancel = false;
+    const fetchImpl = vi.fn().mockImplementation(async () => {
+      cancel = true;
+      return actorRun([{ title: 'Data Engineer', url: 'https://jobs.acme.com/1' }]);
+    });
+    const source = {
+      id: 'cached-actors',
+      options: {
+        cacheMinutes: 15,
+        actors: [{ actorId: 'user~one' }, { actorId: 'user~two' }],
+      },
+    };
+    const first = await apify.run(source, {
+      fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0,
+      actorConcurrency: 1, shouldCancel: () => cancel,
+    });
+    expect(first.cancelled).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+    cancel = false;
+    const cacheableSource = { ...source, options: { ...source.options, actors: [source.options.actors[0]] } };
+    await apify.run(cacheableSource, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    const calls = fetchImpl.mock.calls.length;
+    const cached = await apify.run(cacheableSource, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(cached.cached).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(calls);
+  });
 });
 
 describe('runSearch orchestration', () => {
@@ -498,6 +556,22 @@ describe('runSearch orchestration', () => {
     expect(perSource.find((p) => p.source === 'gh').found).toBe(1);
     // Results are gathered in priority order regardless of completion order.
     expect(perSource.map((p) => p.source)).toEqual(['gh', 'bad']);
+    expect(perSource.every((p) => Number.isFinite(p.durationMs))).toBe(true);
+  });
+
+  it('emits source lifecycle hooks with timing and result counts', async () => {
+    const events = [];
+    await runSearch({
+      jobboards: {
+        defaults: { rateLimitMs: 0, maxRetries: 0 },
+        sources: [{ id: 'gh', adapter: 'greenhouse', enabled: true, priority: 1, boards: ['acme'] }],
+      },
+      ctx: { fetchImpl: vi.fn().mockResolvedValue(jsonResponse({ jobs: [] })) },
+      hooks: { onSource: (event) => events.push(event) },
+    });
+    expect(events.map((event) => event.phase)).toEqual(['start', 'end']);
+    expect(events[1]).toMatchObject({ source: 'gh', found: 0, errors: 0 });
+    expect(Number.isFinite(events[1].durationMs)).toBe(true);
   });
 
   it('dedupes across sources and attaches permissive discovery signals', async () => {

@@ -82,7 +82,10 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       .map((row) => [urlKeyFor(row), row.id])
       .filter(([key]) => key),
   );
-  const { jobs, duplicates, errors, cancelled: searchCancelled = false } = await searchFn({
+  const workdayDetailCache = db.getReusableWorkdayDetail
+    ? (jobId) => db.getReusableWorkdayDetail(jobId)
+    : null;
+  const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
     scoring: config.scoring,
@@ -90,7 +93,9 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       ...(deps.searchCtx ?? {}),
       root: config.root,
       shouldCancel: deps.shouldCancel,
+      workdayDetailCache,
     },
+    hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
     // are re-discovered so DRY_RUN -> PREPARE -> LIVE_ASSIST can build on them.
     // Honors runtime.excludeAlreadyApplied (default true).
@@ -297,7 +302,10 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   });
 
   logger.endRun(counters);
-  return { counters, scoredJobs, discovered, scored, queued, review: reviewRows, report, errors, artifacts };
+  return {
+    counters, scoredJobs, discovered, scored, queued, review: reviewRows,
+    report, errors, artifacts, perSource, cancelled: searchCancelled,
+  };
 }
 
 /** Compact entry for the data/found_jobs.json audit trail. */

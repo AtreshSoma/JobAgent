@@ -63,4 +63,17 @@ describe('one-page workbench shell', () => {
     expect(html).toContain('state.stats = null; await loadStats(true); await renderWorkbench();');
     expect(html).not.toContain('state.stats = null; await renderWorkbench(); await loadStats(true);');
   });
+
+  it('shows determinate source progress, elapsed time, and responsive cancellation state', () => {
+    expect(html).toContain('id="run-bar"');
+    expect(html).toContain('progress.currentSource');
+    expect(html).toContain('duration(elapsed) + " elapsed"');
+    expect(html).toContain('run.cancelRequested ? "Cancelling"');
+    expect(html).toContain('run.lastResult.cancelled');
+    expect(html).toContain('Source timings');
+  });
+
+  it('keeps compact filter checkboxes from inheriting full-width text-input flex rules', () => {
+    expect(html).toMatch(/\.check-filter input\s*\{[^}]*flex:\s*0 0 14px;[^}]*min-width:\s*14px;/s);
+  });
 });

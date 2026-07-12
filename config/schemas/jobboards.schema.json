@@ -116,6 +116,11 @@
             "minimum": 0,
             "description": "Minimum delay between request starts against one physical host/pod."
           },
+          "maxDetailFetches": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum optional Workday full-description requests per tenant; cached descriptions do not consume this budget."
+          },
           "queries": {
             "type": "array",
             "items": {

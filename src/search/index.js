@@ -110,19 +110,37 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   // order, so results are gathered in priority order — collection and dedup
   // stay deterministic regardless of which source finishes first.
   const settled = await mapSettled(sources, sourceConcurrency, async (source) => {
+    const startedAt = Date.now();
     if (ctx.shouldCancel?.()) {
-      hooks.onSource?.({ phase: 'cancelled', source: source.id, adapter: source.adapter });
-      return { jobs: [], errors: [], cancelled: true };
+      hooks.onSource?.({ phase: 'cancelled', source: source.id, adapter: source.adapter, durationMs: 0 });
+      return { jobs: [], errors: [], cancelled: true, durationMs: 0 };
     }
     const mod = ADAPTERS[source.adapter];
     if (!mod || typeof mod.run !== 'function') {
-      return { jobs: [], errors: [{ error: `Unknown adapter: ${source.adapter}` }] };
+      const durationMs = Date.now() - startedAt;
+      hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: 0, errors: 1, durationMs });
+      return { jobs: [], errors: [{ error: `Unknown adapter: ${source.adapter}` }], durationMs };
     }
-    hooks.onSource?.({ phase: 'start', source: source.id, adapter: source.adapter });
-    const result = await mod.run(source, adapterCtx);
-    const jobs = result.jobs ?? [];
-    hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: jobs.length });
-    return { jobs, errors: result.errors ?? [], cancelled: result.cancelled === true };
+    hooks.onSource?.({ phase: 'start', source: source.id, adapter: source.adapter, at: new Date().toISOString() });
+    try {
+      const result = await mod.run(source, adapterCtx);
+      const jobs = result.jobs ?? [];
+      const sourceErrors = result.errors ?? [];
+      const durationMs = Date.now() - startedAt;
+      hooks.onSource?.({
+        phase: result.cancelled === true ? 'cancelled' : 'end',
+        source: source.id, adapter: source.adapter, found: jobs.length,
+        errors: sourceErrors.length, durationMs, cached: result.cached === true,
+      });
+      return {
+        jobs, errors: sourceErrors, cancelled: result.cancelled === true,
+        durationMs, cached: result.cached === true,
+      };
+    } catch (error) {
+      const durationMs = Date.now() - startedAt;
+      hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: 0, errors: 1, durationMs });
+      throw error;
+    }
   });
 
   const collected = [];
@@ -148,6 +166,8 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
       found: payload.jobs.length,
       errors: payload.errors.length,
       cancelled: payload.cancelled === true,
+      durationMs: payload.durationMs ?? null,
+      cached: payload.cached === true,
     });
   }
 

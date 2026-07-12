@@ -36,8 +36,8 @@ export const adapterId = 'workday';
 /** Hard cap on pagination to avoid runaway loops on misconfigured tenants. */
 const MAX_PAGES = 50;
 
-/** Hard cap on per-job detail GETs per tenant (runaway protection). */
-const MAX_DETAIL_FETCHES = 200;
+/** Optional full-JD enrichment budget per tenant. Summaries remain usable. */
+const DEFAULT_MAX_DETAIL_FETCHES = 20;
 
 /** Default number of tenants fetched in parallel. */
 const DEFAULT_TENANT_CONCURRENCY = 6;
@@ -80,6 +80,9 @@ export async function run(source = {}, ctx = {}) {
   const tenantConcurrency = ctx.boardConcurrency ?? DEFAULT_TENANT_CONCURRENCY;
   const pageConcurrency = ctx.pageConcurrency ?? DEFAULT_PAGE_CONCURRENCY;
   const detailConcurrency = ctx.detailConcurrency ?? DEFAULT_DETAIL_CONCURRENCY;
+  const maxDetailFetches = Number.isFinite(source.maxDetailFetches)
+    ? Math.max(0, source.maxDetailFetches)
+    : DEFAULT_MAX_DETAIL_FETCHES;
   const hostSpacingMs = source.rateLimitMs === 0
     ? 0
     : Math.max(0, ctx.workdayHostSpacingMs ?? source.hostSpacingMs ?? 500);
@@ -90,19 +93,25 @@ export async function run(source = {}, ctx = {}) {
   });
   const jobs = [];
   const errors = [];
+  let cancelled = false;
 
   // Tenants are independent public career sites — fetch them in parallel.
   const perTenant = await mapWithConcurrency(tenants, tenantConcurrency, async (tenant) => {
+    if (ctx.shouldCancel?.()) return { jobs: [], errors: [], cancelled: true };
     const cfg = validateTenant(tenant);
     if (cfg.error) {
       return { jobs: [], errors: [{ tenant: tenant?.tenant ?? null, error: cfg.error }] };
     }
     try {
-      const { jobs: found, errors: detailErrors } = await fetchTenant(cfg, {
+      const { jobs: found, errors: detailErrors, cancelled: tenantCancelled = false } = await fetchTenant(cfg, {
         fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs: source.rateLimitMs,
         requestTimeoutMs, pageConcurrency, detailConcurrency, hostSpacingMs,
+        maxDetailFetches, workdayDetailCache: ctx.workdayDetailCache, shouldCancel: ctx.shouldCancel,
       });
-      return { jobs: found, errors: detailErrors.map((e) => ({ tenant: cfg.tenant, site: cfg.site, ...e })) };
+      return {
+        jobs: found, errors: detailErrors.map((e) => ({ tenant: cfg.tenant, site: cfg.site, ...e })),
+        cancelled: tenantCancelled,
+      };
     } catch (err) {
       return {
         jobs: [],
@@ -118,13 +127,14 @@ export async function run(source = {}, ctx = {}) {
     if (!r) continue;
     jobs.push(...r.jobs);
     errors.push(...r.errors);
+    cancelled ||= r.cancelled === true;
   }
 
   if (tenants.length === 0) {
     errors.push({ note: 'Workday source enabled but no tenants configured. Add { host, tenant, site } entries to `tenants`.' });
   }
 
-  return { jobs, errors };
+  return { jobs, errors, cancelled };
 }
 
 /** Validate and normalize a tenant config entry. */
@@ -153,9 +163,14 @@ function validateTenant(t = {}) {
 
 /** Page through one tenant/site's public CXS jobs endpoint. */
 async function fetchTenant(cfg, ctx) {
-  const { fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs, requestTimeoutMs, pageConcurrency, detailConcurrency, hostSpacingMs } = ctx;
+  const {
+    fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs, requestTimeoutMs,
+    pageConcurrency, detailConcurrency, hostSpacingMs, maxDetailFetches,
+    workdayDetailCache, shouldCancel,
+  } = ctx;
   const endpoint = `https://${cfg.host}/wday/cxs/${encodeURIComponent(cfg.tenant)}/${encodeURIComponent(cfg.site)}/jobs`;
   const errors = [];
+  let cancelled = false;
 
   // Spacing is keyed on the HOST, not the tenant: a key used once per run never
   // has a previous call to space against, so a tenant-keyed wait always
@@ -163,6 +178,7 @@ async function fetchTenant(cfg, ctx) {
   const spacingKey = `workday:${cfg.host}`;
 
   // Page 0 — fetched first so we learn `total` and can fan out the rest.
+  if (shouldCancel?.()) return { jobs: [], errors: [], cancelled: true };
   if (rateLimiter) await rateLimiter.wait(spacingKey, rateLimitMs);
   const first = await withRetry(
     () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, pageBody(cfg, 0), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
@@ -178,6 +194,7 @@ async function fetchTenant(cfg, ctx) {
   const remainingOffsets = [];
   for (let page = 1; page < pageCount; page += 1) remainingOffsets.push(page * cfg.pageSize);
   const restPages = await mapWithConcurrency(remainingOffsets, pageConcurrency, async (offset) => {
+    if (shouldCancel?.()) { cancelled = true; return { postings: [], error: null }; }
     try {
       const data = await withRetry(
         () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, pageBody(cfg, offset), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
@@ -203,7 +220,22 @@ async function fetchTenant(cfg, ctx) {
 
   const out = postings.map((p) => mapJob(p, cfg));
 
-  // Enrich up to MAX_DETAIL_FETCHES jobs with their full JD via the per-job
+  // A previously stored full description is just as accurate as fetching the
+  // same immutable requisition again. Hydrate it before spending detail budget.
+  if (workdayDetailCache) {
+    for (const job of out) {
+      const cached = typeof workdayDetailCache === 'function'
+        ? workdayDetailCache(job.id)
+        : workdayDetailCache.get?.(job.id);
+      if (!cached?.jdText) continue;
+      job.jdText = cached.jdText;
+      if (cached.postedAt) job.postedAt = cached.postedAt;
+      job.rawMetadata.summaryOnly = false;
+      job.rawMetadata.detailReused = true;
+    }
+  }
+
+  // Enrich only uncached jobs, within the configured per-tenant budget.
   // PUBLIC detail endpoint — concurrently (bounded).
   //
   // Detail enrichment is OPTIONAL: a job that keeps its summary is still a
@@ -211,15 +243,20 @@ async function fetchTenant(cfg, ctx) {
   // posting — it produces ONE note saying how many jobs stayed summary-only.
   if (cfg.fetchDetails) {
     const pairs = out
-      .slice(0, MAX_DETAIL_FETCHES)
-      .map((job, i) => ({ job, posting: postings[i] }));
-    const notes = await mapWithConcurrency(pairs, detailConcurrency, ({ job, posting }) =>
-      enrichWithDetail(job, posting, cfg, { fetchImpl, hostGate, maxRetries, requestTimeoutMs, hostSpacingMs }));
+      .map((job, i) => ({ job, posting: postings[i] }))
+      .filter(({ job }) => job.rawMetadata?.summaryOnly !== false)
+      .slice(0, maxDetailFetches);
+    const notes = await mapWithConcurrency(pairs, detailConcurrency, ({ job, posting }) => {
+      if (shouldCancel?.()) { cancelled = true; return null; }
+      return enrichWithDetail(job, posting, cfg, {
+        fetchImpl, hostGate, maxRetries, requestTimeoutMs, hostSpacingMs,
+      });
+    });
     const failed = notes.filter(Boolean);
     if (failed.length > 0) errors.push(summarizeDetailFailures(failed, cfg, out.length));
   }
 
-  return { jobs: out, errors };
+  return { jobs: out, errors, cancelled };
 }
 
 /**

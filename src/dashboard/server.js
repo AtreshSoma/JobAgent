@@ -296,16 +296,52 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       throw err;
     }
     const runId = randomUUID();
+    const sourceItems = phase === 'discover'
+      ? (config?.jobboards?.sources ?? [])
+        .filter((source) => source.enabled)
+        .sort((a, b) => (a.priority ?? 99) - (b.priority ?? 99))
+        .map((source) => ({
+          source: source.id, adapter: source.adapter, status: 'queued',
+          found: 0, errors: 0, durationMs: null, cached: false,
+        }))
+      : [];
     Object.assign(runState, {
       running: true, phase, startedAt: new Date().toISOString(),
       finishedAt: null, lastError: null, cancelRequested: false,
-      runId, rca: [], partial: false, progress: null,
+      runId, rca: [], partial: false,
+      progress: sourceItems.length ? {
+        kind: 'sources', total: sourceItems.length, completed: 0,
+        currentSource: null, items: sourceItems,
+      } : null,
     });
+    const onSource = (event) => {
+      const progress = runState.progress;
+      if (!progress || progress.kind !== 'sources') return;
+      const item = progress.items.find((entry) => entry.source === event.source);
+      if (!item) return;
+      if (event.phase === 'start') {
+        item.status = 'running';
+        item.startedAt = event.at ?? new Date().toISOString();
+        progress.currentSource = event.source;
+      } else {
+        item.status = event.phase === 'cancelled' ? 'cancelled' : (event.errors > 0 ? 'partial' : 'done');
+        item.found = event.found ?? item.found;
+        item.errors = event.errors ?? item.errors;
+        item.durationMs = event.durationMs ?? item.durationMs;
+        item.cached = event.cached === true;
+        progress.completed = progress.items.filter((entry) => ['done', 'partial', 'cancelled'].includes(entry.status)).length;
+        const active = progress.items.find((entry) => entry.status === 'running');
+        progress.currentSource = active?.source ?? null;
+      }
+    };
     // Fire and forget from the request's perspective; tracked so shutdown can
     // drain the work before the database is closed.
     track((async () => {
       try {
-        const r = await runners[phase]({ shouldCancel: () => runState.cancelRequested });
+        const r = await runners[phase]({
+          shouldCancel: () => runState.cancelRequested,
+          searchHooks: { onSource },
+        });
         // Per-source failures (a board that timed out, a token that expired)
         // do NOT fail the run — valid results from healthy sources were kept.
         // They surface as structured RCA entries and mark the run "partial".
@@ -329,12 +365,24 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
           phase, counters: r.counters ?? null,
           partial: runState.partial,
           failedSources: runState.rca.map((x) => x.source).filter(Boolean),
+          perSource: r.perSource ?? [],
+          cancelled: r.cancelled === true || runState.cancelRequested,
+          durationMs: Date.now() - Date.parse(runState.startedAt),
         };
       } catch (err) {
         runState.lastError = `${phase} failed: ${sanitizeErrorMessage(err.message)}`;
         runState.rca = [buildRca({ operation: phase, error: err, runId })];
         runState.partial = false;
       } finally {
+        if (runState.progress?.kind === 'sources') {
+          for (const item of runState.progress.items) {
+            if (item.status === 'queued' || item.status === 'running') {
+              item.status = runState.cancelRequested ? 'cancelled' : 'done';
+            }
+          }
+          runState.progress.completed = runState.progress.items.length;
+          runState.progress.currentSource = null;
+        }
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
       }
@@ -670,7 +718,9 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       return sendJson(res, 202, {
         cancelling: true,
         phase: runState.phase,
-        note: 'batch runs stop between jobs (never mid-fill); pipeline phases finish their current pass',
+        note: runState.phase === 'discover'
+          ? 'queued discovery work will stop; an already-started network request finishes safely'
+          : 'the current safe step will finish, then queued work will stop',
       });
     }
     if (req.method === 'GET' && path === '/api/sections') {

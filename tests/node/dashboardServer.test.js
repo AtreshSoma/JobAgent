@@ -145,6 +145,42 @@ describe('dashboard server API', () => {
     expect(s.lastResult).toMatchObject({ phase: 'discover', counters: { jobs_found: 5 } });
   });
 
+  it('reports live per-source discovery progress and preserves source timings', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    await dash.close();
+    dash = await startDashboard({
+      config: {
+        jobboards: { sources: [
+          { id: 'greenhouse-boards', adapter: 'greenhouse', enabled: true, priority: 1 },
+          { id: 'workday-public', adapter: 'workday', enabled: true, priority: 2 },
+        ] },
+      },
+      db, logger: null, port: 0,
+      deps: {
+        discoverFn: async ({ searchHooks }) => {
+          searchHooks.onSource({ phase: 'start', source: 'greenhouse-boards', adapter: 'greenhouse' });
+          await gate;
+          searchHooks.onSource({ phase: 'end', source: 'greenhouse-boards', adapter: 'greenhouse', found: 3, errors: 0, durationMs: 12 });
+          searchHooks.onSource({ phase: 'cancelled', source: 'workday-public', adapter: 'workday', found: 0, errors: 0, durationMs: 0 });
+          return { counters: { jobs_found: 3 }, perSource: [
+            { source: 'greenhouse-boards', adapter: 'greenhouse', found: 3, errors: 0, durationMs: 12 },
+            { source: 'workday-public', adapter: 'workday', found: 0, errors: 0, durationMs: 0, cancelled: true },
+          ], cancelled: true };
+        },
+      },
+    });
+    await post('/api/run', { phase: 'discover' });
+    const live = (await get('/api/run/status')).body;
+    expect(live.progress).toMatchObject({ kind: 'sources', total: 2, completed: 0, currentSource: 'greenhouse-boards' });
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const done = (await get('/api/run/status')).body;
+    expect(done.progress).toMatchObject({ total: 2, completed: 2, currentSource: null });
+    expect(done.lastResult.cancelled).toBe(true);
+    expect(done.lastResult.perSource[0]).toMatchObject({ source: 'greenhouse-boards', durationMs: 12 });
+  });
+
   it('409s when a run is already in progress', async () => {
     let release;
     const gate = new Promise((r) => { release = r; });

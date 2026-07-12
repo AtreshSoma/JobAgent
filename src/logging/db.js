@@ -329,6 +329,20 @@ export class Database {
   }
 
   /**
+   * Full Workday descriptions already paid for in earlier discovery runs.
+   * Reusing them avoids repeating hundreds of optional public detail requests.
+   * @param {string} id
+   * @returns {{jdText:string,postedAt:string|null}|null}
+   */
+  getReusableWorkdayDetail(id) {
+    return this.prepareCached(`
+      SELECT jd_text AS jdText, posted_at AS postedAt FROM jobs
+      WHERE id = ? AND source = 'workday'
+        AND length(trim(coalesce(jd_text, ''))) >= 200
+    `).get(id) ?? null;
+  }
+
+  /**
    * @param {object} [filter]
    * @param {string} [filter.tier]
    * @param {string} [filter.status]

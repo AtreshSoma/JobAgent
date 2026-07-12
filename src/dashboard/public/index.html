@@ -147,7 +147,7 @@
     }
     .run-progress.active { display: flex; }
     .run-track { height: 3px; flex: 1; max-width: 240px; overflow: hidden; border-radius: 4px; background: color-mix(in srgb, var(--accent) 18%, transparent); }
-    .run-track span { display: block; height: 100%; width: 35%; border-radius: inherit; background: var(--accent); animation: run 1.35s ease-in-out infinite alternate; }
+    .run-track span { display: block; height: 100%; width: 35%; border-radius: inherit; background: var(--accent); animation: run 1.35s ease-in-out infinite alternate; transition: width .3s ease; }
     @keyframes run { from { transform: translateX(-40%); } to { transform: translateX(225%); } }
     .rail {
       position: fixed; inset: var(--header) auto 0 0; width: var(--rail); z-index: 35;
@@ -677,7 +677,7 @@
     .prog i { display: block; height: 100%; background: var(--accent); border-radius: 4px; }
     .prog.bad i { background: var(--danger); }
     .check-filter { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; cursor: pointer; }
-    .check-filter input { min-height: 0; width: 14px; height: 14px; margin: 0; accent-color: var(--accent); }
+    .check-filter input { flex: 0 0 14px; min-width: 14px; min-height: 0; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--accent); }
     .addurl-wrap { position: relative; }
     .addurl-pop {
       position: absolute; top: calc(100% + 6px); right: 0; z-index: 90; display: flex; gap: 6px;
@@ -745,7 +745,7 @@
     </div>
   </header>
   <div class="run-progress" id="run-progress" role="status" aria-live="polite">
-    <strong id="run-label">Working</strong><div class="run-track" aria-hidden="true"><span></span></div>
+    <strong id="run-label">Working</strong><div class="run-track" aria-hidden="true"><span id="run-bar"></span></div>
     <span id="run-detail"></span><button class="btn small subtle" id="cancel-run">Cancel</button>
   </div>
   <main class="main" id="main"><div class="view" id="view"><div class="loading-state">Loading your workbench…</div></div></main>
@@ -814,6 +814,11 @@
       if (ms < 86400000) return Math.floor(ms / 3600000) + "h ago";
       return Math.floor(ms / 86400000) + "d ago";
     }
+    function duration(ms) {
+      var seconds = Math.max(0, Math.round(Number(ms || 0) / 1000));
+      if (seconds < 60) return seconds + "s";
+      return Math.floor(seconds / 60) + "m " + (seconds % 60) + "s";
+    }
     function dateLabel(value) {
       if (!value) return "—";
       var d = new Date(value);
@@ -878,6 +883,7 @@
       var runChip;
       if (run.running) runChip = ["Run: " + (run.phase || "working") + "\u2026", "", "A background run is in progress."];
       else if (run.lastError) runChip = ["Last run failed", "bad", "The last run failed - open the RCA panel for details."];
+      else if (run.lastResult && run.lastResult.cancelled) runChip = ["Last run cancelled", "warn", "Completed results were kept; queued work was stopped."];
       else if (run.partial && degradedOnly(run.rca)) runChip = ["Last run OK (reduced detail)", "warn", "No source failed. Some jobs kept a summary-only description because a board throttled us."];
       else if (run.partial) runChip = ["Last run partial", "warn", "Some sources failed; healthy results were kept."];
       else if (run.finishedAt) runChip = ["Last run OK", "good", "The last background run completed cleanly."];
@@ -1350,11 +1356,15 @@
           : " \u00b7 PARTIAL: valid results from healthy sources were kept.";
       }
       var head = '<div class="explain" style="margin-bottom:12px">Run ' + h(run.runId || "\u2014") + ' \u00b7 phase ' + h(run.phase || "\u2014") + ' \u00b7 started ' + h(run.startedAt || "\u2014") + ' \u00b7 finished ' + h(run.finishedAt || "\u2014") + verdict + "</div>";
+      var sources = (run.lastResult && run.lastResult.perSource) || [];
+      var sourceHtml = sources.length ? '<div class="rca-entry"><div class="rca-top"><strong>Source timings</strong></div>' + sources.map(function (s) {
+        return '<div class="rca-fact"><strong>' + h(s.source) + '</strong> \u00b7 ' + fmt(s.found || 0) + ' found \u00b7 ' + h(duration(s.durationMs)) + (s.cached ? ' \u00b7 cached' : '') + (s.cancelled ? ' \u00b7 cancelled' : '') + (s.errors ? ' \u00b7 ' + fmt(s.errors) + ' issue(s)' : '') + '</div>';
+      }).join("") + '</div>' : "";
       if (!entries.length && !run.lastError) {
-        container.innerHTML = head + emptyState("No failures recorded", "The last run completed without structured failures.");
+        container.innerHTML = head + sourceHtml + (sourceHtml ? "" : emptyState("No failures recorded", "The last run completed without structured failures."));
         return;
       }
-      container.innerHTML = head + (run.lastError ? '<div class="rca-banner failed">' + h(run.lastError) + "</div>" : "") + entries.map(function (e) {
+      container.innerHTML = head + sourceHtml + (run.lastError ? '<div class="rca-banner failed">' + h(run.lastError) + "</div>" : "") + entries.map(function (e) {
         // A degraded entry means results were KEPT at lower fidelity. Rendering
         // it in the same red as a lost source is what made a healthy-but-
         // throttled run look like a catastrophe.
@@ -1508,14 +1518,28 @@
         var active = Boolean(run.running);
         $("run-progress").classList.toggle("active", active);
         $("main").classList.toggle("run-active", active);
-        $("run-label").textContent = active ? "Working" : "Idle";
+        $("run-label").textContent = active ? (run.cancelRequested ? "Cancelling" : (run.phase === "discover" ? "Finding jobs" : "Working")) : "Idle";
         var progress = run.progress || null;
+        var elapsed = active && run.startedAt ? Date.now() - Date.parse(run.startedAt) : 0;
         $("run-detail").textContent = active
-          ? String(run.phase || "Background run") + (progress
+          ? duration(elapsed) + " elapsed" + (progress
             ? " · " + Number(progress.completed || 0) + "/" + Number(progress.total || 0)
-              + (progress.currentJobId ? " · " + progress.currentJobId : "")
+              + (progress.currentSource ? " · " + progress.currentSource : (progress.currentJobId ? " · " + progress.currentJobId : ""))
             : "")
           : "";
+        var bar = $("run-bar");
+        if (active && progress && Number(progress.total) > 0) {
+          bar.style.animation = "none";
+          bar.style.width = Math.max(3, Math.min(100, Number(progress.completed || 0) / Number(progress.total) * 100)) + "%";
+        } else {
+          bar.style.animation = "";
+          bar.style.width = "35%";
+        }
+        $("find-jobs").disabled = active;
+        $("rescore").disabled = active;
+        $("find-jobs").setAttribute("aria-busy", String(active && run.phase === "discover"));
+        $("cancel-run").disabled = !active || run.cancelRequested;
+        $("cancel-run").textContent = run.cancelRequested ? "Cancelling\u2026" : "Cancel";
         if (!active && run.lastError && pollRun.lastError !== run.lastError) { pollRun.lastError = run.lastError; toast(run.lastError, true); }
         // Refresh the data BEFORE rendering. Rendering while stats is null
         // produced the exact contradictory state seen in the field: the table

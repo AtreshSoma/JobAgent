@@ -39,7 +39,14 @@ const APIFY_HOST = 'api.apify.com';
  * tier limits concurrent actor runs, and run-sync calls are heavy. Override via
  * ctx.actorConcurrency.
  */
-const DEFAULT_ACTOR_CONCURRENCY = 3;
+const DEFAULT_ACTOR_CONCURRENCY = 4;
+
+/** Successful actor results are expensive; reuse an immediate repeat click. */
+const resultCache = new Map();
+
+export function clearApifyResultCache() {
+  resultCache.clear();
+}
 
 /**
  * Apify `run-sync-get-dataset-items` EXECUTES an actor (e.g. scraping Indeed)
@@ -86,14 +93,25 @@ export function isRetryableBilledRun(err) {
 export async function run(source = {}, ctx = {}) {
   const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, env } = ctx;
   const options = source.options ?? {};
-  const actors = Array.isArray(options.actors) ? options.actors : [];
+  const configuredActors = Array.isArray(options.actors) ? options.actors : [];
+  const maxActorsPerRun = Number.isFinite(options.maxActorsPerRun)
+    ? Math.max(0, options.maxActorsPerRun)
+    : configuredActors.length;
+  const actors = configuredActors.slice(0, maxActorsPerRun);
   const tokenEnv = options.tokenEnv || 'APIFY_TOKEN';
   const maxItems = Number.isFinite(options.maxItemsPerActor) ? options.maxItemsPerActor : 100;
   const concurrency = ctx.actorConcurrency ?? DEFAULT_ACTOR_CONCURRENCY;
   const actorTimeoutMs = ctx.actorTimeoutMs ?? DEFAULT_ACTOR_TIMEOUT_MS;
+  const cacheMinutes = Number.isFinite(options.cacheMinutes) ? Math.max(0, options.cacheMinutes) : 0;
+  const cacheKey = JSON.stringify([source.id ?? '', maxItems, actors]);
+  const cached = resultCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return { ...cloneResult(cached.result), cached: true };
+  }
 
   const jobs = [];
   const errors = [];
+  let cancelled = false;
 
   if (actors.length === 0) {
     errors.push({ error: 'Apify source is enabled but has no `options.actors` configured.' });
@@ -109,6 +127,7 @@ export async function run(source = {}, ctx = {}) {
   // Actors are independent runs — execute them in parallel (bounded), since a
   // run-sync call can take many seconds each.
   const perActor = await mapWithConcurrency(actors, concurrency, async (actor) => {
+    if (ctx.shouldCancel?.()) { cancelled = true; return null; }
     const label = actor.label || actor.actorId || actor.datasetId || 'apify';
     // Running an actor SPENDS REAL MONEY; reading an existing dataset does not.
     const billable = !actor.datasetId && Boolean(actor.actorId);
@@ -116,6 +135,7 @@ export async function run(source = {}, ctx = {}) {
       // Keyed on the host, not the actor label: a label is used once per run, so
       // it never has a previous call to space against and the limiter never waited.
       if (rateLimiter) await rateLimiter.wait(`apify:${APIFY_HOST}`, source.rateLimitMs);
+      if (ctx.shouldCancel?.()) { cancelled = true; return null; }
       const call = () => fetchItems(fetchImpl, actor, token, maxItems, actorTimeoutMs);
       const items = await withRetry(
         () => (hostGate ? hostGate.run(`https://${APIFY_HOST}/`, call) : call()),
@@ -141,7 +161,18 @@ export async function run(source = {}, ctx = {}) {
     if (r.error) errors.push(r.error);
   }
 
-  return { jobs, errors };
+  const result = { jobs, errors, cancelled };
+  if (!cancelled && errors.length === 0 && cacheMinutes > 0) {
+    resultCache.set(cacheKey, {
+      expiresAt: Date.now() + cacheMinutes * 60_000,
+      result: cloneResult(result),
+    });
+  }
+  return result;
+}
+
+function cloneResult(result) {
+  return JSON.parse(JSON.stringify(result));
 }
 
 /**
