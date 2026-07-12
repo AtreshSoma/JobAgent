@@ -20,6 +20,7 @@
  */
 
 import { buildPrefillPlan } from '../apply/formPrefill.js';
+import { wholeWordIn } from '../utils/textNormalize.js';
 
 /** Truthy-ish answers that mean "tick this box". */
 const AFFIRMATIVE = new Set(['yes', 'true', 'y', '1', 'agree', 'i agree', 'accept', 'checked', 'on']);
@@ -28,14 +29,6 @@ const AFFIRMATIVE = new Set(['yes', 'true', 'y', '1', 'agree', 'i agree', 'accep
 async function safeCount(page, selector) {
   if (!selector) return 0;
   try { return await page.locator(selector).count(); } catch { return 0; }
-}
-
-/** True when `needle` appears as a whole word/phrase inside `haystack`. */
-function wholeWordIn(haystack, needle) {
-  const n = String(needle).trim();
-  if (!n) return false;
-  const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  try { return new RegExp(`\\b${esc}\\b`).test(haystack); } catch { return haystack.includes(n); }
 }
 
 /** Selectors that commonly hold the rendered options of a typeahead/combobox. */
@@ -189,8 +182,12 @@ export async function applyValue(page, field, value) {
  * @returns {Promise<{filled: object[], needsUser: object[], errors: object[]}>}
  */
 export async function fillScannedFields(page, scannedFields = [], { candidate, screeningAnswers, alreadyFilled = new Set() } = {}) {
+  // File inputs are scanned (so required uploads are visible) but NEVER
+  // planned or filled here — attaching documents is uploadRunner's job, and a
+  // text value typed into a file input would be both wrong and rejected.
+  const fillable = scannedFields.filter((f) => f.kind !== 'file');
   // Feed the existing deterministic planner (label -> value + source).
-  const planInput = scannedFields.map((f) => ({
+  const planInput = fillable.map((f) => ({
     label: f.label,
     selector: f.selector,
     choices: (f.options ?? []).map((o) => o.label ?? o.value).filter(Boolean),

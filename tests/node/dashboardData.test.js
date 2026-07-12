@@ -218,13 +218,19 @@ describe('stats, board, decisions against a seeded db', () => {
     expect(() => approveJobPacket(db, 'medium')).toThrow(/no prepared packet/);
   });
 
-  it('markSubmittedByHuman is the only path to submitted', () => {
+  it('markSubmittedByHuman without evidence is submit-unverified, never applied', () => {
     const r = markSubmittedByHuman(db, 'medium', { now: NOW });
-    expect(r.appStatus).toBe(APP_STATUS.SUBMITTED);
+    expect(r.appStatus).toBe(APP_STATUS.SUBMIT_UNVERIFIED);
     const job = db.getJob('medium');
-    expect(Number(job.applied)).toBe(1);
-    expect(job.applied_at).toBe(NOW.toISOString());
+    expect(Number(job.applied)).toBe(0);
+    expect(job.applied_at).toBeNull();
     expect(() => markSubmittedByHuman(db, 'ghost')).toThrow(/unknown job/);
+  });
+
+  it('gives incomplete historical rows a usable title instead of a blank control label', () => {
+    db.upsertJob({ id: 'medium', title: '' });
+    const row = listBoardJobs(db, { now: NOW, q: 'globex' })[0];
+    expect(row.title).toBe('Title not identified');
   });
 
   it('db.setUserDecision rejects unknown decisions', () => {
@@ -449,6 +455,8 @@ describe('submission records and reports', () => {
   it('markSubmittedByHuman without details still works (both optional)', () => {
     const r = markSubmittedByHuman(db, 'r3', {});
     expect(r.confirmationNumber).toBeNull();
+    expect(r.appStatus).toBe(APP_STATUS.SUBMIT_UNVERIFIED);
+    expect(Number(db.getJob('r3').applied)).toBe(0);
     expect(db.getJob('r3').notes ?? '').not.toContain('[submitted');
   });
 

@@ -9,25 +9,34 @@
  *   - appStatus: ONE derived, human-meaningful status per job that merges the
  *     pipeline status, the approval queue, and the user's own triage decision
  *     (shortlist/reject/archive). Truthfulness rule: a job only ever reads
- *     "submitted" when the human actually submitted it (jobs.applied = 1).
+ *     "submitted" (jobs.applied = 1) when the human submitted it, or when the
+ *     human-opted-in auto-submit VERIFIED the submission (confirmation page).
+ *     An auto-submit click without confirmation reads "submit_unverified" and
+ *     needs the human to confirm — it never counts as submitted on its own.
  *   - fitBucket: strong / medium / weak / no_fit, derived from the scoring tier.
  *   - whyFit: the stored score explanation + matched/missing keywords, so the
  *     UI can show exactly WHY a job ranked where it did.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 
-import { APPROVAL_STATUS, approve, reject } from '../apply/approvalQueue.js';
+import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply/approvalQueue.js';
+import { jsonList } from '../utils/json.js';
 import { isWithinLast24Hours, formatPostedRelative } from '../utils/dates.js';
 import { EMPLOYMENT_LABELS } from '../scoring/employmentClassifier.js';
+import { applicationStatePath } from '../apply/applicationState.js';
 
 /** Derived application statuses shown on the board (ordered by precedence). */
 export const APP_STATUS = Object.freeze({
-  SUBMITTED: 'submitted',          // human clicked Submit (applied = 1)
+  SUBMITTED: 'submitted',          // human submitted it, or auto-submit verified it (applied = 1)
   ARCHIVED: 'archived',            // user archived it
   REJECTED: 'rejected',            // user rejected it (or rejected the packet)
   SKIPPED: 'skipped',              // user skipped it during assisted apply
   BLOCKED: 'blocked',              // assist hit login/captcha/unknown fields
+  FAILED: 'failed',                // unexpected assist/component error; retry after RCA
+  CANCELLED: 'cancelled',          // user cancelled at a safe resumable checkpoint
+  SUBMIT_UNVERIFIED: 'submit_unverified', // auto-submit clicked; no confirmation detected — verify!
   READY_FOR_SUBMIT: 'ready_for_submit', // form filled; awaiting the human's click
   APPROVED: 'approved',            // packet approved; ready for assisted fill
   NEEDS_REVIEW: 'needs_review',    // packet prepared; awaiting human approval
@@ -56,9 +65,9 @@ export function deriveAppStatus(job = {}, approval = null) {
   if (job.user_decision === 'rejected') return APP_STATUS.REJECTED;
   if (job.status === 'skipped') return APP_STATUS.SKIPPED;
   if (job.status === 'assist_blocked') return APP_STATUS.BLOCKED;
-  // An assist that errored out is surfaced as blocked (needs the human), never
-  // silently downgraded to "approved" by the fall-through below.
-  if (job.status === 'failed') return APP_STATUS.BLOCKED;
+  if (job.status === 'failed') return APP_STATUS.FAILED;
+  if (job.status === 'cancelled') return APP_STATUS.CANCELLED;
+  if (job.status === 'submit_unverified') return APP_STATUS.SUBMIT_UNVERIFIED;
   if (job.status === 'ready_for_submit') return APP_STATUS.READY_FOR_SUBMIT;
   if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return APP_STATUS.REJECTED;
   if (approval?.approval_status === APPROVAL_STATUS.APPROVED) return APP_STATUS.APPROVED;
@@ -71,13 +80,34 @@ export function deriveAppStatus(job = {}, approval = null) {
 }
 
 /**
+ * Was a job's tier downgraded to Queue by the sponsorship gate?
+ * The ONLY path to a 75+ score sitting in Queue is explainScore's sponsorship
+ * gate (raw Apply/Priority, sponsorship not Confirmed/Likely/Approved).
+ * Deriving it here (mirroring gradeFromScore's thresholds) makes the flag
+ * available for every historical row without a schema migration.
+ * @param {{tier?: string|null, score?: number|null}} job
+ * @returns {boolean}
+ */
+export function isSponsorshipGated(job = {}) {
+  return job.tier === 'Queue' && typeof job.score === 'number' && job.score >= 75;
+}
+
+/**
  * Map a scoring tier to a fit bucket.
+ *
+ * FIT measures how well the ROLE matches the candidate; sponsorship
+ * feasibility is reported separately. A 75+ job the sponsorship gate parked
+ * in Queue is therefore still a STRONG fit (with sponsorshipGated: true and a
+ * "verify sponsorship" action) — hiding those as "medium" made 10k-job sources
+ * read as producing zero strong matches.
+ *
  * @param {string|null} tier
+ * @param {number|null} [score] pass the job's score to classify gated rows
  * @returns {'strong'|'medium'|'weak'|'no_fit'|'unscored'}
  */
-export function fitBucket(tier) {
+export function fitBucket(tier, score = null) {
   if (tier === 'Priority' || tier === 'Apply') return 'strong';
-  if (tier === 'Queue') return 'medium';
+  if (tier === 'Queue') return isSponsorshipGated({ tier, score }) ? 'strong' : 'medium';
   if (tier === 'Near miss') return 'weak';
   if (tier === 'Discard') return 'no_fit';
   return 'unscored';
@@ -134,11 +164,14 @@ export const PROGRESS_STAGES = Object.freeze([
 /** Off-ramp statuses that are not points on the linear pipeline. */
 const OFFRAMP_STAGE = Object.freeze({
   [APP_STATUS.BLOCKED]: 'blocked',
+  [APP_STATUS.FAILED]: 'failed',
+  [APP_STATUS.CANCELLED]: 'cancelled',
   [APP_STATUS.SKIPPED]: 'skipped',
   [APP_STATUS.REJECTED]: 'rejected',
   [APP_STATUS.ARCHIVED]: 'archived',
   [APP_STATUS.DISCARDED]: 'discarded',
   [APP_STATUS.DATE_UNCONFIRMED]: 'date_unconfirmed',
+  [APP_STATUS.SUBMIT_UNVERIFIED]: 'submit_unverified',
 });
 
 /**
@@ -187,11 +220,21 @@ export function lastActionFor(job = {}, appStatus = '') {
 export function explainStatus(job = {}, appStatus = '', approval = null) {
   const blockers = jsonList(job.assist_blockers);
   switch (appStatus) {
+    case APP_STATUS.SUBMIT_UNVERIFIED:
+      return 'Auto-submit clicked Submit, but no confirmation page could be detected. Check your email '
+        + '(or the ATS) for a confirmation: if the application went through, use "Mark submitted"; if not, '
+        + 'open the posting and finish it manually. It is NOT counted as submitted until you confirm.';
     case APP_STATUS.BLOCKED:
       if (blockers.length) return `Assisted fill stopped: ${blockers.join('; ')}`;
       return 'An assisted-fill attempt stopped at an application wall (login, CAPTCHA, an account step, '
         + 'or a question it will not guess). The specific reason was not recorded — open the posting to finish '
         + 'manually, or re-run assisted fill to capture the current blocker.';
+    case APP_STATUS.FAILED:
+      return blockers.length
+        ? `The last fill failed: ${blockers.join('; ')}`
+        : 'The last fill failed unexpectedly. Review the Activity/RCA details, then Retry or Resume.';
+    case APP_STATUS.CANCELLED:
+      return 'You cancelled the fill at a safe checkpoint. Resume continues from the saved application URL.';
     case APP_STATUS.REJECTED:
       if (job.user_decision === 'rejected') return 'You rejected this job.';
       if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return 'Its prepared packet was rejected, so it will not be applied to.';
@@ -216,24 +259,8 @@ function httpError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
 }
 
-/** Parse a TEXT column that may hold a JSON array. */
-function jsonList(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string' && value.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  }
-  return [];
-}
-
-/** Latest approval row per job id. */
-function approvalsByJob(db) {
-  const map = new Map();
-  for (const a of db.listApprovals()) map.set(a.job_id, a); // created_at ASC -> later rows win
-  return map;
-}
+/** Latest approval row per job id (shared precedence with every consumer). */
+const approvalsByJob = latestApprovalsByJob;
 
 /*
  * Decoration cache.
@@ -267,8 +294,16 @@ function cached(db, kind, now, compute) {
 function allBoardRows(db, now) {
   return cached(db, 'rows', now, () => {
     const approvals = approvalsByJob(db);
-    return db.listJobs({}).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+    return listSummaryRows(db).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
   });
+}
+
+/**
+ * All jobs without jd_text (board rows never render it; detail loads it via
+ * getJob). Falls back to listJobs for test stubs that only implement that.
+ */
+function listSummaryRows(db) {
+  return typeof db.listJobsSummary === 'function' ? db.listJobsSummary() : db.listJobs({});
 }
 
 /** ISO date prefix (YYYY-MM-DD) of a date. */
@@ -283,6 +318,20 @@ export const CLOSED_STATUSES = Object.freeze([
 const CLOSED_SET = new Set(CLOSED_STATUSES);
 
 /**
+ * When was this job's packet prepared? Prefers the true prepared_at stamp;
+ * legacy rows (prepared before the column existed) fall back to updated_at
+ * ONLY while the row still sits in `prepared` (any later action bumps
+ * updated_at and would otherwise re-count an old packet as "prepared today").
+ * @param {object} job jobs-table row
+ * @returns {string|null} ISO timestamp
+ */
+function preparedAtOf(job) {
+  if (!job.application_packet_path) return null;
+  if (job.prepared_at) return job.prepared_at;
+  return job.status === 'prepared' ? (job.updated_at ?? null) : null;
+}
+
+/**
  * The single source of truth for the section tabs. Each view is a predicate
  * over a decorated board row. Because the SAME predicates drive both the tab
  * COUNTS and the board FILTER, a tab's badge always equals the number of rows
@@ -291,6 +340,13 @@ const CLOSED_SET = new Set(CLOSED_STATUSES);
  */
 export const BOARD_VIEWS = Object.freeze({
   all: (r) => !CLOSED_SET.has(r.appStatus),
+  today: (r) => [
+    APP_STATUS.READY_FOR_SUBMIT, APP_STATUS.SUBMIT_UNVERIFIED,
+    APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED, APP_STATUS.NEEDS_REVIEW,
+  ].includes(r.appStatus)
+    || (r.postedLast24h && r.fit === 'strong'
+      && [APP_STATUS.SCORED, APP_STATUS.DISCOVERED].includes(r.appStatus))
+    || (r.sponsorshipGated && !CLOSED_SET.has(r.appStatus)),
   // "Best matches" = strong, recommended jobs still awaiting your triage. Once
   // you shortlist/prepare them they move to their stage tab, so this list never
   // overlaps the other tabs — it is purely "new strong opportunities to act on".
@@ -301,7 +357,7 @@ export const BOARD_VIEWS = Object.freeze({
   // "Ready to apply": packet approved (ready to auto-fill) OR already filled and
   // waiting for your manual submit. Both need a human action next.
   ready_apply: (r) => r.appStatus === APP_STATUS.APPROVED || r.appStatus === APP_STATUS.READY_FOR_SUBMIT,
-  blocked: (r) => r.appStatus === APP_STATUS.BLOCKED,
+  blocked: (r) => [APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED].includes(r.appStatus),
   submitted: (r) => r.appStatus === APP_STATUS.SUBMITTED,
 });
 
@@ -327,18 +383,22 @@ function boardRow(job, approval, now) {
   return {
     id: job.id,
     company: job.company,
-    title: job.title,
+    // Historical provider rows can be incomplete. Never render a blank role
+    // name (which also produces unusable checkbox/button accessible names).
+    title: String(job.title ?? '').trim() || 'Title not identified',
     location: job.location,
     url: job.url,
     source: job.source || 'unknown',
     score,
     grade: gradeFromScore(score),
     tier: job.tier ?? null,
-    fit: fitBucket(job.tier),
+    fit: fitBucket(job.tier, score),
+    sponsorshipGated: isSponsorshipGated(job),
     sponsorship: job.sponsorship ?? null,
     employmentType: job.employment_type ?? null,
     employmentCategory: job.employment_category ?? null,
     employmentLabel: EMPLOYMENT_LABELS[job.employment_category] ?? null,
+    compensation: job.compensation_text ?? null,
     remote: /\bremote\b/.test(haystack),
     postedAt: job.posted_at ?? null,
     postedLabel: formatPostedRelative(job.posted_at, now),
@@ -385,7 +445,7 @@ export function dashboardStats(db, { now = new Date() } = {}) {
 }
 
 function computeDashboardStats(db, now) {
-  const jobs = db.listJobs({});
+  const jobs = listSummaryRows(db);
   const approvals = approvalsByJob(db);
   const today = dayOf(now.toISOString());
 
@@ -412,9 +472,13 @@ function computeDashboardStats(db, now) {
       dateUnconfirmed: 0,
       preparedToday: 0,
       submittedToday: 0,
+      submittedThisWeek: 0,
+      qualifiedToday: 0,
+      needsSponsorshipCheck: 0,
       pendingReview: 0,
       blocked: 0,
       readyForSubmit: 0,
+      submitUnverified: 0,
       submittedTotal: 0,
     },
     // ISO timestamp of the most recent discovery (max created_at) so the UI can
@@ -437,7 +501,7 @@ function computeDashboardStats(db, now) {
   for (const job of jobs) {
     const approval = approvals.get(job.id) ?? null;
     const status = deriveAppStatus(job, approval);
-    const fit = fitBucket(job.tier);
+    const fit = fitBucket(job.tier, typeof job.score === 'number' ? job.score : null);
     const source = job.source || 'unknown';
 
     if (dayOf(job.created_at) === today) stats.totals.discoveredToday += 1;
@@ -449,19 +513,37 @@ function computeDashboardStats(db, now) {
     // the header chip always reconciles with what the board's "last 24h"
     // filter shows — a big raw count over a mostly-hidden board reads as a bug.
     if (isWithinLast24Hours(job.posted_at, now) && !CLOSED_SET.has(status)) stats.totals.postedLast24h += 1;
-    if (fit === 'strong') stats.totals.strongFit += 1;
-    if (fit === 'medium') stats.totals.mediumFit += 1;
-    if (fit === 'weak') stats.totals.weakFit += 1;
+    // Fit tiles count ACTIONABLE jobs only (not archived/rejected/discarded) so
+    // clicking a tile shows exactly as many rows as the tile promised — the
+    // default board hides closed jobs.
+    if (!CLOSED_SET.has(status)) {
+      if (fit === 'strong') stats.totals.strongFit += 1;
+      if (fit === 'medium') stats.totals.mediumFit += 1;
+      if (fit === 'weak') stats.totals.weakFit += 1;
+      // Strong-fit roles parked by the sponsorship gate: the next action is to
+      // verify the employer's sponsorship posture, not to discard the job.
+      if (isSponsorshipGated(job)) stats.totals.needsSponsorshipCheck += 1;
+    }
     if (job.user_decision === 'shortlisted') stats.totals.shortlisted += 1;
     if (status === APP_STATUS.REJECTED) stats.totals.rejected += 1;
     if (status === APP_STATUS.SKIPPED) stats.totals.skipped += 1;
     if (status === APP_STATUS.DATE_UNCONFIRMED) stats.totals.dateUnconfirmed += 1;
-    if (job.application_packet_path && dayOf(job.updated_at) === today
-        && Number(job.applied) !== 1) stats.totals.preparedToday += 1;
+    if (dayOf(preparedAtOf(job)) === today && Number(job.applied) !== 1) stats.totals.preparedToday += 1;
     if (Number(job.applied) === 1 && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
+    if (Number(job.applied) === 1 && job.applied_at
+        && (now.getTime() - new Date(job.applied_at).getTime()) < 7 * 86_400_000) {
+      stats.totals.submittedThisWeek += 1;
+    }
+    // "New qualified" means the POSTING is genuinely fresh, not merely that
+    // an older job happened to enter our database today.
+    if (fit === 'strong' && isWithinLast24Hours(job.posted_at, now)
+        && !CLOSED_SET.has(status)) {
+      stats.totals.qualifiedToday += 1;
+    }
     if (status === APP_STATUS.NEEDS_REVIEW) stats.totals.pendingReview += 1;
-    if (status === APP_STATUS.BLOCKED) stats.totals.blocked += 1;
+    if ([APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED].includes(status)) stats.totals.blocked += 1;
     if (status === APP_STATUS.READY_FOR_SUBMIT) stats.totals.readyForSubmit += 1;
+    if (status === APP_STATUS.SUBMIT_UNVERIFIED) stats.totals.submitUnverified += 1;
     if (Number(job.applied) === 1) stats.totals.submittedTotal += 1;
     if (fit === 'strong' && !job.user_decision && !approval
         && [APP_STATUS.SCORED, APP_STATUS.DISCOVERED].includes(status)) strongUntriaged += 1;
@@ -477,7 +559,13 @@ function computeDashboardStats(db, now) {
     stats.byStatus[status] = (stats.byStatus[status] ?? 0) + 1;
 
     // Section-tab counts via the shared board-view predicates.
-    const viewRow = { appStatus: status, fit, grade: gradeFromScore(typeof job.score === 'number' ? job.score : null) };
+    const viewRow = {
+      appStatus: status,
+      fit,
+      grade: gradeFromScore(typeof job.score === 'number' ? job.score : null),
+      postedLast24h: isWithinLast24Hours(job.posted_at, now),
+      sponsorshipGated: isSponsorshipGated(job),
+    };
     for (const [key, pred] of Object.entries(BOARD_VIEWS)) {
       if (pred(viewRow)) stats.views[key] += 1;
     }
@@ -490,10 +578,8 @@ function computeDashboardStats(db, now) {
     // Daily progress strip.
     const created = dayOf(job.created_at);
     if (daily.has(created)) daily.get(created).discovered += 1;
-    if (job.application_packet_path) {
-      const prepared = dayOf(job.updated_at);
-      if (daily.has(prepared)) daily.get(prepared).prepared += 1;
-    }
+    const preparedDay = dayOf(preparedAtOf(job));
+    if (preparedDay && daily.has(preparedDay)) daily.get(preparedDay).prepared += 1;
     if (Number(job.applied) === 1) {
       const submitted = dayOf(job.applied_at);
       if (daily.has(submitted)) daily.get(submitted).submitted += 1;
@@ -512,6 +598,15 @@ function computeDashboardStats(db, now) {
  */
 export function buildNextActions(totals, strongUntriaged = 0) {
   const actions = [];
+  // Unverified auto-submits come first: until confirmed, the job is neither
+  // safely "submitted" nor safe to re-fill — only the human can resolve it.
+  if (totals.submitUnverified > 0) {
+    actions.push({
+      text: `${totals.submitUnverified} auto-submit(s) could not be confirmed — check your email for the ATS `
+        + 'confirmation, then Mark submitted (or finish manually)',
+      filter: { appStatus: APP_STATUS.SUBMIT_UNVERIFIED },
+    });
+  }
   if (totals.readyForSubmit > 0) {
     actions.push({
       text: `${totals.readyForSubmit} application(s) are filled and waiting — review each browser tab and click Submit yourself`,
@@ -534,6 +629,13 @@ export function buildNextActions(totals, strongUntriaged = 0) {
     actions.push({
       text: `${strongUntriaged} strong-fit job(s) have no decision yet — shortlist or reject them`,
       filter: { fit: 'strong' },
+    });
+  }
+  if (totals.needsSponsorshipCheck > 0) {
+    actions.push({
+      text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check — verify the employer `
+        + 'sponsors H-1B (their careers page, past filings), then shortlist and prepare',
+      filter: { fit: 'strong', sponsorship: 'Unconfirmed' },
     });
   }
   if (totals.dateUnconfirmed > 0) {
@@ -582,6 +684,19 @@ const SORTS = {
  * @returns {object[]} decorated board rows
  */
 export function listBoardJobs(db, filters = {}) {
+  return boardPage(db, filters).jobs;
+}
+
+/**
+ * Same filters as listBoardJobs, but returns the page WITH the uncapped match
+ * count, so the UI can say "Showing 200 of 1,431" instead of silently
+ * truncating (the tab badges count ALL matches, so the board must too).
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {object} [filters] see listBoardJobs
+ * @returns {{ jobs: object[], total: number, limit: number }}
+ */
+export function boardPage(db, filters = {}) {
   const now = filters.now ?? new Date();
   const hideClosed = filters.hideClosed !== false && filters.hideClosed !== 'false';
 
@@ -604,6 +719,21 @@ export function listBoardJobs(db, filters = {}) {
   if (filters.employmentType) rows = rows.filter((r) => (r.employmentCategory ?? 'unknown') === filters.employmentType);
   if (filters.ats) rows = rows.filter((r) => (r.atsPlatform ?? 'unknown') === filters.ats);
   if (filters.resumeStatus) rows = rows.filter((r) => r.resumeStatus === filters.resumeStatus);
+  if (filters.sponsorshipGated === true || filters.sponsorshipGated === 'true') {
+    rows = rows.filter((r) => r.sponsorshipGated);
+  }
+  // Mirrors stats.totals.qualifiedToday exactly: strong fit whose POSTING is
+  // genuinely fresh (posted within the last 24h) — never an old job that
+  // merely entered the database today. The default hideClosed pass below
+  // supplies the same closed-set exclusion, so clicking the metric always
+  // shows precisely the counted records.
+  if (filters.qualifiedToday === true || filters.qualifiedToday === 'true') {
+    rows = rows.filter((r) => r.fit === 'strong' && r.postedLast24h);
+  }
+  if (filters.submittedThisWeek === true || filters.submittedThisWeek === 'true') {
+    rows = rows.filter((r) => r.appStatus === APP_STATUS.SUBMITTED && r.appliedAt
+      && (now.getTime() - new Date(r.appliedAt).getTime()) < 7 * 86_400_000);
+  }
   if (filters.remote === true || filters.remote === 'true') rows = rows.filter((r) => r.remote);
   if (filters.last24h === true || filters.last24h === 'true') {
     rows = rows.filter((r) => r.postedLast24h);
@@ -616,7 +746,22 @@ export function listBoardJobs(db, filters = {}) {
 
   rows.sort(SORTS[filters.sort] ?? SORTS.score);
   const limit = Number(filters.limit) > 0 ? Number(filters.limit) : 200;
-  return rows.slice(0, limit);
+  const requestedOffset = Number(filters.offset);
+  const requestedPage = Number(filters.page);
+  const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0
+    ? Math.floor(requestedOffset)
+    : (Number.isFinite(requestedPage) && requestedPage > 1
+      ? (Math.floor(requestedPage) - 1) * limit
+      : 0);
+  const total = rows.length;
+  return {
+    jobs: rows.slice(offset, offset + limit),
+    total,
+    limit,
+    offset,
+    page: Math.floor(offset / limit) + 1,
+    pages: Math.max(1, Math.ceil(total / limit)),
+  };
 }
 
 /**
@@ -645,6 +790,7 @@ export function jobDetail(db, jobId, deps = {}) {
         blockers: full.blockers ?? [],
         resumeTailored: Boolean(full.resumeTailored),
         resumeWarning: full.resumeWarning ?? null,
+        tailoring: full.tailoring ?? null,
         atsReport: full.atsReport ?? null,
         prefillPlan: full.prefill?.plan ?? [],
         needsUser: full.prefill?.needsUser ?? [],
@@ -662,12 +808,39 @@ export function jobDetail(db, jobId, deps = {}) {
   let events = [];
   try {
     events = (db.listEvents?.(jobId) ?? [])
-      .map((e) => ({ at: e.created_at, type: e.event_type, message: e.message }))
+      .map((e) => {
+        let metadata = e.metadata ?? null;
+        if (typeof metadata === 'string') {
+          try { metadata = JSON.parse(metadata); } catch { /* keep the original audit text */ }
+        }
+        return { at: e.created_at, type: e.event_type, message: e.message, metadata };
+      })
       .reverse()
       .slice(0, 30);
   } catch { /* events are best-effort */ }
 
-  return { ...row, jdText: job.jd_text ?? null, packet, events };
+  // Privacy-minimized resumable checkpoint. It contains field identifiers and
+  // verification status, never typed answers or absolute upload paths.
+  let applicationState = null;
+  let applicationStateError = null;
+  if (deps.root) {
+    const statePath = applicationStatePath(deps.root, {
+      id: packet?.id,
+      job: { id: job.id, url: job.url },
+      ats: { platform: job.ats_platform ?? packet?.ats?.platform },
+    });
+    const existsImpl = deps.applicationStateExistsImpl ?? existsSync;
+    if (statePath && existsImpl(statePath)) {
+      try {
+        const readState = deps.readApplicationStateImpl ?? ((p) => readFileSync(p, 'utf8'));
+        applicationState = JSON.parse(readState(statePath));
+      } catch (err) {
+        applicationStateError = `application state unreadable: ${err.message}`;
+      }
+    }
+  }
+
+  return { ...row, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError };
 }
 
 /**
@@ -723,6 +896,7 @@ export function rejectJobPacket(db, jobId) {
  * @param {string} jobId
  * @param {object} [details]
  * @param {string} [details.confirmationNumber]
+ * @param {boolean} [details.verified] human explicitly saw positive confirmation evidence
  * @param {string} [details.note]
  * @param {Date} [details.now]
  * @returns {{ id: string, appStatus: string, appliedAt: string, confirmationNumber: string|null }}
@@ -732,16 +906,27 @@ export function markSubmittedByHuman(db, jobId, details = {}) {
   if (!job) throw httpError(404, `unknown job id: ${jobId}`);
   const appliedAt = (details.now ?? new Date()).toISOString();
   const confirmation = String(details.confirmationNumber ?? '').trim().slice(0, 200) || null;
+  const verified = details.verified === true || Boolean(confirmation);
 
-  const patch = { id: jobId, applied: 1, applied_at: appliedAt, status: 'submitted' };
+  const patch = verified
+    ? { id: jobId, applied: 1, applied_at: appliedAt, status: 'submitted' }
+    : { id: jobId, applied: 0, applied_at: null, status: 'submit_unverified' };
   if (confirmation) patch.submitted_confirmation = confirmation;
   const note = String(details.note ?? '').trim().slice(0, 2000);
   if (note) {
     const stamp = appliedAt.slice(0, 16).replace('T', ' ');
-    patch.notes = job.notes ? `${job.notes}\n[submitted ${stamp}] ${note}` : `[submitted ${stamp}] ${note}`;
+    const label = verified ? 'submitted' : 'submission reported — verification pending';
+    patch.notes = job.notes ? `${job.notes}\n[${label} ${stamp}] ${note}` : `[${label} ${stamp}] ${note}`;
   }
   db.upsertJob(patch);
-  return { id: jobId, appStatus: APP_STATUS.SUBMITTED, appliedAt, confirmationNumber: confirmation };
+  return {
+    id: jobId,
+    appStatus: verified ? APP_STATUS.SUBMITTED : APP_STATUS.SUBMIT_UNVERIFIED,
+    appliedAt: verified ? appliedAt : null,
+    reportedAt: appliedAt,
+    verified,
+    confirmationNumber: confirmation,
+  };
 }
 
 /**
@@ -770,6 +955,7 @@ function sectionRow(row) {
     postedConfidence: row.postedConfidence, atsPlatform: row.atsPlatform,
     resumeStatus: row.resumeStatus, progress: row.progress, remote: row.remote,
     atsScore: row.atsScore, atsBand: row.atsBand,
+    compensation: row.compensation, sponsorshipGated: row.sponsorshipGated,
     employmentCategory: row.employmentCategory, employmentLabel: row.employmentLabel,
     appliedAt: row.appliedAt,
   };
@@ -811,16 +997,39 @@ export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
 
   const readyForSubmit = rows.filter((r) => is(r, APP_STATUS.READY_FOR_SUBMIT, APP_STATUS.APPROVED)).sort(byScore);
   const needsReview = rows.filter((r) => is(r, APP_STATUS.NEEDS_REVIEW)).sort(byScore);
-  const blocked = rows.filter((r) => is(r, APP_STATUS.BLOCKED)).sort(byScore);
+  const blocked = rows.filter((r) => is(r, APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED)).sort(byScore);
+  const submitUnverified = rows.filter((r) => is(r, APP_STATUS.SUBMIT_UNVERIFIED)).sort(byScore);
   const submitted = rows.filter((r) => is(r, APP_STATUS.SUBMITTED))
     .sort((a, b) => String(b.appliedAt ?? '').localeCompare(String(a.appliedAt ?? '')));
 
-  // Today's priorities: what needs a human RIGHT NOW, most urgent first.
-  const todaysPriorities = [
-    ...rows.filter((r) => is(r, APP_STATUS.READY_FOR_SUBMIT)),
-    ...needsReview,
-    ...blocked,
-  ].slice(0, limit).map(sectionRow);
+  // Today's queue follows the user's actual workflow. A strong match only
+  // earns the "new" slot when the posting itself is confirmed within 24h;
+  // discovering an old posting today never relabels it as new.
+  const readyForUserSubmission = rows
+    .filter((r) => is(r, APP_STATUS.READY_FOR_SUBMIT)).sort(byScore);
+  const strongNew = rows
+    .filter((r) => r.postedLast24h && r.postedConfidence === 'confirmed'
+      && r.fit === 'strong' && is(r, APP_STATUS.SCORED, APP_STATUS.DISCOVERED))
+    .sort(byScore);
+  const sponsorshipVerification = rows
+    .filter((r) => r.sponsorshipGated && !CLOSED_SET.has(r.appStatus)).sort(byScore);
+
+  const priorityAll = [];
+  const seenPriority = new Set();
+  const addPriority = (items, kind) => {
+    for (const row of items) {
+      if (seenPriority.has(row.id)) continue;
+      seenPriority.add(row.id);
+      priorityAll.push({ ...sectionRow(row), priorityKind: kind });
+    }
+  };
+  addPriority(readyForUserSubmission, 'ready_for_submission');
+  addPriority(submitUnverified, 'submission_unverified');
+  addPriority(blocked, 'blocked');
+  addPriority(needsReview, 'prepared_review');
+  addPriority(strongNew, 'strong_new');
+  addPriority(sponsorshipVerification, 'verify_sponsorship');
+  const todaysPriorities = priorityAll.slice(0, limit);
 
   // Best matches: strong, recommended, still actionable (not closed/submitted).
   const closed = [APP_STATUS.REJECTED, APP_STATUS.ARCHIVED, APP_STATUS.DISCARDED, APP_STATUS.SUBMITTED];
@@ -841,13 +1050,17 @@ export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
 
   return {
     todaysPriorities,
+    strongNew: strongNew.slice(0, limit).map(sectionRow),
+    sponsorshipVerification: sponsorshipVerification.slice(0, limit).map(sectionRow),
     bestMatches,
     needsReview: needsReview.slice(0, limit).map(sectionRow),
     readyForSubmit: readyForSubmit.slice(0, limit).map(sectionRow),
     recentlySubmitted: submitted.slice(0, limit).map(sectionRow),
     blockedByReason,
     counts: {
-      todaysPriorities: rows.filter((r) => is(r, APP_STATUS.READY_FOR_SUBMIT, APP_STATUS.NEEDS_REVIEW, APP_STATUS.BLOCKED)).length,
+      todaysPriorities: priorityAll.length,
+      strongNew: strongNew.length,
+      sponsorshipVerification: sponsorshipVerification.length,
       bestMatches: rows.filter((r) => r.fit === 'strong' && r.grade?.recommend && !closed.includes(r.appStatus)).length,
       needsReview: needsReview.length,
       readyForSubmit: readyForSubmit.length,
@@ -963,8 +1176,9 @@ export function buildReports(db, { now = new Date() } = {}) {
 
   // Application log: every job the human acted on (or that stopped), newest first.
   const LOG_STATUSES = new Set([
-    APP_STATUS.SUBMITTED, APP_STATUS.SKIPPED, APP_STATUS.BLOCKED,
-    APP_STATUS.REJECTED, APP_STATUS.ARCHIVED, APP_STATUS.READY_FOR_SUBMIT,
+    APP_STATUS.SUBMITTED, APP_STATUS.SUBMIT_UNVERIFIED, APP_STATUS.SKIPPED,
+    APP_STATUS.BLOCKED, APP_STATUS.REJECTED, APP_STATUS.ARCHIVED,
+    APP_STATUS.READY_FOR_SUBMIT,
   ]);
   const applicationLog = rows
     .filter((r) => LOG_STATUSES.has(r.appStatus))
@@ -995,4 +1209,88 @@ export function buildReports(db, { now = new Date() } = {}) {
     sponsorshipSummary,
     sourcePerformance,
   };
+}
+
+/**
+ * Documents view: the master resume plus every tailored resume / cover letter
+ * the agent generated, newest first. This is the resume "version history" —
+ * one tailored version per prepared job, each traceable to its job and packet.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {object} [options] { root, now, statImpl }
+ * @returns {{ master: object|null, tailored: object[] }}
+ */
+export function buildDocuments(db, {
+  root = null, now = new Date(), statImpl = null, readFileImpl = null,
+} = {}) {
+  const stat = statImpl ?? ((p) => {
+    try {
+      const s = statSync(p);
+      return { exists: true, bytes: s.size, modifiedAt: s.mtime.toISOString() };
+    } catch { return { exists: false, bytes: 0, modifiedAt: null }; }
+  });
+
+  let master = null;
+  if (root) {
+    const masterPath = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+    master = { path: masterPath, ...stat(masterPath) };
+  }
+
+  const approvals = approvalsByJob(db);
+  const readPacket = readFileImpl ?? ((p) => readFileSync(p, 'utf8'));
+  const fileInfo = (path) => (path ? { path, ...stat(path) } : null);
+  const rows = listSummaryRows(db)
+    .filter((j) => j.resume_docx_path || j.resume_path || j.resume_pdf_path
+      || j.cover_letter_path || j.application_packet_path)
+    .map((j) => {
+      let packet = null;
+      let packetError = null;
+      if (j.application_packet_path) {
+        try { packet = JSON.parse(readPacket(j.application_packet_path)); }
+        catch (err) { packetError = `packet unreadable: ${err.message}`; }
+      }
+      const resumeDocx = j.resume_docx_path ?? j.resume_path ?? null;
+      const tailoring = packet?.tailoring ?? null;
+      const changes = Array.isArray(tailoring?.changes) ? tailoring.changes : [];
+      const gaps = Array.isArray(tailoring?.gaps) ? tailoring.gaps : [];
+      return {
+        jobId: j.id,
+        company: j.company,
+        title: j.title,
+        preparedAt: preparedAtOf(j),
+        tailored: packet ? Boolean(packet.resumeTailored) : Boolean(resumeDocx),
+        resumeDocx,
+        resumePdf: j.resume_pdf_path ?? null,
+        coverLetter: j.cover_letter_path ?? null,
+        packet: j.application_packet_path ?? null,
+        folder: j.output_folder_path ?? null,
+        files: {
+          resumeDocx: fileInfo(resumeDocx),
+          resumePdf: fileInfo(j.resume_pdf_path),
+          coverLetter: fileInfo(j.cover_letter_path),
+          packet: fileInfo(j.application_packet_path),
+        },
+        atsScore: j.ats_score == null || j.ats_score === '' ? null : Number(j.ats_score),
+        atsBand: j.ats_band ?? null,
+        appStatus: deriveAppStatus(j, approvals.get(j.id) ?? null),
+        resumeWarning: packet?.resumeWarning ?? null,
+        tailoring: tailoring ? {
+          changes,
+          gaps,
+          summaryLine: tailoring.summaryLine ?? null,
+          changeCount: changes.length,
+          gapCount: gaps.length,
+        } : null,
+        provenance: packet ? {
+          packetId: packet.id ?? null,
+          packetCreatedAt: packet.createdAt ?? null,
+          stopBeforeSubmit: packet.stopBeforeSubmit !== false,
+          source: 'application packet',
+        } : null,
+        packetError,
+      };
+    })
+    .sort((a, b) => String(b.preparedAt ?? '').localeCompare(String(a.preparedAt ?? '')));
+
+  return { generatedAt: now.toISOString(), master, tailored: rows };
 }

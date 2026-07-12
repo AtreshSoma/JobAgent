@@ -141,13 +141,16 @@ export const FRESHNESS_WINDOW_DAYS = Object.freeze({
 
 /**
  * Normalize a raw JOB_FRESHNESS_MODE value to a supported mode.
- * Unknown/empty values default to LAST_3_DAYS.
+ * Unknown/empty values default to LAST_7_DAYS: real requisitions routinely
+ * stay open for weeks, and the previous 3-day default was measured discarding
+ * >75% of scoreable jobs — including 75+ scoring senior data-engineering
+ * roles — before they were ever ranked.
  * @param {unknown} raw
  * @returns {string}
  */
 function normalizeFreshnessMode(raw) {
   const v = String(raw ?? '').trim().toUpperCase();
-  return FRESHNESS_MODES.includes(v) ? v : 'LAST_3_DAYS';
+  return FRESHNESS_MODES.includes(v) ? v : 'LAST_7_DAYS';
 }
 
 /**

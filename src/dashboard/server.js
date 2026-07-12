@@ -9,14 +9,22 @@
  *
  * Safety properties (identical to the CLI):
  *   - Binds to 127.0.0.1 ONLY. This is a local cockpit, never a public site.
- *   - Nothing is ever auto-submitted. The assist endpoint fills an APPROVED
- *     packet in a real browser and stops before submit, exactly like the CLI.
- *   - "Submitted" is only ever set by the explicit mark-submitted action.
- *   - One pipeline run / one assist at a time (busy guard); state is pollable.
+ *   - Every request must carry a loopback Host header, and browser requests
+ *     with an Origin must come from localhost — so a malicious website (or a
+ *     DNS-rebinding page) cannot drive the API from the user's own browser.
+ *   - By default nothing is auto-submitted: the assist endpoints fill an
+ *     APPROVED packet in a real browser and stop before submit. Auto-submit is
+ *     an explicit per-run opt-in, and even then a job is only recorded as
+ *     submitted when the runner VERIFIED the submission (confirmation page);
+ *     an unverified click surfaces as `submit_unverified` for the human.
+ *   - "Submitted" is set by the explicit mark-submitted action, or by that
+ *     verified opt-in auto-submit — never by anything else.
+ *   - One pipeline run / one assist at a time (busy guard); state is pollable;
+ *     batch runs can be cancelled between jobs.
  *
  * API:
  *   GET  /api/stats                       tiles + source/status breakdowns
- *   GET  /api/jobs?…filters               board rows
+ *   GET  /api/jobs?…filters               board rows { jobs, total, limit }
  *   GET  /api/jobs/:id                    full detail incl. packet summary
  *   POST /api/jobs/:id/decision {decision} shortlist | rejected | archived | clear
  *   POST /api/jobs/:id/approve            approve prepared packet (human gate)
@@ -24,6 +32,7 @@
  *   POST /api/jobs/:id/mark-submitted     record YOUR manual submission
  *   POST /api/jobs/:id/assist             fill the approved packet, stop before submit
  *   POST /api/run {phase}                 discover | score | prepare (async)
+ *   POST /api/run/cancel                  stop a running batch between jobs
  *   GET  /api/run/status                  current/last run state
  *   GET  /api/sections                    curated command-center sections
  *   POST /api/jobs/:id/note {note}        save a free-text note on a job
@@ -36,24 +45,76 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join, dirname, normalize, extname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+
+import { buildRca, sanitizeErrorMessage } from '../utils/failureRca.js';
 
 import {
-  dashboardStats, listBoardJobs, jobDetail, applyDecision,
+  dashboardStats, boardPage, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
+  buildDocuments,
 } from './data.js';
 import {
-  runScore, runPrepareApps, loadPacket, recordAssistResult,
+  runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult,
   preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { evaluateAutoApplyBatch } from '../apply/autoApplyEligibility.js';
+import { markApplicationUserSubmitted, markApplicationVerified } from '../apply/applicationState.js';
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
+import { LIFECYCLE } from '../lifecycle.js';
 import { writeJobTracker } from '../reports/jobTracker.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'public');
 
 /** Phases the dashboard may trigger. Submission is intentionally absent. */
 const RUN_PHASES = new Set(['discover', 'score', 'prepare']);
+
+/** Most RCA rows to keep after collapsing — a panel, not a log file. */
+const MAX_RCA_ENTRIES = 25;
+
+/** Bound user-triggered batches so one local request cannot monopolize the UI. */
+const MAX_BATCH_JOBS = 200;
+
+/**
+ * Fold RCA entries that say the same thing into one row carrying a count.
+ *
+ * One throttled host used to emit a near-identical entry per job, so a run that
+ * merely lost some job *descriptions* rendered as forty screaming failures and
+ * buried the one or two errors that actually needed the user's attention.
+ * Same source + category + status = one row.
+ *
+ * @param {object[]} entries
+ * @returns {object[]}
+ */
+export function collapseRca(entries = []) {
+  /** @type {Map<string, object>} */
+  const merged = new Map();
+  for (const e of entries) {
+    const key = `${e.source ?? ''}|${e.operation ?? ''}|${e.category}|${e.status ?? ''}|${e.degraded ? 'd' : 'f'}`;
+    const seen = merged.get(key);
+    if (!seen) {
+      merged.set(key, { ...e });
+      continue;
+    }
+    seen.count += e.count ?? 1;
+    seen.retryCount = Math.max(seen.retryCount, e.retryCount ?? 0);
+    // Keep the first message as the representative sample; the count carries
+    // the rest. Recompute the impact so it reflects the folded total.
+    seen.impact = buildRca({
+      operation: seen.operation,
+      source: seen.source,
+      error: seen.message,
+      status: seen.status ?? undefined,
+      degraded: seen.degraded,
+      count: seen.count,
+    }).impact;
+  }
+  return [...merged.values()]
+    .sort((a, b) => Number(a.degraded) - Number(b.degraded) || b.count - a.count)
+    .slice(0, MAX_RCA_ENTRIES);
+}
 
 /**
  * Create (but do not start) the dashboard server.
@@ -72,9 +133,12 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     // so the button appeared to do nothing (header stuck at "0 found in last
     // 24h" no matter how many jobs the run found). Route it through the
     // scoring pipeline, which discovers, scores, AND persists in one pass.
-    discover: deps.discoverFn ?? (() => runScore({ config, db, logger, deps })),
-    score: deps.scoreFn ?? (() => runScore({ config, db, logger, deps })),
-    prepare: deps.prepareFn ?? (() => runPrepareApps({ config, db, logger, deps })),
+    discover: deps.discoverFn ?? ((runDeps = {}) => runScore({ config, db, logger, deps: { ...deps, ...runDeps } })),
+    // "Re-score" recomputes fit for jobs ALREADY on the board from their stored
+    // JDs — no network, no re-discovery. (It used to silently re-run the full
+    // discovery pipeline, which is what the Find button is for.)
+    score: deps.scoreFn ?? ((runDeps = {}) => runRescore({ config, db, logger, deps: { ...deps, ...runDeps } })),
+    prepare: deps.prepareFn ?? ((runDeps = {}) => runPrepareApps({ config, db, logger, deps: { ...deps, ...runDeps } })),
   };
   const assistFn = deps.assistFn ?? assistApply;
 
@@ -82,7 +146,70 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
   const runState = {
     running: false, phase: null, startedAt: null,
     finishedAt: null, lastResult: null, lastError: null,
+    cancelRequested: false,
+    // Root-cause analysis of the last run: correlation id, structured
+    // per-source failures, and whether valid partial results were kept.
+    runId: null, rca: [], partial: false, progress: null,
   };
+  const inFlight = new Set();
+  const track = (promise) => {
+    inFlight.add(promise);
+    promise.finally(() => inFlight.delete(promise));
+    return promise;
+  };
+
+  // Doctor is intentionally expensive (Python/browser/filesystem probes).
+  // Coalesce concurrent requests and keep a short cache so revisiting Settings
+  // does not spawn the same checks repeatedly.
+  let healthCache = null;
+  let healthCacheAt = 0;
+  let healthPromise = null;
+  async function healthReport() {
+    if (healthCache && Date.now() - healthCacheAt < 30_000) return healthCache;
+    if (healthPromise) return healthPromise;
+    healthPromise = (async () => {
+      const doctor = deps.doctorFn ?? (await import('../cli/doctor.js')).runDoctor;
+      const report = await doctor({ env: process.env, root: config?.root ?? undefined });
+      healthCache = report;
+      healthCacheAt = Date.now();
+      return report;
+    })();
+    try { return await healthPromise; }
+    finally { healthPromise = null; }
+  }
+
+  /**
+   * True when the job may NOT be filled again: it was submitted, or an
+   * auto-submit click is still unverified (re-filling could double-apply).
+   */
+  function isSubmittedOrUnverified(jobRow) {
+    return Boolean(jobRow) && (Number(jobRow.applied) === 1
+      || jobRow.status === LIFECYCLE.SUBMITTED
+      || jobRow.status === LIFECYCLE.SUBMIT_UNVERIFIED);
+  }
+
+  /**
+   * Re-read a queued job's LIVE state right before filling it. A batch queue is
+   * built once up front, but the human keeps using the dashboard while it runs —
+   * a job they reject/archive/submit (or whose approval they revoke) mid-run
+   * must not be opened and filled anyway.
+   *
+   * @param {string} jobId
+   * @returns {string|null} reason to skip, or null to proceed
+   */
+  function liveSkipReason(jobId) {
+    const live = db.getJob?.(jobId);
+    if (!live) return null; // exotic test stubs — keep legacy behavior
+    if (isSubmittedOrUnverified(live)) return 'submitted while the batch was running — skipped';
+    if (live.user_decision === 'rejected' || live.user_decision === 'archived') {
+      return `you ${live.user_decision} it while the batch was running — skipped`;
+    }
+    const liveApproval = db.getApprovalByJob?.(jobId);
+    if (liveApproval && liveApproval.approval_status !== APPROVAL_STATUS.APPROVED) {
+      return 'its approval was revoked while the batch was running — skipped';
+    }
+    return null;
+  }
 
   /**
    * Rewrite data/job_tracker.csv so the spreadsheet always mirrors the DB after
@@ -129,34 +256,102 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     return packet;
   }
 
+  /** Build a privacy-safe, mutation-free Auto-Apply preview for the UI/API. */
+  function autoApplyEligibility(jobIds, autoSubmitAuthorized = false) {
+    const ids = Array.isArray(jobIds) ? [...new Set(jobIds.filter(Boolean))] : [];
+    const packetErrors = new Map();
+    const items = ids.map((jobId) => {
+      const job = db.getJob?.(jobId) ?? null;
+      const approval = db.getApprovalByJob?.(jobId) ?? null;
+      let packet = null;
+      const packetRef = approval ?? (job?.application_packet_path
+        ? { job_id: jobId, packet_path: job.application_packet_path }
+        : null);
+      if (packetRef) {
+        try {
+          packet = deps.loadPacketImpl ? deps.loadPacketImpl(packetRef) : loadPacket(packetRef);
+        } catch (err) {
+          packetErrors.set(jobId, sanitizeErrorMessage(err.message));
+        }
+      }
+      return { job, approval, packet };
+    });
+    const preview = evaluateAutoApplyBatch({ items, autoSubmitAuthorized });
+    for (const item of preview.items) {
+      const packetError = packetErrors.get(item.jobId);
+      if (!packetError) continue;
+      item.eligible = false;
+      item.reasons.unshift(`Application packet could not be read: ${packetError}`);
+      item.nextAction = item.reasons[0];
+    }
+    preview.eligible = preview.items.filter((x) => x.eligible).length;
+    preview.ineligible = preview.items.length - preview.eligible;
+    return preview;
+  }
+
   async function startRun(phase) {
     if (runState.running) {
       const err = new Error(`a ${runState.phase} run is already in progress`);
       err.statusCode = 409;
       throw err;
     }
+    const runId = randomUUID();
     Object.assign(runState, {
       running: true, phase, startedAt: new Date().toISOString(),
-      finishedAt: null, lastError: null,
+      finishedAt: null, lastError: null, cancelRequested: false,
+      runId, rca: [], partial: false, progress: null,
     });
-    // Fire and forget; the UI polls /api/run/status.
-    (async () => {
+    // Fire and forget from the request's perspective; tracked so shutdown can
+    // drain the work before the database is closed.
+    track((async () => {
       try {
-        const r = await runners[phase]();
-        runState.lastResult = { phase, counters: r.counters ?? null };
+        const r = await runners[phase]({ shouldCancel: () => runState.cancelRequested });
+        // Per-source failures (a board that timed out, a token that expired)
+        // do NOT fail the run — valid results from healthy sources were kept.
+        // They surface as structured RCA entries and mark the run "partial".
+        const sourceErrors = Array.isArray(r?.errors) ? r.errors : [];
+        runState.rca = collapseRca(sourceErrors.map((e) => buildRca({
+          operation: phase,
+          source: e.source ?? e.company ?? null,
+          // Adapters carry the HTTP status structurally. Without it the
+          // classifier is left guessing from prose, and a 429 whose message
+          // happens to contain "fetch failed" gets reported as a network fault.
+          error: e.error ?? e,
+          status: e.status ?? undefined,
+          attempt: e.attempts ?? 0,
+          degraded: e.degraded === true,
+          count: e.count ?? 1,
+          runId,
+          partialResultsValid: true,
+        })));
+        runState.partial = sourceErrors.length > 0;
+        runState.lastResult = {
+          phase, counters: r.counters ?? null,
+          partial: runState.partial,
+          failedSources: runState.rca.map((x) => x.source).filter(Boolean),
+        };
       } catch (err) {
-        runState.lastError = `${phase} failed: ${err.message}`;
+        runState.lastError = `${phase} failed: ${sanitizeErrorMessage(err.message)}`;
+        runState.rca = [buildRca({ operation: phase, error: err, runId })];
+        runState.partial = false;
       } finally {
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
       }
-    })();
-    return { started: true, phase };
+    })());
+    return { started: true, phase, runId };
   }
 
   async function startAssist(jobId) {
     if (runState.running) {
       const err = new Error(`busy: ${runState.phase} is in progress`);
+      err.statusCode = 409;
+      throw err;
+    }
+    // Idempotency guard (same as the CLI): never re-fill a completed — or
+    // unverified — application; that risks submitting it twice.
+    if (isSubmittedOrUnverified(db.getJob?.(jobId))) {
+      const err = new Error('this job was already submitted (or has an unverified auto-submit) — not re-filling to avoid a duplicate application');
       err.statusCode = 409;
       throw err;
     }
@@ -173,27 +368,43 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       throw err;
     }
     const packet = reconcilePacket(loaded, jobId);
+    const runId = randomUUID();
     Object.assign(runState, {
       running: true, phase: `assist:${jobId}`, startedAt: new Date().toISOString(),
-      finishedAt: null, lastError: null,
+      finishedAt: null, lastError: null, cancelRequested: false,
+      runId, rca: [], partial: false,
+      progress: { total: 1, completed: 0, currentJobId: jobId, items: [{ jobId, status: 'queued' }] },
     });
-    (async () => {
+    track((async () => {
       try {
-        const result = await assistFn({ packet, config, mode: 'LIVE_ASSIST', approval, options: {}, deps });
+        const result = await assistFn({
+          packet, config, mode: 'LIVE_ASSIST', approval, options: {},
+          deps: { ...deps, shouldCancel: () => runState.cancelRequested },
+        });
         recordAssistResult(db, jobId, result);
         refreshTracker();
         runState.lastResult = {
           phase: 'assist', jobId, status: result.status,
-          blockers: result.blockers ?? [],
+          blockers: result.blockers ?? [], resumed: result.resumed === true,
+        };
+        runState.progress = {
+          total: 1, completed: 1, currentJobId: null,
+          items: [{ jobId, status: result.status, blockers: result.blockers ?? [] }],
         };
       } catch (err) {
-        runState.lastError = `assist failed: ${err.message}`;
+        const message = sanitizeErrorMessage(err.message);
+        runState.lastError = `assist failed: ${message}`;
+        runState.rca = [buildRca({ operation: 'assist', source: jobId, error: err, runId })];
+        runState.progress = {
+          total: 1, completed: 1, currentJobId: null,
+          items: [{ jobId, status: 'failed', error: message }],
+        };
       } finally {
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
       }
-    })();
-    return { started: true, jobId, note: 'browser will stop before submit — review and click Submit yourself' };
+    })());
+    return { started: true, jobId, runId, note: 'browser will stop before submit — review and click Submit yourself' };
   }
 
   /**
@@ -225,34 +436,73 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       err.statusCode = 409;
       throw err;
     }
-    const ids = Array.isArray(jobIds) ? [...new Set(jobIds.filter(Boolean))] : [];
+    const ids = batchJobIds(jobIds);
     if (ids.length === 0) {
       const err = new Error('select at least one job to auto-apply');
       err.statusCode = 400;
       throw err;
     }
+    const runId = randomUUID();
     Object.assign(runState, {
       running: true, phase: `auto-apply (0/${ids.length})`,
       startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
+      cancelRequested: false, runId, rca: [], partial: false,
+      progress: {
+        total: ids.length, completed: 0, currentJobId: null,
+        items: ids.map((jobId) => ({ jobId, status: 'queued' })),
+      },
     });
-    (async () => {
+    track((async () => {
       const results = [];
       const skipped = [];
       let queueLen = 0;
+      let cancelled = false;
       try {
+        // Auto-submit is fail-closed before any browser opens. Ordinary
+        // fill-and-review batches retain the existing prepare/approve flow.
+        let autoSubmitEligible = null;
+        if (runOpts.autoSubmit === true) {
+          const preview = autoApplyEligibility(ids, true);
+          autoSubmitEligible = new Set(preview.items.filter((x) => x.eligible).map((x) => x.jobId));
+          for (const item of preview.items.filter((x) => !x.eligible)) {
+            skipped.push({ jobId: item.jobId, reason: item.reasons.join(' ') });
+          }
+          runState.progress.items = preview.items.map((item) => ({
+            jobId: item.jobId,
+            status: item.eligible ? 'queued' : 'ineligible',
+            ...(item.eligible ? {} : { reason: item.reasons[0] }),
+          }));
+          runState.progress.completed = preview.ineligible;
+        }
+
+        // 0. Never queue a job that is already submitted (or whose auto-submit
+        //    is unverified) — auto-approving + re-filling it could double-apply.
+        const candidates = [];
+        for (const jobId of ids) {
+          if (autoSubmitEligible && !autoSubmitEligible.has(jobId)) continue;
+          if (isSubmittedOrUnverified(db.getJob?.(jobId))) {
+            skipped.push({ jobId, reason: 'already submitted — skipped to avoid a duplicate application' });
+          } else {
+            candidates.push(jobId);
+          }
+        }
+
         // 1. Prepare packets for jobs that don't have one yet (tailored resume
         //    + application packet). Failures are honest skips, not crashes.
-        const needPacket = ids.filter((id) => !db.getApprovalByJob?.(id));
+        const needPacket = candidates.filter((id) => !db.getApprovalByJob?.(id));
         if (needPacket.length) {
           runState.phase = `auto-apply — preparing ${needPacket.length} packet(s)…`;
           const prepareImpl = deps.prepareForJobsFn ?? preparePacketsForJobs;
-          const prep = await prepareImpl({ config, db, logger, jobIds: needPacket, deps });
+          const prep = await prepareImpl({
+            config, db, logger, jobIds: needPacket,
+            deps: { ...deps, shouldCancel: () => runState.cancelRequested },
+          });
           for (const f of prep.failed ?? []) skipped.push({ jobId: f.jobId, reason: f.error });
         }
 
         // 2+3. Approve (the click is the approval) and fill, one at a time.
         const queue = [];
-        for (const jobId of ids) {
+        for (const jobId of candidates) {
           if (skipped.some((s) => s.jobId === jobId)) continue;
           let approval = db.getApprovalByJob?.(jobId);
           if (!approval) { skipped.push({ jobId, reason: 'no packet could be prepared' }); continue; }
@@ -272,34 +522,73 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         // it as this batch submits, so one batch can never blow past the cap.
         let dailyCount = db.countAppliedOn?.(new Date().toISOString().slice(0, 10)) ?? 0;
         for (const { jobId, packet, approval } of queue) {
+          // The queue is a snapshot; honor what the human did SINCE it was
+          // built. Cancel stops between jobs (never mid-fill), and a job the
+          // user rejected/archived/submitted during the run is skipped.
+          if (runState.cancelRequested) {
+            cancelled = true;
+            skipped.push({ jobId, reason: 'cancelled before this job started' });
+            const item = runState.progress.items.find((x) => x.jobId === jobId);
+            if (item) Object.assign(item, { status: 'cancelled' });
+            runState.progress.completed += 1;
+            continue;
+          }
+          const liveSkip = liveSkipReason(jobId);
+          if (liveSkip) { skipped.push({ jobId, reason: liveSkip }); done += 1; continue; }
           runState.phase = `auto-apply (${done + 1}/${queue.length}) — ${jobId}`;
+          runState.progress.currentJobId = jobId;
+          const progressItem = runState.progress.items.find((x) => x.jobId === jobId);
+          if (progressItem) progressItem.status = 'opening';
           try {
             const result = await assistFn({
               packet, config, mode: 'LIVE_ASSIST', approval, dailyCount,
-              options: { autoSubmit }, deps,
+              options: { autoSubmit },
+              deps: { ...deps, shouldCancel: () => runState.cancelRequested },
             });
             recordAssistResult(db, jobId, result);
             if (result.submitted === true) dailyCount += 1;
-            results.push({ jobId, status: result.status, submitted: result.submitted === true, blockers: result.blockers ?? [] });
+            const itemResult = {
+              jobId, status: result.status, submitted: result.submitted === true,
+              blockers: result.blockers ?? [], resumed: result.resumed === true,
+            };
+            results.push(itemResult);
+            if (progressItem) Object.assign(progressItem, itemResult);
           } catch (err) {
-            results.push({ jobId, status: 'failed', error: err.message });
+            const message = sanitizeErrorMessage(err.message);
+            results.push({ jobId, status: 'failed', error: message });
+            if (progressItem) Object.assign(progressItem, { status: 'failed', error: message });
+            runState.rca.push(buildRca({ operation: 'auto-apply', source: jobId, error: err, runId }));
           }
           done += 1;
+          runState.progress.completed += 1;
         }
+        runState.progress.currentJobId = null;
+        for (const skip of skipped) {
+          const item = runState.progress.items.find((x) => x.jobId === skip.jobId);
+          if (item && ['queued', 'opening'].includes(item.status)) {
+            Object.assign(item, { status: cancelled ? 'cancelled' : 'skipped', reason: skip.reason });
+          }
+        }
+        runState.progress.completed = ids.length;
         refreshTracker();
-        runState.lastResult = { phase: 'assist-batch', total: queue.length, skipped, results };
+        runState.lastResult = {
+          phase: 'assist-batch', total: queue.length, skipped, results,
+          ...(cancelled ? { cancelled: true } : {}),
+        };
       } catch (err) {
         // A background batch failure must NEVER escape — an unhandled rejection
         // here would crash the whole dashboard process (the UI would then only
         // ever show "Failed to fetch").
-        runState.lastError = `auto-apply failed: ${err.message}`;
+        const message = sanitizeErrorMessage(err.message);
+        runState.lastError = `auto-apply failed: ${message}`;
+        runState.rca.push(buildRca({ operation: 'auto-apply', error: err, runId }));
         runState.lastResult = { phase: 'assist-batch', total: queueLen, skipped, results };
       } finally {
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
       }
-    })();
-    return { started: true, queued: ids.length };
+    })());
+    return { started: true, queued: ids.length, runId };
   }
 
   /** Current time: injectable as a function for deterministic tests. */
@@ -309,11 +598,32 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     try {
       await route(req, res);
     } catch (err) {
-      sendJson(res, err.statusCode ?? 500, { error: err.message });
+      sendJson(res, err.statusCode ?? 500, { error: sanitizeErrorMessage(err.message) });
     }
   });
 
   async function route(req, res) {
+    setSecurityHeaders(res);
+    // ── Cross-site request defense ─────────────────────────────────────────
+    // Binding to 127.0.0.1 stops the NETWORK, not the user's own browser: any
+    // website they visit can fire fetch('http://127.0.0.1:4646/…'), and a
+    // DNS-rebinding page can even read responses. Requests must therefore
+    // carry a loopback Host header, and browser requests that declare an
+    // Origin must come from localhost.
+    if (!isLoopbackHost(req.headers.host)) {
+      return sendJson(res, 403, { error: 'forbidden: the dashboard only serves localhost' });
+    }
+    // Origin is not reliably sent for cross-site GETs (for example an image or
+    // form navigation). Modern browsers do send Fetch Metadata, so reject an
+    // explicitly cross-site request before it can trigger even a read endpoint
+    // with work behind it, such as the on-demand health check.
+    if (String(req.headers['sec-fetch-site'] ?? '').toLowerCase() === 'cross-site') {
+      return sendJson(res, 403, { error: 'forbidden: cross-site requests are not allowed' });
+    }
+    if (req.method !== 'GET' && !isAllowedOrigin(req.headers.origin)) {
+      return sendJson(res, 403, { error: 'forbidden: cross-origin requests are not allowed' });
+    }
+
     const url = new URL(req.url, 'http://localhost');
     const path = url.pathname;
 
@@ -331,7 +641,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       res.end();
       return;
     }
-    if (req.method === 'GET' && path === '/learn/') {
+    if (req.method === 'GET' && (path === '/learn/' || path === '/learn/index.html')) {
       const html = readFileSync(join(PUBLIC_DIR, 'learn', 'index.html'), 'utf8');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end(html);
@@ -347,16 +657,36 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method === 'GET' && path === '/api/jobs') {
       const filters = Object.fromEntries(url.searchParams.entries());
       filters.now = nowDate();
-      return sendJson(res, 200, { jobs: listBoardJobs(db, filters) });
+      return sendJson(res, 200, boardPage(db, filters));
     }
     if (req.method === 'GET' && path === '/api/run/status') {
       return sendJson(res, 200, runState);
+    }
+    if (req.method === 'POST' && path === '/api/run/cancel') {
+      if (!runState.running) {
+        return sendJson(res, 409, { error: 'nothing is running' });
+      }
+      runState.cancelRequested = true;
+      return sendJson(res, 202, {
+        cancelling: true,
+        phase: runState.phase,
+        note: 'batch runs stop between jobs (never mid-fill); pipeline phases finish their current pass',
+      });
     }
     if (req.method === 'GET' && path === '/api/sections') {
       return sendJson(res, 200, dashboardSections(db, { now: nowDate() }));
     }
     if (req.method === 'GET' && path === '/api/reports') {
       return sendJson(res, 200, buildReports(db, { now: nowDate() }));
+    }
+    if (req.method === 'GET' && path === '/api/documents') {
+      return sendJson(res, 200, buildDocuments(db, { root: config?.root ?? null, now: nowDate() }));
+    }
+    if (req.method === 'GET' && path === '/api/health') {
+      // Full doctor pass (config, resume, python, browsers, dirs) — the
+      // Settings page's system-health panel. Doctor spawns Python etc., so it
+      // runs on demand only, never on the landing path.
+      return sendJson(res, 200, await healthReport());
     }
     if (req.method === 'GET' && path === '/api/export/jobs.csv') {
       const csv = exportRowsToCsv(buildExportRows(db, { now: nowDate() }));
@@ -387,13 +717,19 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       }
       return sendJson(res, 202, await startRun(body.phase));
     }
+    if (req.method === 'POST' && path === '/api/auto-apply/eligibility') {
+      const body = await readBody(req);
+      const ids = batchJobIds(body.jobIds);
+      if (ids.length === 0) return sendJson(res, 400, { error: 'select at least one job to preview' });
+      return sendJson(res, 200, autoApplyEligibility(ids, body.autoSubmit === true));
+    }
     if (req.method === 'POST' && path === '/api/assist-batch') {
       const body = await readBody(req);
       return sendJson(res, 202, startAssistBatch(body.jobIds, { autoSubmit: body.autoSubmit === true }));
     }
     if (req.method === 'POST' && path === '/api/approve-batch') {
       const body = await readBody(req);
-      const ids = Array.isArray(body.jobIds) ? [...new Set(body.jobIds.filter(Boolean))] : [];
+      const ids = batchJobIds(body.jobIds);
       const approved = [];
       const failed = [];
       for (const jobId of ids) {
@@ -405,7 +741,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     }
     if (req.method === 'POST' && path === '/api/prepare-batch') {
       const body = await readBody(req);
-      const ids = Array.isArray(body.jobIds) ? [...new Set(body.jobIds.filter(Boolean))] : [];
+      const ids = batchJobIds(body.jobIds);
       if (ids.length === 0) return sendJson(res, 400, { error: 'select at least one job to prepare' });
       if (runState.running) {
         return sendJson(res, 409, { error: `busy: ${runState.phase} is in progress` });
@@ -413,11 +749,15 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       Object.assign(runState, {
         running: true, phase: `prepare-selected (${ids.length})`,
         startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
+        cancelRequested: false,
       });
-      (async () => {
+      track((async () => {
         try {
           const prepareImpl = deps.prepareForJobsFn ?? preparePacketsForJobs;
-          const r = await prepareImpl({ config, db, logger, jobIds: ids, deps });
+          const r = await prepareImpl({
+            config, db, logger, jobIds: ids,
+            deps: { ...deps, shouldCancel: () => runState.cancelRequested },
+          });
           refreshTracker();
           runState.lastResult = {
             phase: 'prepare-selected',
@@ -430,12 +770,12 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
           runState.running = false;
           runState.finishedAt = new Date().toISOString();
         }
-      })();
+      })());
       return sendJson(res, 202, { started: true, queued: ids.length });
     }
     if (req.method === 'POST' && path === '/api/decide-batch') {
       const body = await readBody(req);
-      const ids = Array.isArray(body.jobIds) ? [...new Set(body.jobIds.filter(Boolean))] : [];
+      const ids = batchJobIds(body.jobIds);
       const updated = [];
       const failed = [];
       for (const jobId of ids) {
@@ -457,7 +797,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (jobMatch) {
       const [, jobId, action] = jobMatch.map((s) => (s ? decodeURIComponent(s) : s));
       if (req.method === 'GET' && !action) {
-        const detail = jobDetail(db, jobId, { ...deps, now: nowDate() });
+        const detail = jobDetail(db, jobId, { ...deps, root: config?.root ?? null, now: nowDate() });
         if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
         return sendJson(res, 200, detail);
       }
@@ -482,8 +822,26 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         const result = markSubmittedByHuman(db, jobId, {
           now: nowDate(),
           confirmationNumber: body.confirmationNumber,
+          verified: body.verified === true,
           note: body.note,
         });
+        // Keep the privacy-minimized resumable checkpoint aligned when one
+        // exists. Legacy jobs without a checkpoint remain valid DB records.
+        try {
+          const approval = db.getApprovalByJob?.(jobId);
+          const packet = approval
+            ? (deps.loadPacketImpl ? deps.loadPacketImpl(approval) : loadPacket(approval))
+            : null;
+          if (packet && config?.root) {
+            const evidence = [body.confirmationNumber, body.note].filter(Boolean);
+            await markApplicationUserSubmitted({ root: config.root, packet, evidence });
+            if (result.verified) {
+              await markApplicationVerified({ root: config.root, packet, evidence: evidence.length ? evidence : ['human confirmed submission evidence'] });
+            }
+          }
+        } catch (err) {
+          logger?.warn?.(`application-state submission sync skipped for ${jobId}: ${sanitizeErrorMessage(err.message)}`);
+        }
         refreshTracker();
         return sendJson(res, 200, result);
       }
@@ -494,6 +852,11 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       }
       if (req.method === 'POST' && action === 'assist') {
         return sendJson(res, 202, await startAssist(jobId));
+      }
+      if (req.method === 'GET' && action === 'eligibility') {
+        return sendJson(res, 200, autoApplyEligibility(
+          [jobId], url.searchParams.get('autoSubmit') === 'true',
+        ).items[0]);
       }
       // One-click end-to-end: prepare (if needed) -> approve -> fill; submits
       // only when the body explicitly opts in. Same orchestration as the batch.
@@ -506,7 +869,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     sendJson(res, 404, { error: `no route: ${req.method} ${path}` });
   }
 
-  return { server, runState };
+  return { server, runState, inFlight };
 }
 
 /**
@@ -516,9 +879,17 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
  * @returns {Promise<{ server: import('node:http').Server, port: number, url: string, close: Function }>}
  */
 export function startDashboard({ config, db, logger, port = 4646, deps = {} } = {}) {
-  const { server, runState } = createDashboardServer({ config, db, logger, deps });
+  const { server, runState, inFlight } = createDashboardServer({ config, db, logger, deps });
   return new Promise((resolve, reject) => {
-    server.once('error', reject);
+    server.once('error', (err) => {
+      if (err?.code === 'EADDRINUSE') {
+        reject(new Error(`port ${port} is already in use — another dashboard is probably running. `
+          + `Open http://127.0.0.1:${port} in your browser, or close the other process `
+          + `(or start this one with a different port).`));
+        return;
+      }
+      reject(err);
+    });
     // 127.0.0.1 only — the dashboard must never be reachable from the network.
     server.listen(port, '127.0.0.1', () => {
       const actual = server.address().port;
@@ -527,7 +898,11 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
         runState,
         port: actual,
         url: `http://127.0.0.1:${actual}`,
-        close: () => new Promise((r) => server.close(r)),
+        close: async () => {
+          runState.cancelRequested = true;
+          await new Promise((r) => server.close(r));
+          await Promise.allSettled([...inFlight]);
+        },
       });
     });
   });
@@ -568,9 +943,75 @@ export function installProcessSafetyNet({ runState, logger, proc = process } = {
 
 /* ------------------------------- helpers --------------------------------- */
 
+/** Hostnames that mean "this machine's browser talking to its own dashboard". */
+const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '::1', '[::1]']);
+
+/**
+ * Is this Host header a loopback host (any port)? A missing Host is allowed —
+ * only ancient non-browser clients omit it, and the socket is loopback-bound.
+ * @param {string|undefined} host
+ */
+export function isLoopbackHost(host) {
+  if (!host) return true;
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(`http://${host}`).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Is this Origin header acceptable for a state-changing request? Absent means
+ * a same-origin/non-browser client (fetch/curl); "null" is an opaque origin
+ * (sandboxed iframe, file://) and is rejected like any foreign site.
+ * @param {string|undefined} origin
+ */
+export function isAllowedOrigin(origin) {
+  if (origin === undefined || origin === '') return true;
+  if (origin === 'null') return false;
+  try {
+    return LOOPBACK_HOSTNAMES.has(new URL(origin).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function sendJson(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+function batchJobIds(value) {
+  const ids = Array.isArray(value)
+    ? [...new Set(value.filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim()))]
+    : [];
+  if (ids.length > MAX_BATCH_JOBS) {
+    throw Object.assign(new Error(`batch is limited to ${MAX_BATCH_JOBS} jobs`), { statusCode: 400 });
+  }
+  return ids;
+}
+
+/** Defense-in-depth headers for every page, API response, and static asset. */
+function setSecurityHeaders(res) {
+  res.setHeader('content-security-policy', [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "connect-src 'self'",
+    "font-src 'self' data:",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    // The dashboard is intentionally a single-file local SPA. Inline script
+    // and style remain necessary until it is split into fingerprinted assets.
+    "script-src 'self' 'unsafe-inline'",
+    "style-src 'self' 'unsafe-inline'",
+  ].join('; '));
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('x-frame-options', 'DENY');
+  res.setHeader('referrer-policy', 'no-referrer');
+  res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('cache-control', 'no-store');
 }
 
 /** Minimal MIME map for the bundled SPA assets. */

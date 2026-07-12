@@ -248,7 +248,7 @@ describe('workday adapter', () => {
       return jsonResponse({ jobPostingInfo: { jobDescription: '<p>Azure Databricks PySpark</p>' } });
     });
     const { jobs, errors } = await workday.run(
-      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 20 }] },
+      { tenants: [{ host: 'acme.wd1.myworkdayjobs.com', tenant: 'acme', site: 'External', pageSize: 20 }], hostSpacingMs: 0 },
       { fetchImpl, maxRetries: 0, detailConcurrency: 4 },
     );
     expect(errors).toHaveLength(0);

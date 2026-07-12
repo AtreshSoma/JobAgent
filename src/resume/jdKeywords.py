@@ -31,6 +31,44 @@ def _count(text: str, phrase: str) -> int:
     return len(_phrase_pattern(phrase).findall(text))
 
 
+def _marker_events(
+    text: str, required_markers: Sequence[str], preferred_markers: Sequence[str]
+) -> List[tuple]:
+    """Return non-overlapping qualification-heading events.
+
+    Marker vocabularies commonly overlap: ``preferred qualifications`` also
+    contains the broad required marker ``qualifications``.  Treating both hits
+    as headings incorrectly turns the preferred section back into a required
+    section halfway through the heading.  We therefore prefer the longest
+    marker at an overlapping location and discard the shorter nested hit.
+
+    Each event is ``(start, end, kind, marker)`` and events are returned in
+    document order.
+    """
+    candidates: List[tuple] = []
+    for kind, markers in (
+        ("required", required_markers),
+        ("preferred", preferred_markers),
+    ):
+        for marker in markers:
+            if not marker:
+                continue
+            for hit in _phrase_pattern(marker).finditer(text):
+                candidates.append((hit.start(), hit.end(), kind, marker))
+
+    # At a shared/overlapping position, keep the most specific (longest)
+    # configured heading.  The final kind tie-break is deterministic only; an
+    # exact marker should not normally be configured in both lists.
+    candidates.sort(key=lambda item: (item[0], -(item[1] - item[0]), item[2]))
+    selected: List[tuple] = []
+    for candidate in candidates:
+        start, end, _kind, _marker = candidate
+        if any(start < chosen_end and end > chosen_start for chosen_start, chosen_end, *_ in selected):
+            continue
+        selected.append(candidate)
+    return selected
+
+
 def _required_spans(
     text: str, required_markers: Sequence[str], preferred_markers: Sequence[str]
 ) -> List[tuple]:
@@ -40,20 +78,13 @@ def _required_spans(
     marker opens a span that stays open until the next marker (required or
     preferred) or the end of the document. A preferred marker closes it.
     """
-    events: List[tuple] = []
-    for m in required_markers:
-        for hit in _phrase_pattern(m).finditer(text):
-            events.append((hit.start(), "required"))
-    for m in preferred_markers:
-        for hit in _phrase_pattern(m).finditer(text):
-            events.append((hit.start(), "preferred"))
+    events = _marker_events(text, required_markers, preferred_markers)
     if not events:
         return []
-    events.sort(key=lambda e: e[0])
 
     spans: List[tuple] = []
     open_start = None
-    for pos, kind in events:
+    for pos, _end, kind, _marker in events:
         if kind == "required":
             if open_start is None:
                 open_start = pos
@@ -65,6 +96,90 @@ def _required_spans(
     if open_start is not None:
         spans.append((open_start, len(text)))
     return spans
+
+
+def _context(text: str, start: int, end: int, radius: int = 90) -> str:
+    """Return a compact, whitespace-normalized JD excerpt around a hit."""
+    left = max(0, start - radius)
+    right = min(len(text), end + radius)
+    return re.sub(r"\s+", " ", text[left:right]).strip()
+
+
+def classify_qualification_keywords(
+    jd_text: str,
+    keywords: Iterable[str],
+    *,
+    required_markers: Iterable[str] | None = None,
+    preferred_markers: Iterable[str] | None = None,
+) -> Dict[str, Any]:
+    """Classify requested keywords as required, preferred, or unclassified.
+
+    This is deliberately narrower than ATS tiering: repetition and title
+    placement can affect ATS importance, but they do not turn a preferred
+    qualification into a required one.  Classification comes only from the
+    most recent explicit qualification heading before each keyword occurrence.
+    If a term occurs in both sections, ``required`` wins conservatively.
+
+    The returned ``items`` retain the caller's display form and include exact JD
+    excerpts so downstream tailoring can explain every prioritization decision.
+    """
+    # Normalize whitespace up front so multi-word headings and technologies can
+    # span line breaks in copied job descriptions without losing classification.
+    text = re.sub(r"\s+", " ", jd_text or "").strip()
+    required = list(required_markers or [])
+    preferred = list(preferred_markers or [])
+    events = _marker_events(text, required, preferred)
+
+    deduped: List[str] = []
+    seen = set()
+    for keyword in keywords:
+        key = _normalize(str(keyword))
+        if key and key not in seen:
+            seen.add(key)
+            deduped.append(keyword)
+
+    buckets: Dict[str, List[str]] = {
+        "required": [],
+        "preferred": [],
+        "unclassified": [],
+    }
+    items: List[Dict[str, Any]] = []
+
+    for keyword in deduped:
+        occurrences: List[Dict[str, str]] = []
+        kinds = set()
+        for hit in _phrase_pattern(str(keyword)).finditer(text):
+            active = None
+            for event in events:
+                if event[0] > hit.start():
+                    break
+                active = event
+            kind = active[2] if active is not None else "unclassified"
+            kinds.add(kind)
+            occurrences.append({
+                "classification": kind,
+                "marker": active[3] if active is not None else "",
+                "excerpt": _context(text, hit.start(), hit.end()),
+            })
+
+        if "required" in kinds:
+            classification = "required"
+        elif "preferred" in kinds:
+            classification = "preferred"
+        else:
+            classification = "unclassified"
+
+        buckets[classification].append(keyword)
+        items.append({
+            "keyword": keyword,
+            "classification": classification,
+            "jd_evidence": occurrences,
+        })
+
+    return {
+        **buckets,
+        "items": items,
+    }
 
 
 def _in_spans(text: str, phrase: str, spans: List[tuple]) -> bool:

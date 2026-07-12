@@ -14,13 +14,17 @@
  */
 
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+
+import { writeFileAtomic } from './utils/fsSafe.js';
 
 /** Canonical, zeroed counter block. */
 export function emptyCounters() {
   return {
     jobs_found: 0,
     jobs_scored: 0,
+    jobs_skipped_unchanged: 0,
+    jobs_cancelled: 0,
     jobs_queued: 0,
     jobs_discarded: 0,
     jobs_unknown_date_review: 0,
@@ -42,7 +46,9 @@ export function countBy(rows = [], key) {
 
 function defaultWrite(dir, path, text) {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, text, 'utf8');
+  // Atomic: a dashboard/watch process reading this artifact mid-write must
+  // never see a truncated JSON file.
+  writeFileAtomic(path, text, 'utf8');
 }
 
 /** Write a JSON artifact under <root>/data/<filename>. Returns the path. */

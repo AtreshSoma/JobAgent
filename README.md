@@ -14,8 +14,9 @@ visa sponsorship.
 
 ## TL;DR — what it actually does
 
-1. **Finds jobs** from official ATS APIs (Greenhouse, Lever), public job pages
-   (JSON-LD), and CSV/URL lists you provide.
+1. **Finds jobs** from configured public ATS endpoints (Greenhouse, Lever,
+   Ashby, Workday, and SmartRecruiters), provider feeds, public JSON-LD job
+   pages, and CSV/URL lists you provide.
 2. **De-duplicates** and stores every job in a local SQLite database.
 3. **Filters out** disqualifiers (no-sponsorship, clearance-required, junior,
    wrong employment type, wrong geography, stale postings).
@@ -68,11 +69,20 @@ Then, when you run `assist` on an **approved** packet, it:
 4. Clicks only **safe navigation** controls (Next / Continue / Review) to advance
    multi-step forms — and **stops before the final Submit**.
 
-**Does it ever click submit?** No. This assistant never submits an application
-for you. After it fills and uploads everything it can, it leaves the job as
-`ready_for_submit` (or `assist_blocked` when it needs your input) with the
-browser open on the final page, so you review and click **Submit** yourself.
-This is a deliberate safety design, not a limitation to work around.
+**Does it ever click submit?** Not by default. After it fills and uploads
+everything it can, it leaves the job as `ready_for_submit` (or `assist_blocked`
+when it needs your input) with the browser open on the final page, so you
+review and click **Submit** yourself.
+
+There is ONE exception, and it is entirely in your hands: when you explicitly
+opt in to **auto-submit for that specific run** (the dashboard asks you each
+time), the runner clicks the final Submit — but only on a completely clean form
+(zero blockers, every required field filled, truthful sponsorship answers, a
+confidently-identified submit button) and within your daily application cap.
+Even then, a job is only recorded as **submitted** when the runner VERIFIES the
+submission (a confirmation page, or a redirect with the form gone). An
+unverified click is surfaced as `submit_unverified` for you to confirm — it is
+never silently counted as an application.
 
 ---
 
@@ -106,11 +116,11 @@ What happens at each stage, concretely:
 | Search | `src/search/` | Calls Greenhouse/Lever public APIs, parses JSON-LD from public job pages, and imports your CSV/URL lists. No login automation, no stealth. |
 | Normalize | `src/search/normalize.js` | Converts every source into one canonical job shape with a stable ID. |
 | De-dupe | `src/search/deduplicator.js` | Drops repeats (keeps the richer JD); skips jobs you've already **applied** to (toggle via `EXCLUDE_ALREADY_APPLIED`). |
-| Freshness | `src/search/freshnessFilter.js` | Keeps recent **dated** postings only, per `JOB_FRESHNESS_MODE` (LAST_24_HOURS / LAST_3_DAYS / LAST_7_DAYS / ALL). Auto-widens to a 3-day window when a strict window is thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs are **never** mixed into fresh results; with `INCLUDE_UNKNOWN_DATE_JOBS=true` they go to a separate review bucket (`data/unknown_date_review.json`), otherwise they are dropped. |
+| Freshness | `src/search/freshnessFilter.js` | Keeps recent **dated** postings only, per `JOB_FRESHNESS_MODE` (LAST_24_HOURS / LAST_3_DAYS / LAST_7_DAYS / ALL — **default LAST_7_DAYS**: requisitions stay open for weeks, and a 3-day hard window was measured discarding >75% of scoreable jobs before ranking). Auto-widens to a 3-day window when a strict window is thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs are **never** mixed into fresh results; with `INCLUDE_UNKNOWN_DATE_JOBS=true` they go to a separate review bucket (`data/unknown_date_review.json`), otherwise they are dropped. |
 | Exclude | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior, C2C/part-time, wrong-geo, and stale postings — all phrases come from `config/exclusions.json`. |
 | Sponsorship | `src/scoring/sponsorshipClassifier.js` | Confirmed / Likely / Unconfirmed from JD phrases + known-sponsor list in config. |
 | Score | `src/scoring/scorer.js` | 13 weighted categories (title, seniority, Azure/Fabric stack, data-eng stack, BI/semantic, Python/SQL/PySpark, domain, sponsorship, geography, freshness, direct-ATS, company likelihood, resume alignment) → normalized 0–100. Fully deterministic. |
-| Tier + gate | `src/scoring/explainScore.js` | Priority ≥85, Apply ≥75, Queue ≥60, Near miss ≥50. Downgrades Apply/Priority → Queue unless sponsorship is acceptable or you approved it. |
+| Tier + gate | `src/scoring/explainScore.js` | Priority ≥85, Apply ≥75, Queue ≥60, Near miss ≥50. Downgrades Apply/Priority → Queue unless sponsorship is acceptable or you approved it. The dashboard still shows these gated 75+ roles as **strong fits** with a "⚠ verify sponsorship first" action — fit measures the ROLE match; sponsorship feasibility is reported separately, and the gate only blocks auto-preparation. Only Priority/Apply tiers are auto-prepared; Queue-tier jobs are prepared **only** when you select them yourself ("Prepare selected"). |
 | Tailor resume | `src/resume/tailor.py` | Opens the master read-only and bolds skills you already have that match the JD. Saves into the job's `applications/output/` folder. Never fabricates skills. (An optional per-job "Most relevant to this role" focus line is available but **off by default** — enable with `config.runtime.resumeFocusLine === true`.) |
 | Cover letter | `src/apply/coverLetter.js` | Deterministic template filled from your profile, then humanized (banned phrases + em dashes removed), 180–260 words, only when score ≥ threshold or required. |
 | Packet | `src/apply/applicationPacket.js` | Bundles job + score + tier + resume path + cover letter + ATS + fill plan + upload plan. Always `submitReady: false`. |
@@ -127,8 +137,8 @@ What happens at each stage, concretely:
 2. Prefer official APIs, RSS feeds, public job pages, user-provided URLs, and ATS pages.
 3. No stealth browser evasion, webdriver hiding, fake user agents, or aggressive scraping.
 4. Never fabricate candidate data, resume content, skills, certifications, history, salary, education, or immigration status.
-5. Auto-search, auto-score, auto-tailor, and form pre-fill *planning* are allowed; **the final submit is always done by you**.
-6. There is no auto-submit mode and no submit-click path anywhere in the code — `assist` (LIVE_ASSIST) fills and uploads, then stops on the final page for you to submit.
+5. Auto-search, auto-score, auto-tailor, and form pre-fill *planning* are allowed; **the final submit is human-gated** — either you click it, or you explicitly opted in to auto-submit for that run.
+6. The only automated submit path is `applyRunner.tryAutoSubmit`, strictly gated behind the per-run `options.autoSubmit === true` opt-in, a clean form, and the daily cap — and "submitted" is only recorded after the submission is verified (`npm run verify` asserts these gates exist).
 7. Every application packet is fully reviewable before anything happens.
 8. Sponsorship/work-authorization answers are always truthful and config-driven; the agent never claims "no sponsorship required."
 9. Ambiguous, legal, immigration, salary, or relocation questions pause and ask you.
@@ -150,8 +160,10 @@ run all at once or one step at a time:
 
 Valid run modes are **`DRY_RUN`**, **`PREPARE`**, and **`LIVE_ASSIST`** (set via
 `RUN_MODE` or `--mode`). Any unknown or legacy value falls back to `DRY_RUN`.
-Unattended auto-submit is intentionally **not** possible — this assistant never
-clicks the final Submit; you always do.
+Unattended auto-submit is intentionally **not** possible — submission happens
+only when you click Submit yourself, or when you explicitly opt in to
+auto-submit for a specific run (and even then only verified submissions are
+recorded as submitted).
 
 ---
 
@@ -225,8 +237,15 @@ drives the whole workflow from the browser:
 - **Board**: search, filter (fit / status / source / sponsorship / last-24 h),
   sort (score / newest / company / recently updated), and compare up to three
   jobs side by side.
-- **Why it fits**: every job shows its score explanation, the matched skills
-  found in the JD, and the missing/not-evidenced ones.
+- **Why it fits**: every job shows its score explanation, the JD skills you
+  have, and the JD skills not evidenced in your profile. A skill-alias
+  ontology (`config/scoring.json` → `evidenceAliases`) keeps these two lists
+  consistent — "ADF" in a JD is evidenced by "Azure Data Factory" in your
+  profile, "lakehouse" by "Delta Lake"/"Databricks", and so on.
+- **Verify sponsorship queue**: strong-fit roles (score ≥75) whose sponsorship
+  is unverified are surfaced with a "verify" chip and their own tile/next
+  action instead of being hidden in the medium bucket — the safety gate still
+  keeps them out of auto-preparation until you confirm the employer sponsors.
 - **Actions**: shortlist · reject · archive · approve packet · *Fill in browser
   (stops before submit)* · *I submitted it myself* (the only path to
   "submitted" — the system never sets it on its own).
@@ -381,9 +400,10 @@ npm run reject -- <id>     # reject a packet
 ```bash
 npm run doctor         # preflight checks (env, config, resume, browsers, dirs)
 npm run report         # regenerate reports from stored data
-npm run verify         # repo health + safety check (no auto-submit path)
+npm run verify         # repo health + safety check (submit stays human-gated)
+npm run db:maintenance # checkpoint the SQLite WAL (+ --vacuum to compact)
 npm test               # Node test suite (vitest)
-npm run test:py        # Python test suite (pytest)
+npm run test:py        # Python test suite (pytest; requires `python` on PATH)
 ```
 
 ### Typical flow
@@ -412,8 +432,11 @@ and an `approval_required` log line, and writes the packet to `applications/outp
 
 ```
 config/    validated config files + JSON schemas (the source of truth)
+           candidate.json + screening_answers.json hold YOUR personal data and are
+           gitignored — copy the *.example.json templates and fill them in
 src/       Node + Python modules (cli, config, search, scoring, resume, apply, automation, reports, logging, utils)
-scripts/   maintenance scripts (migrate-output-names, cleanup-outputs, verify)
+scripts/   maintenance scripts (migrate-output-names, cleanup-outputs, verify,
+           db-maintenance, regenerate-resumes, plus ad-hoc dev/debug .mjs tools)
 resumes/   base/ (master, read-only) and output/ (tailored drafts + cover letters)
 applications/
   output/       one JSON application packet per prepared job (review these)
@@ -439,7 +462,8 @@ need your input.
 ## Build status
 
 This project is built in strict phases. **Current state: all phases complete,
-including the browser-assisted apply layer (212 JS + 11 Python tests passing).**
+including the browser-assisted apply layer, a production-hardening pass, and a
+data-quality audit pass (563 JS + 40 Python tests passing).**
 
 - [x] Phase 1 — Scaffold (dirs, config, schemas, project metadata)
 - [x] Phase 2 — Config + utilities (loaders, validation, rate limit, retry, credentials, notifier, text, dates) + tests
@@ -460,12 +484,51 @@ including the browser-assisted apply layer (212 JS + 11 Python tests passing).**
 The **config files** — not source code — are authoritative:
 
 - `config/candidate.json` — your profile, skills, work authorization
+  (**gitignored — personal data**; copy `config/candidate.example.json` to create it)
 - `config/scoring.json` — weights, tiers, keywords, sponsorship signals
 - `config/exclusions.json` — hard disqualifier phrases
 - `config/screening_answers.json` — truthful, pattern-matched answers to form questions
+  (**gitignored — personal data**; copy `config/screening_answers.example.json` to create it)
 - `config/cover_letter.json` — cover-letter template + thresholds
 - `config/humanizer_patterns.json` — banned phrases/characters to strip
 - `config/jobboards.json` — which sources are enabled
 
 Secrets live only in `.env`. Scoring weights, exclusions, screening answers, and
 profile values are never hardcoded in source.
+# Job Search Workbench support matrix
+
+The dashboard is a dense, one-page daily workbench: workflow tabs and the job table stay in the main column, while priorities and the selected-job inspector remain in the right column. Documents, analytics, settings, and run RCA open as utility drawers instead of replacing the workbench.
+
+| Source / ATS | Discovery and detail | Auto-Fill | Verified Auto-Apply | Important limits |
+| --- | --- | --- | --- | --- |
+| Greenhouse | Official public board API | Fixture-tested common fields and resume upload | Eligible only after packet, resume, screening, duplicate, and consent checks | Live ATS-specific submission is not manually verified in this repository |
+| Lever | Official public postings API | Fixture-tested | Same fail-closed gate | Live ATS-specific submission is not manually verified |
+| Ashby | Official public postings API, including available compensation | Fixture-tested | Same fail-closed gate | Live ATS-specific submission is not manually verified |
+| Workday | Configured public CXS endpoints | Fixture-tested multi-step form behavior | Same fail-closed gate | Tenant schemas vary; authentication, CAPTCHA, and MFA are not bypassed |
+| SmartRecruiters | Official public postings endpoints | Fixture-tested | Same fail-closed gate | Tenant-specific fields can require review |
+| Generic company pages | JSON-LD/manual URL ingestion where available | Fixture-tested conservative field matching | Same fail-closed gate for the generic fixture family | Unknown or required fields stop for review |
+| LinkedIn / Indeed / Dice | Configured provider results and manual/direct job URLs | Only after reaching a supported external application form | Not eligible on protected marketplace pages | No login-wall, CAPTCHA, rate-limit, or anti-bot bypass |
+| iCIMS / Taleo / Jobvite | Manual/direct URL workflows may prefill recognizable fields | Best effort | Not in the verified Auto-Apply allowlist | Review and submit manually |
+
+“Fixture-tested” means the repository test fixtures demonstrated the behavior. It does not mean every live tenant or page variant was manually demonstrated. The product never treats a clicked Submit button as proof of application: `applied=1` requires positive confirmation evidence (for example, a confirmation page or confirmation number). A browser close, ambiguous response, or validation failure remains resumable and unverified.
+
+## Auto-Apply safety model
+
+Auto-Apply is off by default and requires explicit, one-run authorization in the eligibility preview. The server re-runs the same checks immediately before opening a browser. A job is excluded when it is already applied, duplicated, rejected, archived, missing a prepared packet or resume, has unresolved screening questions or upload blockers, requires unsafe sponsorship answers, has an unsupported ATS, or lacks a valid application URL.
+
+Durable checkpoints distinguish `precheck`, `filling`, `review`, `ready`, `submitting`, `verifying`, `user_submitted`, `verified`, `blocked`, `failed`, and `cancelled`. Submission-attempt phases cannot silently reopen and submit again. Failed or cancelled pre-submission work can be resumed from saved completed fields.
+
+## Launch and verification
+
+Run `npm run app` for the canonical launcher. It starts the local dashboard, selects a fallback port when the preferred port is occupied, prints the URL, opens a browser when the environment permits it, and shuts down on Ctrl+C. On Windows, `start-dashboard.cmd` invokes the same launcher.
+
+Useful checks:
+
+```text
+npm run verify
+npm run doctor
+npx vitest run
+npm run test:py
+```
+
+Run-level failures and partial source failures appear in the Activity/RCA drawer with sanitized symptoms, likely cause, retry guidance, retryability, and whether partial results remain valid. Secrets and screening answers are not included in these entries.

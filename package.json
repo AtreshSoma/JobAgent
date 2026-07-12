@@ -8,6 +8,7 @@
     "node": ">=22.5"
   },
   "scripts": {
+    "app": "node src/index.js app",
     "start": "node src/index.js go",
     "go": "node src/index.js go",
     "dashboard": "node src/index.js dashboard",
@@ -38,9 +39,10 @@
     "cleanup-outputs": "node scripts/cleanupGeneratedOutputs.js",
     "regenerate-resumes": "node scripts/regenerateResumes.js",
     "verify": "node scripts/verifyRepoHealth.js",
+    "db:maintenance": "node scripts/dbMaintenance.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:py": "python3 -m pytest"
+    "test:py": "python -m pytest"
   },
   "dependencies": {
     "ajv": "^8.17.1",
@@ -51,7 +53,7 @@
     "playwright": "~1.56.1"
   },
   "devDependencies": {
-    "marked": "^18.0.5",
-    "vitest": "^2.1.1"
+    "marked": "^18.0.6",
+    "vitest": "^4.1.10"
   }
 }

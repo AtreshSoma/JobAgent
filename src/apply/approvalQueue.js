@@ -20,6 +20,21 @@ export const APPROVAL_STATUS = Object.freeze({
 });
 
 /**
+ * Latest approval row per job id, as a Map. The single shared implementation
+ * for every consumer (dashboard, tracker) so "which approval row wins" can
+ * never drift between views: listApprovals is ordered created_at ASC, so a
+ * later row for the same job overwrites the earlier one.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @returns {Map<string, object>} job_id -> latest approval row
+ */
+export function latestApprovalsByJob(db) {
+  const map = new Map();
+  for (const a of db.listApprovals?.() ?? []) map.set(a.job_id, a);
+  return map;
+}
+
+/**
  * Enqueue a prepared packet for human review.
  *
  * Idempotent per job: if this job already has a queue entry, the existing row is

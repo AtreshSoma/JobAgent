@@ -44,6 +44,22 @@ export function slugify(text, maxLength = 60) {
 }
 
 /**
+ * True when `needle` appears as a whole word/phrase inside `haystack` —
+ * "race" must match "Race/Ethnicity" but never "embrace". Falls back to plain
+ * containment only if the needle produces an invalid regex.
+ * @param {unknown} haystack
+ * @param {unknown} needle
+ * @returns {boolean}
+ */
+export function wholeWordIn(haystack, needle) {
+  const h = String(haystack ?? '');
+  const n = String(needle ?? '').trim();
+  if (!n) return false;
+  const esc = n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  try { return new RegExp(`\\b${esc}\\b`, 'i').test(h); } catch { return h.includes(n); }
+}
+
+/**
  * Case-insensitive substring containment.
  * @param {unknown} haystack
  * @param {unknown} needle

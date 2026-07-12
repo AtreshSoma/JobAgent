@@ -8,9 +8,16 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout } from '../../utils/httpClient.js';
+import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
 
 export const adapterId = 'greenhouse';
+
+/**
+ * EVERY board lives on this one host. Politeness must be keyed on it: the old
+ * `greenhouse:${token}` rate-limit key was unique per board, so it never had a
+ * previous call to space against and the limiter never actually waited.
+ */
+const GREENHOUSE_HOST = 'boards-api.greenhouse.io';
 
 /** Default number of boards to fetch in parallel when ctx omits a ceiling. */
 const DEFAULT_BOARD_CONCURRENCY = 8;
@@ -26,21 +33,30 @@ const DEFAULT_BOARD_CONCURRENCY = 8;
  * @returns {Promise<{ jobs: object[], errors: Array<{board: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
   const errors = [];
 
   // Boards are independent public endpoints — fetch them in parallel (bounded).
+  // They are NOT independent servers, so the host gate below is what keeps the
+  // fan-out within the budget boards-api.greenhouse.io is actually counting.
   const perBoard = await mapWithConcurrency(boards, concurrency, async (token) => {
     try {
-      if (rateLimiter) await rateLimiter.wait(`greenhouse:${token}`, source.rateLimitMs);
-      const url = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(token)}/jobs?content=true`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      if (rateLimiter) await rateLimiter.wait(`greenhouse:${GREENHOUSE_HOST}`, source.rateLimitMs);
+      const url = `https://${GREENHOUSE_HOST}/v1/boards/${encodeURIComponent(token)}/jobs?content=true`;
+      const call = () => fetchJson(fetchImpl, url, requestTimeoutMs);
+      const data = await withRetry(
+        () => (hostGate ? hostGate.run(url, call) : call()),
+        { maxRetries },
+      );
       return { jobs: (data.jobs ?? []).map((j) => mapJob(j, token)), error: null };
     } catch (err) {
-      return { jobs: [], error: { board: token, error: err.message } };
+      return {
+        jobs: [],
+        error: { board: token, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
+      };
     }
   });
 
@@ -54,11 +70,7 @@ export async function run(source = {}, ctx = {}) {
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
   const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
-  if (!res.ok) {
-    const e = new Error(`Greenhouse HTTP ${res.status} for ${url}`);
-    e.status = res.status;
-    throw e;
-  }
+  if (!res.ok) throw httpError(res, 'Greenhouse', url);
   return res.json();
 }
 
@@ -92,7 +104,10 @@ export function mapJob(j, token) {
     location: j.location?.name ?? '',
     url: j.absolute_url ?? '',
     jdText: htmlToText(unescapeHtmlPayload(j.content ?? '')),
-    postedAt: j.updated_at ?? j.first_published ?? null,
+    // first_published is the true posting date; updated_at bumps on ANY board
+    // edit, which made months-old reqs look freshly posted. Fall back to
+    // updated_at only when the board omits first_published.
+    postedAt: j.first_published ?? j.updated_at ?? null,
     employmentType: '',
     rawMetadata: { board: token, departments: j.departments ?? [] },
   });

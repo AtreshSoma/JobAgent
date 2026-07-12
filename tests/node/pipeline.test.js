@@ -104,4 +104,26 @@ describe('runPipeline', () => {
     expect(noSpon.discard_reason).toContain('sponsorship_denial');
     db.close();
   });
+
+  it('incremental discovery skips deterministic re-scoring for unchanged jobs', async () => {
+    const { db, logger, config } = makeCtx(root);
+    const first = await runPipeline({ config, db, logger, mode: 'DRY_RUN', deps: { searchFn, now: F.NOW, stamp: 'first' } });
+    expect(first.counters.jobs_scored).toBeGreaterThan(0);
+
+    const second = await runPipeline({ config, db, logger, mode: 'DRY_RUN', deps: { searchFn, now: F.NOW, stamp: 'second' } });
+    expect(second.counters.jobs_scored).toBe(0);
+    expect(second.counters.jobs_skipped_unchanged).toBe(first.counters.jobs_scored);
+    db.close();
+  });
+
+  it('cancels before scoring and records the partial checkpoint', async () => {
+    const { db, logger, config } = makeCtx(root);
+    const result = await runPipeline({
+      config, db, logger, mode: 'DRY_RUN',
+      deps: { searchFn, now: F.NOW, stamp: 'cancelled', shouldCancel: () => true },
+    });
+    expect(result.counters.jobs_scored).toBe(0);
+    expect(result.counters.jobs_cancelled).toBeGreaterThan(0);
+    db.close();
+  });
 });

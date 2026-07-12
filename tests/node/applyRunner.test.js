@@ -67,7 +67,7 @@ describe('assistApply', () => {
     expect(r.blockers).toContain('packet has no application URL');
   });
 
-  it('auto-submit (opt-in) clicks the final Submit on a completely clean form', async () => {
+  it('auto-submit (opt-in) clicks the final Submit and VERIFIES the confirmation page', async () => {
     const page = makeFakePage(KNOWN);
     const r = await assistApply({
       packet: basePacket(),
@@ -75,11 +75,70 @@ describe('assistApply', () => {
       mode: 'LIVE_ASSIST',
       approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
       options: { headless: true, autoSubmit: true },
-      deps: { ...sessionDeps(page), wait: async () => {} },
+      deps: {
+        ...sessionDeps(page),
+        wait: async () => {},
+        // After the click, the ATS shows its confirmation page.
+        inspectPage: async () => ({
+          status: null, url: 'https://example.com/apply/confirmation',
+          html: '<h1>Thank you for applying!</h1>', guard: { blocked: false },
+        }),
+      },
     });
     expect(r.status).toBe(LIFECYCLE.SUBMITTED);
     expect(r.submitted).toBe(true);
+    expect(r.submitVerification?.verified).toBe(true);
+    expect(r.submitVerification?.signals).toContain('confirmation message');
     expect(page.record.clicks).toEqual([{ selector: '#submit_app' }]);
+  });
+
+  it('auto-submit WITHOUT a detectable confirmation ends as submit_unverified, never submitted', async () => {
+    const page = makeFakePage(KNOWN);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: { maxApplicationsPerDay: 15 }, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true, autoSubmit: true },
+      deps: {
+        ...sessionDeps(page),
+        wait: async () => {},
+        // Same URL, same form — the click may have been swallowed by client-side
+        // validation. The runner must NOT claim it was submitted.
+        inspectPage: async () => ({
+          status: null, url: 'https://example.com/apply',
+          html: '<form><input id="email"></form>', guard: { blocked: false },
+        }),
+      },
+    });
+    expect(r.status).toBe(LIFECYCLE.SUBMIT_UNVERIFIED);
+    expect(r.submitted).toBe(false);
+    expect(r.submitVerification?.verified).toBe(false);
+    expect(r.note).toMatch(/NOT recorded as submitted/);
+    expect(page.record.clicks).toEqual([{ selector: '#submit_app' }]); // the click DID happen
+  });
+
+  it('auto-submit hitting a post-submit CAPTCHA wall ends as submit_unverified', async () => {
+    const page = makeFakePage(KNOWN);
+    const r = await assistApply({
+      packet: basePacket(),
+      config: { runtime: { maxApplicationsPerDay: 15 }, scoring: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true, autoSubmit: true },
+      deps: {
+        ...sessionDeps(page),
+        wait: async () => {},
+        inspectPage: async () => ({
+          status: null, url: 'https://example.com/apply/challenge',
+          html: '<div>Please verify you are human</div>',
+          guard: { blocked: true, kind: 'captcha', reason: 'captcha challenge' },
+        }),
+      },
+    });
+    expect(r.status).toBe(LIFECYCLE.SUBMIT_UNVERIFIED);
+    expect(r.submitted).toBe(false);
+    expect(r.submitVerification?.signals?.join(' ')).toMatch(/post-submit wall/);
   });
 
   it('auto-submit REFUSES when the form has blockers (falls back to ready_for_submit)', async () => {

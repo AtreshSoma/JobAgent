@@ -4,14 +4,20 @@
  * Joins every job in the SQLite store with its latest approval-queue row and
  * writes one tidy spreadsheet at `data/job_tracker.csv`. The "Submit Status"
  * column always reflects the human-gated reality: nothing reads "Submitted"
- * unless a human actually submitted it (jobs.applied = 1).
+ * unless the human submitted it — or opt-in auto-submit VERIFIED the
+ * submission (jobs.applied = 1). An unverified auto-submit click is called
+ * out explicitly so it is never mistaken for a completed application.
  */
 
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 
+import { writeFileAtomic } from '../utils/fsSafe.js';
 import { csvField } from './reportGenerator.js';
 import { formatPostedRelative } from '../utils/dates.js';
+import { deriveAppStatus, APP_STATUS } from '../dashboard/data.js';
+import { jsonList } from '../utils/json.js';
+import { latestApprovalsByJob as approvalsByJob } from '../apply/approvalQueue.js';
 
 /** Tracker columns, in spreadsheet order. */
 const COLUMNS = [
@@ -21,48 +27,43 @@ const COLUMNS = [
   'Location', 'ATS', 'Resume Used', 'Cover Letter', 'Job ID',
 ];
 
-/** Parse a TEXT column that may hold a JSON array. */
-function jsonList(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string' && value.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  }
-  return [];
-}
+/** Spreadsheet label for every derived board status. */
+const STATUS_LABELS = Object.freeze({
+  [APP_STATUS.SUBMITTED]: 'Submitted',
+  [APP_STATUS.SUBMIT_UNVERIFIED]: 'Auto-submit clicked — UNCONFIRMED (verify, then mark submitted)',
+  [APP_STATUS.ARCHIVED]: 'Archived by you',
+  [APP_STATUS.REJECTED]: 'Rejected by you',
+  [APP_STATUS.SKIPPED]: 'Skipped by you',
+  [APP_STATUS.BLOCKED]: 'Filled — needs you (login/extra fields)',
+  [APP_STATUS.READY_FOR_SUBMIT]: 'Filled — ready to submit',
+  [APP_STATUS.APPROVED]: 'Approved — not yet submitted',
+  [APP_STATUS.NEEDS_REVIEW]: 'Prepared — awaiting your approval',
+  [APP_STATUS.SHORTLISTED]: 'Shortlisted',
+  [APP_STATUS.DATE_UNCONFIRMED]: 'Scored — posting date unconfirmed',
+  [APP_STATUS.DISCARDED]: 'Filtered out during scoring',
+  [APP_STATUS.SCORED]: 'Scored',
+  [APP_STATUS.DISCOVERED]: 'Found',
+});
 
 /**
- * Human-readable submit status for a job + its latest approval row.
- * Order matters: an actual submission always wins, then explicit user actions,
- * then assist outcomes, then approval state, then pipeline progress.
+ * Human-readable submit status for a job + its latest approval row. Derives
+ * from the SAME deriveAppStatus() precedence the dashboard board uses, so the
+ * spreadsheet and the board can never drift apart, then maps to spreadsheet
+ * wording.
  *
  * @param {object} job jobs-table row (may be partial)
  * @param {object|null} approval latest approval_queue row for the job
  * @returns {string}
  */
 export function submitStatus(job = {}, approval = null) {
-  if (Number(job.applied) === 1) return 'Submitted';
-  if (job.status === 'skipped') return 'Skipped by you';
-  if (job.status === 'ready_for_submit') return 'Filled — ready to submit';
-  if (job.status === 'assist_blocked') return 'Filled — needs you (login/extra fields)';
-  if (job.status === 'failed') return 'Assist failed — open & apply manually';
-  if (approval?.approval_status === 'approved') return 'Approved — not yet submitted';
-  if (approval?.approval_status === 'rejected') return 'Rejected by you';
-  if (job.application_packet_path) return 'Prepared — awaiting your approval';
-  if (typeof job.score === 'number' || job.tier) return 'Scored';
-  return 'Found';
-}
-
-/** Latest approval row per job id. */
-function approvalsByJob(db) {
-  const map = new Map();
-  for (const a of db.listApprovals?.() ?? []) {
-    // listApprovals is ordered by created_at ascending, so later rows win.
-    map.set(a.job_id, a);
+  const status = deriveAppStatus(job, approval);
+  // A packet that exists but whose approval row is missing (edge case) still
+  // reads as prepared rather than a bare "Scored".
+  if ((status === APP_STATUS.SCORED || status === APP_STATUS.DISCOVERED)
+      && job.application_packet_path) {
+    return STATUS_LABELS[APP_STATUS.NEEDS_REVIEW];
   }
-  return map;
+  return STATUS_LABELS[status] ?? 'Found';
 }
 
 /**
@@ -109,6 +110,8 @@ export function writeJobTracker(db, root) {
   const dir = join(root, 'data');
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'job_tracker.csv');
-  writeFileSync(path, [COLUMNS.join(','), ...rows].join('\n'), 'utf8');
+  // Atomic: the dashboard rewrites this after every action while the user may
+  // have it open in Excel — a torn CSV must be impossible.
+  writeFileAtomic(path, [COLUMNS.join(','), ...rows].join('\n'), 'utf8');
   return { path, total: jobs.length, prepared, submitted };
 }

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   applicant_count INTEGER,
   employment_type TEXT,
   employment_category TEXT,
+  compensation_text TEXT,
   score INTEGER,
   tier TEXT,
   sponsorship TEXT,
@@ -74,6 +75,8 @@ CREATE TABLE IF NOT EXISTS run_log (
   ended_at TEXT,
   jobs_found INTEGER,
   jobs_scored INTEGER,
+  jobs_skipped_unchanged INTEGER,
+  jobs_cancelled INTEGER,
   jobs_queued INTEGER,
   jobs_prepared INTEGER,
   jobs_applied INTEGER,
@@ -105,17 +108,36 @@ CREATE TABLE IF NOT EXISTS approval_queue (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_tier ON jobs(tier);
+CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score);
+CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
+CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs(posted_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_applied ON jobs(applied);
 CREATE INDEX IF NOT EXISTS idx_events_job ON application_events(job_id);
 CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
 `;
 
+/** All jobs-table columns except jd_text (see listJobsSummary). */
+const JOB_SUMMARY_COLUMNS = [
+  'id', 'source', 'company', 'title', 'location', 'url', 'posted_at',
+  'applicant_count', 'employment_type', 'employment_category', 'compensation_text',
+  'score', 'tier', 'sponsorship',
+  'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
+  'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
+  'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
+  'applied', 'applied_at', 'user_decision', 'decided_at',
+  'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
+  'created_at', 'updated_at',
+].join(', ');
+
 /** Columns allowed for the jobs table (whitelist for safe upserts). */
 const JOB_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'jd_text', 'posted_at',
-  'applicant_count', 'employment_type', 'employment_category', 'score', 'tier', 'sponsorship',
+  'applicant_count', 'employment_type', 'employment_category', 'compensation_text',
+  'score', 'tier', 'sponsorship',
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
   'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
-  'cover_letter_path', 'application_packet_path', 'output_folder_path',
+  'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at',
@@ -139,16 +161,27 @@ export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
   // fsync on every commit. Discovery persists thousands of rows per run, so the
   // default FULL setting would otherwise dominate runtime with disk syncs.
   db.exec('PRAGMA synchronous = NORMAL;');
+  // Two processes legitimately write this DB at once (dashboard server + CLI
+  // watch mode). Without a busy timeout a concurrent write throws SQLITE_BUSY
+  // immediately; with it, SQLite retries for up to 5s before giving up.
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA_SQL);
   applyMigrations(db);
+  if (path !== ':memory:') {
+    // Long-lived readers (the dashboard) can keep the WAL from ever being
+    // checkpointed; left alone it grows without bound (observed: 60+ MB).
+    // A truncate checkpoint on open folds it back into the main DB file.
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE);'); } catch { /* best effort */ }
+  }
   return new Database(db);
 }
 
 /** Idempotent, additive migrations for databases created by older schemas. */
 function applyMigrations(db) {
   const runLogCols = new Set(db.prepare('PRAGMA table_info(run_log)').all().map((c) => c.name));
-  for (const col of ['jobs_assisted', 'jobs_submitted', 'jobs_unknown_date_review']) {
+  for (const col of ['jobs_assisted', 'jobs_submitted', 'jobs_unknown_date_review',
+    'jobs_skipped_unchanged', 'jobs_cancelled']) {
     if (!runLogCols.has(col)) {
       db.exec(`ALTER TABLE run_log ADD COLUMN ${col} INTEGER`);
     }
@@ -156,7 +189,7 @@ function applyMigrations(db) {
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
   for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
     'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation', 'ats_band',
-    'employment_category']) {
+    'employment_category', 'compensation_text', 'prepared_at']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }
@@ -281,6 +314,21 @@ export class Database {
   }
 
   /**
+   * URL identities that already own an actionable/protected record. Closed
+   * discovery-only history is excluded so a genuinely reposted role can return.
+   * @returns {Array<{id: string, url: string}>}
+   */
+  getActiveJobUrls() {
+    return this.db.prepare(`
+      SELECT id, url FROM jobs
+      WHERE trim(coalesce(url, '')) <> ''
+        AND (applied = 1
+          OR status NOT IN ('discarded', 'skipped')
+          OR user_decision = 'shortlisted')
+    `).all();
+  }
+
+  /**
    * @param {object} [filter]
    * @param {string} [filter.tier]
    * @param {string} [filter.status]
@@ -293,6 +341,17 @@ export class Database {
     if (status) { clauses.push('status = ?'); params.push(status); }
     const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
     return this.db.prepare(`SELECT * FROM jobs${where} ORDER BY score DESC`).all(...params);
+  }
+
+  /**
+   * Every job WITHOUT the jd_text column. jd_text dominates row size (~8 KB
+   * avg on real data — ~200 MB across 25k jobs), and the dashboard board/stats
+   * never render it (job detail loads it via getJob). Excluding it cuts each
+   * full-table decoration pass from hundreds of MB of I/O to a few MB.
+   * @returns {object[]} jobs-table rows minus jd_text
+   */
+  listJobsSummary() {
+    return this.db.prepare(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs ORDER BY score DESC`).all();
   }
 
   /**
@@ -328,6 +387,7 @@ export class Database {
   /** @param {Record<string, any>} row */
   insertRunLog(row) {
     const cols = ['run_id', 'mode', 'started_at', 'ended_at', 'jobs_found', 'jobs_scored',
+      'jobs_skipped_unchanged', 'jobs_cancelled',
       'jobs_queued', 'jobs_prepared', 'jobs_applied', 'jobs_assisted', 'jobs_submitted',
       'jobs_discarded', 'jobs_unknown_date_review', 'errors'];
     const present = cols.filter((c) => c in row);

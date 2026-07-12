@@ -10,6 +10,7 @@
 const SIGNATURES = [
   { key: 'greenhouse', hosts: ['greenhouse.io', 'boards.greenhouse.io'], html: ['greenhouse.io', 'gh_jid'] },
   { key: 'lever', hosts: ['lever.co', 'jobs.lever.co'], html: ['lever.co', 'postings.lever'] },
+  { key: 'ashby', hosts: ['ashbyhq.com', 'jobs.ashbyhq.com'], html: ['ashbyhq', 'ashby-job-posting'] },
   { key: 'workday', hosts: ['myworkdayjobs.com', 'workday.com'], html: ['workday', 'wd1.myworkdayjobs'] },
   { key: 'icims', hosts: ['icims.com'], html: ['icims'] },
   { key: 'taleo', hosts: ['taleo.net'], html: ['taleo'] },

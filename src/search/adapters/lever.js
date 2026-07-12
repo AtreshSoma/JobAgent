@@ -8,12 +8,15 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout } from '../../utils/httpClient.js';
+import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
 
 export const adapterId = 'lever';
 
 /** Default number of boards to fetch in parallel when ctx omits a ceiling. */
 const DEFAULT_BOARD_CONCURRENCY = 8;
+
+/** Every Lever board shares this host — politeness must be keyed on it. */
+const LEVER_HOST = 'api.lever.co';
 
 /**
  * @param {object} source jobboards source entry ({ boards: string[] })
@@ -26,7 +29,7 @@ const DEFAULT_BOARD_CONCURRENCY = 8;
  * @returns {Promise<{ jobs: object[], errors: Array<{board: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
@@ -34,13 +37,20 @@ export async function run(source = {}, ctx = {}) {
 
   const perBoard = await mapWithConcurrency(boards, concurrency, async (company) => {
     try {
-      if (rateLimiter) await rateLimiter.wait(`lever:${company}`, source.rateLimitMs);
-      const url = `https://api.lever.co/v0/postings/${encodeURIComponent(company)}?mode=json`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      if (rateLimiter) await rateLimiter.wait(`lever:${LEVER_HOST}`, source.rateLimitMs);
+      const url = `https://${LEVER_HOST}/v0/postings/${encodeURIComponent(company)}?mode=json`;
+      const call = () => fetchJson(fetchImpl, url, requestTimeoutMs);
+      const data = await withRetry(
+        () => (hostGate ? hostGate.run(url, call) : call()),
+        { maxRetries },
+      );
       const list = Array.isArray(data) ? data : [];
       return { jobs: list.map((j) => mapJob(j, company)), error: null };
     } catch (err) {
-      return { jobs: [], error: { board: company, error: err.message } };
+      return {
+        jobs: [],
+        error: { board: company, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
+      };
     }
   });
 
@@ -54,11 +64,7 @@ export async function run(source = {}, ctx = {}) {
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
   const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
-  if (!res.ok) {
-    const e = new Error(`Lever HTTP ${res.status} for ${url}`);
-    e.status = res.status;
-    throw e;
-  }
+  if (!res.ok) throw httpError(res, 'Lever', url);
   return res.json();
 }
 

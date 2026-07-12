@@ -20,6 +20,20 @@ function seed(db) {
   db.upsertJob({ id: 'j2', company: 'Globex', title: 'BI Engineer', url: 'http://b', source: 'ashby', score: 60, tier: 'Queue' });
 }
 
+function eligiblePacket(url = 'http://a') {
+  return {
+    id: 'pk-j1',
+    job: { id: 'j1', url },
+    ats: { platform: 'greenhouse' },
+    blockers: [],
+    resumePath: '/docs/tailored-resume.docx',
+    prefill: { plan: [], needsUser: [] },
+    screeningPlan: { answered: [], needsUser: [] },
+    uploads: { blockers: [] },
+    stopBeforeSubmit: true,
+  };
+}
+
 describe('dashboard server API', () => {
   let db;
   let dash;
@@ -46,9 +60,12 @@ describe('dashboard server API', () => {
         scoreFn: async () => ({ counters: { jobs_scored: 3 } }),
         prepareFn: async () => ({ counters: { jobs_prepared: 1 } }),
         assistFn: async ({ options }) => (options?.autoSubmit
-          ? { status: 'submitted', submitted: true, blockers: [] }
+          // Mirrors the real runner contract: submitted:true is ONLY ever
+          // reported together with a positive post-submit verification.
+          ? { status: 'submitted', submitted: true, blockers: [],
+              submitVerification: { verified: true, signals: ['confirmation message'] } }
           : { status: 'ready_for_submit', blockers: [] }),
-        loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
+        loadPacketImpl: () => eligiblePacket(),
       },
     });
   });
@@ -92,7 +109,7 @@ describe('dashboard server API', () => {
     expect((await post('/api/jobs/j2/decision', 'not json{{')).status).toBe(400);
   });
 
-  it('approve -> assist -> stops before submit; mark-submitted is explicit', async () => {
+  it('approve -> assist stops before submit; submission needs positive evidence', async () => {
     expect((await post('/api/jobs/j2/approve')).status).toBe(409); // no packet
     expect((await post('/api/jobs/j1/assist')).status).toBe(400);  // not approved yet
     expect((await post('/api/jobs/j1/approve')).body.status).toBe('approved');
@@ -107,7 +124,13 @@ describe('dashboard server API', () => {
     expect(db.getJob('j1').status).toBe('ready_for_submit');
     expect(Number(db.getJob('j1').applied)).toBe(0); // assist NEVER submits
 
-    const done = await post('/api/jobs/j1/mark-submitted');
+    const pending = await post('/api/jobs/j1/mark-submitted');
+    expect(pending.body.appStatus).toBe('submit_unverified');
+    expect(Number(db.getJob('j1').applied)).toBe(0);
+
+    const done = await post('/api/jobs/j1/mark-submitted', {
+      verified: true, confirmationNumber: 'confirmation page shown',
+    });
     expect(done.body.appStatus).toBe('submitted');
     expect(Number(db.getJob('j1').applied)).toBe(1);
   });
@@ -180,9 +203,12 @@ describe('dashboard batch actions + CSV export', () => {
       deps: {
         now: () => NOW,
         assistFn: async ({ options }) => (options?.autoSubmit
-          ? { status: 'submitted', submitted: true, blockers: [] }
+          // Mirrors the real runner contract: submitted:true is ONLY ever
+          // reported together with a positive post-submit verification.
+          ? { status: 'submitted', submitted: true, blockers: [],
+              submitVerification: { verified: true, signals: ['confirmation message'] } }
           : { status: 'ready_for_submit', blockers: [] }),
-        loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
+        loadPacketImpl: () => eligiblePacket(),
         // Avoid touching the real filesystem in tests.
         writeJobTrackerImpl: () => { trackerWrites += 1; return { path: '/fake/root/data/job_tracker.csv' }; },
         readTextImpl: () => 'Company,Job Role\nAcme,Senior Data Engineer',
@@ -210,6 +236,19 @@ describe('dashboard batch actions + CSV export', () => {
     expect(r.body.approved).toEqual(['j1']);     // j1 has a packet
     expect(r.body.failed.map((f) => f.jobId)).toEqual(['j2']); // j2 has none
     expect(db.getApprovalByJob('j1').approval_status).toBe('approved');
+  });
+
+  it('previews Auto-Apply eligibility without mutating jobs or approvals', async () => {
+    const before = db.getApprovalByJob('j1').approval_status;
+    const r = await post('/api/auto-apply/eligibility', {
+      jobIds: ['j1', 'j2'], autoSubmit: true,
+    });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ total: 2, eligible: 1, ineligible: 1, autoSubmitAuthorized: true });
+    expect(r.body.items.find((x) => x.jobId === 'j1')).toMatchObject({ eligible: true, ats: 'greenhouse' });
+    expect(r.body.items.find((x) => x.jobId === 'j2').reasons.join(' ')).toMatch(/Prepare|Sponsorship|ATS/);
+    expect(db.getApprovalByJob('j1').approval_status).toBe(before);
+    expect(Number(db.getJob('j1').applied)).toBe(0);
   });
 
   it('auto-apply orchestrates prepare -> approve -> fill and never submits', async () => {
@@ -272,7 +311,7 @@ describe('dashboard batch actions + CSV export', () => {
       config: { root: '/fake/root' }, db, logger: null, port: 0,
       deps: {
         now: () => NOW,
-        loadPacketImpl: () => ({ job: { id: 'j1', url: 'https://www.indeed.com/viewjob?jk=stale' }, blockers: [] }),
+        loadPacketImpl: () => eligiblePacket('https://www.indeed.com/viewjob?jk=stale'),
         assistFn: async ({ packet }) => { navigatedUrl = packet.job.url; return { status: 'ready_for_submit', blockers: [] }; },
         writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }),
       },
@@ -292,7 +331,7 @@ describe('dashboard batch actions + CSV export', () => {
       config: { root: '/fake/root' }, db, logger: null, port: 0,
       deps: {
         now: () => NOW,
-        loadPacketImpl: () => ({ job: { id: 'j1', url: 'http://a' }, blockers: [] }),
+        loadPacketImpl: () => eligiblePacket(),
         assistFn: async () => { throw new Error('browser blew up'); },
         writeJobTrackerImpl: () => ({ path: '/fake/root/data/job_tracker.csv' }),
       },

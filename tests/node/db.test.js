@@ -74,6 +74,14 @@ describe('db (node:sqlite, in-memory)', () => {
     expect(ids.size).toBe(2);
   });
 
+  it('returns URL owners only for actionable/protected records', () => {
+    db.upsertJob({ id: 'live', url: 'https://jobs.example/live', status: 'scored' });
+    db.upsertJob({ id: 'closed', url: 'https://jobs.example/closed', status: 'discarded' });
+    db.upsertJob({ id: 'applied', url: 'https://jobs.example/applied', status: 'submitted', applied: 1 });
+    db.upsertJob({ id: 'saved', url: 'https://jobs.example/saved', status: 'discarded', user_decision: 'shortlisted' });
+    expect(db.getActiveJobUrls().map((row) => row.id).sort()).toEqual(['applied', 'live', 'saved']);
+  });
+
   it('commits a batch of writes inside a transaction', () => {
     db.transaction(() => {
       for (let i = 0; i < 5; i += 1) db.upsertJob({ id: `t${i}`, score: i });

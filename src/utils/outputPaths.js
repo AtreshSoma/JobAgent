@@ -18,10 +18,22 @@
  * so the two can never drift apart.
  */
 
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
 /** Candidate name fallback if config is unavailable. */
 export const DEFAULT_CANDIDATE_NAME = 'Atresh Somayajula';
+
+/**
+ * Project-relative path with forward slashes, for tidy console output.
+ * @param {string} root project root
+ * @param {string} p absolute (or relative) path
+ * @returns {string}
+ */
+export function relPath(root, p) {
+  if (!p) return '';
+  try { return relative(root, p).split('\\').join('/'); }
+  catch { return String(p); }
+}
 
 /** Tech / business acronyms preserved in ALL CAPS when de-slugging titles. */
 const ACRONYMS = new Set([

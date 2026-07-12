@@ -79,7 +79,7 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   const total = max > 0 ? Math.round((raw / max) * 100) : 0;
 
   const matchedKeywords = [...matchedAll];
-  const missingKeywords = computeMissing(text, candidate, kw);
+  const missingKeywords = computeMissing(text, candidate, kw, scoring.evidenceAliases);
 
   return {
     total,
@@ -175,21 +175,39 @@ export function candidateStackTerms(candidate = {}) {
   return Object.values(stack).flat().filter((t) => typeof t === 'string');
 }
 
-/** Important JD keywords absent from the candidate profile (tailoring gaps). */
-function computeMissing(text, candidate, kw) {
+/**
+ * Important JD keywords NOT evidenced by the candidate profile (tailoring gaps).
+ *
+ * A term counts as evidenced when the profile contains the term itself OR any
+ * of its configured aliases (scoring.evidenceAliases) — so "ADF" in a JD is
+ * never reported as a gap when the profile lists "Azure Data Factory", and
+ * "lakehouse" is evidenced by "Delta Lake"/"Databricks" experience. Without
+ * this, the same skill could appear in BOTH matchedKeywords (found in the JD)
+ * and missingKeywords (alias not substring-matched in the profile), which
+ * reads as a contradiction on the dashboard.
+ */
+export function computeMissing(text, candidate, kw, evidenceAliases = {}) {
   const important = [
     ...(kw.azureFabric ?? []), ...(kw.dataEngineering ?? []),
     ...(kw.languages ?? []), ...(kw.biSemantic ?? []),
   ];
-  const inJd = new Set(matchedPhrases(text, important).map((p) => p.toLowerCase()));
+  const inJd = new Set(matchedPhrases(text, important).map((p) => normalizeText(p)));
   const profileText = normalizeText([
     ...candidateStackTerms(candidate),
     ...(candidate.certifications ?? []),
     ...(candidate.domainExperience ?? []),
   ].join(' '));
+  const aliases = new Map(
+    Object.entries(evidenceAliases ?? {}).map(([term, list]) => [
+      normalizeText(term),
+      (Array.isArray(list) ? list : []).map((a) => normalizeText(a)),
+    ]),
+  );
+  const evidenced = (term) =>
+    profileText.includes(term) || (aliases.get(term) ?? []).some((a) => a && profileText.includes(a));
   const missing = [];
   for (const term of inJd) {
-    if (!profileText.includes(term)) missing.push(term);
+    if (!evidenced(term)) missing.push(term);
   }
   return missing;
 }

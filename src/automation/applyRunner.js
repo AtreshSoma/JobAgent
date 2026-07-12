@@ -16,18 +16,34 @@
  * `assist_blocked` with the browser left open for the human — auto-submit
  * never overrides a guard or fabricates an answer.
  *
+ * Truthfulness rule for "submitted": clicking Submit is NOT proof the
+ * application went through (client-side validation, a post-submit CAPTCHA, or
+ * a no-op button all swallow the click). After the click the runner re-inspects
+ * the page and only reports `submitted: true` when it can VERIFY the submission
+ * (a confirmation message, or the URL changed and the form is gone). An
+ * unverified click ends as `submit_unverified` — surfaced to the human to
+ * confirm via the ATS email — and is never recorded as applied.
+ *
  * All browser interaction is injectable (`deps.createSession`) so the core flow
  * is unit-testable with a fake page and exercisable with real Playwright against
  * local fixture forms.
  */
 
 import { createBrowserSession, openApplicationPage, inspectCurrentPage } from './browser.js';
-import { fillFields, requiredFieldsSatisfied } from './fieldResolver.js';
-import { scanFields, resolveFormScope } from './domScanner.js';
+import { fillFields, requiredFieldsSatisfied, verifyFilledFields } from './fieldResolver.js';
+import { scanFields, resolveFormScope, detectValidationErrors } from './domScanner.js';
 import { fillScannedFields } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
 import { assertTruthfulSponsorship } from '../apply/screeningQA.js';
+import {
+  APPLICATION_PHASE,
+  applicationStatePreventsReopen,
+  assertApplicationStateMatchesPacket,
+  createApplicationState,
+  resolveApplicationStateStore,
+  transitionApplicationState,
+} from '../apply/applicationState.js';
 import { LIFECYCLE } from '../lifecycle.js';
 import { join } from 'node:path';
 
@@ -65,15 +81,102 @@ export async function assistApply({
     requiredFieldsFilled: false,
     submitted: false,
     sessionLeftOpen: false,
+    // Resumable-workflow trail: every phase transition with a timestamp, so the
+    // human (and the audit log) can see exactly where a run got to —
+    // Queued -> Precheck -> Opening -> Filling -> Validating -> Advancing ->
+    // Blocked / ReadyForReview / Submitted / SubmitUnverified.
+    phases: [],
+    resumed: false,
+    duplicatePrevented: false,
+    applicationState: null,
+    applicationStatePath: null,
   };
+  const clock = deps.now ?? (() => new Date());
+  const nowIso = () => {
+    const value = typeof clock === 'function' ? clock() : clock;
+    return (value instanceof Date ? value : new Date(value)).toISOString();
+  };
+  const phaseEvent = (name, detail = null) => {
+    result.phases.push({ phase: name, at: nowIso(), ...(detail ? { detail } : {}) });
+  };
+
+  let stateStore;
+  let applicationState;
+  try {
+    stateStore = resolveApplicationStateStore({
+      packet,
+      root: config?.root,
+      statePath: options.statePath,
+      store: deps.stateStore,
+    });
+    result.applicationStatePath = stateStore?.path ?? (typeof options.statePath === 'string' ? options.statePath : null);
+    const loaded = stateStore ? await stateStore.load?.() : null;
+    if (loaded) {
+      assertApplicationStateMatchesPacket(loaded, packet);
+      applicationState = loaded;
+      result.resumed = true;
+    } else {
+      applicationState = createApplicationState(packet, { now: clock });
+      phaseEvent(APPLICATION_PHASE.QUEUED);
+      if (stateStore) await stateStore.save?.(applicationState);
+    }
+    result.applicationState = applicationState;
+  } catch (err) {
+    result.status = LIFECYCLE.FAILED;
+    result.blockers.push(`application state could not be loaded: ${err.message}`);
+    return result;
+  }
+
+  const checkpoint = async (name, patch = {}, detail = null) => {
+    phaseEvent(name, detail);
+    applicationState = transitionApplicationState(applicationState, name, patch, { now: clock, detail });
+    try {
+      if (stateStore) await stateStore.save?.(applicationState);
+    } catch (err) {
+      const wrapped = new Error(`application state checkpoint failed: ${err.message}`);
+      wrapped.applicationStatePersistence = true;
+      throw wrapped;
+    }
+    result.applicationState = applicationState;
+    result.currentStep = applicationState.currentStep;
+    return applicationState;
+  };
+
+  // A reported submission is a write-once duplicate guard. Until verification
+  // exists, the safe action is human review — never re-open and possibly apply
+  // a second time.
+  if (applicationStatePreventsReopen(applicationState)) {
+    result.duplicatePrevented = true;
+    result.status = applicationState.phase === APPLICATION_PHASE.VERIFIED
+      ? LIFECYCLE.SUBMITTED
+      : LIFECYCLE.SUBMIT_UNVERIFIED;
+    result.note = applicationState.phase === APPLICATION_PHASE.VERIFIED
+      ? 'Application is already verified; browser assist was not reopened.'
+      : 'Application was already reported submitted and awaits verification; browser assist was not reopened to prevent a duplicate.';
+    return result;
+  }
 
   if (!url) {
     result.status = LIFECYCLE.FAILED;
     result.blockers.push('packet has no application URL');
+    try {
+      await checkpoint(APPLICATION_PHASE.BLOCKED, { blockers: result.blockers }, 'packet has no application URL');
+    } catch { /* the primary error is already actionable */ }
     return result;
   }
 
   // Sponsorship truthfulness is checked from the packet (no browser needed).
+  try {
+    await checkpoint(APPLICATION_PHASE.PRECHECK, {
+      blockers: result.blockers,
+      unresolvedQuestions: packet?.screeningPlan?.needsUser ?? [],
+      resumeCount: applicationState.resumeCount + (result.resumed ? 1 : 0),
+    });
+  } catch (err) {
+    result.status = LIFECYCLE.FAILED;
+    result.blockers.push(err.message);
+    return result;
+  }
   const truthCheck = assertTruthfulSponsorship(packet?.screeningPlan?.answered ?? []);
   result.sponsorshipTruthful = truthCheck.truthful;
   if (!truthCheck.truthful) {
@@ -113,6 +216,13 @@ export async function assistApply({
       ? ` — if you set BROWSER_USER_DATA_DIR, close every ${channel === 'msedge' ? 'Microsoft Edge' : channel} window first (a profile can only be opened by one process at a time)`
       : '';
     result.blockers.push(`could not start browser: ${err.message}${hint}`);
+    try {
+      await checkpoint(APPLICATION_PHASE.BLOCKED, {
+        currentStep: applicationState.currentStep,
+        lastUrl: applicationState.lastUrl ?? url,
+        blockers: result.blockers,
+      }, 'browser session could not start');
+    } catch { /* preserve the browser startup error */ }
     return result;
   }
 
@@ -144,45 +254,135 @@ export async function assistApply({
         result.note = `daily application cap reached (${dailyCap}) — filled but left for you to submit`;
         return false;
       }
+      const beforeUrl = currentUrlOf(page) ?? url;
+      // Write-ahead duplicate guard: if the process dies after the click but
+      // before confirmation inspection, a future run must not click Submit a
+      // second time. `submitting` means the attempt is write-ahead protected;
+      // it is intentionally not `verified` yet.
+      await checkpoint(APPLICATION_PHASE.SUBMITTING, {
+        currentStep: result.currentStep,
+        lastUrl: beforeUrl,
+        blockers: [],
+        submissionEvidence: ['explicit per-run auto-submit authorization', 'submit attempt initiated'],
+      }, 'final submit attempt initiated; verification required');
       const clicked = await clickAndSettle(scope, { selector: result.submitSelector, text: 'Submit' }, deps);
-      if (!clicked) return false;
-      result.submitted = true;
-      result.status = LIFECYCLE.SUBMITTED;
+      if (!clicked) {
+        await checkpoint(APPLICATION_PHASE.VERIFYING, {
+          currentStep: result.currentStep,
+          lastUrl: currentUrlOf(page) ?? beforeUrl,
+          blockers: ['submit control could not be confirmed after the attempt'],
+          submissionEvidence: ['explicit per-run auto-submit authorization', 'submit attempt initiated'],
+        }, 'submit attempt could not be confirmed; manual verification required');
+        result.submitted = false;
+        result.status = LIFECYCLE.SUBMIT_UNVERIFIED;
+        result.note = 'The final submit attempt could not be confirmed. Automatic retry is disabled to prevent a duplicate; review the ATS and confirmation email manually.';
+        return true;
+      }
+      // A click is not a submission. Verify before reporting `submitted` —
+      // an unverified click is surfaced to the human, never recorded as applied.
+      await checkpoint(APPLICATION_PHASE.VERIFYING, {
+        currentStep: result.currentStep,
+        lastUrl: currentUrlOf(page) ?? beforeUrl,
+        blockers: [],
+        submissionEvidence: ['explicit per-run auto-submit authorization', 'submit control clicked'],
+      }, 'submit control clicked; checking confirmation evidence');
+      const verification = await verifySubmission({ page, url, beforeUrl, inspectPage });
+      result.submitVerification = verification;
+      if (verification.verified) {
+        result.submitted = true;
+        result.status = LIFECYCLE.SUBMITTED;
+        result.note = `auto-submitted — submission confirmed (${verification.signals.join(', ')})`;
+        await checkpoint(APPLICATION_PHASE.VERIFIED, {
+          currentStep: result.currentStep,
+          lastUrl: verification.lastUrl ?? currentUrlOf(page) ?? beforeUrl,
+          blockers: [],
+          verificationEvidence: verification.signals,
+        }, 'submission confirmation detected');
+      } else {
+        result.submitted = false;
+        result.status = LIFECYCLE.SUBMIT_UNVERIFIED;
+        result.note = 'Submit was clicked but no confirmation page could be detected — check the open '
+          + 'browser tab and your email for an ATS confirmation. If it went through, use "Mark submitted"; '
+          + 'otherwise finish the application manually. NOT recorded as submitted.';
+      }
       return true;
     };
 
     // Blockers that persist across every step (packet-level + sponsorship).
     const baseBlockers = [...result.blockers];
     // Cumulative state across multi-step pages.
-    const filledByKey = new Set();
-    const uploadedTypes = new Set();
+    const uploadedTypes = new Set(
+      (applicationState.uploadVerification ?? []).filter((u) => u.verified === true).map((u) => u.type),
+    );
     let dynamicNeedsUser = [];
     let staticUnresolved = [];
-    let step0UploadBlockers = [];
+    const fieldResultKeys = new Set();
+    const uploadResultKeys = new Set();
+    const addFilledResult = (field, step) => {
+      const key = `${step}|${field.selector ?? field.field ?? field.label ?? ''}`;
+      if (fieldResultKeys.has(key)) return;
+      fieldResultKeys.add(key);
+      result.filled.push({ ...field, step });
+    };
+    const addUploadResult = (upload, step) => {
+      const key = `${step}|${upload.type ?? ''}|${upload.selector ?? ''}`;
+      if (uploadResultKeys.has(key)) return;
+      uploadResultKeys.add(key);
+      result.uploads.uploaded.push({ ...upload, step });
+    };
 
     // 1. Open + guard. Never proceed past a protected page.
-    let nav = await openPage(page, url);
+    const resumeUrl = result.resumed && applicationState.lastUrl ? applicationState.lastUrl : url;
+    await checkpoint(APPLICATION_PHASE.OPENING, {
+      currentStep: applicationState.currentStep,
+      lastUrl: resumeUrl,
+      blockers: baseBlockers,
+    }, result.resumed ? 'resuming last checkpoint URL' : 'opening application URL');
+    let nav = await openPage(page, resumeUrl);
     result.guard = nav.guard;
     if (nav.guard?.blocked) {
       result.status = LIFECYCLE.ASSIST_BLOCKED;
       result.blockers = [...baseBlockers, `page blocked (${nav.guard.kind}): ${nav.guard.reason}`];
       result.sessionLeftOpen = !headless;
+      await checkpoint(APPLICATION_PHASE.BLOCKED, {
+        currentStep: applicationState.currentStep,
+        lastUrl: nav.url ?? resumeUrl,
+        blockers: result.blockers,
+      }, `page blocked (${nav.guard.kind})`);
       return result;
     }
 
     result.steps = 0;
-    for (let step = 0; step < maxSteps; step++) {
-      result.steps = step + 1;
+    let currentStep = Math.max(1, Number(applicationState.currentStep) || 1);
+    for (let runStep = 0; runStep < maxSteps; runStep++) {
+      if (deps.shouldCancel?.()) {
+        result.status = LIFECYCLE.CANCELLED;
+        result.note = 'Application run cancelled at a safe checkpoint. Resume to continue from the saved URL.';
+        await checkpoint(APPLICATION_PHASE.CANCELLED, {
+          currentStep: applicationState.currentStep,
+          lastUrl: currentUrlOf(page) ?? applicationState.lastUrl ?? url,
+          blockers: [],
+        }, 'user requested cancellation');
+        return result;
+      }
+      const stepNumber = currentStep;
+      result.steps = runStep + 1;
+      result.currentStep = stepNumber;
 
       // Re-inspect + re-guard on every step after the first (we navigated via a
       // "Next"/"Continue" click, so the DOM/URL may have changed entirely).
-      if (step > 0) {
-        nav = await inspectPage(page, url);
+      if (runStep > 0) {
+        nav = await inspectPage(page, resumeUrl);
         result.guard = nav.guard;
         if (nav.guard?.blocked) {
           result.status = LIFECYCLE.ASSIST_BLOCKED;
           result.blockers = [...baseBlockers, `page blocked (${nav.guard.kind}): ${nav.guard.reason}`];
           result.sessionLeftOpen = !headless;
+          await checkpoint(APPLICATION_PHASE.BLOCKED, {
+            currentStep: stepNumber,
+            lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+            blockers: result.blockers,
+          }, `page blocked (${nav.guard.kind})`);
           return result;
         }
       }
@@ -194,24 +394,55 @@ export async function assistApply({
       // fields and run every fill/scan/upload/navigate against it; falls back to
       // the page when the form is top-level (or for unit-test fakes).
       const scope = await resolveFormScope(page);
+      await checkpoint(APPLICATION_PHASE.FILLING, {
+        currentStep: stepNumber,
+        lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+        blockers: baseBlockers,
+      }, `step ${stepNumber}`);
 
-      // 2a. Static plan fill (first page only — its selectors are page-1 specific).
-      if (step === 0) {
-        const fill = await fillFields(scope, packet.fillPlan, { dryRun });
-        for (const f of fill.filled) {
-          if (f.selector) filledByKey.add(f.selector);
-          result.filled.push(f);
-        }
-        staticUnresolved = fill.unresolved ?? [];
-        for (const err of fill.errors ?? []) stepBlockers.push(`field ${err.field}: ${err.error}`);
+      const stepFilledKeys = new Set();
+      const completedThisStep = [];
+
+      // 2a. Re-resolve the static plan on every page. Normally it only matches
+      // page one; on a resumed same-URL SPA this safely restores deterministic
+      // fields instead of trusting that a previous browser process retained
+      // them.
+      const fill = await fillFields(scope, packet.fillPlan, { dryRun });
+      for (const f of fill.filled) {
+        if (f.selector) stepFilledKeys.add(f.selector);
+        completedThisStep.push(f);
+        addFilledResult(f, stepNumber);
       }
+      staticUnresolved = fill.unresolved ?? [];
+      for (const err of fill.errors ?? []) stepBlockers.push(`field ${err.field}: ${err.error}`);
 
       // 2b. Dynamic, type-aware fill of whatever is actually on the page now.
       const scanned = await scanFields(scope);
-      const dyn = await fillScannedFields(scope, scanned, { candidate, screeningAnswers, alreadyFilled: filledByKey });
-      for (const f of dyn.filled) result.filled.push(f);
-      if (dyn.needsUser?.length) dynamicNeedsUser = dyn.needsUser;
+      const dyn = await fillScannedFields(scope, scanned, { candidate, screeningAnswers, alreadyFilled: stepFilledKeys });
+      for (const f of dyn.filled ?? []) {
+        completedThisStep.push(f);
+        addFilledResult(f, stepNumber);
+      }
+      dynamicNeedsUser = dyn.needsUser ?? [];
       for (const err of dyn.errors ?? []) stepBlockers.push(`field ${err.label ?? err.field}: ${err.error}`);
+
+      // A checkbox/radio/select can reveal a conditional question. Re-scan
+      // once after applying the first dynamic batch and fill only newly visible
+      // controls (stepFilledKeys prevents duplicate actions).
+      const conditionalScan = await scanFields(scope);
+      const conditional = await fillScannedFields(scope, conditionalScan, {
+        candidate, screeningAnswers, alreadyFilled: stepFilledKeys,
+      });
+      for (const f of conditional.filled ?? []) {
+        completedThisStep.push(f);
+        addFilledResult(f, stepNumber);
+      }
+      const needsUserByKey = new Map(
+        [...dynamicNeedsUser, ...(conditional.needsUser ?? [])]
+          .map((item) => [`${item.selector ?? ''}|${item.label ?? ''}`, item]),
+      );
+      dynamicNeedsUser = [...needsUserByKey.values()];
+      for (const err of conditional.errors ?? []) stepBlockers.push(`field ${err.label ?? err.field}: ${err.error}`);
       result.unresolved = staticUnresolved;
 
       // A dynamic form field we cannot answer blocks the run ONLY when the live
@@ -229,16 +460,78 @@ export async function assistApply({
 
       // 4. Upload resume (+ cover letter). Only treat "not found" as a blocker on
       //    the first page; later steps simply attach if the input appears.
+      const verifiedBeforeThisStep = new Set(uploadedTypes);
       const up = await uploadFiles(scope, packet.fillPlan, { dryRun });
-      for (const u of up.uploaded ?? []) { result.uploads.uploaded.push(u); if (u.type) uploadedTypes.add(u.type); }
+      for (const u of up.uploaded ?? []) {
+        addUploadResult(u, stepNumber);
+        // A unit-test page double cannot inspect FileList (`verified: null`),
+        // but a positive failure is never treated as success. Live Playwright
+        // sessions always provide explicit true/false verification.
+        if (u.type && u.verified !== false) uploadedTypes.add(u.type);
+      }
       for (const s of up.skipped ?? []) result.uploads.skipped.push(s);
-      if (step === 0) { step0UploadBlockers = up.blockers ?? []; result.uploads.blockers = up.blockers ?? []; }
-      stepBlockers.push(...step0UploadBlockers.filter((b) => !uploadedTypes.has('resume') || !/resume/i.test(b)));
+      for (const blocker of up.blockers ?? []) {
+        const type = String(blocker).split(':', 1)[0];
+        const alreadyVerified = verifiedBeforeThisStep.has(type);
+        const merelyAbsentOnLaterStep = /(?:input not found|no upload selector resolved)/i.test(blocker);
+        if (alreadyVerified && merelyAbsentOnLaterStep) continue;
+        stepBlockers.push(blocker);
+        if (!result.uploads.blockers.includes(blocker)) result.uploads.blockers.push(blocker);
+      }
 
       // 5. Required fields satisfied?
+      const unresolvedQuestions = [
+        ...(packet?.screeningPlan?.needsUser ?? []),
+        ...dynamicNeedsUser,
+      ];
+      await checkpoint(APPLICATION_PHASE.VALIDATING, {
+        currentStep: stepNumber,
+        lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+        completedFields: completedThisStep,
+        unresolvedQuestions,
+        uploadVerification: up.uploaded ?? [],
+        blockers: [...baseBlockers, ...stepBlockers],
+      }, `step ${stepNumber}`);
+      // Field-level errors visible right after OUR fill (a rejected date
+      // format, a file the widget refused) — surfaced as blockers so the human
+      // fixes them in the open browser instead of submitting a broken form.
+      const fillErrors = await detectValidationErrors(scope);
+      for (const e of fillErrors) stepBlockers.push(`form validation: ${e}`);
+      const fieldVerification = await verifyFilledFields(scope, completedThisStep);
+      result.fieldVerification ??= { accepted: [], rejected: [], unobservable: [] };
+      for (const key of ['accepted', 'rejected', 'unobservable']) {
+        result.fieldVerification[key].push(...(fieldVerification[key] ?? []).map((f) => ({ ...f, step: stepNumber })));
+      }
+      for (const rejected of fieldVerification.rejected ?? []) {
+        stepBlockers.push(`field ${rejected.label ?? rejected.field ?? 'unknown'} was not accepted: ${rejected.reason}`);
+      }
       const req = requiredFieldsSatisfied(result.filled, packet.fillPlan);
       result.requiredFieldsFilled = req.ok;
       if (!req.ok) stepBlockers.push(`required fields missing: ${req.missing.join(', ')}`);
+
+      // Rewrite the validating checkpoint with live acceptance results and the
+      // final blocker set. The state contains only field identifiers/status —
+      // never the values that were typed.
+      const acceptedBySelector = new Map((fieldVerification.accepted ?? []).map((f) => [f.selector, f]));
+      const rejectedBySelector = new Map((fieldVerification.rejected ?? []).map((f) => [f.selector, f]));
+      const checkpointFields = completedThisStep.map((field) => {
+        const accepted = acceptedBySelector.get(field.selector);
+        const rejected = rejectedBySelector.get(field.selector);
+        return {
+          ...field,
+          accepted: Boolean(accepted),
+          verification: accepted ? 'live DOM retained an accepted value'
+            : rejected?.reason ?? 'live value inspection unavailable',
+        };
+      });
+      await checkpoint(APPLICATION_PHASE.VALIDATING, {
+        currentStep: stepNumber,
+        lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+        completedFields: checkpointFields,
+        unresolvedQuestions,
+        uploadVerification: up.uploaded ?? [],
+        blockers: [...baseBlockers, ...stepBlockers],
+      }, `step ${stepNumber} validation complete`);
 
       // 6. Identify the FINAL submit control (for awareness only — we never click
       //    it). Prefer the packet's; otherwise discover one on the current page.
@@ -265,6 +558,14 @@ export async function assistApply({
       if (hardStop) {
         result.status = LIFECYCLE.ASSIST_BLOCKED;
         result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: stepNumber,
+          lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: result.blockers,
+        }, 'needs the human (wall, sponsorship, or unknown required question)');
         return result;
       }
 
@@ -273,6 +574,14 @@ export async function assistApply({
       if (result.blockers.length > 0) {
         result.status = LIFECYCLE.ASSIST_BLOCKED;
         result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: stepNumber,
+          lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: result.blockers,
+        }, result.blockers[0]);
         return result;
       }
 
@@ -280,17 +589,38 @@ export async function assistApply({
       // everything is filled and ready — submit automatically ONLY if the human
       // opted in for this run AND the form is completely clean; otherwise stop
       // for the human to review and click Submit.
-      const advance = await findAdvanceControl(scope);
-      if (!advance || step === maxSteps - 1) {
+      // "Apply now"/"Start application" counts as an advance ONLY on a
+      // fieldless landing page — on a filled quick-apply form that button IS
+      // the submit, and clicking it would bypass the submit gate.
+      const advance = await findAdvanceControl(scope, {
+        allowApplyStart: scanned.length === 0 && result.filled.length === 0,
+      });
+      if (!advance || runStep === maxSteps - 1) {
         if (await tryAutoSubmit(scope)) {
           result.sessionLeftOpen = !headless; // leave the confirmation page visible
           return result;
         }
         result.status = LIFECYCLE.READY_FOR_SUBMIT;
         result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.READY_FOR_REVIEW, {
+          currentStep: stepNumber,
+          lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: [],
+        }, 'filled — waiting for YOUR review and Submit');
         return result;
       }
 
+      await checkpoint(APPLICATION_PHASE.ADVANCING, {
+        currentStep: stepNumber,
+        lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+        completedFields: checkpointFields,
+        unresolvedQuestions,
+        uploadVerification: up.uploaded ?? [],
+        blockers: [],
+      }, `step ${stepNumber}: ${advance.text ?? advance.selector ?? 'next'}`);
       const clicked = await clickAndSettle(scope, advance, deps);
       if (!clicked) {
         if (await tryAutoSubmit(scope)) {
@@ -299,15 +629,72 @@ export async function assistApply({
         }
         result.status = LIFECYCLE.READY_FOR_SUBMIT;
         result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.READY_FOR_REVIEW, {
+          currentStep: stepNumber,
+          lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: [],
+        }, 'advance control could not be activated — waiting for YOUR review');
+        return result;
+      }
+
+      // Validate immediately after navigation. ATSes commonly keep the same URL
+      // and render inline errors when a step was rejected; a resolved click is
+      // therefore not proof that advancing succeeded.
+      const afterAdvance = await inspectPage(page, resumeUrl);
+      result.guard = afterAdvance.guard;
+      if (afterAdvance.guard?.blocked) {
+        result.status = LIFECYCLE.ASSIST_BLOCKED;
+        result.blockers = [...baseBlockers,
+          `page blocked (${afterAdvance.guard.kind}): ${afterAdvance.guard.reason}`];
+        result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: stepNumber,
+          lastUrl: afterAdvance.url ?? currentUrlOf(page) ?? resumeUrl,
+          blockers: result.blockers,
+        }, `page blocked after advancing (${afterAdvance.guard.kind})`);
+        return result;
+      }
+      const afterScope = await resolveFormScope(page);
+      const navigationErrors = await detectValidationErrors(afterScope);
+      if (navigationErrors.length) {
+        result.status = LIFECYCLE.ASSIST_BLOCKED;
+        result.blockers = [...baseBlockers, ...navigationErrors.map((e) => `form validation: ${e}`)];
+        result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: stepNumber,
+          lastUrl: afterAdvance.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: result.blockers,
+        }, 'validation errors after advancing');
         return result;
       }
       result.advancedSteps = (result.advancedSteps ?? 0) + 1;
+      currentStep = stepNumber + 1;
+      nav = afterAdvance;
+      await checkpoint(APPLICATION_PHASE.ADVANCING, {
+        currentStep,
+        lastUrl: afterAdvance.url ?? currentUrlOf(page) ?? resumeUrl,
+        completedFields: checkpointFields,
+        unresolvedQuestions: [],
+        uploadVerification: up.uploaded ?? [],
+        blockers: [],
+      }, `step ${stepNumber} accepted; checkpointed step ${currentStep}`);
       // loop continues to the next step
     }
 
     // Exhausted the step budget — leave it filled and ready for the human.
     result.status = result.blockers.length > 0 ? LIFECYCLE.ASSIST_BLOCKED : LIFECYCLE.READY_FOR_SUBMIT;
     result.sessionLeftOpen = !headless;
+    await checkpoint(result.blockers.length > 0 ? APPLICATION_PHASE.BLOCKED : APPLICATION_PHASE.READY_FOR_REVIEW, {
+      currentStep,
+      lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+      blockers: result.blockers,
+    }, 'assist step budget exhausted');
     return result;
   } catch (err) {
     // The human closing the assist browser window is a normal, deliberate act
@@ -315,13 +702,37 @@ export async function assistApply({
     // failure and NOT a wall. Report it as ready_for_submit so the dashboard
     // prompts "did you submit it?" instead of scaring them with "blocked".
     if (isBrowserClosedError(err)) {
-      result.status = LIFECYCLE.READY_FOR_SUBMIT;
+      const submitMayHaveStarted = [
+        APPLICATION_PHASE.SUBMITTING, APPLICATION_PHASE.VERIFYING,
+        APPLICATION_PHASE.USER_SUBMITTED,
+      ].includes(applicationState.phase);
+      result.status = submitMayHaveStarted ? LIFECYCLE.SUBMIT_UNVERIFIED : LIFECYCLE.READY_FOR_SUBMIT;
       result.browserClosedByUser = true;
-      result.note = 'Browser was closed during assist — if you finished and submitted the application yourself, mark it Submitted; otherwise re-run auto-apply.';
+      result.note = submitMayHaveStarted
+        ? 'Browser closed during the final submit attempt. Automatic retry is disabled; verify the ATS or confirmation email manually.'
+        : 'Browser was closed during assist — if you finished and submitted the application yourself, mark it Submitted; otherwise resume the application.';
+      if (!submitMayHaveStarted) {
+        try {
+          await checkpoint(APPLICATION_PHASE.READY_FOR_REVIEW, {
+            currentStep: result.currentStep ?? applicationState.currentStep,
+            lastUrl: currentUrlOf(session?.page) ?? applicationState.lastUrl ?? url,
+            blockers: [],
+          }, 'browser closed by user');
+        } catch { /* state persistence error is surfaced on the next resume */ }
+      }
       return result;
     }
     result.status = LIFECYCLE.FAILED;
     result.blockers.push(`assist error: ${err.message}`);
+    if (!err.applicationStatePersistence && !applicationStatePreventsReopen(applicationState)) {
+      try {
+        await checkpoint(APPLICATION_PHASE.FAILED, {
+          currentStep: result.currentStep ?? applicationState.currentStep,
+          lastUrl: currentUrlOf(session?.page) ?? applicationState.lastUrl ?? url,
+          blockers: result.blockers,
+        }, 'unexpected assist error');
+      } catch { /* preserve the original assist error */ }
+    }
     return result;
   } finally {
     // Close only when we are NOT intentionally leaving the browser open for the
@@ -336,6 +747,69 @@ export async function assistApply({
 async function safeCount(page, selector) {
   if (!selector) return 0;
   try { return await page.locator(selector).count(); } catch { return 0; }
+}
+
+/**
+ * Phrases that ATSes render after a REAL submission. Deliberately conservative:
+ * a miss only downgrades to `submit_unverified` (human verifies), while a false
+ * positive would fabricate a submission — so nothing ambiguous belongs here.
+ */
+export const SUBMIT_CONFIRMATION_RE = new RegExp([
+  'thank you for applying',
+  'thanks for applying',
+  'thank you for your application',
+  'application (?:was |has been |is )?(?:received|submitted|complete|sent)',
+  'successfully (?:submitted|applied)',
+  'submission (?:was |has been )?(?:received|complete|successful)',
+  "we(?:'|’)?ve received your application",
+  'your application has been sent',
+].join('|'), 'i');
+
+/** Current page URL, or null when the page object cannot report one. */
+function currentUrlOf(page) {
+  try { return typeof page?.url === 'function' ? (page.url() || null) : null; } catch { return null; }
+}
+
+/**
+ * Verify that a clicked Submit actually submitted.
+ *
+ * Evidence accepted (guard must not be blocked — a post-submit CAPTCHA is not
+ * a confirmation):
+ *   - a known confirmation message on the page (or inside the ATS iframe), OR
+ *   - the URL changed AND the form fields are gone (classic redirect-to-
+ *     thank-you flow with nothing left to fill).
+ *
+ * @returns {Promise<{ verified: boolean, signals: string[] }>}
+ */
+async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
+  let after = null;
+  try { after = await inspectPage(page, url); } catch { after = null; }
+  if (!after) return { verified: false, signals: ['post-submit inspection failed'], lastUrl: currentUrlOf(page) ?? beforeUrl };
+  if (after.guard?.blocked) {
+    return { verified: false, signals: [`post-submit wall (${after.guard.kind})`], lastUrl: after.url ?? currentUrlOf(page) ?? beforeUrl };
+  }
+
+  const signals = [];
+  let html = after.html ?? '';
+  let formGone = false;
+  try {
+    // The confirmation (and any leftover form) may live inside an embedded ATS
+    // iframe — include its content and its field count.
+    const scope = await resolveFormScope(page, { timeoutMs: 500 });
+    if (scope && scope !== page && typeof scope.content === 'function') {
+      html += await scope.content();
+    }
+    const fields = await scanFields(scope);
+    formGone = Array.isArray(fields) && fields.length === 0;
+  } catch { formGone = false; }
+
+  if (SUBMIT_CONFIRMATION_RE.test(html)) signals.push('confirmation message');
+  const urlChanged = Boolean(after.url && beforeUrl && after.url !== beforeUrl);
+  if (urlChanged) signals.push('page navigated');
+  if (formGone) signals.push('form gone');
+
+  const verified = signals.includes('confirmation message') || (urlChanged && formGone);
+  return { verified, signals, lastUrl: after.url ?? currentUrlOf(page) ?? beforeUrl };
 }
 
 /** True when an assist error means the HUMAN closed the browser/tab/window. */

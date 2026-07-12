@@ -16,7 +16,15 @@
  */
 
 /** Text that means "go to the next step" (forward, not final). */
-export const ADVANCE_RE = /\b(next|continue|proceed|review|save\s*(?:and|&)\s*continue|next\s*step|go\s*to\s*next|start\s*application|apply\s*now)\b/i;
+export const ADVANCE_RE = /\b(next|continue|proceed|review|save\s*(?:and|&)\s*continue|next\s*step|go\s*to\s*next)\b/i;
+
+/**
+ * Text that opens/starts an application from a JD landing page. NOT a general
+ * advance control: on one-page/quick-apply flows "Apply now" IS the final
+ * submit, so these are only clicked on a page with no form fields at all
+ * (a pure landing page) — never on a page we just filled.
+ */
+export const APPLY_START_RE = /\b(start\s*application|apply\s*now|apply\s*for\s*this\s*job)\b/i;
 
 /** Text that means "this is the FINAL submit" — never auto-clicked by the navigator. */
 export const SUBMIT_RE = /\b(submit|finish|send\s*application|complete\s*application|submit\s*application)\b/i;
@@ -73,14 +81,20 @@ async function collect(page) {
 
 /**
  * Find the control that advances to the next step (forward, not final submit).
+ *
  * @param {object} page
+ * @param {object} [options]
+ * @param {boolean} [options.allowApplyStart=false] also accept "Apply now" /
+ *   "Start application" — pass true ONLY on a fieldless JD landing page, where
+ *   such a button opens the form (on a filled one-page form it IS the submit).
  * @returns {Promise<{selector: string|null, text: string}|null>}
  */
-export async function findAdvanceControl(page) {
+export async function findAdvanceControl(page, { allowApplyStart = false } = {}) {
   const list = await collect(page);
   for (const c of list) {
     if (SUBMIT_RE.test(c.text)) continue; // never treat a final submit as "advance"
     if (ADVANCE_RE.test(c.text)) return c;
+    if (allowApplyStart && APPLY_START_RE.test(c.text)) return c;
   }
   return null;
 }

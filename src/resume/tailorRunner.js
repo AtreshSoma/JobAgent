@@ -82,6 +82,7 @@ export function vocabularyFromScoring(scoring = {}) {
  * @param {object} [args.options]
  * @param {boolean} [args.options.exportPdf=false] also export a PDF (best-effort)
  * @param {boolean} [args.options.addSummaryLine=false]
+ * @param {boolean} [args.options.enableRewrites=false] recorded but intentionally disabled by Python
  * @param {object} [args.deps]
  * @param {Function} [args.deps.spawnImpl] override child_process.spawn (testing)
  * @param {NodeJS.ProcessEnv} [args.deps.env]
@@ -102,6 +103,13 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     audit: null,
     emphasized: null,
     summaryLine: null,
+    changes: [],
+    gaps: [],
+    qualifications: {},
+    selectedContent: {},
+    rewritePolicy: null,
+    invariants: null,
+    limitations: [],
     validation: null,
     atsReport: null,
     warning: null,
@@ -127,6 +135,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
     add_summary_line: options.addSummaryLine === true,
+    enable_rewrites: options.enableRewrites === true,
     export_pdf: options.exportPdf === true,
   };
 
@@ -148,6 +157,16 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     audit: response.audit ?? null,
     emphasized: response.emphasized ?? null,
     summaryLine: response.summary_line ?? null,
+    // Structured, evidence-backed record of every tailoring action (skill
+    // reorders with before/after, emphasis evidence, focus line) plus the JD
+    // requirements the resume does NOT support (reported, never inserted).
+    changes: response.changes ?? [],
+    gaps: response.gaps ?? [],
+    qualifications: response.qualifications ?? {},
+    selectedContent: response.selected_content ?? {},
+    rewritePolicy: response.rewrite_policy ?? null,
+    invariants: response.invariants ?? null,
+    limitations: response.limitations ?? [],
     validation: response.validation ?? null,
     atsReport: response.ats_report ?? null,
     warning: null,

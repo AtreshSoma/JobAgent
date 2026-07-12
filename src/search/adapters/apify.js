@@ -25,11 +25,14 @@ import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { getSecret } from '../../utils/credentialManager.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout } from '../../utils/httpClient.js';
+import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
 
 export const adapterId = 'apify';
 
 const API_BASE = 'https://api.apify.com/v2';
+
+/** Every Apify call shares this host — politeness must be keyed on it. */
+const APIFY_HOST = 'api.apify.com';
 
 /**
  * How many actors to run concurrently. Conservative by default: Apify's free
@@ -61,8 +64,27 @@ const DEFAULT_ACTOR_TIMEOUT_MS = 180_000;
  * @param {NodeJS.ProcessEnv} [ctx.env]
  * @returns {Promise<{ jobs: object[], errors: Array<{actor?: string, error: string}> }>}
  */
+/**
+ * Retry policy for a BILLED actor run (`run-sync-get-dataset-items`), which
+ * executes a scrape and charges your Apify account for it.
+ *
+ * The default policy retries timeouts and 5xx. That is wrong — and expensive —
+ * here: a run-sync call that times out (or dies mid-flight) has usually already
+ * STARTED the actor, so retrying re-runs a scrape you have already paid for. A
+ * slow actor could be billed four times over for one configured entry.
+ *
+ * Only a 429 is safe to retry: Apify rejected the request at the gate, so no
+ * actor run was created and nothing was charged.
+ *
+ * @param {any} err
+ * @returns {boolean}
+ */
+export function isRetryableBilledRun(err) {
+  return Number(err?.status ?? err?.statusCode) === 429;
+}
+
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, env } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, env } = ctx;
   const options = source.options ?? {};
   const actors = Array.isArray(options.actors) ? options.actors : [];
   const tokenEnv = options.tokenEnv || 'APIFY_TOKEN';
@@ -88,11 +110,16 @@ export async function run(source = {}, ctx = {}) {
   // run-sync call can take many seconds each.
   const perActor = await mapWithConcurrency(actors, concurrency, async (actor) => {
     const label = actor.label || actor.actorId || actor.datasetId || 'apify';
+    // Running an actor SPENDS REAL MONEY; reading an existing dataset does not.
+    const billable = !actor.datasetId && Boolean(actor.actorId);
     try {
-      if (rateLimiter) await rateLimiter.wait(`apify:${label}`, source.rateLimitMs);
+      // Keyed on the host, not the actor label: a label is used once per run, so
+      // it never has a previous call to space against and the limiter never waited.
+      if (rateLimiter) await rateLimiter.wait(`apify:${APIFY_HOST}`, source.rateLimitMs);
+      const call = () => fetchItems(fetchImpl, actor, token, maxItems, actorTimeoutMs);
       const items = await withRetry(
-        () => fetchItems(fetchImpl, actor, token, maxItems, actorTimeoutMs),
-        { maxRetries },
+        () => (hostGate ? hostGate.run(`https://${APIFY_HOST}/`, call) : call()),
+        { maxRetries, isRetryable: billable ? isRetryableBilledRun : undefined },
       );
       const mapped = [];
       for (const item of items) {
@@ -101,7 +128,10 @@ export async function run(source = {}, ctx = {}) {
       }
       return { jobs: mapped, error: null };
     } catch (err) {
-      return { jobs: [], error: { actor: label, error: err.message } };
+      return {
+        jobs: [],
+        error: { actor: label, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
+      };
     }
   });
 
@@ -152,11 +182,9 @@ async function fetchItems(fetchImpl, actor, token, maxItems, timeoutMs) {
 
 async function fetchJson(fetchImpl, url, init = {}, timeoutMs) {
   const res = await fetchWithTimeout(fetchImpl, url, init, timeoutMs);
-  if (!res.ok) {
-    const e = new Error(`Apify HTTP ${res.status} for ${stripQuery(url)}`);
-    e.status = res.status;
-    throw e;
-  }
+  // stripQuery keeps the token out of the message even though we send it as a
+  // header — a URL in an error string is the classic way a secret leaks.
+  if (!res.ok) throw httpError(res, 'Apify', stripQuery(url));
   const data = await res.json();
   return Array.isArray(data) ? data : (data.items ?? []);
 }
@@ -186,7 +214,15 @@ export function mapItem(item, actor = {}) {
   // A row with neither a title nor a URL is unusable downstream.
   if (!title && !url) return null;
 
-  const company = coerce(pick(item, fm.company, ['companyName', 'company', 'organization', 'employer', 'employerName', 'companyTitle']));
+  // Actors are wildly inconsistent about the employer field; try every known
+  // shape (including schema.org hiringOrganization objects — coerce() extracts
+  // `.name`), then fall back to the apply URL's company host so a job is never
+  // persisted with a blank company.
+  const company = coerce(pick(item, fm.company, [
+    'companyName', 'company', 'organization', 'employer', 'employerName',
+    'companyTitle', 'hiringOrganization', 'company_name', 'organizationName',
+    'companyBrandName', 'companyInfo',
+  ])) || companyFromUrl(url);
   const location = formatLocation(pick(item, fm.location, ['location', 'jobLocation', 'place', 'formattedLocation', 'city']));
   const rawJd = coerce(pick(item, fm.jdText, ['descriptionText', 'description', 'jobDescription', 'descriptionHtml', 'snippet']));
   const postedAt = coerce(pick(item, fm.postedAt, ['postedAt', 'publishedAt', 'postingDateParsed', 'datePosted', 'postedDate', 'datePublished', 'dateOnIndeed', 'date', 'postedTime']));
@@ -256,6 +292,45 @@ export function resolveApplyUrl(item, fm = {}) {
 /** True when a URL's host belongs to a job aggregator (gated apply page). */
 export function isAggregatorHost(u) {
   return /https?:\/\/[^/]*\b(indeed|linkedin|glassdoor|ziprecruiter|simplyhired|monster|dice)\.[a-z.]+/i.test(u);
+}
+
+/**
+ * Last-resort company name from a DIRECT apply URL. ATS URLs carry the company
+ * slug (greenhouse.io/acme, acme.wd5.myworkdayjobs.com, jobs.acme.com);
+ * aggregator hosts never identify the employer, so they yield ''.
+ *
+ * @param {string} url
+ * @returns {string} best-effort company name (may be '')
+ */
+export function companyFromUrl(url) {
+  if (!url || isAggregatorHost(url)) return '';
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    // ATS path-slug hosts: greenhouse.io/<company>, jobs.lever.co/<company>, …
+    const pathSlugHosts = /(greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|jobvite\.com)$/;
+    if (pathSlugHosts.test(host)) {
+      const slug = u.pathname.split('/').filter(Boolean)[0] ?? '';
+      return prettifySlug(slug);
+    }
+    // Workday-style subdomain hosts: <company>.wd5.myworkdayjobs.com.
+    const sub = host.split('.')[0];
+    if (/myworkdayjobs\.com$|icims\.com$|taleo\.net$/.test(host)) return prettifySlug(sub);
+    // Company career site: jobs.acme.com / careers.acme.com / acme.com.
+    const parts = host.split('.');
+    const base = parts.length >= 2 ? parts[parts.length - 2] : '';
+    return /^(jobs|careers|www|apply|boards|job)$/.test(base) ? '' : prettifySlug(base);
+  } catch {
+    return '';
+  }
+}
+
+/** "acme-labs" / "acme_labs" -> "Acme Labs". */
+function prettifySlug(slug) {
+  return String(slug ?? '')
+    .replace(/[-_]+/g, ' ')
+    .trim()
+    .replace(/\b[a-z]/g, (c) => c.toUpperCase());
 }
 
 /**

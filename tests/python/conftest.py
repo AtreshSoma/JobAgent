@@ -32,3 +32,25 @@ def sample_resume(tmp_path):
     path = tmp_path / "MASTER_RESUME.docx"
     doc.save(str(path))
     return path
+
+
+@pytest.fixture()
+def sample_resume_with_competencies(tmp_path):
+    """A master resume with a competencies TABLE (like the real master)."""
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("PROFESSIONAL SUMMARY")
+    doc.add_paragraph("Senior Data Engineer with cloud data platform experience.")
+    doc.add_paragraph("CORE COMPETENCIES")
+    table = doc.add_table(rows=2, cols=2)
+    table.rows[0].cells[0].text = "Data Platforms:"
+    table.rows[0].cells[1].text = "Snowflake, Azure Databricks, Microsoft Fabric, Azure Synapse"
+    table.rows[1].cells[0].text = "Pipelines:"
+    table.rows[1].cells[1].text = "SSIS, ADF Pipelines, PySpark, Kafka"
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph("Built medallion pipelines on Azure Databricks with PySpark and Delta Lake.")
+    path = tmp_path / "MASTER_RESUME.docx"
+    doc.save(str(path))
+    return path

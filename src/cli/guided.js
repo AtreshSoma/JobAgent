@@ -20,20 +20,13 @@
  */
 
 import { createInterface } from 'node:readline/promises';
-import { relative } from 'node:path';
 
+import { relPath as rel } from '../utils/outputPaths.js';
 import { runPrepareApps } from './commands.js';
 import { runApply } from './applyOneByOne.js';
 import { listPending, approve } from '../apply/approvalQueue.js';
 import { writeJobTracker } from '../reports/jobTracker.js';
 import { ui } from './ui.js';
-
-/** Project-relative path with forward slashes, for tidy output. */
-function rel(root, p) {
-  if (!p) return '';
-  try { return relative(root, p).split('\\').join('/'); }
-  catch { return String(p); }
-}
 
 /** Build a readline-backed prompt; falls back to a no-op when not interactive. */
 function makePrompt() {

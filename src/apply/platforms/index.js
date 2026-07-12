@@ -5,6 +5,7 @@
 
 import { descriptor as greenhouse } from './greenhouse.js';
 import { descriptor as lever } from './lever.js';
+import { descriptor as ashby } from './ashby.js';
 import { descriptor as workday } from './workday.js';
 import { descriptor as icims } from './icims.js';
 import { descriptor as taleo } from './taleo.js';
@@ -13,7 +14,7 @@ import { descriptor as jobvite } from './jobvite.js';
 import { descriptor as generic } from './generic.js';
 
 export const PLATFORMS = Object.freeze({
-  greenhouse, lever, workday, icims, taleo, smartrecruiters, jobvite, generic,
+  greenhouse, lever, ashby, workday, icims, taleo, smartrecruiters, jobvite, generic,
 });
 
 /**

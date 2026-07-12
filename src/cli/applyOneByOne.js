@@ -17,8 +17,8 @@
  */
 
 import { createInterface } from 'node:readline/promises';
-import { relative } from 'node:path';
 
+import { relPath as rel } from '../utils/outputPaths.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { createBrowserSession } from '../automation/browser.js';
 import { loadPacket, recordAssistResult } from './commands.js';
@@ -29,13 +29,6 @@ import { writeJobTracker } from '../reports/jobTracker.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { ui } from './ui.js';
 import { formatPostedRelative } from '../utils/dates.js';
-
-/** Project-relative path with forward slashes, for tidy output. */
-function rel(root, p) {
-  if (!p) return '';
-  try { return relative(root, p).split('\\').join('/'); }
-  catch { return String(p); }
-}
 
 /** Current timestamp as ISO; honours an injected clock for tests. */
 function nowIso(now) {
@@ -82,13 +75,15 @@ export async function runApply({ config, db, logger, options = {}, deps = {} } =
       .map((approval) => ({ approval, packet: loadPacket(approval, deps) }))
       .filter((x) => x.packet && x.packet.job?.url);
 
-    // Idempotency: never re-list a job that was already submitted. This keeps
+    // Idempotency: never re-list a job that was already submitted — or whose
+    // auto-submit is unverified (re-filling could double-apply). This keeps
     // finished applications out of the menu AND prevents a re-fill from
     // clobbering their "submitted" status in the tracker.
     const alreadyApplied = [];
     const pendingItems = items.filter(({ packet }) => {
       const row = db.getJob?.(packet.job?.id) ?? null;
-      const done = row && (Number(row.applied) === 1 || row.status === 'submitted');
+      const done = row && (Number(row.applied) === 1
+        || row.status === 'submitted' || row.status === 'submit_unverified');
       if (done) alreadyApplied.push(packet);
       return !done;
     });
@@ -229,14 +224,22 @@ export async function runApply({ config, db, logger, options = {}, deps = {} } =
       }
 
       if (outcome === 'submitted') {
+        // The user just told us they submitted — losing this write would let a
+        // later run re-open the application. Never claim "Recorded" on a
+        // failed write; tell the human exactly what to do instead.
+        let recorded = true;
         try {
           db.upsertJob({ id: job.id, applied: 1, applied_at: nowIso(deps.now), status: 'submitted' });
-        } catch { /* ignore */ }
+        } catch (err) {
+          recorded = false;
+          ui.warn(`Could NOT record the submission (${err.message}).`);
+          ui.note('Close other processes using the DB and mark it Submitted from the dashboard.');
+        }
         logger?.event?.(EVENT_TYPES.APPLICATION_SUBMITTED, {
           jobId: job.id, message: `marked submitted by user`, meta: { company: job.company, title: job.title },
         });
         submittedCount += 1;
-        ui.success('Recorded as Submitted in your tracker.');
+        if (recorded) ui.success('Recorded as Submitted in your tracker.');
       } else if (outcome === 'skipped') {
         try { db.upsertJob({ id: job.id, status: 'skipped' }); } catch { /* ignore */ }
         logger?.event?.(EVENT_TYPES.PREFILL_STARTED, {

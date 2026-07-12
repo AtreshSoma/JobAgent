@@ -11,7 +11,7 @@
  *   - All answers are drawn from config; nothing about the candidate is invented.
  */
 
-import { normalizeText } from '../utils/textNormalize.js';
+import { normalizeText, wholeWordIn } from '../utils/textNormalize.js';
 
 /** Phrases an answer must never contain (would misrepresent the candidate). */
 const FORBIDDEN_ANSWER_FRAGMENTS = [
@@ -89,18 +89,23 @@ export function answerScreeningQuestion(question, screeningAnswers, { choices } 
   return { answered: true, action: 'answer', matchedId: best.id, answer, type: best.type ?? 'text', confidence: bestScore };
 }
 
-/** Fraction of a pattern's words present, taking the strongest pattern. */
+/**
+ * Fraction of a pattern's words present, taking the strongest pattern.
+ * WHOLE-WORD matching only: the EEO pattern "race" must match
+ * "Race/Ethnicity" but never "embrace diversity" — a substring hit here would
+ * write a demographic answer into an unrelated free-text field.
+ */
 function matchScore(text, patterns) {
   let best = 0;
   for (const pattern of patterns) {
     const p = normalizeText(pattern);
     if (!p) continue;
-    if (text.includes(p)) {
+    if (wholeWordIn(text, p)) {
       best = Math.max(best, 1);
       continue;
     }
     const words = p.split(' ').filter(Boolean);
-    const hit = words.filter((w) => text.includes(w)).length;
+    const hit = words.filter((w) => wholeWordIn(text, w)).length;
     const frac = words.length ? hit / words.length : 0;
     if (frac >= 0.75) best = Math.max(best, frac);
   }
@@ -126,10 +131,16 @@ function isForbidden(answer) {
   return FORBIDDEN_ANSWER_FRAGMENTS.some((f) => a.includes(f));
 }
 
+/**
+ * Unanswerable question -> defer to the configured default. `ask_user`
+ * (shipped default) surfaces it as a blocker; `skip` leaves the field blank
+ * without blocking (the live form's own required-field check still applies).
+ * Never anything else — an unknown question is never answered with a guess.
+ */
 function askUser(defaults) {
   return {
     answered: false,
-    action: defaults.unknownAction === 'answer' ? 'ask_user' : 'ask_user',
+    action: defaults.unknownAction === 'skip' ? 'skip' : 'ask_user',
     matchedId: null,
     answer: null,
     type: null,

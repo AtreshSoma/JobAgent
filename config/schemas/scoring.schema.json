@@ -4,7 +4,12 @@
   "title": "Scoring configuration",
   "type": "object",
   "additionalProperties": false,
-  "required": ["weights", "tiers", "keywords", "sponsorshipGate"],
+  "required": [
+    "weights",
+    "tiers",
+    "keywords",
+    "sponsorshipGate"
+  ],
   "properties": {
     "weights": {
       "type": "object",
@@ -26,55 +31,161 @@
         "resumeKeywordAlignment"
       ],
       "properties": {
-        "titleFit": { "type": "number", "minimum": 0 },
-        "seniorityFit": { "type": "number", "minimum": 0 },
-        "azureFabricStack": { "type": "number", "minimum": 0 },
-        "dataEngineeringStack": { "type": "number", "minimum": 0 },
-        "biSemanticDepth": { "type": "number", "minimum": 0 },
-        "pythonSqlPyspark": { "type": "number", "minimum": 0 },
-        "domainFit": { "type": "number", "minimum": 0 },
-        "sponsorshipFeasibility": { "type": "number", "minimum": 0 },
-        "geographyFit": { "type": "number", "minimum": 0 },
-        "freshness": { "type": "number", "minimum": 0 },
-        "directAtsAvailability": { "type": "number", "minimum": 0 },
-        "companySponsorshipLikelihood": { "type": "number", "minimum": 0 },
-        "resumeKeywordAlignment": { "type": "number", "minimum": 0 }
+        "titleFit": {
+          "type": "number",
+          "minimum": 0
+        },
+        "seniorityFit": {
+          "type": "number",
+          "minimum": 0
+        },
+        "azureFabricStack": {
+          "type": "number",
+          "minimum": 0
+        },
+        "dataEngineeringStack": {
+          "type": "number",
+          "minimum": 0
+        },
+        "biSemanticDepth": {
+          "type": "number",
+          "minimum": 0
+        },
+        "pythonSqlPyspark": {
+          "type": "number",
+          "minimum": 0
+        },
+        "domainFit": {
+          "type": "number",
+          "minimum": 0
+        },
+        "sponsorshipFeasibility": {
+          "type": "number",
+          "minimum": 0
+        },
+        "geographyFit": {
+          "type": "number",
+          "minimum": 0
+        },
+        "freshness": {
+          "type": "number",
+          "minimum": 0
+        },
+        "directAtsAvailability": {
+          "type": "number",
+          "minimum": 0
+        },
+        "companySponsorshipLikelihood": {
+          "type": "number",
+          "minimum": 0
+        },
+        "resumeKeywordAlignment": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     },
     "tiers": {
       "type": "object",
       "additionalProperties": false,
       "description": "Lower-bound score (0-100 normalized) for each tier.",
-      "required": ["priority", "apply", "queue", "nearMiss"],
+      "required": [
+        "priority",
+        "apply",
+        "queue",
+        "nearMiss"
+      ],
       "properties": {
-        "priority": { "type": "number", "minimum": 0, "maximum": 100 },
-        "apply": { "type": "number", "minimum": 0, "maximum": 100 },
-        "queue": { "type": "number", "minimum": 0, "maximum": 100 },
-        "nearMiss": { "type": "number", "minimum": 0, "maximum": 100 }
+        "priority": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "apply": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "queue": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "nearMiss": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        }
       }
     },
     "keywords": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["titles", "azureFabric", "dataEngineering", "biSemantic", "languages", "domains"],
+      "required": [
+        "titles",
+        "azureFabric",
+        "dataEngineering",
+        "biSemantic",
+        "languages",
+        "domains"
+      ],
       "properties": {
-        "titles": { "type": "array", "items": { "type": "string" } },
-        "azureFabric": { "type": "array", "items": { "type": "string" } },
-        "dataEngineering": { "type": "array", "items": { "type": "string" } },
-        "biSemantic": { "type": "array", "items": { "type": "string" } },
-        "languages": { "type": "array", "items": { "type": "string" } },
-        "domains": { "type": "array", "items": { "type": "string" } }
+        "titles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "azureFabric": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dataEngineering": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "biSemantic": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "sponsorshipGate": {
       "type": "object",
       "additionalProperties": false,
       "description": "Sponsorship statuses that permit a job to reach Apply/Priority tiers.",
-      "required": ["allowApplyWhen"],
+      "required": [
+        "allowApplyWhen"
+      ],
       "properties": {
         "allowApplyWhen": {
           "type": "array",
-          "items": { "type": "string", "enum": ["Confirmed", "Likely", "Approved"] },
+          "items": {
+            "type": "string",
+            "enum": [
+              "Confirmed",
+              "Likely",
+              "Approved"
+            ]
+          },
           "minItems": 1
         }
       }
@@ -84,17 +195,46 @@
       "additionalProperties": false,
       "description": "Inputs for the sponsorship classifier.",
       "properties": {
-        "affirmativePhrases": { "type": "array", "items": { "type": "string" } },
-        "likelySponsors": { "type": "array", "items": { "type": "string" } }
+        "affirmativePhrases": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "likelySponsors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "freshness": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "skipOlderThanDays": { "type": "integer", "minimum": 1 },
-        "flagOlderThanDays": { "type": "integer", "minimum": 1 },
-        "highApplicantThreshold": { "type": "integer", "minimum": 1 }
+        "skipOlderThanDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "flagOlderThanDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "highApplicantThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "evidenceAliases": {
+      "type": "object",
+      "description": "JD term -> profile terms that truthfully evidence it (skill-alias ontology). A JD keyword is only reported as a gap when neither it nor any alias appears in the candidate profile.",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
       }
     }
   }

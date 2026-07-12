@@ -15,6 +15,9 @@
  *   found -> unknown_date_review     (no posting date; held for human review)
  *   scored -> near_miss              (scored below the queue threshold)
  *   assist_started -> assist_blocked (captcha/login/mfa/unknown question/etc.)
+ *   assist_started -> submit_unverified (opt-in auto-submit clicked Submit but
+ *                                     no confirmation page was detected — the
+ *                                     human must verify before it counts)
  *   any -> failed                    (unexpected error)
  */
 
@@ -29,13 +32,44 @@ export const LIFECYCLE = Object.freeze({
   ASSIST_STARTED: 'assist_started',
   ASSIST_BLOCKED: 'assist_blocked',
   READY_FOR_SUBMIT: 'ready_for_submit',
+  SUBMIT_UNVERIFIED: 'submit_unverified',
   SUBMITTED: 'submitted',
   SKIPPED: 'skipped',
+  CANCELLED: 'cancelled',
   FAILED: 'failed',
 });
 
 /** All known lifecycle values (handy for validation/tests). */
 export const LIFECYCLE_VALUES = Object.freeze(Object.values(LIFECYCLE));
+
+/**
+ * DB statuses that represent human or assist investment. Re-discovery and
+ * re-scoring must never overwrite these (e.g. a prepared+approved job being
+ * re-discovered after it aged past the freshness window must NOT flip to
+ * "discarded" — that silently buries an application in flight).
+ */
+export const PROTECTED_STATUSES = Object.freeze([
+  LIFECYCLE.PREPARED, LIFECYCLE.ASSIST_STARTED, LIFECYCLE.ASSIST_BLOCKED,
+  LIFECYCLE.READY_FOR_SUBMIT, LIFECYCLE.SUBMIT_UNVERIFIED, LIFECYCLE.SUBMITTED,
+  LIFECYCLE.SKIPPED,
+  LIFECYCLE.CANCELLED,
+]);
+
+/**
+ * Should discovery/scoring keep its hands off this job row's status?
+ * True when the human decided something, a packet exists, it was applied to,
+ * or an assist outcome was recorded.
+ *
+ * @param {object|null} row jobs-table row (or null when the job is new)
+ * @returns {boolean}
+ */
+export function isProtectedJobRow(row) {
+  if (!row) return false;
+  return Number(row.applied) === 1
+    || Boolean(row.application_packet_path)
+    || Boolean(row.user_decision)
+    || PROTECTED_STATUSES.includes(row.status);
+}
 
 import { TIERS } from './scoring/explainScore.js';
 

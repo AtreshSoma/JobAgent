@@ -7,7 +7,8 @@
     "boardConcurrency": 8,
     "pageConcurrency": 4,
     "detailConcurrency": 6,
-    "actorConcurrency": 3
+    "actorConcurrency": 3,
+    "hostConcurrency": 4
   },
   "sources": [
     {
@@ -415,6 +416,7 @@
         { "host": "workday.wd5.myworkdayjobs.com", "tenant": "workday", "site": "Workday", "company": "Workday", "searchText": "data engineer", "pageSize": 20 }
       ],
       "rateLimitMs": 4000,
+      "hostSpacingMs": 500,
       "options": {
         "note": "DISCOVERY. Public Workday CXS career-site endpoints only — the same JSON each company's public career page loads. No login, no CAPTCHA bypass, no private endpoints. Each tenant is verified-reachable and returns data roles; a tenant that goes 404/422/500 is logged and skipped, never crashes the run. searchText focuses the public search box on data-engineering roles; fetchDetails (default) pulls the full JD so scoring is accurate. Add more via scripts/probe-workday*.mjs to confirm host/tenant/site before listing."
       }
