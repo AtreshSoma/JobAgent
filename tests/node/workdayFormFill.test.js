@@ -38,7 +38,7 @@ describe('Workday-style form filling (real browser)', () => {
     }
   }, 60000);
 
-  afterAll(async () => { await session?.close?.(); });
+  afterAll(async () => { await session?.close?.(); }, 30000);
 
   it('fills a combined name with the FULL name, answers sponsorship Yes, and never leaks the State', async (ctx) => {
     if (!available) return ctx.skip();

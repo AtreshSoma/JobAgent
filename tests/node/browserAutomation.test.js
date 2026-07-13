@@ -41,7 +41,7 @@ describe('browser automation against a local fixture form', () => {
     }
   }, 60000);
 
-  afterAll(async () => { await session?.close?.(); });
+  afterAll(async () => { await session?.close?.(); }, 30000);
 
   it('opens a clean form page without a guard block', async (ctx) => {
     if (!available) return ctx.skip();

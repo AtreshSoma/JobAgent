@@ -46,7 +46,7 @@ describe('ATS application contract fixtures (real local browser, no submit)', ()
     catch { available = false; }
   }, 60000);
 
-  afterAll(async () => { await session?.close?.(); });
+  afterAll(async () => { await session?.close?.(); }, 30000);
 
   for (const fixture of CASES) {
     it(`${fixture.key}: detects/prepares/fills/verifies upload and stops at final review`, async (ctx) => {

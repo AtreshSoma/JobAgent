@@ -3,77 +3,63 @@ import { readFileSync } from 'node:fs';
 
 const html = readFileSync(new URL('../../src/dashboard/public/index.html', import.meta.url), 'utf8');
 
-describe('one-page workbench shell', () => {
-  it('keeps the daily workflow on one page with horizontal tabs and a persistent right column', () => {
-    expect(html).not.toContain('<nav class="rail"');
-    expect(html).toContain('class="wf-tabs"');
-    expect(html).toContain('Best matches');
-    expect(html).toContain('Ready to apply');
-    expect(html).toContain('class="right-col"');
-    expect(html).toContain('Today\\u2019s priorities');
-    expect(html).toContain('Match evidence');
+describe('restored command-center workbench shell', () => {
+  it('restores the compact dark dashboard requested by the user', () => {
+    expect(html).toContain('<h1>JobAgent</h1>');
+    expect(html).toContain('local-only · submit is your call');
+    expect(html).toContain('class="ctxbar"');
+    expect(html).toContain('class="tabs"');
+    expect(html).toContain('id="tiles"');
+    expect(html).toContain('id="rows"');
+    expect(html).toContain('id="detail"');
+    expect(html).toContain('Source performance');
+    expect(html).toContain('Sponsorship feasibility');
+    expect(html).toContain('Daily progress (last 7 days)');
   });
 
-  it('exposes every primary command and keeps utility views in a drawer', () => {
+  it('keeps the complete primary workflow in the restored header and selection bar', () => {
     for (const label of [
-      'Find new jobs', 'Re-score', 'Prepare', 'Auto-Apply Selected',
-      'Auto-Apply Best', 'Add by URL', 'Interview Prep',
+      'Find New Jobs', 'Re-score', 'Auto-Prepare Best', 'Add by URL',
+      'Interview Prep', 'Reports', 'Auto-apply', 'Prepare selected', 'Approve',
     ]) expect(html).toContain(label);
-    expect(html).toContain('class="util-drawer"');
-    expect(html).toContain('data-util="documents"');
-    expect(html).toContain('data-util="analytics"');
-    expect(html).toContain('Settings &amp; health');
   });
 
-  it('requires an explicit one-run Auto-Apply consent and calls the preview API first', () => {
+  it('retains the newer cancellation and per-source discovery progress behavior', () => {
+    expect(html).toContain('id="btnCancel"');
+    expect(html).toContain('/api/run/cancel');
+    expect(html).toContain('p.currentSource');
+    expect(html).toContain('completed results will be kept');
+    expect(html).toContain('cancelled · completed results kept');
+  });
+
+  it('retains auto-submit eligibility and verified-submission safety', () => {
     expect(html).toContain('/api/auto-apply/eligibility');
-    expect(html).toContain('id="auto-consent"');
-    expect(html).toContain('explicitly authorize');
+    expect(html).toContain('authorizedAutoSubmitIds');
     expect(html).toContain('autoSubmit: true');
-    expect(html).toContain('positive confirmation evidence');
+    expect(html).toContain('verified: Boolean(confirmation)');
+    expect(html).toContain('not counted as applied yet');
   });
 
-  it('contains responsive/mobile contracts and prevents page-level horizontal overflow', () => {
+  it('keeps responsive behavior without changing the restored desktop design', () => {
     expect(html).toMatch(/body\s*\{[^}]*overflow-x:\s*hidden/s);
-    for (const width of ['1280px', '1100px', '900px', '760px', '430px']) {
-      expect(html).toContain(`max-width: ${width}`);
-    }
-    expect(html).toContain('.job-cards { display: block; }');
-    expect(html).toContain('.main { margin-left: 0; padding-bottom: 0; }');
+    expect(html).toContain('@media (max-width: 1180px)');
+    expect(html).toContain('@media (max-width: 900px)');
+    expect(html).toContain('header { align-items: flex-start; flex-wrap: wrap;');
   });
 
-  it('implements keyboard-operable tabs and traps focus inside modal utility drawers', () => {
-    expect(html).toContain('aria-controls="job-results"');
-    expect(html).toContain('role="tabpanel"');
-    expect(html).toContain('["ArrowLeft", "ArrowRight", "Home", "End"]');
-    expect(html).toContain('event.key === "Tab" && !$("util-drawer").hidden');
-  });
-
-  it('the inline application script parses and its HTML escape helper is effective', () => {
+  it('parses the inline application script and escapes untrusted HTML', () => {
     const script = html.slice(html.lastIndexOf('<script>') + 8, html.lastIndexOf('</script>'));
     expect(() => new Function(script)).not.toThrow();
 
-    const from = script.indexOf('function h(value)');
-    const to = script.indexOf('function enc(value)', from);
-    const escape = new Function(`${script.slice(from, to)}; return h;`)();
+    const from = script.indexOf('function esc(s)');
+    const to = script.indexOf('/* ── tiles', from);
+    const escape = new Function(`${script.slice(from, to)}; return esc;`)();
     expect(escape('<img src=x onerror="boom"> &')).toBe('&lt;img src=x onerror=&quot;boom&quot;&gt; &amp;');
   });
 
-  it('loads fresh statistics before re-rendering after a background run', () => {
-    expect(html).toContain('state.stats = null; await loadStats(true); await renderWorkbench();');
-    expect(html).not.toContain('state.stats = null; await renderWorkbench(); await loadStats(true);');
-  });
-
-  it('shows determinate source progress, elapsed time, and responsive cancellation state', () => {
-    expect(html).toContain('id="run-bar"');
-    expect(html).toContain('progress.currentSource');
-    expect(html).toContain('duration(elapsed) + " elapsed"');
-    expect(html).toContain('run.cancelRequested ? "Cancelling"');
-    expect(html).toContain('run.lastResult.cancelled');
-    expect(html).toContain('Source timings');
-  });
-
-  it('keeps compact filter checkboxes from inheriting full-width text-input flex rules', () => {
-    expect(html).toMatch(/\.check-filter input\s*\{[^}]*flex:\s*0 0 14px;[^}]*min-width:\s*14px;/s);
+  it('refreshes stats and jobs after a background run completes', () => {
+    expect(html).toContain('if (wasDown || (!s.running && wasRunning)) refresh();');
+    expect(html).toContain('loadStats().then(loadSections)');
+    expect(html).toContain('loadJobs().catch');
   });
 });
