@@ -648,7 +648,9 @@ describe('sources registry', () => {
     expect(sourceKind('apify')).toBe('discovery');
     expect(sourceKind('dice')).toBe('url-reader');
     expect(sourceKind('public')).toBe('url-reader');
+    expect(sourceKind('generic-public-pages')).toBe('url-reader');
     expect(sourceKind('manual')).toBe('manual');
+    expect(sourceKind('manual-url')).toBe('manual');
     expect(sourceKind('mystery')).toBe('unknown');
   });
 });

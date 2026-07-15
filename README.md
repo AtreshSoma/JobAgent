@@ -119,7 +119,7 @@ What happens at each stage, concretely:
 | Freshness | `src/search/freshnessFilter.js` | Keeps recent **dated** postings only, per `JOB_FRESHNESS_MODE` (LAST_24_HOURS / LAST_3_DAYS / LAST_7_DAYS / ALL — **default LAST_7_DAYS**: requisitions stay open for weeks, and a 3-day hard window was measured discarding >75% of scoreable jobs before ranking). Auto-widens to a 3-day window when a strict window is thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs are **never** mixed into fresh results; with `INCLUDE_UNKNOWN_DATE_JOBS=true` they go to a separate review bucket (`data/unknown_date_review.json`), otherwise they are dropped. |
 | Exclude | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior, C2C/part-time, wrong-geo, and stale postings — all phrases come from `config/exclusions.json`. |
 | Sponsorship | `src/scoring/sponsorshipClassifier.js` | Confirmed / Likely / Unconfirmed from JD phrases + known-sponsor list in config. |
-| Score | `src/scoring/scorer.js` | 13 weighted categories (title, seniority, Azure/Fabric stack, data-eng stack, BI/semantic, Python/SQL/PySpark, domain, sponsorship, geography, freshness, direct-ATS, company likelihood, resume alignment) → normalized 0–100. Fully deterministic. |
+| Score | `src/scoring/scorer.js` | 13 weighted categories (title, seniority, Azure/Fabric stack, data-eng stack, BI/semantic, Python/SQL/PySpark, domain, sponsorship, geography, freshness, direct-ATS, company likelihood, resume alignment) → normalized 0–100. Fully deterministic. The dashboard also shows the score as a letter grade: **A** ≥ 85, **B** ≥ 75, **C** ≥ 65, **D** ≥ 50, **F** < 50 (grades C and up are marked "recommend"). |
 | Tier + gate | `src/scoring/explainScore.js` | Priority ≥85, Apply ≥75, Queue ≥60, Near miss ≥50. Downgrades Apply/Priority → Queue unless sponsorship is acceptable or you approved it. The dashboard still shows these gated 75+ roles as **strong fits** with a "⚠ verify sponsorship first" action — fit measures the ROLE match; sponsorship feasibility is reported separately, and the gate only blocks auto-preparation. Only Priority/Apply tiers are auto-prepared; Queue-tier jobs are prepared **only** when you select them yourself ("Prepare selected"). |
 | Tailor resume | `src/resume/tailor.py` | Opens the master read-only and bolds skills you already have that match the JD. Saves into the job's `applications/output/` folder. Never fabricates skills. (An optional per-job "Most relevant to this role" focus line is available but **off by default** — enable with `config.runtime.resumeFocusLine === true`.) |
 | Cover letter | `src/apply/coverLetter.js` | Deterministic template filled from your profile, then humanized (banned phrases + em dashes removed), 180–260 words, only when score ≥ threshold or required. |
@@ -254,7 +254,11 @@ drives the whole workflow from the browser:
 - **Source breakdown**: found / strong / prepared / submitted per source
   (Greenhouse, Lever, Ashby, SmartRecruiters, Workday, manual lists, …).
 - **Sponsorship breakdown**: Confirmed / Likely / Unconfirmed counts with how
-  many of each are strong fits.
+  many of each are strong fits. A fourth, dashboard-only bucket —
+  **Unclassified** — collects jobs that never reached the classifier: jobs from
+  a discover-only run (classification happens in the score phase) and jobs
+  discarded by hard exclusions before scoring. It is not a classifier output;
+  running Score classifies every job that passes exclusions.
 - **Daily progress**: discovered / prepared / submitted per day for the last
   7 days.
 - **Next actions**: a ranked to-do list (filled apps waiting for your Submit,
@@ -463,7 +467,7 @@ need your input.
 
 This project is built in strict phases. **Current state: all phases complete,
 including the browser-assisted apply layer, a production-hardening pass, and a
-data-quality audit pass (563 JS + 40 Python tests passing).**
+data-quality audit pass (732 JS + 52 Python tests passing).**
 
 - [x] Phase 1 — Scaffold (dirs, config, schemas, project metadata)
 - [x] Phase 2 — Config + utilities (loaders, validation, rate limit, retry, credentials, notifier, text, dates) + tests

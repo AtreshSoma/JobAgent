@@ -18,6 +18,7 @@ describe('humanizer (JS)', () => {
   it('detects residual banned content', () => {
     expect(hasBannedContent('an em dash \u2014 here', humanizerPatterns)).toBe(true);
     expect(hasBannedContent('clean text', humanizerPatterns)).toBe(false);
+    expect(hasBannedContent(undefined, humanizerPatterns)).toBe(false);
   });
 });
 

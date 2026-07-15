@@ -54,10 +54,10 @@ export function assertTruthfulSponsorship(answers = []) {
  *   confidence: number
  * }}
  */
-export function answerScreeningQuestion(question, screeningAnswers, { choices } = {}) {
+export function answerScreeningQuestion(question, screeningAnswers = {}, { choices } = {}) {
   const text = normalizeText(question);
-  const answers = screeningAnswers.answers ?? [];
-  const defaults = screeningAnswers.defaults ?? {};
+  const answers = screeningAnswers?.answers ?? [];
+  const defaults = screeningAnswers?.defaults ?? {};
 
   let best = null;
   let bestScore = 0;

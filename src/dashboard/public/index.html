@@ -366,7 +366,7 @@
         <div class="scroll"><table class="srcTable"><thead><tr><th>Reason</th><th>Jobs</th></tr></thead><tbody id="blockRows"></tbody></table></div>
       </div>
       <div class="card">
-        <h3>Daily progress (last 7 days)</h3>
+        <h3 title="Counts per calendar day (midnight to midnight), so today's row can differ from the header's rolling 'last 24h' figures.">Daily progress (last 7 calendar days)</h3>
         <div class="scroll"><table class="srcTable"><thead><tr><th>Day</th><th>Found</th><th>Prepared</th>
           <th>Submitted</th></tr></thead><tbody id="dailyRows"></tbody></table></div>
       </div>
@@ -493,8 +493,8 @@ async function loadStats() {
   const posted24 = s.totals.postedLast24h ?? 0;
   $('freshness').innerHTML =
     `<span class="stat"><b>${fmt(s.totals.jobsTracked)}</b><span class="l">jobs tracked</span></span>`
-    + `<span class="stat${found24 ? ' hot' : ''}"><b>${fmt(found24)}</b><span class="l">found in last 24h</span></span>`
-    + `<span class="stat${posted24 ? ' hot' : ''}"><b>${fmt(posted24)}</b><span class="l">posted in last 24h</span></span>`
+    + `<span class="stat${found24 ? ' hot' : ''}" title="Rolling 24-hour window (now minus 24h) — the Daily progress table counts calendar days instead, so the two can differ."><b>${fmt(found24)}</b><span class="l">found in last 24h</span></span>`
+    + `<span class="stat${posted24 ? ' hot' : ''}" title="Rolling 24-hour window (now minus 24h) — the Daily progress table counts calendar days instead, so the two can differ."><b>${fmt(posted24)}</b><span class="l">posted in last 24h</span></span>`
     + `<span class="stat"><b>${last ?? 'never'}</b><span class="l">last discovery</span></span>`;
   renderTabs();
   const srcEntries = Object.entries(s.bySource).sort((a, b) => b[1].found - a[1].found);
@@ -645,7 +645,8 @@ async function loadJobs() {
       <td>${gradeBadge(j.grade)}<div class="muted" style="font-size:10px">${j.score ?? '—'}</div></td>
       <td><b>${esc(j.company || 'Company on posting')}</b>${j.remote ? ' <span class="rs">remote</span>' : ''}<br>
         <span class="muted">${esc(j.title)}</span></td>
-      <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span></td>
+      <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span>${j.sponsorshipGated && !j.userDecision
+        ? ' <span class="chip Unconfirmed" title="Strong fit parked by the sponsorship gate — verify the employer sponsors, then shortlist to unlock preparation.">⚠ verify</span>' : ''}</td>
       <td>${typeChip(j)}</td>
       <td><span class="dot ${j.postedConfidence}" title="posting date ${j.postedConfidence}"></span>${esc(j.postedLabel)}${j.postedLast24h ? ' <span class="chip strong">new</span>' : ''}</td>
       <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span></td>
@@ -688,6 +689,13 @@ function nextBestAction(j) {
       btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
         + ` ${AUTO_APPLY_BTN(j.id, '↻ Re-try auto-apply')}` };
   }
+  // Sponsorship gate (README: a job can't be Apply/Priority unless sponsorship is
+  // acceptable or you explicitly approved it). Gated jobs surface verification as
+  // the primary action — never a one-click Auto-apply.
+  if (j.sponsorshipGated && !j.userDecision) return {
+    text: 'Strong fit, but sponsorship is unconfirmed — verify the employer sponsors H-1B (careers page, past filings) before applying. Shortlist it once verified; that records your approval and unlocks preparation.',
+    btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Verify sponsorship ↗</button></a>`
+      + ` <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Verified — shortlist</button>` };
   if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit — auto-apply tailors the resume, fills the application, and stops before Submit.',
     btn: AUTO_APPLY_BTN(j.id) + ` <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
   if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — auto-apply prepares the tailored packet and fills the application in one go.',
@@ -723,6 +731,10 @@ async function autoApplyOne(id) {
   if (isRunning) { toast('A run is in progress — wait for it to finish.', true); return; }
   if (isAggregatorUrl(jobsById[id]?.url)) {
     toast('Aggregator link — it will hit a verification wall. Open the posting instead.', true); return;
+  }
+  if (jobsById[id]?.sponsorshipGated && !jobsById[id]?.userDecision
+      && !confirm('Sponsorship for this job is UNCONFIRMED — the safety gate keeps it out of auto-preparation until you verify the employer sponsors.\n\nContinue anyway? Continuing counts as your explicit approval for this job.')) {
+    return;
   }
   const autoSubmit = askAutoSubmit(1);
   try {
@@ -1132,14 +1144,24 @@ async function batchAutoApply() {
   // any selected jobs that are blocked / already submitted / rejected / archived.
   const NON_APPLICABLE = new Set(['blocked', 'submitted', 'rejected', 'archived', 'discarded']);
   const skippable = ids.filter((id) => NON_APPLICABLE.has(jobsById[id]?.appStatus));
-  const actionable = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus));
+  // Sponsorship gate (mirrors autoApplyOne): gated jobs with no explicit user
+  // decision need verification first — they never ride along in a batch.
+  const gated = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus)
+    && jobsById[id]?.sponsorshipGated && !jobsById[id]?.userDecision);
+  const gatedSet = new Set(gated);
+  const actionable = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus) && !gatedSet.has(id));
   if (!actionable.length) {
-    toast(`All ${ids.length} selected job(s) are blocked/submitted/closed — nothing to auto-apply.`, true);
+    toast(gated.length
+      ? `Nothing to auto-apply: ${gated.length} selected job(s) need a sponsorship check first (verify, then shortlist), and the rest are blocked/submitted/closed.`
+      : `All ${ids.length} selected job(s) are blocked/submitted/closed — nothing to auto-apply.`, true);
     return;
   }
   let warn = '';
   if (skippable.length) {
-    warn = `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
+    warn += `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
+  }
+  if (gated.length) {
+    warn += `\n\nNote: ${gated.length} selected job(s) have UNCONFIRMED sponsorship and will be skipped — verify the employer sponsors, shortlist them, then auto-apply.`;
   }
   if (!confirm(`Auto-apply ${actionable.length} job(s)?${warn}\n\nFor each job it will: tailor a resume packet if one doesn't exist yet, approve it, open the posting in a browser, and fill everything it can.`)) return;
   const autoSubmit = askAutoSubmit(actionable.length);

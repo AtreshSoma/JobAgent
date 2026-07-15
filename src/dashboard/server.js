@@ -53,7 +53,7 @@ import {
   dashboardStats, boardPage, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
-  buildDocuments,
+  buildDocuments, setApplyTierThreshold,
 } from './data.js';
 import {
   runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult,
@@ -127,6 +127,9 @@ export function collapseRca(entries = []) {
  * @returns {{ server: import('node:http').Server, runState: object }}
  */
 export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
+  // Keep the dashboard's sponsorship-gate derivation in lockstep with the
+  // configured Apply threshold (AUDIT_LOG flagged item 1).
+  setApplyTierThreshold(config?.scoring?.tiers?.apply);
   const runners = {
     // "Find New Jobs" must leave jobs ON THE BOARD. The bare discover phase
     // only writes data/found_jobs.json — never the SQLite DB the board reads —

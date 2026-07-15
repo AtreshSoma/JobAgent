@@ -237,6 +237,16 @@ export function transitionApplicationState(state, nextPhase, patch = {}, { now, 
       && ![APPLICATION_PHASE.USER_SUBMITTED, APPLICATION_PHASE.VERIFIED].includes(nextPhase)) {
     throw new Error('a submitted application cannot be reopened before verification');
   }
+  if (state.phase === APPLICATION_PHASE.SUBMITTING
+      && ![APPLICATION_PHASE.SUBMITTING, APPLICATION_PHASE.VERIFYING,
+        APPLICATION_PHASE.USER_SUBMITTED, APPLICATION_PHASE.VERIFIED].includes(nextPhase)) {
+    throw new Error('a submission attempt cannot be reopened before verification');
+  }
+  if (state.phase === APPLICATION_PHASE.VERIFYING
+      && ![APPLICATION_PHASE.VERIFYING, APPLICATION_PHASE.USER_SUBMITTED,
+        APPLICATION_PHASE.VERIFIED].includes(nextPhase)) {
+    throw new Error('an application awaiting verification cannot be reopened');
+  }
 
   const at = isoNow(now);
   const currentStep = Math.max(0, Number(patch.currentStep ?? state.currentStep ?? 0) || 0);

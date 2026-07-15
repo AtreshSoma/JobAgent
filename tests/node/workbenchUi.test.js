@@ -14,7 +14,7 @@ describe('restored command-center workbench shell', () => {
     expect(html).toContain('id="detail"');
     expect(html).toContain('Source performance');
     expect(html).toContain('Sponsorship feasibility');
-    expect(html).toContain('Daily progress (last 7 days)');
+    expect(html).toContain('Daily progress (last 7 calendar days)');
   });
 
   it('keeps the complete primary workflow in the restored header and selection bar', () => {

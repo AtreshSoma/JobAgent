@@ -80,16 +80,28 @@ export function deriveAppStatus(job = {}, approval = null) {
 }
 
 /**
+ * Apply-tier threshold used to derive the sponsorship-gate flag. Synced from
+ * config (scoring.tiers.apply) at server startup so a retuned config can't
+ * silently diverge from this derivation; 75 is the shipped default.
+ */
+let applyTierThreshold = 75;
+
+/** Sync the gate-derivation threshold with scoring.tiers.apply. */
+export function setApplyTierThreshold(value) {
+  if (Number.isFinite(value) && value > 0) applyTierThreshold = value;
+}
+
+/**
  * Was a job's tier downgraded to Queue by the sponsorship gate?
- * The ONLY path to a 75+ score sitting in Queue is explainScore's sponsorship
- * gate (raw Apply/Priority, sponsorship not Confirmed/Likely/Approved).
- * Deriving it here (mirroring gradeFromScore's thresholds) makes the flag
- * available for every historical row without a schema migration.
+ * The ONLY path to an Apply-threshold score sitting in Queue is explainScore's
+ * sponsorship gate (raw Apply/Priority, sponsorship not
+ * Confirmed/Likely/Approved). Deriving it here makes the flag available for
+ * every historical row without a schema migration.
  * @param {{tier?: string|null, score?: number|null}} job
  * @returns {boolean}
  */
 export function isSponsorshipGated(job = {}) {
-  return job.tier === 'Queue' && typeof job.score === 'number' && job.score >= 75;
+  return job.tier === 'Queue' && typeof job.score === 'number' && job.score >= applyTierThreshold;
 }
 
 /**
@@ -277,11 +289,21 @@ const approvalsByJob = latestApprovalsByJob;
  */
 const _memo = new WeakMap();
 function cached(db, kind, now, compute) {
-  let changes = -1;
-  try { changes = db.db.prepare('SELECT total_changes() AS c').get().c; }
-  catch { return compute(); /* exotic db stub (tests) — skip caching */ }
-  const at = typeof now?.getTime === 'function' ? now.getTime() : Date.now();
-  const key = `${changes}:${Math.floor(at / 30_000)}`;
+  // P2: pure invalidate-on-write, no time bucket. total_changes() covers this
+  // connection's writes (pipeline, dashboard actions, archival sync); PRAGMA
+  // data_version bumps whenever ANY OTHER connection commits (watch CLI,
+  // maintenance scripts like repair-applied-status.mjs, a second dashboard).
+  // Together every real write path invalidates; an idle dashboard recomputes
+  // nothing. (`now` stays in the signature for callers/tests that inject it.)
+  let key;
+  try {
+    const prep = typeof db.prepareCached === 'function'
+      ? (sql) => db.prepareCached(sql)
+      : (sql) => db.db.prepare(sql);
+    const changes = prep('SELECT total_changes() AS c').get().c;
+    const version = prep('PRAGMA data_version').get().data_version;
+    key = `${version}:${changes}`;
+  } catch { return compute(); /* exotic db stub (tests) — skip caching */ }
   let slot = _memo.get(db);
   if (!slot) { slot = {}; _memo.set(db, slot); }
   if (slot[kind]?.key === key) return slot[kind].val;
@@ -291,19 +313,39 @@ function cached(db, kind, now, compute) {
 }
 
 /** All jobs decorated as board rows (cached — see above). */
-function allBoardRows(db, now) {
-  return cached(db, 'rows', now, () => {
+function allBoardRows(db, now, { includeArchived = false } = {}) {
+  return cached(db, includeArchived ? 'rows-all' : 'rows', now, () => {
     const approvals = approvalsByJob(db);
-    return listSummaryRows(db).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+    return listSummaryRows(db, now, { includeArchived })
+      .map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
   });
 }
 
 /**
  * All jobs without jd_text (board rows never render it; detail loads it via
  * getJob). Falls back to listJobs for test stubs that only implement that.
+ *
+ * Memoized through the same cached() layer as stats/rows: at ~27k jobs this
+ * query costs seconds, and stats + board rows each need the same rows within
+ * one cache bucket. Callers treat the returned array as read-only.
  */
-function listSummaryRows(db) {
-  return typeof db.listJobsSummary === 'function' ? db.listJobsSummary() : db.listJobs({});
+function listSummaryRows(db, now = new Date(), { includeArchived = false } = {}) {
+  if (typeof db.listJobsSummary !== 'function') return db.listJobs({});
+  const kind = includeArchived ? 'summary-all' : 'summary';
+  return cached(db, kind, now, () => db.listJobsSummary({ includeArchived }));
+}
+
+/**
+ * Slim, all-rows projection for STATS (P1): archived rows included so tile
+ * totals stay truthful, but only the columns the stats pass reads — none of
+ * the heavy text columns that dominate marshaling cost. Falls back to the
+ * full summary for db stubs without listJobsStats.
+ */
+function statsRows(db, now) {
+  if (typeof db.listJobsStats !== 'function') {
+    return listSummaryRows(db, now, { includeArchived: true });
+  }
+  return cached(db, 'stats-rows', now, () => db.listJobsStats());
 }
 
 /** ISO date prefix (YYYY-MM-DD) of a date. */
@@ -445,7 +487,7 @@ export function dashboardStats(db, { now = new Date() } = {}) {
 }
 
 function computeDashboardStats(db, now) {
-  const jobs = listSummaryRows(db);
+  const jobs = statsRows(db, now);
   const approvals = approvalsByJob(db);
   const today = dayOf(now.toISOString());
 
@@ -699,12 +741,16 @@ export function listBoardJobs(db, filters = {}) {
 export function boardPage(db, filters = {}) {
   const now = filters.now ?? new Date();
   const hideClosed = filters.hideClosed !== false && filters.hideClosed !== 'false';
+  // P3: archived (closed) rows are fetched only when the request can actually
+  // show them — hideClosed switched off, or an explicit closed-status filter.
+  const includeArchived = !hideClosed || CLOSED_SET.has(filters.appStatus);
 
-  let rows = allBoardRows(db, now);
+  let rows = allBoardRows(db, now, { includeArchived });
 
   if (filters.q) {
     const q = String(filters.q).toLowerCase();
-    rows = rows.filter((r) => [r.company, r.title, r.location]
+    // Notes are searchable too, so a private reminder you typed can find its job.
+    rows = rows.filter((r) => [r.company, r.title, r.location, r.notes]
       .some((v) => String(v ?? '').toLowerCase().includes(q)));
   }
   // Section-tab view: a curated predicate that scopes the board to exactly the
@@ -1093,7 +1139,9 @@ export const EXPORT_COLUMNS = Object.freeze([
  * @returns {object[]}
  */
 export function buildExportRows(db, { now = new Date(), includeClosed = true } = {}) {
-  let rows = allBoardRows(db, now);
+  // Exports are a full record — always include archived rows, then apply the
+  // caller's own includeClosed preference on the derived status.
+  let rows = allBoardRows(db, now, { includeArchived: true });
   if (!includeClosed) {
     const closed = [APP_STATUS.ARCHIVED, APP_STATUS.DISCARDED];
     rows = rows.filter((r) => !closed.includes(r.appStatus));
@@ -1239,7 +1287,7 @@ export function buildDocuments(db, {
   const approvals = approvalsByJob(db);
   const readPacket = readFileImpl ?? ((p) => readFileSync(p, 'utf8'));
   const fileInfo = (path) => (path ? { path, ...stat(path) } : null);
-  const rows = listSummaryRows(db)
+  const rows = listSummaryRows(db, new Date(), { includeArchived: true })
     .filter((j) => j.resume_docx_path || j.resume_path || j.resume_pdf_path
       || j.cover_letter_path || j.application_packet_path)
     .map((j) => {

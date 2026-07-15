@@ -71,7 +71,11 @@ const SOURCE_STRING_KIND = Object.freeze({
   indeed: 'url-reader',
   public: 'url-reader',
   generic: 'url-reader',
+  // genericPublicPage's run() tags jobs with the configured source id.
+  'generic-public-pages': 'url-reader',
   manual: 'manual',
+  // The dashboard's "Add by URL" ingest path (commands.ingestUrl).
+  'manual-url': 'manual',
 });
 
 /**

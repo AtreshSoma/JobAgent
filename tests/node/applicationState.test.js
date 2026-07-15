@@ -81,6 +81,19 @@ describe('durable application state', () => {
     expect(() => transitionApplicationState(verified, APPLICATION_PHASE.OPENING)).toThrow(/cannot transition/);
   });
 
+  it('never reopens write-ahead submitting or verifying checkpoints', () => {
+    const queued = createApplicationState(PACKET);
+    const submitting = transitionApplicationState(queued, APPLICATION_PHASE.SUBMITTING);
+    expect(applicationStatePreventsReopen(submitting)).toBe(true);
+    expect(() => transitionApplicationState(submitting, APPLICATION_PHASE.OPENING)).toThrow(/cannot be reopened/);
+
+    const verifying = transitionApplicationState(submitting, APPLICATION_PHASE.VERIFYING);
+    expect(applicationStatePreventsReopen(verifying)).toBe(true);
+    expect(() => transitionApplicationState(verifying, APPLICATION_PHASE.FILLING)).toThrow(/cannot be reopened/);
+    expect(transitionApplicationState(verifying, APPLICATION_PHASE.VERIFIED).phase)
+      .toBe(APPLICATION_PHASE.VERIFIED);
+  });
+
   it('rejects a malformed checkpoint instead of silently starting over', () => {
     const root = mkdtempSync(join(tmpdir(), 'application-state-'));
     dirs.push(root);

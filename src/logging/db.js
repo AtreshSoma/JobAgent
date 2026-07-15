@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   notes TEXT,
   submitted_confirmation TEXT,
   created_at TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS run_log (
@@ -113,6 +114,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
 CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs(posted_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_applied ON jobs(applied);
+CREATE INDEX IF NOT EXISTS idx_jobs_sponsorship ON jobs(sponsorship);
 CREATE INDEX IF NOT EXISTS idx_events_job ON application_events(job_id);
 CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
 `;
@@ -200,6 +202,20 @@ function applyMigrations(db) {
   if (!jobCols.has('ats_score')) {
     db.exec('ALTER TABLE jobs ADD COLUMN ats_score INTEGER');
   }
+  // P3 row archival: NULL = hot row. Rows stay in THIS table (never moved), so
+  // every "already known" check in the search path (existsInDb/getKnownJobIds/
+  // getAppliedJobIds/getActiveJobUrls) keeps seeing them and dedupe holds.
+  // Backfilled once when the column first appears; maintained incrementally by
+  // _syncArchivedAt on every job write afterwards.
+  if (!jobCols.has('archived_at')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN archived_at TEXT');
+    db.prepare(`UPDATE jobs SET archived_at = ? WHERE COALESCE(applied, 0) != 1 AND (
+        user_decision IN ('archived', 'rejected')
+        OR (status = 'discarded' AND user_decision IS NULL))`).run(nowIso());
+  }
+  // Index lives here, not in SCHEMA_SQL: on pre-archival databases SCHEMA_SQL
+  // runs before this migration adds the column, so the index must come after.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(archived_at);');
 }
 
 /** Serialize a value for a TEXT column (objects/arrays become JSON). */
@@ -283,7 +299,32 @@ export class Database {
     const sql = `INSERT INTO jobs (${cols.join(', ')}) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET ${updates}`;
     this.prepareCached(sql).run(params);
+    this._syncArchivedAt(job.id);
     return this.getJob(job.id);
+  }
+
+  /**
+   * Derive the P3 archival flag from the merged row. A row leaves the hot set
+   * only when the board's default view already hides it (user archived/
+   * rejected, or pipeline-discarded with no human decision) and it was never
+   * applied; any write that makes it active again clears the flag (e.g. a
+   * re-score resurrecting a discard, or a decision being cleared). Mirroring
+   * the closed-set exactly means archival never changes what the board shows.
+   * @param {string} id
+   */
+  _syncArchivedAt(id) {
+    const row = this.prepareCached(
+      'SELECT applied, status, user_decision, archived_at FROM jobs WHERE id = ?',
+    ).get(id);
+    if (!row) return;
+    const closed = Number(row.applied) !== 1 && (
+      row.user_decision === 'archived' || row.user_decision === 'rejected'
+      || (row.status === 'discarded' && row.user_decision == null));
+    if (closed && !row.archived_at) {
+      this.prepareCached('UPDATE jobs SET archived_at = ? WHERE id = ?').run(nowIso(), id);
+    } else if (!closed && row.archived_at) {
+      this.prepareCached('UPDATE jobs SET archived_at = NULL WHERE id = ?').run(id);
+    }
   }
 
   /** @param {string} id */
@@ -364,8 +405,22 @@ export class Database {
    * full-table decoration pass from hundreds of MB of I/O to a few MB.
    * @returns {object[]} jobs-table rows minus jd_text
    */
-  listJobsSummary() {
-    return this.db.prepare(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs ORDER BY score DESC`).all();
+  listJobsSummary({ includeArchived = false } = {}) {
+    const where = includeArchived ? '' : ' WHERE archived_at IS NULL';
+    return this.db.prepare(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs${where} ORDER BY score DESC`).all();
+  }
+
+  /**
+   * Slim per-job projection for dashboard STATS (P1): every row (archived
+   * included, so tile totals stay truthful) but only the ~14 columns the
+   * stats computation actually reads — none of the heavy text columns
+   * (explanation / keyword JSON / notes) that dominate marshaling cost.
+   * @returns {object[]}
+   */
+  listJobsStats() {
+    return this.db.prepare(`SELECT id, source, status, user_decision, applied, applied_at,
+      created_at, updated_at, prepared_at, application_packet_path,
+      score, tier, sponsorship, posted_at FROM jobs`).all();
   }
 
   /**
@@ -382,6 +437,7 @@ export class Database {
     this.db.prepare(
       'UPDATE jobs SET user_decision = ?, decided_at = ?, updated_at = ? WHERE id = ?',
     ).run(decision, decision ? nowIso() : null, nowIso(), id);
+    this._syncArchivedAt(id);
     return this.getJob(id);
   }
 

@@ -51,9 +51,10 @@ export function humanize(text, patterns = {}) {
 
 /** True if text still contains any banned phrase or character. */
 export function hasBannedContent(text, patterns = {}) {
-  const lower = (text ?? '').toLowerCase();
+  const raw = typeof text === 'string' ? text : '';
+  const lower = raw.toLowerCase();
   for (const ch of patterns.bannedCharacters ?? []) {
-    if (text.includes(ch)) return true;
+    if (raw.includes(ch)) return true;
   }
   for (const phrase of patterns.bannedPhrases ?? []) {
     if (phrase && lower.includes(phrase.toLowerCase())) return true;
