@@ -12,5 +12,8 @@ export const descriptor = makePlatform({
   fileInputs: {
     resume: 'input[data-automation-id="file-upload-input-ref"]',
   },
-  submitSelector: 'button[data-automation-id="bottom-navigation-next-button"]',
+  // Workday reuses its bottom-navigation control across intermediate and final
+  // steps. Treating that selector as a guaranteed final Submit is unsafe; the
+  // live runner identifies a final control from its explicit text instead.
+  submitSelector: null,
 });

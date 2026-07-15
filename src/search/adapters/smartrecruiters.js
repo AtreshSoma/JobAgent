@@ -12,7 +12,7 @@
 import { normalizeJob } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout } from '../../utils/httpClient.js';
+import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
 
 export const adapterId = 'smartrecruiters';
 
@@ -20,6 +20,9 @@ const PAGE_LIMIT = 100;
 
 /** Default number of companies to fetch in parallel when ctx omits a ceiling. */
 const DEFAULT_BOARD_CONCURRENCY = 8;
+
+/** Every SmartRecruiters company shares this host — key politeness on it. */
+const SMARTRECRUITERS_HOST = 'api.smartrecruiters.com';
 
 /**
  * @param {object} source jobboards source entry ({ boards: string[] } — SmartRecruiters company identifiers)
@@ -32,7 +35,7 @@ const DEFAULT_BOARD_CONCURRENCY = 8;
  * @returns {Promise<{ jobs: object[], errors: Array<{company: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const companies = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
@@ -40,12 +43,19 @@ export async function run(source = {}, ctx = {}) {
 
   const perCompany = await mapWithConcurrency(companies, concurrency, async (company) => {
     try {
-      if (rateLimiter) await rateLimiter.wait(`smartrecruiters:${company}`, source.rateLimitMs);
-      const url = `https://api.smartrecruiters.com/v1/companies/${encodeURIComponent(company)}/postings?limit=${PAGE_LIMIT}`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      if (rateLimiter) await rateLimiter.wait(`smartrecruiters:${SMARTRECRUITERS_HOST}`, source.rateLimitMs);
+      const url = `https://${SMARTRECRUITERS_HOST}/v1/companies/${encodeURIComponent(company)}/postings?limit=${PAGE_LIMIT}`;
+      const call = () => fetchJson(fetchImpl, url, requestTimeoutMs);
+      const data = await withRetry(
+        () => (hostGate ? hostGate.run(url, call) : call()),
+        { maxRetries },
+      );
       return { jobs: (data.content ?? []).map((p) => mapPosting(p, company)), error: null };
     } catch (err) {
-      return { jobs: [], error: { company, error: err.message } };
+      return {
+        jobs: [],
+        error: { company, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
+      };
     }
   });
 
@@ -59,11 +69,7 @@ export async function run(source = {}, ctx = {}) {
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
   const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
-  if (!res.ok) {
-    const e = new Error(`SmartRecruiters HTTP ${res.status} for ${url}`);
-    e.status = res.status;
-    throw e;
-  }
+  if (!res.ok) throw httpError(res, 'SmartRecruiters', url);
   return res.json();
 }
 

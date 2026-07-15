@@ -15,7 +15,7 @@
   }
   * { box-sizing: border-box; }
   html { scrollbar-color: var(--line) var(--bg); }
-  body { margin: 0; background: var(--bg); color: var(--text);
+  body { margin: 0; background: var(--bg); color: var(--text); overflow-x: hidden;
          font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
          -webkit-font-smoothing: antialiased; }
   .num, .tile .n, .badge, .tab .badge, td.r { font-variant-numeric: tabular-nums; }
@@ -87,6 +87,14 @@
 
   main { display: grid; grid-template-columns: minmax(0,1fr) 430px; gap: 18px; padding: 16px 22px 40px; }
   @media (max-width: 1180px) { main { grid-template-columns: minmax(0,1fr); } }
+  @media (max-width: 900px) {
+    header { align-items: flex-start; flex-wrap: wrap; padding: 8px 12px; }
+    header .spacer { display: none; }
+    .btnrow { width: 100%; justify-content: flex-start; }
+    .ctxbar, .tabs, main { padding-left: 12px; padding-right: 12px; }
+    main { grid-template-columns: minmax(0,1fr); }
+    .filters input[type=text] { width: 100%; }
+  }
 
   /* ── Stat tiles ── */
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -247,6 +255,7 @@
   <span class="spacer"></span>
   <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
   <span id="runStatus"></span>
+  <button id="btnCancel" class="small ghost" hidden onclick="cancelRun()">Cancel</button>
   <div class="btnrow">
     <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')"
       title="Search every configured job board, score each match against your profile, and update the board — new postings appear here when it finishes.">Find New Jobs</button>
@@ -357,7 +366,7 @@
         <div class="scroll"><table class="srcTable"><thead><tr><th>Reason</th><th>Jobs</th></tr></thead><tbody id="blockRows"></tbody></table></div>
       </div>
       <div class="card">
-        <h3>Daily progress (last 7 days)</h3>
+        <h3 title="Counts per calendar day (midnight to midnight), so today's row can differ from the header's rolling 'last 24h' figures.">Daily progress (last 7 calendar days)</h3>
         <div class="scroll"><table class="srcTable"><thead><tr><th>Day</th><th>Found</th><th>Prepared</th>
           <th>Submitted</th></tr></thead><tbody id="dailyRows"></tbody></table></div>
       </div>
@@ -484,8 +493,8 @@ async function loadStats() {
   const posted24 = s.totals.postedLast24h ?? 0;
   $('freshness').innerHTML =
     `<span class="stat"><b>${fmt(s.totals.jobsTracked)}</b><span class="l">jobs tracked</span></span>`
-    + `<span class="stat${found24 ? ' hot' : ''}"><b>${fmt(found24)}</b><span class="l">found in last 24h</span></span>`
-    + `<span class="stat${posted24 ? ' hot' : ''}"><b>${fmt(posted24)}</b><span class="l">posted in last 24h</span></span>`
+    + `<span class="stat${found24 ? ' hot' : ''}" title="Rolling 24-hour window (now minus 24h) — the Daily progress table counts calendar days instead, so the two can differ."><b>${fmt(found24)}</b><span class="l">found in last 24h</span></span>`
+    + `<span class="stat${posted24 ? ' hot' : ''}" title="Rolling 24-hour window (now minus 24h) — the Daily progress table counts calendar days instead, so the two can differ."><b>${fmt(posted24)}</b><span class="l">posted in last 24h</span></span>`
     + `<span class="stat"><b>${last ?? 'never'}</b><span class="l">last discovery</span></span>`;
   renderTabs();
   const srcEntries = Object.entries(s.bySource).sort((a, b) => b[1].found - a[1].found);
@@ -636,7 +645,8 @@ async function loadJobs() {
       <td>${gradeBadge(j.grade)}<div class="muted" style="font-size:10px">${j.score ?? '—'}</div></td>
       <td><b>${esc(j.company || 'Company on posting')}</b>${j.remote ? ' <span class="rs">remote</span>' : ''}<br>
         <span class="muted">${esc(j.title)}</span></td>
-      <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span></td>
+      <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span>${j.sponsorshipGated && !j.userDecision
+        ? ' <span class="chip Unconfirmed" title="Strong fit parked by the sponsorship gate — verify the employer sponsors, then shortlist to unlock preparation.">⚠ verify</span>' : ''}</td>
       <td>${typeChip(j)}</td>
       <td><span class="dot ${j.postedConfidence}" title="posting date ${j.postedConfidence}"></span>${esc(j.postedLabel)}${j.postedLast24h ? ' <span class="chip strong">new</span>' : ''}</td>
       <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span></td>
@@ -679,6 +689,13 @@ function nextBestAction(j) {
       btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
         + ` ${AUTO_APPLY_BTN(j.id, '↻ Re-try auto-apply')}` };
   }
+  // Sponsorship gate (README: a job can't be Apply/Priority unless sponsorship is
+  // acceptable or you explicitly approved it). Gated jobs surface verification as
+  // the primary action — never a one-click Auto-apply.
+  if (j.sponsorshipGated && !j.userDecision) return {
+    text: 'Strong fit, but sponsorship is unconfirmed — verify the employer sponsors H-1B (careers page, past filings) before applying. Shortlist it once verified; that records your approval and unlocks preparation.',
+    btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Verify sponsorship ↗</button></a>`
+      + ` <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Verified — shortlist</button>` };
   if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit — auto-apply tailors the resume, fills the application, and stops before Submit.',
     btn: AUTO_APPLY_BTN(j.id) + ` <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
   if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — auto-apply prepares the tailored packet and fills the application in one go.',
@@ -698,13 +715,32 @@ function askAutoSubmit(count = 1) {
     + 'and within your daily application cap. Anything uncertain is left open for you.\n\n'
     + 'Cancel — fill only; you review each form and click Submit yourself.');
 }
+async function authorizedAutoSubmitIds(ids) {
+  const preview = await api('/api/auto-apply/eligibility', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jobIds: ids, autoSubmit: true }),
+  });
+  const eligible = (preview.items || []).filter((item) => item.eligible).map((item) => item.jobId);
+  if (!eligible.length) {
+    const reasons = (preview.items || []).flatMap((item) => item.reasons || []).slice(0, 3).join(' ');
+    throw new Error(`Auto-submit precheck blocked every job.${reasons ? ` ${reasons}` : ''}`);
+  }
+  return eligible;
+}
 async function autoApplyOne(id) {
   if (isRunning) { toast('A run is in progress — wait for it to finish.', true); return; }
   if (isAggregatorUrl(jobsById[id]?.url)) {
     toast('Aggregator link — it will hit a verification wall. Open the posting instead.', true); return;
   }
+  if (jobsById[id]?.sponsorshipGated && !jobsById[id]?.userDecision
+      && !confirm('Sponsorship for this job is UNCONFIRMED — the safety gate keeps it out of auto-preparation until you verify the employer sponsors.\n\nContinue anyway? Continuing counts as your explicit approval for this job.')) {
+    return;
+  }
   const autoSubmit = askAutoSubmit(1);
   try {
+    if (autoSubmit && !(await authorizedAutoSubmitIds([id])).includes(id)) {
+      throw new Error('This job did not pass the final auto-submit eligibility check.');
+    }
     await api(`/api/jobs/${encodeURIComponent(id)}/auto-apply`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ autoSubmit }),
@@ -824,16 +860,20 @@ function closeSubmitModal() { $('submitModal').classList.remove('show'); submitJ
 async function confirmSubmitted() {
   if (!submitJobId) return;
   try {
-    await api(`/api/jobs/${encodeURIComponent(submitJobId)}/mark-submitted`, {
+    const confirmation = $('submitConf').value.trim();
+    const result = await api(`/api/jobs/${encodeURIComponent(submitJobId)}/mark-submitted`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        confirmationNumber: $('submitConf').value,
+        confirmationNumber: confirmation || undefined,
+        verified: Boolean(confirmation),
         note: $('submitNote').value,
       }),
     });
     const id = submitJobId;
     closeSubmitModal();
-    toast('Recorded as submitted by you');
+    toast(result.verified
+      ? 'Recorded as submitted with confirmation evidence.'
+      : 'Recorded as submit unverified — it is not counted as applied yet.');
     refresh(); select(id);
   } catch (e) { toast(e.message, true); }
 }
@@ -972,6 +1012,7 @@ async function runPhase(phase) {
 /** Human-friendly one-line summary of a finished run. */
 function prettyResult(r) {
   if (!r) return '';
+  if (r.cancelled) return `${r.phase ?? 'run'} cancelled · completed results kept`;
   if (r.phase === 'assist-batch') {
     const list = r.results || [];
     const ok = list.filter((x) => x.status !== 'failed').length;
@@ -994,8 +1035,15 @@ function applyRunGate(s) {
     const b = $(id); if (b) { b.disabled = isRunning; b.title = isRunning ? 'A run is in progress…' : ''; }
   }
   const rs = $('runStatus');
+  const cancel = $('btnCancel');
+  cancel.hidden = !isRunning;
+  cancel.disabled = !isRunning || s.cancelRequested;
+  cancel.textContent = s.cancelRequested ? 'Cancelling…' : 'Cancel';
   if (isRunning) {
-    rs.textContent = `${s.phase} running…`;
+    const p = s.progress;
+    rs.textContent = `${s.phase} running…` + (p
+      ? ` ${p.completed ?? 0}/${p.total ?? 0}${p.currentSource ? ` · ${p.currentSource}` : ''}`
+      : '');
     rs.className = 'busy';
   } else {
     rs.className = '';
@@ -1003,6 +1051,13 @@ function applyRunGate(s) {
       : s && s.lastResult ? `✓ ${prettyResult(s.lastResult)}` : '';
   }
   syncSelbar();
+}
+async function cancelRun() {
+  try {
+    await api('/api/run/cancel', { method: 'POST' });
+    toast('Cancellation requested — completed results will be kept.');
+    pollRun();
+  } catch (e) { toast(e.message, true); }
 }
 let wasRunning = false;
 async function pollRun() {
@@ -1089,22 +1144,33 @@ async function batchAutoApply() {
   // any selected jobs that are blocked / already submitted / rejected / archived.
   const NON_APPLICABLE = new Set(['blocked', 'submitted', 'rejected', 'archived', 'discarded']);
   const skippable = ids.filter((id) => NON_APPLICABLE.has(jobsById[id]?.appStatus));
-  const actionable = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus));
+  // Sponsorship gate (mirrors autoApplyOne): gated jobs with no explicit user
+  // decision need verification first — they never ride along in a batch.
+  const gated = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus)
+    && jobsById[id]?.sponsorshipGated && !jobsById[id]?.userDecision);
+  const gatedSet = new Set(gated);
+  const actionable = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus) && !gatedSet.has(id));
   if (!actionable.length) {
-    toast(`All ${ids.length} selected job(s) are blocked/submitted/closed — nothing to auto-apply.`, true);
+    toast(gated.length
+      ? `Nothing to auto-apply: ${gated.length} selected job(s) need a sponsorship check first (verify, then shortlist), and the rest are blocked/submitted/closed.`
+      : `All ${ids.length} selected job(s) are blocked/submitted/closed — nothing to auto-apply.`, true);
     return;
   }
   let warn = '';
   if (skippable.length) {
-    warn = `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
+    warn += `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
+  }
+  if (gated.length) {
+    warn += `\n\nNote: ${gated.length} selected job(s) have UNCONFIRMED sponsorship and will be skipped — verify the employer sponsors, shortlist them, then auto-apply.`;
   }
   if (!confirm(`Auto-apply ${actionable.length} job(s)?${warn}\n\nFor each job it will: tailor a resume packet if one doesn't exist yet, approve it, open the posting in a browser, and fill everything it can.`)) return;
   const autoSubmit = askAutoSubmit(actionable.length);
   try {
+    const launchIds = autoSubmit ? await authorizedAutoSubmitIds(actionable) : actionable;
     // The server orchestrates the whole chain (prepare -> approve -> fill[-> submit]).
     const r = await api('/api/assist-batch', { method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jobIds: actionable, autoSubmit }) });
+      body: JSON.stringify({ jobIds: launchIds, autoSubmit }) });
     toast(autoSubmit
       ? `Auto-applying ${r.queued} job(s) — clean forms are submitted automatically; anything uncertain is left open for you.`
       : `Auto-applying ${r.queued} job(s) — preparing where needed, then filling one browser at a time. Stops before submit.`);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -35,6 +35,11 @@ describe('screeningQA', () => {
     const r = answerScreeningQuestion('What is your favorite database color?', screeningAnswers);
     expect(r.answered).toBe(false);
     expect(r.action).toBe('ask_user');
+  });
+
+  it('fails closed when screening-answer config is unavailable', () => {
+    const r = answerScreeningQuestion('What is your favorite database color?');
+    expect(r).toMatchObject({ answered: false, action: 'ask_user', answer: null });
   });
 
   it('maps a yes/no question to a provided choice', () => {
@@ -83,6 +88,8 @@ describe('atsDetector', () => {
   });
   it('falls back to generic for unknown hosts', () => {
     expect(detectAts({ url: 'https://careers.acme.com/job/1' }).platform).toBe('generic');
+    expect(detectAts({ url: 'https://fakegreenhouse.io/acme/jobs/1' }).platform).toBe('generic');
+    expect(detectAts({ url: 'https://lever.co.attacker.example/acme/jobs/1' }).platform).toBe('generic');
   });
   it('detects from html signals', () => {
     expect(detectAts({ url: 'https://x.com', html: '<div>powered by smartrecruiters</div>' }).platform).toBe('smartrecruiters');
@@ -194,6 +201,14 @@ describe('fileUpload', () => {
     writeFileSync(resume, 'hi');
     const r = buildUploadPlan({ resumePath: resume });
     expect(r.ready).toBe(false);
+  });
+
+  it('rejects a directory even when its name has a document extension', () => {
+    const fakeResume = join(dir, 'folder.pdf');
+    mkdirSync(fakeResume);
+    const r = buildUploadPlan({ resumePath: fakeResume });
+    expect(r.ready).toBe(false);
+    expect(r.blockers).toContain('resume: path is not a file');
   });
 });
 

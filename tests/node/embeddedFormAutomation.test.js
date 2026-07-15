@@ -45,7 +45,7 @@ describe('embedded iframe form filling (real browser)', () => {
     }
   }, 60000);
 
-  afterAll(async () => { await session?.close?.(); });
+  afterAll(async () => { await session?.close?.(); }, 30000);
 
   it('finds NO fields when scanning the top document (reproduces the bug)', async (ctx) => {
     if (!available) return ctx.skip();

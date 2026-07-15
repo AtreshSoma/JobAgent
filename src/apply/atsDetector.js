@@ -10,6 +10,7 @@
 const SIGNATURES = [
   { key: 'greenhouse', hosts: ['greenhouse.io', 'boards.greenhouse.io'], html: ['greenhouse.io', 'gh_jid'] },
   { key: 'lever', hosts: ['lever.co', 'jobs.lever.co'], html: ['lever.co', 'postings.lever'] },
+  { key: 'ashby', hosts: ['ashbyhq.com', 'jobs.ashbyhq.com'], html: ['ashbyhq', 'ashby-job-posting'] },
   { key: 'workday', hosts: ['myworkdayjobs.com', 'workday.com'], html: ['workday', 'wd1.myworkdayjobs'] },
   { key: 'icims', hosts: ['icims.com'], html: ['icims'] },
   { key: 'taleo', hosts: ['taleo.net'], html: ['taleo'] },
@@ -26,7 +27,7 @@ const SIGNATURES = [
 export function detectAts({ url = '', html = '' } = {}) {
   const host = safeHost(url);
   for (const sig of SIGNATURES) {
-    if (host && sig.hosts.some((h) => host.includes(h))) {
+    if (host && sig.hosts.some((h) => host === h || host.endsWith(`.${h}`))) {
       return { platform: sig.key, confidence: 1, signal: `host:${host}` };
     }
   }
@@ -40,7 +41,9 @@ export function detectAts({ url = '', html = '' } = {}) {
 
 function safeHost(url) {
   try {
-    return new URL(url).host.toLowerCase();
+    // hostname excludes a port and is matched on DNS-label boundaries above;
+    // e.g. fakegreenhouse.io must never be classified as greenhouse.io.
+    return new URL(url).hostname.toLowerCase();
   } catch {
     return '';
   }

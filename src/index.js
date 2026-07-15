@@ -38,20 +38,16 @@ import {
 import { runGuided } from './cli/guided.js';
 import { runApply } from './cli/applyOneByOne.js';
 import { runWatch } from './cli/watch.js';
-import { runDoctor, printDoctorReport, requiredProfileGaps } from './cli/doctor.js';
+import { runDoctor, printDoctorReport } from './cli/doctor.js';
+import { quickPreflight } from './cli/preflight.js';
+import { parseDashboardPort } from './cli/app.js';
 import { ui } from './cli/ui.js';
 import { formatPostedRelative } from './utils/dates.js';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-/** Project-relative path with forward slashes, for tidy console output. */
-function rel(root, p) {
-  if (!p) return '';
-  try { return relative(root, p).split('\\').join('/'); }
-  catch { return String(p); }
-}
+import { relPath as rel } from './utils/outputPaths.js';
 
 /** Short, readable form of an approval UUID (keeps it copy-pasteable in full). */
 function shortId(id) {
@@ -120,6 +116,14 @@ export function resolveMode({ options, flags }, env = process.env) {
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const parsed = parseArgs(argv);
   const command = parsed.positionals[0];
+
+  // `app` is the canonical one-command startup. Like doctor, it must not
+  // assume config is healthy — it translates setup problems into a friendly
+  // first-run checklist instead of a stack trace.
+  if (command === 'app') {
+    const { runApp } = await import('./cli/app.js');
+    return runApp({ parsed, env });
+  }
 
   // doctor/preflight must not assume config or the DB are healthy — they are
   // the tools that diagnose those — so they bypass the normal command setup.
@@ -191,28 +195,42 @@ async function runCommand(command, parsed, env) {
           return { command, preflight: gate };
         }
         const { startDashboard, installProcessSafetyNet } = await import('./dashboard/server.js');
-        const port = Number(parsed.options.port ?? env.DASHBOARD_PORT ?? 4646);
+        const port = parseDashboardPort(parsed.options.port ?? env.DASHBOARD_PORT, 4646);
         const dash = await startDashboard({ config, db, logger, port });
-        // The dashboard runs browser automation in the background and leaves a
-        // real browser open for you to review. If that window is closed (or
-        // Playwright errors), the resulting unhandled rejection would otherwise
-        // kill this server and the UI would show only "Failed to fetch". This
-        // keeps the cockpit alive and records the error for /api/run/status.
-        const uninstallSafetyNet = installProcessSafetyNet({ runState: dash.runState, logger });
-        ui.heading('JobAgent Dashboard');
-        ui.success(`Running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
-        ui.note('Discover, score, review, approve, and auto-apply from the browser.');
-        ui.note('By default it stops before Submit; auto-submit only runs when you explicitly opt in per run.');
-        ui.blank();
-        ui.note('Press Ctrl+C to stop.');
-        // Keep the process alive until the user stops it; close the server
-        // (and fall through to the db.close() in finally) on SIGINT/SIGTERM.
-        await new Promise((resolve) => {
-          process.once('SIGINT', resolve);
-          process.once('SIGTERM', resolve);
-        });
-        uninstallSafetyNet();
-        await dash.close();
+        let uninstallSafetyNet = () => {};
+        let onSignal = null;
+        let bodyError = null;
+        try {
+          // The dashboard runs browser automation in the background and leaves
+          // a real browser open for review. Keep background errors visible
+          // without allowing them to kill the local cockpit.
+          uninstallSafetyNet = installProcessSafetyNet({ runState: dash.runState, logger });
+          ui.heading('JobAgent Dashboard');
+          ui.success(`Running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
+          ui.note('Discover, score, review, approve, and auto-apply from the browser.');
+          ui.note('By default it stops before Submit; auto-submit only runs when you explicitly opt in per run.');
+          ui.blank();
+          ui.note('Press Ctrl+C to stop.');
+          // Keep the process alive until the user stops it. Both listeners are
+          // removed below, including the signal that did not fire.
+          await new Promise((resolve) => {
+            onSignal = resolve;
+            process.once('SIGINT', onSignal);
+            process.once('SIGTERM', onSignal);
+          });
+        } catch (err) {
+          bodyError = err;
+          throw err;
+        } finally {
+          if (onSignal) {
+            process.off('SIGINT', onSignal);
+            process.off('SIGTERM', onSignal);
+          }
+          let cleanupError = null;
+          try { await dash.close(); } catch (err) { cleanupError ??= err; }
+          try { uninstallSafetyNet(); } catch (err) { cleanupError ??= err; }
+          if (!bodyError && cleanupError) throw cleanupError;
+        }
         return { command, url: dash.url, stopped: true };
       }
       case 'discover': {
@@ -428,17 +446,7 @@ async function runLegacyMode(parsed, env) {
  * @param {object} config loadConfig() bundle
  * @returns {{ ok: boolean, problems: string[] }}
  */
-export function quickPreflight(config) {
-  const problems = [];
-  for (const gap of requiredProfileGaps(config.candidate)) {
-    problems.push(`Candidate profile is missing ${gap.label} — add "${gap.path}" to config/candidate.json (true information only).`);
-  }
-  const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
-  if (!existsSync(master)) {
-    problems.push('Master resume not found at resumes/base/MASTER_RESUME.docx — it is the read-only source for tailoring.');
-  }
-  return { ok: problems.length === 0, problems };
-}
+export { quickPreflight };
 
 /* ────────────────────────── console summaries ────────────────────────── */
 
@@ -598,12 +606,6 @@ function summarizePacket(packet, config) {
     rel(config.root, packet.resumePath),
     rel(config.root, packet.coverLetterPath),
   ].filter(Boolean));
-}
-
-/** Compact console output via the structured logger (legacy fallback). */
-function printTable(pino, rows) {
-  if (!rows.length) { pino.info('(none)'); return; }
-  for (const row of rows) pino.info(row);
 }
 
 // Run only when invoked directly.

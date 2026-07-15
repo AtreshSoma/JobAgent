@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Local ATS contract fixtures</title>
+</head>
+<body>
+  <h1 id="fixture-title">ATS fixture</h1>
+  <form id="application-form"></form>
+  <script>
+    const ats = new URLSearchParams(location.search).get('ats') || 'generic';
+    const forms = {
+      greenhouse: `
+        <label for="first_name">First name</label><input id="first_name" required>
+        <label for="last_name">Last name</label><input id="last_name" required>
+        <label for="email">Email</label><input id="email" type="email" required>
+        <fieldset id="resume_fieldset"><legend>Resume</legend><input type="file" required></fieldset>
+        <button id="submit_app" type="button">Submit application</button>`,
+      lever: `
+        <label for="name">Full name</label><input id="name" name="name" required>
+        <label for="email">Email</label><input id="email" name="email" type="email" required>
+        <label for="phone">Phone</label><input id="phone" name="phone">
+        <label for="resume">Resume</label><input id="resume" name="resume" type="file" required>
+        <button id="lever-submit" class="template-btn-submit" type="button">Submit application</button>`,
+      ashby: `
+        <label for="name">Full name</label><input id="name" name="name" autocomplete="name" required>
+        <label for="email">Email</label><input id="email" name="email" type="email" required>
+        <label for="phone">Phone</label><input id="phone" name="phone" type="tel">
+        <label for="resume">Resume</label><input id="resume" name="resume" type="file" required>
+        <button id="ashby-submit" type="button">Submit application</button>`,
+      workday: `
+        <label for="first">First name</label><input id="first" data-automation-id="legalNameSection_firstName" required>
+        <label for="last">Last name</label><input id="last" data-automation-id="legalNameSection_lastName" required>
+        <label for="email">Email</label><input id="email" data-automation-id="email" type="email" required>
+        <label for="resume">Resume</label><input id="resume" data-automation-id="file-upload-input-ref" type="file" required>
+        <button id="workday-submit" type="button">Submit application</button>`,
+      smartrecruiters: `
+        <label for="first">First name</label><input id="first" name="firstName" required>
+        <label for="last">Last name</label><input id="last" name="lastName" required>
+        <label for="email">Email</label><input id="email" name="email" type="email" required>
+        <label for="resume">Resume</label><input id="resume" name="resume" type="file" required>
+        <button data-test="form-submit" type="button">Submit application</button>`,
+      generic: `
+        <label for="first">First name</label><input id="first" name="first_name" required>
+        <label for="last">Last name</label><input id="last" name="last_name" required>
+        <label for="email">Email</label><input id="email" type="email" required>
+        <label for="resume">Resume</label><input id="resume" type="file" required>
+        <label for="country">Country</label><select id="country"><option value="">Select</option><option value="US">United States</option></select>
+        <label for="consent">I agree to answer the conditional question</label><input id="consent" type="checkbox">
+        <div id="conditional-wrap" style="display:none"><label for="conditional">Availability to start</label><textarea id="conditional"></textarea></div>
+        <fieldset><legend>Willing to relocate?</legend>
+          <label><input id="relocate_yes" name="relocate" type="radio" value="Yes">Yes</label>
+          <label><input id="relocate_no" name="relocate" type="radio" value="No">No</label>
+        </fieldset>
+        <label for="location">Location</label><input id="location" role="combobox" aria-controls="location-list">
+        <div id="location-list" role="listbox"><button id="boston" type="button" role="option">Boston, MA</button></div>
+        <button id="generic-submit" type="button">Submit application</button>`,
+    };
+    document.querySelector('#fixture-title').textContent = `${ats} local fixture`;
+    document.querySelector('#application-form').innerHTML = forms[ats] || forms.generic;
+    window.submitAttempts = 0;
+    for (const button of document.querySelectorAll('button')) {
+      button.addEventListener('click', () => { window.submitAttempts += 1; });
+    }
+    document.querySelector('#consent')?.addEventListener('change', (event) => {
+      document.querySelector('#conditional-wrap').style.display = event.target.checked ? 'block' : 'none';
+    });
+    document.querySelector('#boston')?.addEventListener('click', () => {
+      document.querySelector('#location').value = 'Boston, MA';
+    });
+  </script>
+</body>
+</html>

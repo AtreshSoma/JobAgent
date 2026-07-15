@@ -203,8 +203,14 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
     checks.push(makeCheck('config', 'Configuration', SEVERITY.PASS,
       'all config files load and validate against their schemas'));
   } catch (err) {
-    checks.push(makeCheck('config', 'Configuration', SEVERITY.FAIL, err.message,
-      'Fix the listed config issue(s) under config/ — config is the source of truth for personal data.'));
+    // candidate.json / screening_answers.json are gitignored (personal data),
+    // so a fresh clone will not have them — point straight at the templates.
+    const hint = /candidate\.json|screening_answers\.json/.test(err.message)
+      ? 'These files hold YOUR personal data and are not tracked in git. Copy '
+        + 'config/candidate.example.json -> config/candidate.json and '
+        + 'config/screening_answers.example.json -> config/screening_answers.json, then fill them in.'
+      : 'Fix the listed config issue(s) under config/ — config is the source of truth for personal data.';
+    checks.push(makeCheck('config', 'Configuration', SEVERITY.FAIL, err.message, hint));
   }
 
   if (config) {

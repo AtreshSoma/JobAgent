@@ -53,6 +53,11 @@
           "type": "integer",
           "minimum": 1,
           "description": "How many Apify actors run in parallel."
+        },
+        "hostConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many requests may be in flight against ONE host (for Workday, one shared pod like wd5.myworkdayjobs.com) across every source. This is the ceiling the server actually enforces: many boards/tenants share a single host, so the per-source ceilings above cannot prevent a 429 on their own."
         }
       }
     },
@@ -100,6 +105,21 @@
           "rateLimitMs": {
             "type": "integer",
             "minimum": 0
+          },
+          "hostConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional per-source in-flight ceiling when the adapter creates its own host gate."
+          },
+          "hostSpacingMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Minimum delay between request starts against one physical host/pod."
+          },
+          "maxDetailFetches": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum optional Workday full-description requests per tenant; cached descriptions do not consume this budget."
           },
           "queries": {
             "type": "array",

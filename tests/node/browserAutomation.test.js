@@ -41,7 +41,7 @@ describe('browser automation against a local fixture form', () => {
     }
   }, 60000);
 
-  afterAll(async () => { await session?.close?.(); });
+  afterAll(async () => { await session?.close?.(); }, 30000);
 
   it('opens a clean form page without a guard block', async (ctx) => {
     if (!available) return ctx.skip();
@@ -70,6 +70,8 @@ describe('browser automation against a local fixture form', () => {
     await openApplicationPage(page, FORM_URL);
     const up = await uploadFiles(page, FILL_PLAN);
     expect(up.uploaded.map((u) => u.type).sort()).toEqual(['coverLetter', 'resume']);
+    expect(up.uploaded.every((u) => u.verified === true)).toBe(true);
+    expect(up.uploaded.every((u) => u.verificationMethod === 'input-file-list')).toBe(true);
     expect(up.blockers).toEqual([]);
   }, 60000);
 

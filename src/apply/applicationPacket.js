@@ -12,7 +12,9 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+
+import { writeFileAtomic } from '../utils/fsSafe.js';
 import { join } from 'node:path';
 
 import { detectAts } from './atsDetector.js';
@@ -41,6 +43,7 @@ export function buildApplicationPacket({
   job, score, tier, candidate, screeningAnswers,
   resumePath, resumeTailored = false, resumeWarning = null,
   resumePdfPath = null, resumeValidation = null, atsReport = null,
+  tailoring = null,
   coverLetter, coverLetterPath, formFields = [], html = '',
 }) {
   const ats = detectAts({ url: job.url, html });
@@ -86,6 +89,11 @@ export function buildApplicationPacket({
     resumeWarning: resumeWarning ?? null,
     resumePdfPath: resumePdfPath ?? null,
     resumeValidation: resumeValidation ?? null,
+    // Evidence-backed tailoring report: every change made to the resume for
+    // THIS job (skill reorders with before/after, emphasis evidence, focus
+    // line) and the JD requirements the resume does not support (never
+    // inserted). This is what the human reviews before approving.
+    tailoring: tailoring ?? null,
     atsReport: atsReport ?? null,
     coverLetterPath: coverLetterPath ?? null,
     coverLetterGenerated: Boolean(coverLetter?.generated),
@@ -121,6 +129,8 @@ function summarizeJd(jdText = '', maxChars = 600) {
 export function writePacket(packet, dir, fileName) {
   mkdirSync(dir, { recursive: true });
   const path = join(dir, fileName ?? `${packet.id}.json`);
-  writeFileSync(path, JSON.stringify(packet, null, 2), 'utf8');
+  // Atomic: the dashboard reads packet JSON on demand — it must never see a
+  // half-written packet.
+  writeFileAtomic(path, JSON.stringify(packet, null, 2), 'utf8');
   return path;
 }

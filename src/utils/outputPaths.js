@@ -4,9 +4,9 @@
  * Every generated application artifact lives under:
  *
  *   applications/output/{Company Name}/{Job Title}_{JobID-or-PostedDate}/
- *     Atresh_Somayajula_Resume_{Job_Title}.docx
- *     Atresh_Somayajula_Resume_{Job_Title}.pdf
- *     Atresh_Somayajula_Cover_Letter_{Job_Title}.(pdf|txt)
+ *     {Candidate_Name}_Resume_{Job_Title}.docx
+ *     {Candidate_Name}_Resume_{Job_Title}.pdf
+ *     {Candidate_Name}_Cover_Letter_{Job_Title}.(pdf|txt)
  *     Application_Packet_{Company_Name}_{Job_Title}.json
  *
  * Folder names are human-readable (spaces preserved) so the tree is easy to
@@ -18,10 +18,22 @@
  * so the two can never drift apart.
  */
 
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 
-/** Candidate name fallback if config is unavailable. */
-export const DEFAULT_CANDIDATE_NAME = 'Atresh Somayajula';
+/** Privacy-safe candidate name fallback if config is unavailable. */
+export const DEFAULT_CANDIDATE_NAME = 'Candidate';
+
+/**
+ * Project-relative path with forward slashes, for tidy console output.
+ * @param {string} root project root
+ * @param {string} p absolute (or relative) path
+ * @returns {string}
+ */
+export function relPath(root, p) {
+  if (!p) return '';
+  try { return relative(root, p).split('\\').join('/'); }
+  catch { return String(p); }
+}
 
 /** Tech / business acronyms preserved in ALL CAPS when de-slugging titles. */
 const ACRONYMS = new Set([

@@ -106,3 +106,64 @@ export function requiredFieldsSatisfied(filled = [], fillPlan = {}, required = [
   }
   return { ok: missing.length === 0, missing };
 }
+
+/**
+ * Verify that fields which reported a successful Playwright action still hold
+ * an accepted value in the live DOM. This catches controlled React inputs that
+ * briefly accept fill() and then reset, and native constraint failures before
+ * the runner advances. No value is returned or persisted.
+ *
+ * Page doubles that cannot expose DOM state are reported as `unobservable`,
+ * not as failures. Real Playwright Locator objects expose evaluate().
+ */
+export async function verifyFilledFields(page, filled = []) {
+  const accepted = [];
+  const rejected = [];
+  const unobservable = [];
+  const seen = new Set();
+
+  for (const field of filled) {
+    const selector = field?.selector;
+    if (!selector || seen.has(selector)) continue;
+    seen.add(selector);
+    let locator;
+    try {
+      if ((await page.locator(selector).count()) !== 1) {
+        // A field from an earlier multi-step page is no longer observable. It
+        // was validated before that page advanced and remains in the durable
+        // completed-fields audit trail.
+        unobservable.push({ ...field, reason: 'field not present on current step' });
+        continue;
+      }
+      locator = page.locator(selector).first();
+    } catch {
+      unobservable.push({ ...field, reason: 'selector could not be inspected' });
+      continue;
+    }
+
+    if (typeof locator.evaluate !== 'function') {
+      unobservable.push({ ...field, reason: 'live value inspection unavailable' });
+      continue;
+    }
+
+    try {
+      const state = await locator.evaluate((el) => ({
+        type: String(el.type ?? '').toLowerCase(),
+        valuePresent: String(el.value ?? '').trim().length > 0,
+        checked: Boolean(el.checked),
+        valid: typeof el.checkValidity === 'function' ? el.checkValidity() : true,
+      }));
+      const action = field.action ?? 'fill';
+      let retained = state.valuePresent;
+      if (action === 'check') retained = state.checked;
+      else if (action === 'uncheck') retained = !state.checked;
+      else if (action === 'radio') retained = state.checked || state.valuePresent;
+      const record = { ...field, accepted: Boolean(retained && state.valid) };
+      if (record.accepted) accepted.push(record);
+      else rejected.push({ ...record, reason: state.valid ? 'value did not remain set' : 'browser constraint validation failed' });
+    } catch (err) {
+      unobservable.push({ ...field, reason: err.message });
+    }
+  }
+  return { accepted, rejected, unobservable };
+}

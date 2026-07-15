@@ -8,12 +8,15 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout } from '../../utils/httpClient.js';
+import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
 
 export const adapterId = 'ashby';
 
 /** Default number of boards to fetch in parallel when ctx omits a ceiling. */
 const DEFAULT_BOARD_CONCURRENCY = 8;
+
+/** Every Ashby board shares this host — politeness must be keyed on it. */
+const ASHBY_HOST = 'api.ashbyhq.com';
 
 /**
  * @param {object} source jobboards source entry ({ boards: string[] })
@@ -26,7 +29,7 @@ const DEFAULT_BOARD_CONCURRENCY = 8;
  * @returns {Promise<{ jobs: object[], errors: Array<{board: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
@@ -34,15 +37,22 @@ export async function run(source = {}, ctx = {}) {
 
   const perBoard = await mapWithConcurrency(boards, concurrency, async (board) => {
     try {
-      if (rateLimiter) await rateLimiter.wait(`ashby:${board}`, source.rateLimitMs);
-      const url = `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(board)}?includeCompensation=true`;
-      const data = await withRetry(() => fetchJson(fetchImpl, url, requestTimeoutMs), { maxRetries });
+      if (rateLimiter) await rateLimiter.wait(`ashby:${ASHBY_HOST}`, source.rateLimitMs);
+      const url = `https://${ASHBY_HOST}/posting-api/job-board/${encodeURIComponent(board)}?includeCompensation=true`;
+      const call = () => fetchJson(fetchImpl, url, requestTimeoutMs);
+      const data = await withRetry(
+        () => (hostGate ? hostGate.run(url, call) : call()),
+        { maxRetries },
+      );
       const mapped = (data.jobs ?? [])
         .filter((j) => j.isListed !== false)
         .map((j) => mapJob(j, board));
       return { jobs: mapped, error: null };
     } catch (err) {
-      return { jobs: [], error: { board, error: err.message } };
+      return {
+        jobs: [],
+        error: { board, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
+      };
     }
   });
 
@@ -56,11 +66,7 @@ export async function run(source = {}, ctx = {}) {
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
   const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
-  if (!res.ok) {
-    const e = new Error(`Ashby HTTP ${res.status} for ${url}`);
-    e.status = res.status;
-    throw e;
-  }
+  if (!res.ok) throw httpError(res, 'Ashby', url);
   return res.json();
 }
 

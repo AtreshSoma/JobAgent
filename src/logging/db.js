@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   applicant_count INTEGER,
   employment_type TEXT,
   employment_category TEXT,
+  compensation_text TEXT,
   score INTEGER,
   tier TEXT,
   sponsorship TEXT,
@@ -64,7 +65,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   notes TEXT,
   submitted_confirmation TEXT,
   created_at TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  archived_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS run_log (
@@ -74,6 +76,8 @@ CREATE TABLE IF NOT EXISTS run_log (
   ended_at TEXT,
   jobs_found INTEGER,
   jobs_scored INTEGER,
+  jobs_skipped_unchanged INTEGER,
+  jobs_cancelled INTEGER,
   jobs_queued INTEGER,
   jobs_prepared INTEGER,
   jobs_applied INTEGER,
@@ -105,17 +109,37 @@ CREATE TABLE IF NOT EXISTS approval_queue (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_tier ON jobs(tier);
+CREATE INDEX IF NOT EXISTS idx_jobs_score ON jobs(score);
+CREATE INDEX IF NOT EXISTS idx_jobs_source ON jobs(source);
+CREATE INDEX IF NOT EXISTS idx_jobs_posted_at ON jobs(posted_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_applied ON jobs(applied);
+CREATE INDEX IF NOT EXISTS idx_jobs_sponsorship ON jobs(sponsorship);
 CREATE INDEX IF NOT EXISTS idx_events_job ON application_events(job_id);
 CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
 `;
 
+/** All jobs-table columns except jd_text (see listJobsSummary). */
+const JOB_SUMMARY_COLUMNS = [
+  'id', 'source', 'company', 'title', 'location', 'url', 'posted_at',
+  'applicant_count', 'employment_type', 'employment_category', 'compensation_text',
+  'score', 'tier', 'sponsorship',
+  'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
+  'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
+  'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
+  'applied', 'applied_at', 'user_decision', 'decided_at',
+  'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
+  'created_at', 'updated_at',
+].join(', ');
+
 /** Columns allowed for the jobs table (whitelist for safe upserts). */
 const JOB_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'jd_text', 'posted_at',
-  'applicant_count', 'employment_type', 'employment_category', 'score', 'tier', 'sponsorship',
+  'applicant_count', 'employment_type', 'employment_category', 'compensation_text',
+  'score', 'tier', 'sponsorship',
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
   'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
-  'cover_letter_path', 'application_packet_path', 'output_folder_path',
+  'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at',
@@ -139,16 +163,27 @@ export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
   // fsync on every commit. Discovery persists thousands of rows per run, so the
   // default FULL setting would otherwise dominate runtime with disk syncs.
   db.exec('PRAGMA synchronous = NORMAL;');
+  // Two processes legitimately write this DB at once (dashboard server + CLI
+  // watch mode). Without a busy timeout a concurrent write throws SQLITE_BUSY
+  // immediately; with it, SQLite retries for up to 5s before giving up.
+  db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA_SQL);
   applyMigrations(db);
+  if (path !== ':memory:') {
+    // Long-lived readers (the dashboard) can keep the WAL from ever being
+    // checkpointed; left alone it grows without bound (observed: 60+ MB).
+    // A truncate checkpoint on open folds it back into the main DB file.
+    try { db.exec('PRAGMA wal_checkpoint(TRUNCATE);'); } catch { /* best effort */ }
+  }
   return new Database(db);
 }
 
 /** Idempotent, additive migrations for databases created by older schemas. */
 function applyMigrations(db) {
   const runLogCols = new Set(db.prepare('PRAGMA table_info(run_log)').all().map((c) => c.name));
-  for (const col of ['jobs_assisted', 'jobs_submitted', 'jobs_unknown_date_review']) {
+  for (const col of ['jobs_assisted', 'jobs_submitted', 'jobs_unknown_date_review',
+    'jobs_skipped_unchanged', 'jobs_cancelled']) {
     if (!runLogCols.has(col)) {
       db.exec(`ALTER TABLE run_log ADD COLUMN ${col} INTEGER`);
     }
@@ -156,7 +191,7 @@ function applyMigrations(db) {
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
   for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
     'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation', 'ats_band',
-    'employment_category']) {
+    'employment_category', 'compensation_text', 'prepared_at']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }
@@ -167,6 +202,20 @@ function applyMigrations(db) {
   if (!jobCols.has('ats_score')) {
     db.exec('ALTER TABLE jobs ADD COLUMN ats_score INTEGER');
   }
+  // P3 row archival: NULL = hot row. Rows stay in THIS table (never moved), so
+  // every "already known" check in the search path (existsInDb/getKnownJobIds/
+  // getAppliedJobIds/getActiveJobUrls) keeps seeing them and dedupe holds.
+  // Backfilled once when the column first appears; maintained incrementally by
+  // _syncArchivedAt on every job write afterwards.
+  if (!jobCols.has('archived_at')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN archived_at TEXT');
+    db.prepare(`UPDATE jobs SET archived_at = ? WHERE COALESCE(applied, 0) != 1 AND (
+        user_decision IN ('archived', 'rejected')
+        OR (status = 'discarded' AND user_decision IS NULL))`).run(nowIso());
+  }
+  // Index lives here, not in SCHEMA_SQL: on pre-archival databases SCHEMA_SQL
+  // runs before this migration adds the column, so the index must come after.
+  db.exec('CREATE INDEX IF NOT EXISTS idx_jobs_archived ON jobs(archived_at);');
 }
 
 /** Serialize a value for a TEXT column (objects/arrays become JSON). */
@@ -250,7 +299,32 @@ export class Database {
     const sql = `INSERT INTO jobs (${cols.join(', ')}) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET ${updates}`;
     this.prepareCached(sql).run(params);
+    this._syncArchivedAt(job.id);
     return this.getJob(job.id);
+  }
+
+  /**
+   * Derive the P3 archival flag from the merged row. A row leaves the hot set
+   * only when the board's default view already hides it (user archived/
+   * rejected, or pipeline-discarded with no human decision) and it was never
+   * applied; any write that makes it active again clears the flag (e.g. a
+   * re-score resurrecting a discard, or a decision being cleared). Mirroring
+   * the closed-set exactly means archival never changes what the board shows.
+   * @param {string} id
+   */
+  _syncArchivedAt(id) {
+    const row = this.prepareCached(
+      'SELECT applied, status, user_decision, archived_at FROM jobs WHERE id = ?',
+    ).get(id);
+    if (!row) return;
+    const closed = Number(row.applied) !== 1 && (
+      row.user_decision === 'archived' || row.user_decision === 'rejected'
+      || (row.status === 'discarded' && row.user_decision == null));
+    if (closed && !row.archived_at) {
+      this.prepareCached('UPDATE jobs SET archived_at = ? WHERE id = ?').run(nowIso(), id);
+    } else if (!closed && row.archived_at) {
+      this.prepareCached('UPDATE jobs SET archived_at = NULL WHERE id = ?').run(id);
+    }
   }
 
   /** @param {string} id */
@@ -281,6 +355,35 @@ export class Database {
   }
 
   /**
+   * URL identities that already own an actionable/protected record. Closed
+   * discovery-only history is excluded so a genuinely reposted role can return.
+   * @returns {Array<{id: string, url: string}>}
+   */
+  getActiveJobUrls() {
+    return this.db.prepare(`
+      SELECT id, url FROM jobs
+      WHERE trim(coalesce(url, '')) <> ''
+        AND (applied = 1
+          OR status NOT IN ('discarded', 'skipped')
+          OR user_decision = 'shortlisted')
+    `).all();
+  }
+
+  /**
+   * Full Workday descriptions already paid for in earlier discovery runs.
+   * Reusing them avoids repeating hundreds of optional public detail requests.
+   * @param {string} id
+   * @returns {{jdText:string,postedAt:string|null}|null}
+   */
+  getReusableWorkdayDetail(id) {
+    return this.prepareCached(`
+      SELECT jd_text AS jdText, posted_at AS postedAt FROM jobs
+      WHERE id = ? AND source = 'workday'
+        AND length(trim(coalesce(jd_text, ''))) >= 200
+    `).get(id) ?? null;
+  }
+
+  /**
    * @param {object} [filter]
    * @param {string} [filter.tier]
    * @param {string} [filter.status]
@@ -293,6 +396,31 @@ export class Database {
     if (status) { clauses.push('status = ?'); params.push(status); }
     const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
     return this.db.prepare(`SELECT * FROM jobs${where} ORDER BY score DESC`).all(...params);
+  }
+
+  /**
+   * Every job WITHOUT the jd_text column. jd_text dominates row size (~8 KB
+   * avg on real data — ~200 MB across 25k jobs), and the dashboard board/stats
+   * never render it (job detail loads it via getJob). Excluding it cuts each
+   * full-table decoration pass from hundreds of MB of I/O to a few MB.
+   * @returns {object[]} jobs-table rows minus jd_text
+   */
+  listJobsSummary({ includeArchived = false } = {}) {
+    const where = includeArchived ? '' : ' WHERE archived_at IS NULL';
+    return this.db.prepare(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs${where} ORDER BY score DESC`).all();
+  }
+
+  /**
+   * Slim per-job projection for dashboard STATS (P1): every row (archived
+   * included, so tile totals stay truthful) but only the ~14 columns the
+   * stats computation actually reads — none of the heavy text columns
+   * (explanation / keyword JSON / notes) that dominate marshaling cost.
+   * @returns {object[]}
+   */
+  listJobsStats() {
+    return this.db.prepare(`SELECT id, source, status, user_decision, applied, applied_at,
+      created_at, updated_at, prepared_at, application_packet_path,
+      score, tier, sponsorship, posted_at FROM jobs`).all();
   }
 
   /**
@@ -309,6 +437,7 @@ export class Database {
     this.db.prepare(
       'UPDATE jobs SET user_decision = ?, decided_at = ?, updated_at = ? WHERE id = ?',
     ).run(decision, decision ? nowIso() : null, nowIso(), id);
+    this._syncArchivedAt(id);
     return this.getJob(id);
   }
 
@@ -328,6 +457,7 @@ export class Database {
   /** @param {Record<string, any>} row */
   insertRunLog(row) {
     const cols = ['run_id', 'mode', 'started_at', 'ended_at', 'jobs_found', 'jobs_scored',
+      'jobs_skipped_unchanged', 'jobs_cancelled',
       'jobs_queued', 'jobs_prepared', 'jobs_applied', 'jobs_assisted', 'jobs_submitted',
       'jobs_discarded', 'jobs_unknown_date_review', 'errors'];
     const present = cols.filter((c) => c in row);

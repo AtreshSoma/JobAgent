@@ -136,6 +136,29 @@ function isJobPosting(node) {
   return Array.isArray(t) ? t.includes('JobPosting') : t === 'JobPosting';
 }
 
+/**
+ * Read schema.org's identifier union without ever stringifying an object as
+ * "[object Object]". JobPosting.identifier may be a scalar, PropertyValue,
+ * URL-shaped node, or an array of those shapes.
+ */
+function jsonLdIdentifier(identifier) {
+  if (identifier === null || identifier === undefined) return '';
+  if (Array.isArray(identifier)) {
+    for (const item of identifier) {
+      const value = jsonLdIdentifier(item);
+      if (value !== '') return value;
+    }
+    return '';
+  }
+  if (typeof identifier !== 'object') return identifier;
+
+  for (const key of ['value', '@value', '@id']) {
+    const value = jsonLdIdentifier(identifier[key]);
+    if (value !== '') return value;
+  }
+  return '';
+}
+
 /** Map a JobPosting JSON-LD node to a normalized job. */
 function jobFromJsonLd(node, { url, source }) {
   const org = node.hiringOrganization;
@@ -146,7 +169,7 @@ function jobFromJsonLd(node, { url, source }) {
 
   return normalizeJob({
     source,
-    sourceJobId: str(node.identifier?.value ?? node.identifier ?? ''),
+    sourceJobId: str(jsonLdIdentifier(node.identifier)),
     company,
     title: node.title ?? '',
     location,

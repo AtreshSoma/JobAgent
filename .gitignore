@@ -3,6 +3,12 @@
 *.env
 !.env.example
 
+# --- Personal data (real name/contact/EEO/salary answers) — keep local only ---
+config/candidate.json
+config/screening_answers.json
+!config/candidate.example.json
+!config/screening_answers.example.json
+
 # --- Node ---
 node_modules/
 npm-debug.log*
@@ -32,6 +38,7 @@ data/job_tracker.csv
 data/approval_queue.json
 data/run_state.json
 data/packets/
+data/application-state/
 resumes/output/*
 !resumes/output/.gitkeep
 applications/output/*
@@ -57,3 +64,4 @@ test-results/
 Thumbs.db
 .vscode/
 .idea/
+*.code-workspace

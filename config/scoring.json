@@ -33,7 +33,21 @@
       "will sponsor",
       "h-1b sponsorship",
       "green card sponsorship",
-      "sponsor visa"
+      "sponsor visa",
+      "h-1b transfer",
+      "h1b transfer",
+      "visa transfer",
+      "able to sponsor",
+      "can sponsor",
+      "willing to sponsor",
+      "sponsorship is offered",
+      "sponsorship offered",
+      "sponsorship provided",
+      "work visa sponsorship",
+      "immigration sponsorship",
+      "support visa sponsorship",
+      "supports visa sponsorship",
+      "cap-exempt"
     ],
     "likelySponsors": [
       "capgemini", "tcs", "tata consultancy", "infosys", "accenture", "deloitte",
@@ -114,5 +128,30 @@
       "retail",
       "banking"
     ]
+  },
+  "evidenceAliases": {
+    "adf": ["azure data factory"],
+    "azure data factory": ["adf"],
+    "fabric": ["microsoft fabric"],
+    "microsoft fabric": ["fabric"],
+    "synapse": ["azure synapse"],
+    "spark": ["pyspark", "apache spark", "databricks"],
+    "pyspark": ["spark python", "apache spark"],
+    "lakehouse": ["delta lake", "databricks", "medallion architecture"],
+    "delta lake": ["lakehouse", "delta live tables"],
+    "data lake": ["adls", "adls gen2", "azure data lake", "delta lake", "lakehouse"],
+    "data warehouse": ["azure synapse", "synapse", "snowflake", "dimensional modeling", "star schema", "ssas"],
+    "etl": ["azure data factory", "adf", "ssis", "elt", "data pipeline"],
+    "elt": ["etl", "azure data factory", "dbt"],
+    "streaming": ["structured streaming", "kafka", "event hub", "spark streaming"],
+    "batch processing": ["azure data factory", "databricks", "etl", "data pipeline"],
+    "data pipeline": ["azure data factory", "adf pipelines", "etl", "databricks"],
+    "semantic model": ["semantic models", "ssas tabular", "tabular model"],
+    "semantic modeling": ["semantic models", "ssas tabular"],
+    "tabular model": ["ssas tabular", "semantic models"],
+    "dimensional modeling": ["star schema", "kimball", "dimensional modeling"],
+    "star schema": ["dimensional modeling", "kimball"],
+    "sql": ["t-sql"],
+    "t-sql": ["sql server", "tsql"]
   }
 }

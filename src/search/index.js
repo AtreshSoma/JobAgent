@@ -9,6 +9,7 @@
  */
 
 import { createRateLimiter } from '../utils/rateLimiter.js';
+import { createHostGate } from '../utils/hostGate.js';
 import { mapSettled } from '../utils/concurrency.js';
 import { deduplicate } from './deduplicator.js';
 import { classifyDiscovery } from './discoveryFilter.js';
@@ -47,6 +48,14 @@ export const ADAPTERS = {
 const DEFAULT_SOURCE_CONCURRENCY = 6;
 
 /**
+ * Requests allowed in flight against ONE host, across every source that talks
+ * to it. Sources are independent; hosts are not. Dozens of Greenhouse boards
+ * share `boards-api.greenhouse.io` and dozens of Workday tenants share a pod,
+ * so this — not the per-source ceiling — is the limit the server counts.
+ */
+const DEFAULT_HOST_CONCURRENCY = 4;
+
+/**
  * Run all enabled sources and return deduplicated jobs.
  *
  * @param {object} args
@@ -68,6 +77,13 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   });
   const maxRetries = ctx.maxRetries ?? defaults.maxRetries ?? 3;
 
+  // ONE gate for the whole run, shared by every source. Politeness has to be
+  // accounted per host — the per-source ceilings above cannot see that two
+  // different sources are pointed at the same server.
+  const hostGate = ctx.hostGate ?? createHostGate({
+    maxConcurrent: ctx.hostConcurrency ?? defaults.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
+  });
+
   // Concurrency ceilings are politeness limits, never evasion. Source-level
   // fans out across independent connectors; per-adapter ceilings (boards /
   // pages / details / actors) are threaded through ctx so each adapter throttles
@@ -77,6 +93,7 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   const adapterCtx = {
     ...ctx,
     rateLimiter,
+    hostGate,
     maxRetries,
     requestTimeoutMs: ctx.requestTimeoutMs ?? defaults.requestTimeoutMs,
     boardConcurrency: ctx.boardConcurrency ?? defaults.boardConcurrency,
@@ -93,15 +110,37 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   // order, so results are gathered in priority order — collection and dedup
   // stay deterministic regardless of which source finishes first.
   const settled = await mapSettled(sources, sourceConcurrency, async (source) => {
+    const startedAt = Date.now();
+    if (ctx.shouldCancel?.()) {
+      hooks.onSource?.({ phase: 'cancelled', source: source.id, adapter: source.adapter, durationMs: 0 });
+      return { jobs: [], errors: [], cancelled: true, durationMs: 0 };
+    }
     const mod = ADAPTERS[source.adapter];
     if (!mod || typeof mod.run !== 'function') {
-      return { jobs: [], errors: [{ error: `Unknown adapter: ${source.adapter}` }] };
+      const durationMs = Date.now() - startedAt;
+      hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: 0, errors: 1, durationMs });
+      return { jobs: [], errors: [{ error: `Unknown adapter: ${source.adapter}` }], durationMs };
     }
-    hooks.onSource?.({ phase: 'start', source: source.id, adapter: source.adapter });
-    const result = await mod.run(source, adapterCtx);
-    const jobs = result.jobs ?? [];
-    hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: jobs.length });
-    return { jobs, errors: result.errors ?? [] };
+    hooks.onSource?.({ phase: 'start', source: source.id, adapter: source.adapter, at: new Date().toISOString() });
+    try {
+      const result = await mod.run(source, adapterCtx);
+      const jobs = result.jobs ?? [];
+      const sourceErrors = result.errors ?? [];
+      const durationMs = Date.now() - startedAt;
+      hooks.onSource?.({
+        phase: result.cancelled === true ? 'cancelled' : 'end',
+        source: source.id, adapter: source.adapter, found: jobs.length,
+        errors: sourceErrors.length, durationMs, cached: result.cached === true,
+      });
+      return {
+        jobs, errors: sourceErrors, cancelled: result.cancelled === true,
+        durationMs, cached: result.cached === true,
+      };
+    } catch (error) {
+      const durationMs = Date.now() - startedAt;
+      hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: 0, errors: 1, durationMs });
+      throw error;
+    }
   });
 
   const collected = [];
@@ -126,6 +165,9 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
       adapter: source.adapter,
       found: payload.jobs.length,
       errors: payload.errors.length,
+      cancelled: payload.cancelled === true,
+      durationMs: payload.durationMs ?? null,
+      cached: payload.cached === true,
     });
   }
 
@@ -146,5 +188,11 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
     }
   }
 
-  return { jobs: unique, duplicates, errors, perSource };
+  return {
+    jobs: unique,
+    duplicates,
+    errors,
+    perSource,
+    cancelled: perSource.some((source) => source.cancelled),
+  };
 }

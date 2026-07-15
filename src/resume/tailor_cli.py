@@ -66,6 +66,9 @@ def _run(request: dict) -> dict:
         keywords,
         request.get("patterns") or {},
         add_summary_line=add_summary_line,
+        required_markers=ats_config.get("requiredMarkers"),
+        preferred_markers=ats_config.get("preferredMarkers"),
+        enable_rewrites=bool(request.get("enable_rewrites", False)),
         output_name=output_name,
     )
 
@@ -101,6 +104,13 @@ def _run(request: dict) -> dict:
         "audit": result.get("audit"),
         "emphasized": result.get("emphasized"),
         "summary_line": result.get("summary_line"),
+        "changes": result.get("changes", []),
+        "gaps": result.get("gaps", []),
+        "qualifications": result.get("qualifications", {}),
+        "selected_content": result.get("selected_content", {}),
+        "rewrite_policy": result.get("rewrite_policy", {}),
+        "invariants": result.get("invariants", {}),
+        "limitations": result.get("limitations", []),
         "validation": validation,
         "ats_report": ats_report,
         "error": None,

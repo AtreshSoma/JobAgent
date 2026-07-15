@@ -78,10 +78,29 @@ function collectFields() {
     const tag = el.tagName.toLowerCase();
     const rawType = (el.getAttribute('type') || tag).toLowerCase();
 
-    // Skip controls we must never touch automatically.
-    if (['hidden', 'submit', 'button', 'image', 'reset', 'file', 'password'].includes(rawType)) continue;
+    // Skip controls we must never touch automatically. File inputs ARE
+    // reported (the workflow must see required uploads and verify attachments
+    // persist) — but as kind:'file', which the text filler ignores; only
+    // uploadRunner ever touches them.
+    if (['hidden', 'submit', 'button', 'image', 'reset', 'password'].includes(rawType)) continue;
     if (el.disabled || el.readOnly) continue;
     if (!isVisible(el)) continue;
+
+    if (rawType === 'file') {
+      // ATS file inputs frequently carry no id/name (e.g. inside a labelled
+      // <fieldset>) — fall back to a container-scoped selector so the field
+      // is still reported.
+      let sel = selectorFor(el);
+      if (!sel) {
+        const host = el.closest('fieldset[id], [id]');
+        sel = host ? `#${cssEscape(host.id)} input[type="file"]` : 'input[type="file"]';
+        if (document.querySelectorAll(sel).length !== 1) sel = null;
+      }
+      const label = labelFor(el)
+        || (el.closest('fieldset')?.querySelector('legend')?.textContent ?? '').trim();
+      if (sel) out.push({ kind: 'file', type: 'file', selector: sel, label, name: el.name || '', required: el.required === true });
+      continue;
+    }
 
     if (tag === 'select') {
       const options = Array.from(el.options || []).map((o) => ({
@@ -235,3 +254,58 @@ export async function resolveFormScope(page, { timeoutMs = 3000, pollMs = 150 } 
   }
 }
 
+
+/**
+ * Detect visible validation errors on the current form step.
+ *
+ * ATSes surface rejection of a step as inline field errors rather than a
+ * navigation failure, so after filling (and after every advance click) the
+ * runner asks the live DOM for:
+ *   - fields marked aria-invalid="true" (reported with their label), and
+ *   - visible alert/error text (role="alert", .error/.field-error/.help-block,
+ *     Greenhouse/Lever/Workday error classes).
+ *
+ * Returns [] on pages/frames that cannot evaluate (unit-test fakes) — the
+ * check degrades gracefully, it never breaks a run.
+ *
+ * @param {object} scope Playwright Page or Frame
+ * @returns {Promise<string[]>} human-readable error strings, deduplicated
+ */
+export async function detectValidationErrors(scope) {
+  if (!scope || typeof scope.evaluate !== 'function') return [];
+  try {
+    const errors = await scope.evaluate(() => {
+      const out = new Set();
+      const visible = (el) => {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const labelFor = (el) => {
+        if (el.labels && el.labels.length) return el.labels[0].textContent.trim();
+        if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
+        const id = el.getAttribute('aria-describedby');
+        if (id) {
+          const desc = document.getElementById(id.split(/\s+/)[0]);
+          if (desc) return desc.textContent.trim();
+        }
+        return el.name || el.id || 'field';
+      };
+      for (const el of document.querySelectorAll('[aria-invalid="true"]')) {
+        if (visible(el)) out.add(`invalid field: ${labelFor(el).slice(0, 80)}`);
+      }
+      const errorSel = '[role="alert"], .field-error, .error-message, .help-block.error, '
+        + '.field_with_errors, .invalid-feedback, [data-automation-id*="error"]';
+      for (const el of document.querySelectorAll(errorSel)) {
+        const text = (el.textContent || '').trim();
+        if (visible(el) && text && text.length <= 200) out.add(text);
+      }
+      return [...out].slice(0, 10);
+    });
+    return Array.isArray(errors) ? errors : [];
+  } catch {
+    return [];
+  }
+}

@@ -14,7 +14,9 @@
  */
 
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+
+import { writeFileAtomic } from '../utils/fsSafe.js';
 
 import { dateStamp } from '../utils/dates.js';
 
@@ -247,8 +249,8 @@ export function generateReport({ jobs = [], outDir, stamp } = {}) {
     csv: join(outDir, `report-${tag}.csv`),
     html: join(outDir, `report-${tag}.html`),
   };
-  writeFileSync(files.json, JSON.stringify(summary, null, 2), 'utf8');
-  writeFileSync(files.csv, renderCsv(jobs), 'utf8');
-  writeFileSync(files.html, renderHtml(summary), 'utf8');
+  writeFileAtomic(files.json, JSON.stringify(summary, null, 2), 'utf8');
+  writeFileAtomic(files.csv, renderCsv(jobs), 'utf8');
+  writeFileAtomic(files.html, renderHtml(summary), 'utf8');
   return { files, summary };
 }

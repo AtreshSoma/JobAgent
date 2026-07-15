@@ -18,6 +18,9 @@ describe('outputs', () => {
     expect(emptyCounters()).toEqual({
       jobs_found: 0, jobs_scored: 0, jobs_queued: 0, jobs_discarded: 0,
       jobs_unknown_date_review: 0, jobs_prepared: 0, jobs_assisted: 0, jobs_submitted: 0,
+      // Cancellation + incremental discovery outcomes are counted too, so a
+      // cancelled or skip-unchanged run is never misread as "found nothing".
+      jobs_cancelled: 0, jobs_skipped_unchanged: 0,
     });
   });
 

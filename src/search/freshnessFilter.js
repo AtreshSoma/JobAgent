@@ -49,8 +49,8 @@ import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
  * }}
  */
 export function applyFreshnessFilter(jobs = [], settings = {}, { now = new Date() } = {}) {
-  const mode = settings.jobFreshnessMode ?? 'LAST_3_DAYS';
-  const windowDays = FRESHNESS_WINDOW_DAYS[mode] ?? 3;
+  const mode = settings.jobFreshnessMode ?? 'LAST_7_DAYS';
+  const windowDays = FRESHNESS_WINDOW_DAYS[mode] ?? 7;
   // Undated jobs are opt-in and default OFF. They never join the fresh results.
   const includeUnknown = settings.includeUnknownDateJobs === true;
   const fallbackEnabled = settings.includeLast3DaysFallback !== false;

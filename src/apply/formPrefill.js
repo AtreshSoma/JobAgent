@@ -200,7 +200,9 @@ export function buildPrefillPlan(fields = [], { candidate, screeningAnswers } = 
     const qa = answerScreeningQuestion(field.label, screeningAnswers, { choices: field.choices });
     if (qa.answered) {
       plan.push({ label: field.label, selector: field.selector ?? null, field: qa.matchedId, value: qa.answer, source: 'screening' });
-    } else {
+    } else if (qa.action !== 'skip') {
+      // 'skip' (config defaults.unknownAction) leaves the field blank without
+      // blocking; the live form's own required check still stops the run.
       needsUser.push({ label: field.label, selector: field.selector ?? null, reason: 'no high-confidence answer' });
     }
   }

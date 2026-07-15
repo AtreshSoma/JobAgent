@@ -31,7 +31,7 @@ describe('credentialManager', () => {
       browserSlowMo: 0,
       assistMaxSteps: 8,
       resumeExportPdf: true,
-      jobFreshnessMode: 'LAST_3_DAYS',
+      jobFreshnessMode: 'LAST_7_DAYS',
       includeLast3DaysFallback: true,
       minResultsBeforeFallback: 10,
       includeUnknownDateJobs: false,
@@ -72,8 +72,9 @@ describe('credentialManager', () => {
     expect(getRuntimeSettings({ RUN_MODE: 'BOGUS' }).mode).toBe('DRY_RUN');
     expect(getRuntimeSettings({ RUN_MODE: 'live_submit' }).mode).toBe('DRY_RUN');
     expect(getRuntimeSettings({ RUN_MODE: 'live_assist' }).mode).toBe('LIVE_ASSIST');
-    // Invalid freshness mode falls back to LAST_3_DAYS.
-    expect(getRuntimeSettings({ JOB_FRESHNESS_MODE: 'nonsense' }).jobFreshnessMode).toBe('LAST_3_DAYS');
+    // Invalid freshness mode falls back to LAST_7_DAYS (recalibrated default:
+    // the 3-day hard window discarded >75% of scoreable jobs before ranking).
+    expect(getRuntimeSettings({ JOB_FRESHNESS_MODE: 'nonsense' }).jobFreshnessMode).toBe('LAST_7_DAYS');
   });
 
   it('redact masks secret-looking keys recursively', () => {

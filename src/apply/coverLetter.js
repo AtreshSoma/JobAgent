@@ -49,11 +49,20 @@ export function generateCoverLetter(job, scoreResult, {
     .join('\n');
 
   const wordCount = countWords(body);
+  // The configured minimum is a review flag, never a padding trigger: padding
+  // would mean inventing filler claims. A short letter stays reviewable with an
+  // explicit warning so the human decides whether it is enough.
+  const minWords = coverLetter.wordCount?.min ?? 0;
+  const belowMinWordCount = wordCount < minWords;
   return {
     generated: true,
     reason: required ? 'required by employer' : `score ${score} >= ${coverLetter.minScoreToGenerate}`,
     text,
     wordCount,
+    belowMinWordCount,
+    warnings: belowMinWordCount
+      ? [`cover letter is ${wordCount} words, below the configured minimum of ${minWords} — review before sending`]
+      : [],
     cleaned: !hasBannedContent(text, humanizerPatterns),
   };
 }

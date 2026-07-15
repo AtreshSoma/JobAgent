@@ -9,6 +9,35 @@
  */
 
 import { existsSync } from 'node:fs';
+import { basename } from 'node:path';
+
+/**
+ * Read the browser's live FileList after setInputFiles. A successful API call
+ * alone is not enough: custom ATS widgets can immediately clear/reject a file.
+ * `verified: null` means the page double does not expose FileList inspection;
+ * real Playwright locators do.
+ */
+export async function verifyUploadAttached(locator, path) {
+  if (!locator || typeof locator.evaluate !== 'function') {
+    return { verified: null, verificationMethod: 'file-list-unavailable' };
+  }
+  try {
+    const files = await locator.evaluate((input) => Array.from(input.files ?? []).map((file) => ({
+      name: file.name,
+      size: file.size,
+      type: file.type,
+    })));
+    const wanted = basename(path).toLowerCase();
+    const match = Array.isArray(files) && files.some((file) => String(file?.name ?? '').toLowerCase() === wanted);
+    return {
+      verified: match,
+      verificationMethod: 'input-file-list',
+      attachedFileCount: Array.isArray(files) ? files.length : 0,
+    };
+  } catch (err) {
+    return { verified: false, verificationMethod: 'input-file-list', verificationError: err.message };
+  }
+}
 
 /**
  * @param {object} page Playwright page (or compatible)
@@ -52,8 +81,13 @@ export async function uploadFiles(page, fillPlan = {}, { dryRun = false, fileExi
       continue;
     }
     try {
-      await page.locator(u.selector).first().setInputFiles(u.path);
-      uploaded.push({ type: u.type, path: u.path, selector: u.selector });
+      const locator = page.locator(u.selector).first();
+      await locator.setInputFiles(u.path);
+      const verification = await verifyUploadAttached(locator, u.path);
+      uploaded.push({ type: u.type, path: u.path, selector: u.selector, ...verification });
+      if (verification.verified === false) {
+        blockers.push(`${u.type}: upload did not remain attached after selection`);
+      }
     } catch (err) {
       blockers.push(`${u.type}: upload failed (${err.message})`);
     }

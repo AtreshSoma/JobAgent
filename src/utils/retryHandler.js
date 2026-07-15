@@ -69,12 +69,20 @@ export async function withRetry(fn, {
     } catch (err) {
       const isLast = attempt >= maxRetries;
       if (isLast || !isRetryable(err)) {
+        // Record what we actually spent so the failure can report it honestly
+        // instead of the RCA panel always printing "Retries spent: 0".
+        if (err && typeof err === 'object' && err.attempts === undefined) {
+          err.attempts = attempt;
+        }
         throw err;
       }
-      // Exponential backoff: base * 2^attempt, capped, with bounded jitter.
-      const raw = baseDelayMs * Math.pow(2, attempt);
-      const capped = Math.min(raw, maxDelayMs);
-      const delayMs = jitter(capped, 0.25, rng);
+      // A server that sent Retry-After told us exactly how long to wait. Obeying
+      // it beats guessing: a blind 500ms/1s/2s curve just earns another 429.
+      const retryAfter = Number(err?.retryAfterMs);
+      const delayMs = Number.isFinite(retryAfter) && retryAfter > 0
+        ? Math.min(retryAfter, maxDelayMs)
+        // Exponential backoff: base * 2^attempt, capped, with bounded jitter.
+        : jitter(Math.min(baseDelayMs * Math.pow(2, attempt), maxDelayMs), 0.25, rng);
       attempt += 1;
       if (typeof onRetry === 'function') {
         onRetry({ attempt, delayMs, error: err });

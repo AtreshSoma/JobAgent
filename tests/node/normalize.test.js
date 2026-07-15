@@ -46,6 +46,22 @@ describe('normalize', () => {
     expect(jobs[0].postedAt).toBe('2026-05-28');
   });
 
+  it('parseJsonLdJobs safely handles identifier union shapes', () => {
+    const posting = (identifier) => `<script type="application/ld+json">${JSON.stringify({
+      '@type': 'JobPosting',
+      title: 'Data Engineer',
+      hiringOrganization: { name: 'Acme' },
+      identifier,
+    })}</script>`;
+
+    expect(parseJsonLdJobs(posting({ propertyID: 'Acme', value: 'REQ-42' }))[0].sourceJobId)
+      .toBe('REQ-42');
+    expect(parseJsonLdJobs(posting([{ propertyID: 'empty' }, { '@id': 'REQ-43' }]))[0].sourceJobId)
+      .toBe('REQ-43');
+    expect(parseJsonLdJobs(posting({ propertyID: 'Acme' }))[0].sourceJobId)
+      .toBe('');
+  });
+
   it('extractJsonLdBlocks ignores malformed JSON-LD', () => {
     const html = '<script type="application/ld+json">{bad json}</script>' +
       '<script type="application/ld+json">{"@type":"JobPosting","title":"X"}</script>';

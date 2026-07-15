@@ -25,7 +25,7 @@ describe('outputPaths naming convention', () => {
 
   it('derives the candidate filename prefix', () => {
     expect(candidatePrefix('Atresh Somayajula')).toBe('Atresh_Somayajula');
-    expect(candidatePrefix()).toBe('Atresh_Somayajula');
+    expect(candidatePrefix()).toBe('Candidate');
   });
 
   it('normalizes date / id folder suffixes to YYYY-MM-DD when dated', () => {

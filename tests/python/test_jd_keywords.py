@@ -1,5 +1,5 @@
 """Tests for deterministic JD keyword tiering."""
-from jdKeywords import extract_jd_keywords
+from jdKeywords import classify_qualification_keywords, extract_jd_keywords
 
 VOCAB = [
     "azure data factory", "adf", "databricks", "delta lake", "spark",
@@ -70,3 +70,44 @@ def test_word_boundary_prevents_false_substring_match():
     out = extract_jd_keywords(jd, "Data Engineer", VOCAB)
     assert "adf" not in out["all"]
     assert "databricks" in out["all"]
+
+
+def test_qualification_classification_keeps_required_and_preferred_distinct():
+    jd = (
+        "Required: Azure Data Factory and SQL. "
+        "Preferred: dbt and Kafka."
+    )
+    out = classify_qualification_keywords(
+        jd,
+        ["azure data factory", "sql", "dbt", "kafka", "terraform"],
+        required_markers=MARKERS_REQUIRED,
+        preferred_markers=MARKERS_PREFERRED,
+    )
+    assert out["required"] == ["azure data factory", "sql"]
+    assert out["preferred"] == ["dbt", "kafka"]
+    assert out["unclassified"] == ["terraform"]
+    assert all(item["jd_evidence"] for item in out["items"] if item["keyword"] != "terraform")
+
+
+def test_overlapping_preferred_qualifications_heading_is_not_reopened_as_required():
+    required = ["requirements", "qualifications", "minimum qualifications"]
+    preferred = ["preferred", "preferred qualifications"]
+    jd = "Requirements: SQL. Preferred qualifications: dbt and Kafka."
+    classified = classify_qualification_keywords(
+        jd,
+        ["sql", "dbt", "kafka"],
+        required_markers=required,
+        preferred_markers=preferred,
+    )
+    tiered = extract_jd_keywords(
+        jd,
+        "Data Engineer",
+        ["sql", "dbt", "kafka"],
+        required_markers=required,
+        preferred_markers=preferred,
+    )
+    assert classified["required"] == ["sql"]
+    assert classified["preferred"] == ["dbt", "kafka"]
+    assert "sql" in tiered["tier1"]
+    assert "dbt" in tiered["tier2"]
+    assert "kafka" in tiered["tier2"]

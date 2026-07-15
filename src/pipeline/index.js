@@ -18,9 +18,12 @@
  */
 
 import { join } from 'node:path';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
+
+import { writeFileAtomic } from '../utils/fsSafe.js';
 
 import { runSearch } from '../search/index.js';
+import { urlKeyFor } from '../search/deduplicator.js';
 import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { applyFreshnessFilter } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
@@ -38,11 +41,17 @@ import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { dateStamp, formatPostedRelative } from '../utils/dates.js';
 import { buildJobPaths } from '../utils/outputPaths.js';
 import { tailorResumeForJob } from '../resume/tailorRunner.js';
-import { LIFECYCLE, lifecycleForTier, isQueuedTier } from '../lifecycle.js';
+import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '../lifecycle.js';
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
 
-/** Tiers that warrant building an application packet in PREPARE/LIVE_ASSIST. */
-const PREPARE_TIERS = new Set([TIERS.PRIORITY, TIERS.APPLY, TIERS.QUEUE]);
+/**
+ * Tiers that warrant AUTO-building an application packet in PREPARE/LIVE_ASSIST.
+ * Deliberately excludes Queue: Queue is "worth a human look", not "worth a
+ * tailored resume" — auto-preparing it was measured producing 153 medium-fit
+ * packets vs 8 strong-fit ones, burying the real candidates. Queue jobs can
+ * still be prepared explicitly via the dashboard's "Prepare selected".
+ */
+const PREPARE_TIERS = new Set([TIERS.PRIORITY, TIERS.APPLY]);
 
 /**
  * @param {object} args
@@ -65,14 +74,36 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   // a per-job SELECT during dedup — a discovery run examines thousands of jobs.
   const excludeApplied = config?.runtime?.excludeAlreadyApplied !== false;
   const appliedIds = excludeApplied ? db.getAppliedJobIds() : null;
-  const { jobs, duplicates, errors } = await searchFn({
+  // Provider-specific ids can change across sources/runs. Refresh the same id,
+  // but do not create another actionable row for a URL already owned by a
+  // different live/protected record.
+  const activeUrlOwners = new Map(
+    (db.getActiveJobUrls?.() ?? [])
+      .map((row) => [urlKeyFor(row), row.id])
+      .filter(([key]) => key),
+  );
+  const workdayDetailCache = db.getReusableWorkdayDetail
+    ? (jobId) => db.getReusableWorkdayDetail(jobId)
+    : null;
+  const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
     scoring: config.scoring,
+    ctx: {
+      ...(deps.searchCtx ?? {}),
+      root: config.root,
+      shouldCancel: deps.shouldCancel,
+      workdayDetailCache,
+    },
+    hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
     // are re-discovered so DRY_RUN -> PREPARE -> LIVE_ASSIST can build on them.
     // Honors runtime.excludeAlreadyApplied (default true).
-    existsInDb: (job) => (appliedIds ? appliedIds.has(job.id) : false),
+    existsInDb: (job) => {
+      if (appliedIds?.has(job.id)) return true;
+      const owner = activeUrlOwners.get(urlKeyFor(job));
+      return Boolean(owner && owner !== job.id);
+    },
   });
   logger.event(EVENT_TYPES.SEARCH_END, {
     message: `Search complete: ${jobs.length} jobs, ${duplicates.length} dupes, ${errors.length} errors`,
@@ -100,6 +131,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   }
 
   const counters = { ...emptyCounters(), jobs_found: jobs.length };
+  if (searchCancelled) counters.jobs_cancelled += 1;
   const scoredJobs = [];
   // Full-visibility audit trail of every discovered job and what happened to it.
   const discovered = [];
@@ -146,6 +178,18 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   }
 
   for (const job of freshJobs) {
+    if (deps.shouldCancel?.()) {
+      counters.jobs_cancelled += 1;
+      break;
+    }
+    // Find New Jobs is incremental: an unchanged record that already has a
+    // score does not need deterministic scoring work repeated. Re-score is the
+    // explicit command for applying changed scoring configuration to all rows.
+    const existing = db.getJob?.(job.id) ?? null;
+    if (mode === 'DRY_RUN' && existing?.score != null && materiallyUnchanged(existing, job)) {
+      counters.jobs_skipped_unchanged += 1;
+      continue;
+    }
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
 
@@ -258,7 +302,10 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   });
 
   logger.endRun(counters);
-  return { counters, scoredJobs, discovered, scored, queued, review: reviewRows, report, errors, artifacts };
+  return {
+    counters, scoredJobs, discovered, scored, queued, review: reviewRows,
+    report, errors, artifacts, perSource, cancelled: searchCancelled,
+  };
 }
 
 /** Compact entry for the data/found_jobs.json audit trail. */
@@ -336,6 +383,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   let resumeWarning = null;
   let resumeValidation = null;
   let resumeAtsReport = null;
+  let resumeTailoring = null;
   const tailorFn = typeof deps.tailorFn === 'function' ? deps.tailorFn : tailorResumeForJob;
   try {
     // exportPdf — also emit a PDF alongside the .docx when enabled (most ATS
@@ -361,6 +409,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     resumeWarning = tailored?.warning ?? null;
     resumeValidation = tailored?.validation ?? null;
     resumeAtsReport = tailored?.atsReport ?? null;
+    resumeTailoring = tailored?.tailored
+      ? { changes: tailored.changes ?? [], gaps: tailored.gaps ?? [], summaryLine: tailored.summaryLine ?? null }
+      : null;
     // A resume that fails hard validation (empty/unreadable/no sections/no
     // contact) must not be silently submitted — surface it as a warning so the
     // packet carries a blocker and the submit gate withholds.
@@ -405,6 +456,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     screeningAnswers: config.screeningAnswers,
     resumePath, coverLetter: cover, coverLetterPath,
     resumeTailored, resumeWarning, resumePdfPath, resumeValidation,
+    tailoring: resumeTailoring,
     atsReport: resumeAtsReport,
     formFields: job.formFields ?? [],
     html: job.html ?? '',
@@ -415,6 +467,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     resume_docx_path: resumeTailored ? resumePath : null,
     resume_pdf_path: resumePdfPath,
     application_packet_path: packetPath, output_folder_path: outPaths.folder,
+    // The true "prepared on" timestamp — daily stats must not infer it from
+    // updated_at, which any later note/decision/re-score would bump.
+    prepared_at: new Date().toISOString(),
     ats_platform: packet.ats.platform,
     ats_score: resumeAtsReport?.match_score ?? null,
     ats_band: resumeAtsReport?.band ?? null,
@@ -438,10 +493,34 @@ function writeCoverLetter(dir, fileName, cover, deps) {
 
 function defaultWrite(dir, path, text) {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path, text, 'utf8');
+  // Atomic: readers must never observe a torn cover letter / artifact.
+  writeFileAtomic(path, text, 'utf8');
+}
+
+/** Statuses owned by discovery/scoring — the only ones the guard applies to. */
+const DISCOVERY_STATUSES = new Set(['discarded', 'scored', 'unknown_date_review']);
+
+/** Material fields whose change warrants re-scoring an already-seen posting. */
+function materiallyUnchanged(row, job) {
+  return String(row.company ?? '') === String(job.company ?? '')
+    && String(row.title ?? '') === String(job.title ?? '')
+    && String(row.location ?? '') === String(job.location ?? '')
+    && String(row.url ?? '') === String(job.url ?? '')
+    && String(row.jd_text ?? '') === String(job.jdText ?? '')
+    && String(row.posted_at ?? '') === String(job.postedAt ?? '')
+    && String(row.employment_type ?? '') === String(job.employmentType ?? '');
 }
 
 function persistJob(db, job, fields = {}, markers = {}) {
+  const patch = { ...fields };
+  // Downgrade guard: a re-discovered job the human already invested in
+  // (decision, packet, approval, assist outcome, submission) keeps its status —
+  // a stale/duplicate hit must never flip a prepared job back to "discarded".
+  // Metadata (JD text, posted date, URL, score fields) still refreshes.
+  if (DISCOVERY_STATUSES.has(patch.status) && isProtectedJobRow(db.getJob?.(job.id))) {
+    delete patch.status;
+    delete patch.discard_reason;
+  }
   db.upsertJob({
     id: job.id,
     source: job.source,
@@ -454,6 +533,9 @@ function persistJob(db, job, fields = {}, markers = {}) {
     applicant_count: job.applicantCount,
     employment_type: job.employmentType,
     employment_category: classifyEmployment(job, markers).category,
-    ...fields,
+    ...(job.rawMetadata?.compensation
+      ? { compensation_text: String(job.rawMetadata.compensation).trim() }
+      : {}),
+    ...patch,
   });
 }

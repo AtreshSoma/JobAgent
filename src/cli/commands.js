@@ -18,15 +18,17 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 import { runSearch } from '../search/index.js';
 import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { fetchUrl } from '../search/adapters/genericPublicPage.js';
 import { runPipeline, preparePacket } from '../pipeline/index.js';
+import { jsonList } from '../utils/json.js';
 import { writeFoundJobs } from '../outputs.js';
 import { emptyCounters } from '../outputs.js';
-import { LIFECYCLE } from '../lifecycle.js';
+import { LIFECYCLE, isProtectedJobRow } from '../lifecycle.js';
 import {
   listPending, approve, reject, APPROVAL_STATUS,
 } from '../apply/approvalQueue.js';
@@ -103,6 +105,79 @@ export async function runPrepareApps({ config, db, logger, deps = {} } = {}) {
   return runPipeline({ config, db, logger, mode: 'PREPARE', deps });
 }
 
+/** DB statuses a re-score may overwrite — rows still owned by the pipeline. */
+const RESCORABLE_STATUSES = new Set([LIFECYCLE.FOUND, LIFECYCLE.SCORED, LIFECYCLE.NEAR_MISS, 'discarded', '', null, undefined]);
+
+/**
+ * RE-SCORE — recompute exclusions, sponsorship, score, tier, and explanation
+ * for every job ALREADY in the DB, from its stored JD. Purely local: no
+ * discovery, no network. This is what the dashboard's "Re-score" button runs
+ * (it used to silently re-run the full discovery pipeline).
+ *
+ * Only rows still owned by the pipeline are touched: anything the human acted
+ * on (decision, packet, approval, assist outcome, submission) keeps both its
+ * status AND its recorded score untouched.
+ *
+ * @param {object} args { config, db, logger, deps }
+ * @returns {Promise<{ counters: object }>}
+ */
+export async function runRescore({ config, db, logger, deps = {} } = {}) {
+  const now = typeof deps.now === 'function' ? deps.now() : deps.now ?? new Date();
+  const rows = db.listJobs({});
+  const counters = { jobs_rescored: 0, jobs_excluded: 0, jobs_skipped_protected: 0 };
+
+  let i = 0;
+  for (const row of rows) {
+    if (deps.shouldCancel?.()) {
+      counters.jobs_cancelled = (counters.jobs_cancelled ?? 0) + 1;
+      break;
+    }
+    // Yield the event loop periodically so the dashboard stays responsive
+    // while tens of thousands of rows are re-scored in the background.
+    i += 1;
+    if (i % 250 === 0) await new Promise((r) => setImmediate(r));
+    if (isProtectedJobRow(row) || !RESCORABLE_STATUSES.has(row.status)) {
+      counters.jobs_skipped_protected += 1;
+      continue;
+    }
+
+    const job = {
+      id: row.id, source: row.source, company: row.company, title: row.title,
+      location: row.location, url: row.url, jdText: row.jd_text ?? '',
+      postedAt: row.posted_at, applicantCount: row.applicant_count,
+      employmentType: row.employment_type,
+    };
+
+    // Same chain as discovery: exclusions -> sponsorship -> score -> tier.
+    const exclusion = applyExclusions(job, config.exclusions, { now });
+    if (exclusion.excluded) {
+      db.upsertJob({ id: job.id, status: 'discarded', discard_reason: exclusion.reason });
+      counters.jobs_excluded += 1;
+      continue;
+    }
+    const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
+    const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
+    const { tier, explanation } = explainScore(score, config.scoring);
+    db.upsertJob({
+      id: job.id,
+      score: score.total, tier, sponsorship: sponsorship.status,
+      employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
+      matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
+      explanation,
+      status: tier === 'Discard' ? 'discarded' : 'scored',
+      discard_reason: tier === 'Discard' ? 'below score threshold on re-score' : null,
+    });
+    counters.jobs_rescored += 1;
+  }
+
+  logger?.event?.(EVENT_TYPES.SCORE_EXPLAINED, {
+    message: `re-score complete: ${counters.jobs_rescored} rescored, `
+      + `${counters.jobs_excluded} excluded, ${counters.jobs_skipped_protected} protected`,
+    meta: counters,
+  });
+  return { counters };
+}
+
 /**
  * ADD ONE JOB BY URL — the fully-compliant manual path for postings on sites
  * the discovery adapters cannot enumerate (Microsoft/Amazon/Apple and other
@@ -167,16 +242,26 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
   const { tier, explanation } = explainScore(score, config.scoring);
   const fullExplanation = caveat ? `${caveat} ${explanation}` : explanation;
 
-  db.upsertJob({
+  const patch = {
     id: job.id, source: job.source, company: job.company, title: job.title,
     location: job.location, url: job.url, jd_text: job.jdText, posted_at: job.postedAt,
     applicant_count: job.applicantCount, employment_type: job.employmentType,
+    ...(job.rawMetadata?.compensation
+      ? { compensation_text: String(job.rawMetadata.compensation).trim() }
+      : {}),
     employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
     score: score.total, tier, sponsorship: sponsorship.status,
     matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
     explanation: fullExplanation, status: tier === 'Discard' ? 'discarded' : 'scored',
     discard_reason: tier === 'Discard' && caveat ? exclusion.reason : null,
-  });
+  };
+  // Downgrade guard: re-pasting the URL of a job that already has a packet /
+  // decision / assist outcome refreshes its metadata but keeps its status.
+  if (isProtectedJobRow(db.getJob?.(job.id))) {
+    delete patch.status;
+    delete patch.discard_reason;
+  }
+  db.upsertJob(patch);
   logger?.event?.(EVENT_TYPES.SCORE_EXPLAINED, {
     jobId: job.id, message: `${score.total}/100 -> ${tier} (manual URL)`,
     meta: { score: score.total, tier, sponsorship: sponsorship.status, url: job.url, caveat },
@@ -188,18 +273,6 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
     appStatusHint: tier === 'Discard' ? 'discarded' : 'scored',
     caveat, alreadyExisted: existed,
   };
-}
-
-/** Parse a TEXT column that may hold a JSON array. */
-function dbList(value) {
-  if (Array.isArray(value)) return value;
-  if (typeof value === 'string' && value.trim().startsWith('[')) {
-    try {
-      const parsed = JSON.parse(value);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  }
-  return [];
 }
 
 /**
@@ -218,6 +291,11 @@ export async function preparePacketsForJobs({ config, db, logger, jobIds = [], d
   const counters = { jobs_prepared: 0 };
 
   for (const jobId of jobIds) {
+    // Cooperative cancel (dashboard Cancel button): stop between jobs.
+    if (deps.shouldCancel?.()) {
+      failed.push({ jobId, error: 'cancelled before this job started' });
+      continue;
+    }
     const row = db.getJob(jobId);
     if (!row) { failed.push({ jobId, error: 'unknown job id' }); continue; }
     if (Number(row.applied) === 1) {
@@ -232,8 +310,8 @@ export async function preparePacketsForJobs({ config, db, logger, jobIds = [], d
     };
     const score = {
       total: typeof row.score === 'number' ? row.score : 0,
-      matchedKeywords: dbList(row.matched_keywords),
-      missingKeywords: dbList(row.missing_keywords),
+      matchedKeywords: jsonList(row.matched_keywords),
+      missingKeywords: jsonList(row.missing_keywords),
     };
     try {
       const packetPath = await preparePacket({
@@ -282,10 +360,13 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
   let dailyCount = db.countAppliedOn?.(isoDate(deps.now)) ?? 0;
 
   for (const approval of approvals) {
-    // Idempotency guard: never re-assist a job that was already submitted by a
-    // human. Re-running assist must NOT reopen a completed application.
+    // Idempotency guard: never re-assist a job that was already submitted — or
+    // whose submission is unverified (re-filling could double-apply). Re-running
+    // assist must NOT reopen a completed application.
     const jobRow = db.getJob?.(approval.job_id) ?? null;
-    if (jobRow && (Number(jobRow.applied) === 1 || jobRow.status === LIFECYCLE.SUBMITTED)) {
+    if (jobRow && (Number(jobRow.applied) === 1
+        || jobRow.status === LIFECYCLE.SUBMITTED
+        || jobRow.status === LIFECYCLE.SUBMIT_UNVERIFIED)) {
       counters.jobs_skipped_already_applied += 1;
       logger?.event?.(EVENT_TYPES.DUPLICATE_SKIPPED, {
         jobId: approval.job_id,
@@ -398,16 +479,51 @@ export function recordAssistResult(db, jobId, result) {
       assist_blockers: Array.isArray(result.blockers) ? result.blockers : [],
     };
     // Auto-submit (explicit per-run opt-in) is the ONE automated path to
-    // applied=1 — the runner only sets result.submitted after clicking the
-    // final Submit on a clean form at the human's request.
-    if (result.submitted === true) {
+    // applied=1 — and the runner only sets result.submitted after VERIFYING
+    // the submission (confirmation page / redirect with the form gone). An
+    // unverified click arrives here as status `submit_unverified` and is
+    // never recorded as applied — the human confirms it via Mark submitted.
+    if (result.submitted === true && result.submitVerification?.verified === true) {
+      const signals = result.submitVerification?.signals ?? [];
       patch.applied = 1;
       patch.applied_at = new Date().toISOString();
       patch.status = 'submitted';
-      patch.submitted_confirmation = 'auto-submitted — verify the ATS confirmation email';
+      patch.submitted_confirmation = `auto-submitted — confirmed by ${signals.join(', ') || 'post-submit check'}`;
+    } else if (result.submitted === true) {
+      // Defensive truthfulness guard: a caller may accidentally claim
+      // `submitted` without the runner's positive verification result. Never
+      // turn that inconsistent payload into applied=1; require the human to
+      // verify it before the job can move to Submitted.
+      patch.applied = 0;
+      patch.status = LIFECYCLE.SUBMIT_UNVERIFIED;
     }
     db.upsertJob(patch);
-  } catch {
-    /* job may not be persisted in some flows; ignore */
+    // Persist the run's phase trail (Queued -> Precheck -> ... -> terminal) as
+    // an audit event, so "where exactly did the last fill get to?" is
+    // answerable from the job's history — and a resumed run appends a fresh
+    // trail rather than overwriting the old one.
+    if (Array.isArray(result.phases) && result.phases.length && typeof db.insertEvent === 'function') {
+      try {
+        db.insertEvent({
+          id: randomUUID(),
+          job_id: jobId,
+          event_type: 'assist_phases',
+          message: result.phases.map((ph) => ph.phase).join(' -> '),
+          metadata: { phases: result.phases, status: patch.status },
+        });
+      } catch {
+        // Audit insertion is best-effort. The authoritative job state above
+        // already committed and must not be misreported as a failed update.
+      }
+    }
+  } catch (err) {
+    // ANY submitted-claim write that fails must be loud — whether it was the
+    // verified applied=1 record or the defensive downgrade to
+    // submit_unverified, silently losing it invites a double-application (or
+    // an unverified submit the human is never asked to confirm). Everything
+    // else stays best-effort (the job may not be persisted in some flows).
+    if (result.submitted === true) {
+      throw new Error(`failed to record submitted application for ${jobId}: ${err.message}`);
+    }
   }
 }

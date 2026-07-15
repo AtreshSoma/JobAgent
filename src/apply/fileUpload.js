@@ -51,7 +51,18 @@ function validate(type, path, required, allowed, uploads, blockers) {
     blockers.push(`${type}: unsupported file type ${ext}`);
     return;
   }
-  const { size } = statSync(path);
+  let stats;
+  try {
+    stats = statSync(path);
+  } catch (err) {
+    blockers.push(`${type}: could not inspect file (${err.message})`);
+    return;
+  }
+  if (!stats.isFile()) {
+    blockers.push(`${type}: path is not a file`);
+    return;
+  }
+  const { size } = stats;
   if (size === 0) {
     blockers.push(`${type}: file is empty`);
     return;

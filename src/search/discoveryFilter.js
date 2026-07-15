@@ -16,16 +16,12 @@
  */
 
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
+// Canonical implementation lives with the scorer; re-exported for callers.
+import { candidateStackTerms } from '../scoring/scorer.js';
+
+export { candidateStackTerms };
 
 /** @typedef {{ match: 'strong'|'weak'|'no_match', signals: string[], reasons: string[] }} DiscoveryResult */
-
-/** Flatten candidate.technicalStack into a flat list of stack terms. */
-export function candidateStackTerms(candidate = {}) {
-  const stack = candidate.technicalStack ?? {};
-  return Object.values(stack)
-    .flat()
-    .filter((t) => typeof t === 'string' && t.trim().length > 0);
-}
 
 /** Seniority keywords used to detect a level signal in the JD/title. */
 const SENIORITY_TERMS = {
