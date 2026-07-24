@@ -42,7 +42,7 @@ import { nowIso } from '../utils/dates.js';
 export function buildApplicationPacket({
   job, score, tier, candidate, screeningAnswers,
   resumePath, resumeTailored = false, resumeWarning = null,
-  resumePdfPath = null, resumeValidation = null, atsReport = null,
+  resumePdfPath = null, resumePreviewWarning = null, resumeValidation = null, atsReport = null,
   tailoring = null,
   coverLetter, coverLetterPath, formFields = [], html = '',
 }) {
@@ -88,6 +88,9 @@ export function buildApplicationPacket({
     resumeTailored: Boolean(resumeTailored),
     resumeWarning: resumeWarning ?? null,
     resumePdfPath: resumePdfPath ?? null,
+    // Preview conversion is best-effort and must never block an otherwise
+    // valid application packet. The dashboard can retry it on demand.
+    resumePreviewWarning: resumePreviewWarning ?? null,
     resumeValidation: resumeValidation ?? null,
     // Evidence-backed tailoring report: every change made to the resume for
     // THIS job (skill reorders with before/after, emphasis evidence, focus

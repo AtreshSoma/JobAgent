@@ -23,3 +23,16 @@ def test_audit_is_case_insensitive_and_dedupes(sample_resume):
     result = audit_keywords(text, ["AZURE", "azure", "Azure"])
     assert result["present"].count("AZURE") == 1
     assert result["missing"] == []
+
+
+def test_audit_uses_truthful_aliases_and_keeps_absent_tools_missing():
+    result = audit_keywords(
+        "Delivered PySpark transformations through ADF Pipelines.",
+        ["spark", "elt", "dbt"],
+        evidence_aliases={
+            "spark": ["pyspark"],
+            "elt": ["adf pipelines"],
+        },
+    )
+    assert result["present"] == ["spark", "elt"]
+    assert result["missing"] == ["dbt"]

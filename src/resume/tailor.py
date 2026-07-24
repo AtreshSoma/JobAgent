@@ -17,7 +17,9 @@ Tailoring actions (all honest, content-preserving):
      keywords that are both requested by the job AND already present in the
      resume. It is anchored just above the CORE COMPETENCIES / PROFESSIONAL
      SUMMARY heading so ATS parsers see the job's own terminology up top.
-  6. Save the result to a per-job .docx in the job's output folder.
+  6. Flatten layout tables into single-column paragraphs in the generated copy,
+     preserving their exact text/runs so ATS parsers read content in order.
+  7. Save the result to a per-job .docx in the job's output folder.
 
 Free-form rewriting is intentionally disabled. Without a separately approved,
 claim-level evidence map, even plausible wording changes can silently invent
@@ -35,6 +37,7 @@ from __future__ import annotations
 
 import re
 from collections import Counter
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
@@ -55,6 +58,11 @@ _DEFAULT_PREFERRED_MARKERS = (
     "desired", "preferred qualifications", "good to have",
 )
 _QUALIFICATION_WEIGHT = {"required": 3, "preferred": 2, "unclassified": 1}
+_EMPLOYMENT_DATE_RE = re.compile(
+    r"\b(?:january|february|march|april|may|june|july|august|september|"
+    r"october|november|december)\s+\d{4}\b|\bpresent\b",
+    re.IGNORECASE,
+)
 
 
 def _slug(text: str) -> str:
@@ -313,6 +321,220 @@ def _reorder_competencies(
     return changes
 
 
+def _semantic_tokens(document) -> Counter:
+    """Content-token multiset used to prove table flattening lost no words."""
+    tokens = []
+    for paragraph in _iter_all_paragraphs(document):
+        tokens.extend(re.findall(
+            r"[a-z0-9][a-z0-9+#./%_-]*", paragraph.text or "", re.IGNORECASE
+        ))
+    return Counter(token.lower() for token in tokens)
+
+
+def _copy_cell_content(target, cell) -> None:
+    """Append a cell's text/runs to a body paragraph with formatting intact."""
+    wrote = False
+    for paragraph in cell.paragraphs:
+        if wrote and (paragraph.text or "").strip():
+            target.add_run(" ")
+        if paragraph.runs:
+            for run in paragraph.runs:
+                if not run.text:
+                    continue
+                new_run = target.add_run(run.text)
+                if run._r.rPr is not None:
+                    new_run._r.insert(0, deepcopy(run._r.rPr))
+                wrote = True
+        elif (paragraph.text or "").strip():
+            target.add_run(paragraph.text)
+            wrote = True
+
+
+def _flatten_tables_for_ats(document) -> Dict[str, Any] | None:
+    """Turn tables into ordered body paragraphs without changing content.
+
+    ATS parsers frequently interleave table cells. The master remains untouched;
+    only the generated copy is normalized. A token-multiset check fails closed
+    if a cell was lost or duplicated (including merged-cell edge cases).
+    """
+    tables = list(document.tables)
+    if not tables:
+        return None
+    before_tokens = _semantic_tokens(document)
+    evidence = []
+
+    for table_index, table in enumerate(tables):
+        row_count = 0
+        for row in table.rows:
+            # python-docx repeats the same XML cell for horizontal merges.
+            cells = []
+            seen_cells = set()
+            for cell in row.cells:
+                identity = id(cell._tc)
+                if identity in seen_cells:
+                    continue
+                seen_cells.add(identity)
+                if (cell.text or "").strip():
+                    cells.append(cell)
+            if not cells:
+                continue
+            paragraph = document.add_paragraph()
+            # Moving the newly appended node before the table keeps exact table
+            # order while producing a normal single-column document flow.
+            table._tbl.addprevious(paragraph._p)
+            for cell_index, cell in enumerate(cells):
+                if cell_index:
+                    paragraph.add_run("  ")
+                _copy_cell_content(paragraph, cell)
+            row_count += 1
+        table._tbl.getparent().remove(table._tbl)
+        evidence.append({
+            "table_index": table_index,
+            "rows_converted": row_count,
+            "source": "master_resume",
+        })
+
+    after_tokens = _semantic_tokens(document)
+    if after_tokens != before_tokens:
+        raise RuntimeError("ATS table normalization changed or duplicated resume text")
+    return {
+        "type": "flatten_tables_for_ats",
+        "where": "generated resume layout",
+        "before": f"{len(tables)} table(s)",
+        "after": "single-column paragraphs (0 tables)",
+        "evidence": evidence,
+        "reason": (
+            "converted layout tables to top-to-bottom text so ATS parsers keep "
+            "the intended reading order; the content-token multiset is unchanged"
+        ),
+        "source": "master_resume",
+    }
+
+
+def _stabilize_page_breaks(document) -> Dict[str, Any] | None:
+    """Prevent section/role headings from being orphaned at a page bottom."""
+    before_tokens = _semantic_tokens(document)
+    paragraphs = document.paragraphs
+    changed = set()
+    grouped_roles = []
+    role_contexts = []
+    for index, paragraph in enumerate(paragraphs):
+        text = (paragraph.text or "").strip()
+        if not text:
+            continue
+        if _norm_heading(text) in _SECTION_HEADINGS and index + 1 < len(paragraphs):
+            paragraph.paragraph_format.keep_with_next = True
+            changed.add(index)
+        if not _EMPLOYMENT_DATE_RE.search(text):
+            continue
+        # Output from a previous tailoring pass already groups role/date/first
+        # content into one paragraph with a line break. Treat it as complete;
+        # otherwise a second Re-tailor would incorrectly absorb the preceding
+        # paragraph and then one additional bullet on every run.
+        if "<w:br" in paragraph._p.xml:
+            paragraph.paragraph_format.keep_together = True
+            paragraph.paragraph_format.widow_control = True
+            changed.add(index)
+            continue
+        if index > 0:
+            role_contexts.append((index - 1, index))
+        # A role heading normally precedes the company/location/date line. Keep
+        # both with the project lead (and that lead with the first bullet) so a
+        # page never ends with an empty-looking role shell.
+        for candidate in (index - 1, index, index + 1):
+            if 0 <= candidate < len(paragraphs) and (paragraphs[candidate].text or "").strip():
+                paragraphs[candidate].paragraph_format.keep_with_next = True
+                changed.add(candidate)
+
+    # Work backwards so removing source paragraphs never changes which saved
+    # paragraph objects belong to a later role.
+    for role_index, date_index in reversed(role_contexts):
+        role = paragraphs[role_index]
+        first_content = paragraphs[date_index + 1] if date_index + 1 < len(paragraphs) else None
+        sources = [paragraphs[date_index]]
+        first_text = (first_content.text or "").strip() if first_content is not None else ""
+        # Group exactly the first content paragraph (project lead OR first
+        # bullet) into the same keep-together paragraph. This is stronger and
+        # more portable than keep-with-next, which Chromium-style DOCX renderers
+        # can ignore and otherwise strands whichever role happens to hit the
+        # page bottom. Later bullets remain ordinary paragraphs.
+        group_first_content = bool(
+            first_content is not None
+            and first_text
+            and "<w:br" not in role._p.xml
+            and _norm_heading(first_text) not in _SECTION_HEADINGS
+            and not _EMPLOYMENT_DATE_RE.search(first_text)
+        )
+        if group_first_content:
+            sources.append(first_content)
+        # Some headless renderers ignore keep-with-next and handle explicit page
+        # breaks inconsistently. Preserve every run but group each short role
+        # title and employer/date into one continuous paragraph. Avoid manual
+        # line breaks because a few engines split at the break even when the
+        # paragraph is marked keep-together.
+        for source in sources:
+            if source is first_content:
+                role.add_run().add_break()
+                role.add_run("    ")
+            else:
+                role.add_run("  |  ")
+            source_properties = source._p.pPr
+            for child in list(source._p):
+                if child is not source_properties:
+                    role._p.append(deepcopy(child))
+            source._p.getparent().remove(source._p)
+        role.paragraph_format.keep_together = True
+        role.paragraph_format.widow_control = True
+        role.paragraph_format.keep_with_next = False
+        grouped_roles.append(role_index)
+
+    grouped_roles.sort()
+    # Long resumes in this template are intentionally two pages. Artifact-tool
+    # (and some browser viewers) ignore keep-together at a page boundary, so the
+    # third role can leave its heading at the bottom of page 1. A hard break in
+    # its own empty paragraph is consistently honored and gives a clean split:
+    # two most-recent roles on page 1, older experience + education on page 2.
+    # It adds no text and is idempotent across Re-tailor runs.
+    rendered_paragraphs = document.paragraphs
+    roles = [p for p in rendered_paragraphs if _EMPLOYMENT_DATE_RE.search((p.text or "").strip())]
+    word_count = len(re.findall(r"\b\w+\b", " ".join(p.text or "" for p in rendered_paragraphs)))
+    boundary_breaks = 0
+    if word_count >= 700 and len(roles) >= 3:
+        target = roles[2]
+        current_paragraphs = document.paragraphs
+        target_index = next(i for i, paragraph in enumerate(current_paragraphs) if paragraph._p is target._p)
+        prior = current_paragraphs[target_index - 1] if target_index > 0 else None
+        if prior is None or 'w:type="page"' not in prior._p.xml:
+            from docx.enum.text import WD_BREAK
+
+            breaker = target.insert_paragraph_before()
+            breaker.add_run().add_break(WD_BREAK.PAGE)
+            boundary_breaks = 1
+
+    if _semantic_tokens(document) != before_tokens:
+        raise RuntimeError("role context grouping changed or duplicated resume text")
+
+    if not changed:
+        return None
+    return {
+        "type": "stabilize_page_breaks",
+        "where": "section and employment headings",
+        "before": "headings could be separated from their first content line",
+        "after": (
+            f"{len(changed)} paragraph(s) kept with their following context; "
+            f"{len(grouped_roles)} dense role context block(s) grouped"
+        ),
+        "evidence": [{
+            "paragraph_indexes": sorted(changed),
+            "grouped_role_indexes": grouped_roles,
+            "role_boundary_page_breaks": boundary_breaks,
+            "text_changed": False,
+        }],
+        "reason": "prevents orphaned headings while leaving all resume text and chronology unchanged",
+        "source": "master_resume",
+    }
+
+
 # Headings we prefer to anchor the per-job focus line above (in priority order).
 # Placed just before the first match so the job's own terminology sits near the
 # top of the resume, where ATS keyword parsers weigh it most.
@@ -556,25 +778,65 @@ def _insert_focus_line(
     return text, True
 
 
-def _audit_supported_keywords(resume_text: str, keywords: Sequence[str]) -> Dict[str, List[str]]:
+def _evidence_terms(
+    keyword: str,
+    evidence_aliases: Dict[str, Sequence[str]] | None,
+) -> List[str]:
+    """Return the JD term followed by configured truthful equivalents."""
+    aliases = {
+        re.sub(r"\s+", " ", str(term).lower()).strip(): list(values or [])
+        for term, values in (evidence_aliases or {}).items()
+    }
+    result: List[str] = []
+    seen = set()
+    key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
+    for term in [keyword, *aliases.get(key, [])]:
+        normalized = re.sub(r"\s+", " ", str(term).lower()).strip()
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            result.append(str(term))
+    return result
+
+
+def _audit_supported_keywords(
+    resume_text: str,
+    keywords: Sequence[str],
+    evidence_aliases: Dict[str, Sequence[str]] | None = None,
+) -> Dict[str, Any]:
     """Boundary-aware audit used for mutation decisions.
 
     The general reporting audit historically uses substring matching. Tailoring
     must be stricter: e.g. ``go`` inside ``Golang`` is not evidence of Go, and
     ``C`` inside every sentence is not evidence of the C language.
     """
-    normalized_resume = re.sub(r"\s+", " ", resume_text or "")
     present: List[str] = []
     missing: List[str] = []
+    supported_by: Dict[str, List[Dict[str, str]]] = {}
     seen = set()
     for keyword in keywords:
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         if not key or key in seen:
             continue
         seen.add(key)
-        target = present if _phrase_pattern(str(keyword)).search(normalized_resume) else missing
+        matches: List[Dict[str, str]] = []
+        for term in _evidence_terms(str(keyword), evidence_aliases):
+            for line in resume_text.splitlines():
+                clean = re.sub(r"\s+", " ", line).strip()
+                if clean and _phrase_pattern(term).search(clean):
+                    matches.append({
+                        "matched_term": term,
+                        "resume_text": clean[:300],
+                    })
+                    break
+        target = present if matches else missing
         target.append(keyword)
-    return {"present": present, "missing": missing}
+        if matches:
+            supported_by[str(keyword)] = matches
+    return {
+        "present": present,
+        "missing": missing,
+        "supported_by": supported_by,
+    }
 
 
 def _qualification_audit(
@@ -600,13 +862,23 @@ def _qualification_audit(
     return result
 
 
-def _resume_evidence(resume_text: str, keyword: str) -> List[Dict[str, str]]:
+def _resume_evidence(
+    resume_text: str,
+    keyword: str,
+    evidence_aliases: Dict[str, Sequence[str]] | None = None,
+) -> List[Dict[str, str]]:
     """Return compact exact master-resume excerpts supporting a term."""
     found: List[Dict[str, str]] = []
-    for line in resume_text.splitlines():
-        clean = re.sub(r"\s+", " ", line).strip()
-        if clean and _phrase_pattern(str(keyword)).search(clean):
-            found.append({"keyword": keyword, "resume_text": clean[:300]})
+    for term in _evidence_terms(keyword, evidence_aliases):
+        for line in resume_text.splitlines():
+            clean = re.sub(r"\s+", " ", line).strip()
+            if clean and _phrase_pattern(term).search(clean):
+                found.append({
+                    "keyword": keyword,
+                    "matched_term": term,
+                    "resume_text": clean[:300],
+                })
+                break
         if len(found) == 3:
             break
     return found
@@ -718,6 +990,7 @@ def tailor_resume(
     add_summary_line: bool = False,
     required_markers: Iterable[str] | None = None,
     preferred_markers: Iterable[str] | None = None,
+    evidence_aliases: Dict[str, Sequence[str]] | None = None,
     enable_rewrites: bool = False,
     now: datetime | None = None,
     output_name: str | None = None,
@@ -740,7 +1013,7 @@ def tailor_resume(
 
     keywords = list(keywords)
     resume_text = read_docx_text(master_path)
-    audit = _audit_supported_keywords(resume_text, keywords)
+    audit = _audit_supported_keywords(resume_text, keywords, evidence_aliases)
     qualifications = classify_qualification_keywords(
         job.get("jd_text", ""),
         keywords,
@@ -807,9 +1080,15 @@ def tailor_resume(
             "from arbitrary prose."
         ),
         (
+            "Configured evidence aliases may support a JD term when the master resume "
+            "contains a truthful equivalent (for example, PySpark supports Spark). "
+            "The audit records the exact alias and source excerpt."
+        ),
+        (
             "Content prioritization moves only intact summary paragraphs and contiguous "
             "Word list bullets within their original role; it does not split sentences or "
-            "restructure complex tables/text boxes."
+            "restructure text boxes. Generated copies flatten tables to an ordered, "
+            "single-column ATS-safe layout without changing their words."
         ),
     ]
     if add_summary_line and audit["present"]:
@@ -839,7 +1118,9 @@ def tailor_resume(
                 focus_evidence.append({
                     "keyword": keyword,
                     "qualification": detail.get("classification", "unclassified"),
-                    "master_resume_evidence": _resume_evidence(resume_text, str(keyword)),
+                    "master_resume_evidence": _resume_evidence(
+                        resume_text, str(keyword), evidence_aliases
+                    ),
                     "jd_evidence": detail.get("jd_evidence", []),
                 })
             changes.append({
@@ -861,9 +1142,14 @@ def tailor_resume(
 
     # Requirements the resume does NOT evidence. Reported, never inserted.
     gaps = []
+    has_jd_text = bool((job.get("jd_text") or "").strip())
     for keyword in audit.get("missing", []):
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         detail = qualification_details.get(key, {})
+        # Stored score keywords can outlive a later JD refresh. Never display a
+        # purported gap when the current non-empty JD has no occurrence/evidence.
+        if has_jd_text and not detail.get("jd_evidence"):
+            continue
         gaps.append({
             "keyword": keyword,
             "qualification": detail.get("classification", "unclassified"),
@@ -900,6 +1186,24 @@ def tailor_resume(
         movable_nodes=movable_nodes,
         inserted_focus_text=summary_line if focus_line_inserted else None,
     )
+
+    table_change = _flatten_tables_for_ats(document)
+    if table_change:
+        changes.append(table_change)
+    pagination_change = _stabilize_page_breaks(document)
+    if pagination_change:
+        changes.append(pagination_change)
+    invariants["table_text_preserved"] = True
+    invariants["tables_removed_for_ats"] = len(document.tables) == 0
+    invariants["page_breaks_stabilized"] = True
+    invariants["role_context_text_preserved"] = True
+    invariants["ats_safe_structure_preserved"] = (
+        invariants["paragraph_styles_preserved"]
+        and invariants["protected_content_order_preserved"]
+        and invariants["tables_removed_for_ats"]
+    )
+    if not invariants["ats_safe_structure_preserved"]:
+        raise RuntimeError("ATS-safe structure invariant failed before save")
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

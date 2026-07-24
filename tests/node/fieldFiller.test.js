@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { matchOption, applyValue, fillScannedFields } from '../../src/automation/fieldFiller.js';
+import { matchOption, normalizeChoiceValue, applyValue, fillScannedFields } from '../../src/automation/fieldFiller.js';
 
 /**
  * Minimal fake Playwright page. Each selector resolves to a recording locator.
@@ -43,6 +43,25 @@ describe('fieldFiller.matchOption', () => {
 });
 
 describe('fieldFiller.applyValue', () => {
+  it('reduces a truthful H-1B explanation to Yes only for a sponsorship choice', async () => {
+    const answer = 'Yes. I currently hold H-1B status and will require employer sponsorship (transfer).';
+    const field = {
+      kind: 'select',
+      selector: '#sponsor',
+      label: 'Do you require visa sponsorship?',
+      options: [{ label: 'Yes', value: 'yes' }, { label: 'No', value: 'no' }],
+    };
+    expect(normalizeChoiceValue(field, answer)).toBe('Yes');
+    const page = makePage();
+    const result = await applyValue(page, field, answer);
+    expect(result.ok).toBe(true);
+    expect(page.calls).toContainEqual({
+      selector: '#sponsor',
+      action: 'selectOption',
+      arg: 'yes',
+    });
+  });
+
   it('fills text inputs', async () => {
     const page = makePage();
     const res = await applyValue(page, { kind: 'text', selector: '#name' }, 'Ada');
@@ -120,6 +139,30 @@ function makeComboboxPage({ inputSelector = '#loc', optionMap = {}, keyboard = f
 }
 
 describe('fieldFiller.applyValue (combobox/typeahead)', () => {
+  it('maps an H-1B explanation to the live Yes option in a sponsorship combobox', async () => {
+    const page = makeComboboxPage({
+      inputSelector: '#sponsor',
+      optionMap: { '[role="option"]': ['Yes', 'No'] },
+    });
+    const result = await applyValue(
+      page,
+      { kind: 'combobox', selector: '#sponsor', label: 'Do you require visa sponsorship?' },
+      'Yes. I currently hold H-1B status and will require employer sponsorship (transfer).',
+    );
+    expect(result.ok).toBe(true);
+    expect(page.calls).toContainEqual({
+      selector: '#sponsor',
+      action: 'fill',
+      value: 'Yes',
+    });
+    expect(page.calls).toContainEqual({
+      selector: '[role="option"]',
+      action: 'optionClick',
+      index: 0,
+      text: 'Yes',
+    });
+  });
+
   it('types the value and clicks the best-matching option', async () => {
     const page = makeComboboxPage({
       inputSelector: '#loc',

@@ -26,6 +26,10 @@
  *   GET  /api/stats                       tiles + source/status breakdowns
  *   GET  /api/jobs?…filters               board rows { jobs, total, limit }
  *   GET  /api/jobs/:id                    full detail incl. packet summary
+ *   GET  /api/jobs/:id/resume?format=…    secure PDF preview / DOCX download
+ *   POST /api/jobs/:id/resume-preview     create/recover a PDF preview on demand
+ *   POST /api/jobs/:id/check-link         classify current URL availability
+ *   POST /api/jobs/:id/link {url}         replace stale URL with a direct job URL
  *   POST /api/jobs/:id/decision {decision} shortlist | rejected | archived | clear
  *   POST /api/jobs/:id/approve            approve prepared packet (human gate)
  *   POST /api/jobs/:id/reject-packet      reject prepared packet
@@ -38,14 +42,19 @@
  *   POST /api/jobs/:id/note {note}        save a free-text note on a job
  *   POST /api/decide-batch {jobIds,decision}  bulk shortlist/reject/archive
  *   POST /api/add-url {url}               ingest one public job URL (score + track)
+ *   POST /api/auto-submit-batch            explicit advanced final-submit path
  *   GET  /api/export/jobs.csv             rich CSV of every job + score/status
  */
 
 import { createServer } from 'node:http';
-import { readFileSync } from 'node:fs';
-import { join, dirname, normalize, extname, sep } from 'node:path';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import {
+  join, dirname, normalize, extname, sep, isAbsolute, resolve, basename,
+} from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
+import { ensureResumePdf } from '../resume/pdfPreview.js';
+import { checkJobLink } from './linkHealth.js';
 
 import { buildRca, sanitizeErrorMessage } from '../utils/failureRca.js';
 
@@ -65,6 +74,10 @@ import { markApplicationUserSubmitted, markApplicationVerified } from '../apply/
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { LIFECYCLE } from '../lifecycle.js';
 import { writeJobTracker } from '../reports/jobTracker.js';
+import {
+  buildExtensionPayload, isChromiumExtensionOrigin, readApprovedArtifact,
+  validExtensionKey,
+} from '../extension/companion.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'public');
 
@@ -76,6 +89,9 @@ const MAX_RCA_ENTRIES = 25;
 
 /** Bound user-triggered batches so one local request cannot monopolize the UI. */
 const MAX_BATCH_JOBS = 200;
+
+/** Keep local resume previews bounded even when a DB path is corrupt. */
+const MAX_RESUME_PREVIEW_BYTES = 12 * 1024 * 1024;
 
 /**
  * Fold RCA entries that say the same thing into one row carrying a count.
@@ -127,6 +143,7 @@ export function collapseRca(entries = []) {
  * @returns {{ server: import('node:http').Server, runState: object }}
  */
 export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
+  const extensionKey = deps.extensionKey ?? process.env.JOB_AGENT_EXTENSION_KEY ?? '';
   const runners = {
     // "Find New Jobs" must leave jobs ON THE BOARD. The bare discover phase
     // only writes data/found_jobs.json — never the SQLite DB the board reads —
@@ -254,6 +271,98 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       packet.job = { ...packet.job, url: liveUrl };
     }
     return packet;
+  }
+
+  /**
+   * Read a generated resume for the local review panel. The path comes only
+   * from the selected DB row, is resolved through the real filesystem, and
+   * must remain inside this Job Agent workspace. Pending-review packets are
+   * intentionally readable here: seeing the resume is part of human approval.
+   */
+  function workspaceArtifact(raw, missingMessage = 'the generated resume file could not be found') {
+    const rootPath = config?.root;
+    if (!rootPath) throw Object.assign(new Error('resume preview is unavailable without a project root'), { statusCode: 404 });
+    let workspace;
+    let candidate;
+    try {
+      workspace = realpathSync(rootPath);
+      candidate = realpathSync(isAbsolute(raw) ? raw : resolve(workspace, raw));
+    } catch {
+      throw Object.assign(new Error(missingMessage), { statusCode: 404 });
+    }
+    if (candidate !== workspace && !candidate.startsWith(workspace + sep)) {
+      throw Object.assign(new Error('resume path escapes the Job Agent workspace'), { statusCode: 403 });
+    }
+    return candidate;
+  }
+
+  /** Find a recorded PDF or recover an already-generated sibling PDF. */
+  function existingResumePdf(job) {
+    const docx = job.resume_docx_path ?? job.resume_path ?? null;
+    const absolute = (value) => (isAbsolute(value) ? value : resolve(config?.root ?? '.', value));
+    const freshPdf = (value) => {
+      if (!value || !existsSync(absolute(value))) return false;
+      if (!docx || !existsSync(absolute(docx))) return true;
+      // Re-tailoring overwrites the DOCX but may leave an older sibling PDF.
+      // Never show that stale preview as if it matched the new resume.
+      return statSync(absolute(value)).mtimeMs >= statSync(absolute(docx)).mtimeMs;
+    };
+    if (freshPdf(job.resume_pdf_path)) return job.resume_pdf_path;
+    if (!docx) return null;
+    const sibling = join(dirname(docx), `${basename(docx, extname(docx))}.pdf`);
+    return freshPdf(sibling) ? sibling : null;
+  }
+
+  async function materializeResumePreview(jobId) {
+    const job = db.getJob?.(jobId);
+    if (!job) throw Object.assign(new Error(`unknown job id: ${jobId}`), { statusCode: 404 });
+    let pdfPath = existingResumePdf(job);
+    let generated = false;
+    if (!pdfPath) {
+      const docxRaw = job.resume_docx_path ?? job.resume_path ?? null;
+      if (!docxRaw) throw Object.assign(new Error('tailored resume is not available for this job'), { statusCode: 404 });
+      const docxPath = workspaceArtifact(docxRaw);
+      if (extname(docxPath).toLowerCase() !== '.docx') {
+        throw Object.assign(new Error('the tailored resume is not a DOCX and cannot be previewed'), { statusCode: 422 });
+      }
+      const convert = deps.ensureResumePdfFn ?? ensureResumePdf;
+      const result = await convert(docxPath, deps);
+      if (!result?.exported || !result.pdfPath) {
+        throw Object.assign(new Error(`PDF preview could not be generated: ${result?.reason ?? 'unknown conversion error'}`), { statusCode: 422 });
+      }
+      pdfPath = result.pdfPath;
+      generated = true;
+    }
+    const safePdf = workspaceArtifact(pdfPath, 'the generated PDF preview could not be found');
+    if (extname(safePdf).toLowerCase() !== '.pdf') {
+      throw Object.assign(new Error('the generated preview is not a PDF'), { statusCode: 422 });
+    }
+    if (job.resume_pdf_path !== safePdf) db.upsertJob({ id: jobId, resume_pdf_path: safePdf });
+    return { ready: true, generated, url: `/api/jobs/${encodeURIComponent(jobId)}/resume?format=pdf` };
+  }
+
+  function readResumePreview(jobId, requestedFormat = 'auto') {
+    const job = db.getJob?.(jobId);
+    if (!job) throw Object.assign(new Error(`unknown job id: ${jobId}`), { statusCode: 404 });
+    const pdfPath = existingResumePdf(job);
+    const docxPath = job.resume_docx_path ?? job.resume_path ?? null;
+    const raw = requestedFormat === 'pdf' ? pdfPath
+      : requestedFormat === 'docx' ? docxPath
+        : (pdfPath ?? docxPath);
+    if (!raw) {
+      const label = requestedFormat === 'pdf' ? 'PDF preview' : 'tailored resume';
+      throw Object.assign(new Error(`${label} is not available for this job`), { statusCode: 404 });
+    }
+    const candidate = workspaceArtifact(raw);
+    const size = statSync(candidate).size;
+    if (size > MAX_RESUME_PREVIEW_BYTES) {
+      throw Object.assign(new Error('resume is too large to preview'), { statusCode: 413 });
+    }
+    const extension = extname(candidate).toLowerCase();
+    const type = extension === '.pdf'
+      ? 'application/pdf'
+      : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+    return { bytes: readFileSync(candidate), name: basename(candidate), type, inline: extension === '.pdf' };
   }
 
   /** Build a privacy-safe, mutation-free Auto-Apply preview for the UI/API. */
@@ -661,6 +770,102 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (!isLoopbackHost(req.headers.host)) {
       return sendJson(res, 403, { error: 'forbidden: the dashboard only serves localhost' });
     }
+    const url = new URL(req.url, 'http://localhost');
+    const path = url.pathname;
+
+    // The optional Chromium extension has a different origin by design. It is
+    // admitted only on this narrow API namespace, only from a real extension
+    // origin, and only with a 32+ byte shared key. All ordinary dashboard
+    // routes retain the stricter same-loopback-origin policy below.
+    if (path.startsWith('/api/extension/')) {
+      const origin = String(req.headers.origin ?? '');
+      const fetchSite = String(req.headers['sec-fetch-site'] ?? '').toLowerCase();
+      // Edge does not consistently attach the extension origin to privileged
+      // loopback fetches (depending on popup/service-worker context). Treat the
+      // high-entropy shared key as authentication, while Fetch Metadata + CORS
+      // continue to reject normal cross-site webpages. A null/absent Origin is
+      // accepted only on this key-protected namespace.
+      const allowedTransport = isChromiumExtensionOrigin(origin)
+        || isAllowedOrigin(origin)
+        || origin === 'null';
+      if (!allowedTransport || fetchSite === 'cross-site') {
+        return sendJson(res, 403, { error: 'forbidden: extension transport rejected' });
+      }
+      if (origin) setExtensionCors(res, origin);
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      if (!validExtensionKey(extensionKey, req.headers['x-job-agent-key'])) {
+        return sendJson(res, extensionKey ? 401 : 503, {
+          error: extensionKey
+            ? 'invalid Job Agent extension key'
+            : 'extension API is disabled; set JOB_AGENT_EXTENSION_KEY in .env and restart',
+        });
+      }
+
+      const match = path.match(/^\/api\/extension\/jobs\/([^/]+)(?:\/(payload|result|files\/(resume|cover-letter)))?$/);
+      if (!match) return sendJson(res, 404, { error: `no extension route: ${req.method} ${path}` });
+      const jobId = decodeURIComponent(match[1]);
+      const action = match[2] ?? 'payload';
+      if (req.method === 'GET' && action === 'payload') {
+        return sendJson(res, 200, buildExtensionPayload({
+          db, config, jobId, loadPacketImpl: deps.loadPacketImpl,
+        }));
+      }
+      if (req.method === 'GET' && action.startsWith('files/')) {
+        const artifact = readApprovedArtifact({
+          db, config, jobId, kind: match[3], loadPacketImpl: deps.loadPacketImpl,
+        });
+        res.writeHead(200, {
+          'content-type': artifact.type,
+          'content-length': artifact.bytes.length,
+          'content-disposition': `attachment; filename="${artifact.name.replace(/["\r\n]/g, '_')}"`,
+        });
+        res.end(artifact.bytes);
+        return;
+      }
+      if (req.method === 'POST' && action === 'result') {
+        const body = await readBody(req);
+        const filled = Array.isArray(body.filled) ? body.filled.slice(0, 120).map((x) => ({
+          field: String(x?.field ?? '').slice(0, 80),
+          label: String(x?.label ?? '').slice(0, 120),
+          source: String(x?.source ?? '').slice(0, 40),
+        })) : [];
+        const blockers = Array.isArray(body.blockers)
+          ? body.blockers.slice(0, 40).map((x) => String(x).slice(0, 240)) : [];
+        const formDetected = body.formDetected === true;
+        const startedApplication = body.startedApplication === true;
+        const readyForReview = body.readyForReview === true
+          && formDetected && filled.length > 0 && blockers.length === 0;
+        const status = readyForReview ? LIFECYCLE.READY_FOR_SUBMIT
+          : formDetected && blockers.length > 0 ? LIFECYCLE.ASSIST_BLOCKED
+            : LIFECYCLE.ASSIST_STARTED;
+        const phases = [
+          { phase: 'extension_assist_started', at: nowDate().toISOString() },
+          { phase: status, at: nowDate().toISOString() },
+        ];
+
+        // Once a user follows an aggregator's Apply link, remember the verified
+        // employer URL. Future extension runs open the useful direct page
+        // instead of bouncing through LinkedIn/Indeed again.
+        if (body.contextVerified === true && isSafeObservedApplicationUrl(body.observedUrl)) {
+          const current = db.getJob?.(jobId);
+          if (current && isAggregatorUrl(current.url)) {
+            db.upsertJob({ id: jobId, url: String(body.observedUrl).slice(0, 2048) });
+          }
+        }
+        recordAssistResult(db, jobId, {
+          status, submitted: false, filled, blockers, phases,
+        });
+        refreshTracker();
+        return sendJson(res, 200, {
+          recorded: true, status, formDetected, startedApplication, readyForReview,
+        });
+      }
+      return sendJson(res, 405, { error: 'method not allowed' });
+    }
     // Origin is not reliably sent for cross-site GETs (for example an image or
     // form navigation). Modern browsers do send Fetch Metadata, so reject an
     // explicitly cross-site request before it can trigger even a read endpoint
@@ -671,9 +876,6 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method !== 'GET' && !isAllowedOrigin(req.headers.origin)) {
       return sendJson(res, 403, { error: 'forbidden: cross-origin requests are not allowed' });
     }
-
-    const url = new URL(req.url, 'http://localhost');
-    const path = url.pathname;
 
     if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
       const html = readFileSync(join(PUBLIC_DIR, 'index.html'), 'utf8');
@@ -775,7 +977,19 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     }
     if (req.method === 'POST' && path === '/api/assist-batch') {
       const body = await readBody(req);
-      return sendJson(res, 202, startAssistBatch(body.jobIds, { autoSubmit: body.autoSubmit === true }));
+      // "Assist" and the UI's "Auto-apply" always mean prepare + approve +
+      // fill for review. A stray/legacy autoSubmit boolean must never turn this
+      // ordinary action into a final submission.
+      return sendJson(res, 202, startAssistBatch(body.jobIds, { autoSubmit: false }));
+    }
+    if (req.method === 'POST' && path === '/api/auto-submit-batch') {
+      const body = await readBody(req);
+      if (body.confirmed !== true) {
+        return sendJson(res, 400, {
+          error: 'auto-submit requires confirmed:true for this specific run',
+        });
+      }
+      return sendJson(res, 202, startAssistBatch(body.jobIds, { autoSubmit: true }));
     }
     if (req.method === 'POST' && path === '/api/approve-batch') {
       const body = await readBody(req);
@@ -843,6 +1057,29 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       return sendJson(res, 200, result);
     }
 
+    const resumeMatch = path.match(/^\/api\/jobs\/([^/]+)\/resume$/);
+    if (req.method === 'GET' && resumeMatch) {
+      const jobId = decodeURIComponent(resumeMatch[1]);
+      const requested = url.searchParams.get('format') ?? 'auto';
+      if (!['auto', 'pdf', 'docx'].includes(requested)) {
+        return sendJson(res, 400, { error: 'resume format must be auto, pdf, or docx' });
+      }
+      const artifact = readResumePreview(jobId, requested);
+      // The PDF is intentionally embeddable only by this same-origin local
+      // dashboard. DOCX remains a download because browsers cannot render it.
+      res.setHeader('x-frame-options', artifact.inline ? 'SAMEORIGIN' : 'DENY');
+      res.setHeader('content-security-policy', artifact.inline
+        ? "default-src 'none'; frame-ancestors 'self'"
+        : "default-src 'none'; frame-ancestors 'none'");
+      res.writeHead(200, {
+        'content-type': artifact.type,
+        'content-length': artifact.bytes.length,
+        'content-disposition': `${artifact.inline ? 'inline' : 'attachment'}; filename="${artifact.name.replace(/["\r\n]/g, '_')}"`,
+      });
+      res.end(artifact.bytes);
+      return;
+    }
+
     const jobMatch = path.match(/^\/api\/jobs\/([^/]+)(?:\/([a-z-]+))?$/);
     if (jobMatch) {
       const [, jobId, action] = jobMatch.map((s) => (s ? decodeURIComponent(s) : s));
@@ -850,6 +1087,34 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         const detail = jobDetail(db, jobId, { ...deps, root: config?.root ?? null, now: nowDate() });
         if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
         return sendJson(res, 200, detail);
+      }
+      if (req.method === 'POST' && action === 'resume-preview') {
+        const result = await materializeResumePreview(jobId);
+        return sendJson(res, 200, result);
+      }
+      if (req.method === 'POST' && action === 'check-link') {
+        const job = db.getJob?.(jobId);
+        if (!job) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+        if (!isSafeObservedApplicationUrl(job.url)) {
+          return sendJson(res, 400, { error: 'job URL must be a non-local HTTP(S) address' });
+        }
+        const checker = deps.checkLinkFn ?? checkJobLink;
+        return sendJson(res, 200, await checker(job.url, deps));
+      }
+      if (req.method === 'POST' && action === 'link') {
+        const job = db.getJob?.(jobId);
+        if (!job) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+        const body = await readBody(req);
+        const replacement = String(body.url ?? '').trim();
+        if (!isSafeObservedApplicationUrl(replacement)) {
+          return sendJson(res, 400, { error: 'replacement must be a non-local HTTP(S) job URL' });
+        }
+        if (isAggregatorUrl(replacement)) {
+          return sendJson(res, 400, { error: 'use the direct employer/ATS application URL, not another aggregator link' });
+        }
+        db.upsertJob({ id: jobId, url: replacement });
+        refreshTracker();
+        return sendJson(res, 200, { updated: true, jobId, url: replacement });
       }
       if (req.method === 'POST' && action === 'decision') {
         const body = await readBody(req);
@@ -908,11 +1173,11 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
           [jobId], url.searchParams.get('autoSubmit') === 'true',
         ).items[0]);
       }
-      // One-click end-to-end: prepare (if needed) -> approve -> fill; submits
-      // only when the body explicitly opts in. Same orchestration as the batch.
+      // One-click end-to-end: prepare (if needed) -> approve -> fill for human
+      // review. This named action NEVER clicks the final Submit button.
       if (req.method === 'POST' && action === 'auto-apply') {
-        const body = await readBody(req);
-        return sendJson(res, 202, startAssistBatch([jobId], { autoSubmit: body.autoSubmit === true }));
+        await readBody(req); // consume/validate any legacy JSON body
+        return sendJson(res, 202, startAssistBatch([jobId], { autoSubmit: false }));
       }
     }
 
@@ -1029,6 +1294,29 @@ export function isAllowedOrigin(origin) {
 function sendJson(res, status, body) {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+function setExtensionCors(res, origin) {
+  res.setHeader('access-control-allow-origin', origin);
+  res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+  res.setHeader('access-control-allow-headers', 'content-type, x-job-agent-key');
+  res.setHeader('access-control-max-age', '600');
+  res.setHeader('vary', 'Origin');
+}
+
+function isAggregatorUrl(value) {
+  try {
+    return /(^|\.)(linkedin|indeed|glassdoor|dice|ziprecruiter)\./i.test(new URL(value).hostname);
+  } catch { return false; }
+}
+
+function isSafeObservedApplicationUrl(value) {
+  try {
+    const url = new URL(String(value ?? ''));
+    return ['http:', 'https:'].includes(url.protocol)
+      && !LOOPBACK_HOSTNAMES.has(url.hostname)
+      && url.href.length <= 2048;
+  } catch { return false; }
 }
 
 function batchJobIds(value) {

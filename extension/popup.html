@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"><title>Job Agent</title></head>
+<body>
+  <main>
+    <h1>Job Agent</h1>
+    <p class="muted">Open, start, or fill the selected approved application. Final submission always remains yours.</p>
+    <div id="jobSummary" class="job-summary">Select a job in the dashboard first.</div>
+    <details><summary>Job ID</summary><input id="jobId" autocomplete="off" placeholder="Automatically selected from dashboard"></details>
+    <button id="fill">Continue application</button>
+    <div id="status" role="status"></div>
+    <p class="foot"><a href="options.html" target="_blank">Connection settings</a></p>
+  </main>
+  <script src="popup.js"></script>
+</body></html>

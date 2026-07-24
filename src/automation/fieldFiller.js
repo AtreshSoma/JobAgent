@@ -24,6 +24,26 @@ import { wholeWordIn } from '../utils/textNormalize.js';
 
 /** Truthy-ish answers that mean "tick this box". */
 const AFFIRMATIVE = new Set(['yes', 'true', 'y', '1', 'agree', 'i agree', 'accept', 'checked', 'on']);
+const BINARY_QUESTION = /\b(sponsor(?:ship)?|visa|work authorization|legally authorized|consent|agree|acknowledge|background check)\b/i;
+
+/**
+ * Choice widgets need the option token, not a truthful explanatory sentence.
+ * Example: "Yes. I currently hold H-1B..." must become "Yes" for a Yes/No
+ * sponsorship select. Free-text fields retain the full configured answer.
+ */
+export function normalizeChoiceValue(field = {}, value) {
+  const kind = field.kind ?? field.type ?? 'text';
+  if (!['select', 'radio', 'combobox', 'checkbox'].includes(kind)) return value;
+  if (!BINARY_QUESTION.test(String(field.label ?? ''))) return value;
+  const raw = String(value ?? '').trim();
+  const polarity = /^yes\b/i.test(raw) ? 'yes' : /^no\b/i.test(raw) ? 'no' : null;
+  if (!polarity) return value;
+  const option = (field.options ?? []).find((candidate) => {
+    const label = String(candidate.label ?? candidate.value ?? '').trim();
+    return polarity === 'yes' ? /^(yes|y)\b/i.test(label) : /^(no|n)\b/i.test(label);
+  });
+  return option?.label ?? option?.value ?? (polarity === 'yes' ? 'Yes' : 'No');
+}
 
 /** Count selector matches (0 on error / missing selector). */
 async function safeCount(page, selector) {
@@ -117,10 +137,11 @@ export function matchOption(options = [], value) {
  */
 export async function applyValue(page, field, value) {
   const kind = field.kind ?? field.type ?? 'text';
+  const resolvedValue = normalizeChoiceValue(field, value);
   try {
     if (kind === 'select') {
-      const opt = matchOption(field.options, value);
-      if (!opt) return { ok: false, action: 'select', error: `no option matches "${value}"` };
+      const opt = matchOption(field.options, resolvedValue);
+      if (!opt) return { ok: false, action: 'select', error: `no option matches "${resolvedValue}"` };
       if ((await safeCount(page, field.selector)) !== 1) return { ok: false, action: 'select', error: 'selector not unique' };
       // Prefer matching by value, fall back to label.
       try { await page.locator(field.selector).first().selectOption(opt.value); }
@@ -130,7 +151,7 @@ export async function applyValue(page, field, value) {
 
     if (kind === 'checkbox') {
       if ((await safeCount(page, field.selector)) !== 1) return { ok: false, action: 'checkbox', error: 'selector not unique' };
-      const on = AFFIRMATIVE.has(String(value ?? '').trim().toLowerCase());
+      const on = AFFIRMATIVE.has(String(resolvedValue ?? '').trim().toLowerCase());
       const loc = page.locator(field.selector).first();
       if (on) { await (loc.check?.() ?? loc.click()); }
       else if (loc.uncheck) { await loc.uncheck(); }
@@ -138,8 +159,8 @@ export async function applyValue(page, field, value) {
     }
 
     if (kind === 'radio') {
-      const opt = matchOption(field.options, value);
-      if (!opt || !opt.selector) return { ok: false, action: 'radio', error: `no option matches "${value}"` };
+      const opt = matchOption(field.options, resolvedValue);
+      if (!opt || !opt.selector) return { ok: false, action: 'radio', error: `no option matches "${resolvedValue}"` };
       if ((await safeCount(page, opt.selector)) !== 1) return { ok: false, action: 'radio', error: 'option not unique' };
       const loc = page.locator(opt.selector).first();
       await (loc.check?.() ?? loc.click());
@@ -152,8 +173,8 @@ export async function applyValue(page, field, value) {
       // Open the widget, type the value (react-select listens on input events),
       // then commit a matching option from the dropdown.
       try { await input.click?.(); } catch { /* best effort */ }
-      await input.fill(String(value));
-      const res = await pickComboboxOption(page, field, value);
+      await input.fill(String(resolvedValue));
+      const res = await pickComboboxOption(page, field, resolvedValue);
       // Never leave stray filter text behind when we could not commit a choice —
       // an unselected combobox showing leftover text reads as a wrong answer.
       if (!res.ok) { try { await input.fill?.(''); } catch { /* best effort */ } }
@@ -162,7 +183,7 @@ export async function applyValue(page, field, value) {
 
     // text-like + textarea
     if ((await safeCount(page, field.selector)) !== 1) return { ok: false, action: 'fill', error: 'selector not unique' };
-    await page.locator(field.selector).first().fill(String(value));
+    await page.locator(field.selector).first().fill(String(resolvedValue));
     return { ok: true, action: 'fill' };
   } catch (err) {
     return { ok: false, action: kind, error: err.message };

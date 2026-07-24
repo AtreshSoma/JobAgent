@@ -40,6 +40,21 @@ def test_missing_tier1_lowers_score_and_recommends_truthfully():
     assert any("if you have hands-on" in r.lower() for r in rep["recommendations"])
 
 
+def test_alias_evidence_counts_toward_ats_coverage():
+    rep = build_ats_report(
+        "Built production PySpark transformations through ADF Pipelines.",
+        _jk(tier1=["spark", "elt", "dbt"]),
+        CLEAN_LINT,
+        config=CONFIG,
+        evidence_aliases={
+            "spark": ["pyspark"],
+            "elt": ["adf pipelines"],
+        },
+    )
+    assert rep["tier1"]["present"] == ["spark", "elt"]
+    assert rep["tier1"]["missing"] == ["dbt"]
+
+
 def test_critical_tier1_gap_sets_ok_false():
     resume = "Tableau and Excel."
     jk = _jk(tier1=["databricks", "delta lake", "spark", "dbt"], tier2=[])

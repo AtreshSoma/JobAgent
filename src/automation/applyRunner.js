@@ -112,9 +112,21 @@ export async function assistApply({
     result.applicationStatePath = stateStore?.path ?? (typeof options.statePath === 'string' ? options.statePath : null);
     const loaded = stateStore ? await stateStore.load?.() : null;
     if (loaded) {
-      assertApplicationStateMatchesPacket(loaded, packet);
-      applicationState = loaded;
-      result.resumed = true;
+      try {
+        assertApplicationStateMatchesPacket(loaded, packet);
+        applicationState = loaded;
+        result.resumed = true;
+      } catch (err) {
+        // A user may replace a stale/aggregator URL with the direct employer
+        // application URL. That is still the SAME tracked job, but the old
+        // page/step checkpoint is unsafe to resume. Start a fresh checkpoint
+        // for the new URL; keep failing closed for a different job id.
+        if (!/state URL does not match/i.test(err.message)) throw err;
+        applicationState = createApplicationState(packet, { now: clock });
+        result.checkpointReset = true;
+        phaseEvent(APPLICATION_PHASE.QUEUED, 'application URL changed; starting from the new link');
+        if (stateStore) await stateStore.save?.(applicationState);
+      }
     } else {
       applicationState = createApplicationState(packet, { now: clock });
       phaseEvent(APPLICATION_PHASE.QUEUED);
@@ -458,9 +470,13 @@ export async function assistApply({
       for (const nu of packet?.screeningPlan?.needsUser ?? []) stepBlockers.push(`screening needs user: ${nu.label}`);
       for (const nu of requiredDynamicNeedsUser) stepBlockers.push(`required field needs user: ${nu.label ?? nu}`);
 
-      // 4. Upload resume (+ cover letter). Only treat "not found" as a blocker on
-      //    the first page; later steps simply attach if the input appears.
+      // 4. Upload resume (+ optional cover letter). An upload input commonly
+      //    appears only AFTER the public landing page or a profile/contact step.
+      //    Hold "not found" errors until we know there is no safe forward
+      //    control; otherwise the old flow blocked before clicking Workday's
+      //    "Apply" button and never reached the actual upload step.
       const verifiedBeforeThisStep = new Set(uploadedTypes);
+      const pendingUploadBlockers = [];
       const up = await uploadFiles(scope, packet.fillPlan, { dryRun });
       for (const u of up.uploaded ?? []) {
         addUploadResult(u, stepNumber);
@@ -475,6 +491,10 @@ export async function assistApply({
         const alreadyVerified = verifiedBeforeThisStep.has(type);
         const merelyAbsentOnLaterStep = /(?:input not found|no upload selector resolved)/i.test(blocker);
         if (alreadyVerified && merelyAbsentOnLaterStep) continue;
+        if (merelyAbsentOnLaterStep) {
+          pendingUploadBlockers.push(blocker);
+          continue;
+        }
         stepBlockers.push(blocker);
         if (!result.uploads.blockers.includes(blocker)) result.uploads.blockers.push(blocker);
       }
@@ -507,7 +527,7 @@ export async function assistApply({
       }
       const req = requiredFieldsSatisfied(result.filled, packet.fillPlan);
       result.requiredFieldsFilled = req.ok;
-      if (!req.ok) stepBlockers.push(`required fields missing: ${req.missing.join(', ')}`);
+      const pendingRequiredBlocker = req.ok ? null : `required fields missing: ${req.missing.join(', ')}`;
 
       // Rewrite the validating checkpoint with live acceptance results and the
       // final blocker set. The state contains only field identifiers/status —
@@ -546,6 +566,22 @@ export async function assistApply({
       }
       result.submitSelector = submitSelector;
       result.submitSelectorConfident = Boolean(submitSelector) && submitCount === 1;
+
+      // Resolve the forward control BEFORE deciding that a planned input is
+      // missing. Landing pages and early wizard steps are expected not to have
+      // the eventual resume/contact controls yet. We may safely advance through
+      // Apply/Start/Next/Continue, then re-scan the new DOM. A final Submit is
+      // still excluded by findAdvanceControl and remains human-gated.
+      const advance = await findAdvanceControl(scope, {
+        allowApplyStart: scanned.length === 0 && result.filled.length === 0,
+      });
+      if (!advance) {
+        if (pendingRequiredBlocker) stepBlockers.push(pendingRequiredBlocker);
+        for (const blocker of pendingUploadBlockers) {
+          stepBlockers.push(blocker);
+          if (!result.uploads.blockers.includes(blocker)) result.uploads.blockers.push(blocker);
+        }
+      }
 
       result.blockers = [...baseBlockers, ...stepBlockers];
 
@@ -592,9 +628,6 @@ export async function assistApply({
       // "Apply now"/"Start application" counts as an advance ONLY on a
       // fieldless landing page — on a filled quick-apply form that button IS
       // the submit, and clicking it would bypass the submit gate.
-      const advance = await findAdvanceControl(scope, {
-        allowApplyStart: scanned.length === 0 && result.filled.length === 0,
-      });
       if (!advance || runStep === maxSteps - 1) {
         if (await tryAutoSubmit(scope)) {
           result.sessionLeftOpen = !headless; // leave the confirmation page visible

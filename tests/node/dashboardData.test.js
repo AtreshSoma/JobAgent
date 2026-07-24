@@ -7,7 +7,7 @@ import {
   APP_STATUS,
   gradeFromScore, postedConfidence, resumeStatusOf, progressFor,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
-  BOARD_VIEWS, countViews, explainStatus,
+  BOARD_VIEWS, countViews, explainStatus, classifyAttention,
 } from '../../src/dashboard/data.js';
 
 const NOW = new Date('2026-06-04T12:00:00Z');
@@ -170,7 +170,10 @@ describe('stats, board, decisions against a seeded db', () => {
   it('jobDetail merges the packet JSON and flags unreadable packets', () => {
     const packet = {
       id: 'pk', ats: { platform: 'greenhouse' }, blockers: ['1 screening field(s) need user input'],
-      resumeTailored: true, prefill: { plan: [{ label: 'Email', value: 'a@b.c', source: 'profile' }], needsUser: [{ label: 'Essay' }] },
+      resumeTailored: true, resumePath: '/safe/resume.docx', resumePdfPath: '/safe/resume.pdf',
+      resumeValidation: { ok: true, word_count: 650 },
+      tailoring: { changes: [{ type: 'emphasize' }], gaps: [{ keyword: 'Scala' }] },
+      prefill: { plan: [{ label: 'Email', value: 'a@b.c', source: 'profile' }], needsUser: [{ label: 'Essay' }] },
       screeningPlan: { answered: [] }, stopBeforeSubmit: true, submitReady: false,
     };
     const detail = jobDetail(db, 'strong', { now: NOW, readFileImpl: () => JSON.stringify(packet) });
@@ -178,6 +181,9 @@ describe('stats, board, decisions against a seeded db', () => {
     expect(detail.packet.prefillPlan).toHaveLength(1);
     expect(detail.packet.needsUser[0].label).toBe('Essay');
     expect(detail.packet.submitReady).toBe(false);
+    expect(detail.packet.resumePdfPath).toBe('/safe/resume.pdf');
+    expect(detail.packet.resumeValidation).toMatchObject({ ok: true, word_count: 650 });
+    expect(detail.packet.tailoring.changes[0].type).toBe('emphasize');
 
     const broken = jobDetail(db, 'strong', { now: NOW, readFileImpl: () => { throw new Error('gone'); } });
     expect(broken.packet.error).toContain('gone');
@@ -590,5 +596,12 @@ describe('explainStatus + boardRow.statusReason', () => {
       assist_blockers: ['resume: upload input not found'] });
     const [row] = listBoardJobs(db, { now: NOW, view: 'blocked' });
     expect(row.statusReason).toContain('resume: upload input not found');
+    expect(row.attention).toMatchObject({ kind: 'form_step', label: 'Continue to form', retryable: true });
+  });
+
+  it('separates sign-in, aggregator, and dead-link attention states', () => {
+    expect(classifyAttention({ assist_blockers: ['login required'] }, APP_STATUS.BLOCKED).kind).toBe('sign_in');
+    expect(classifyAttention({ url: 'https://linkedin.com/jobs/view/1', assist_blockers: [] }, APP_STATUS.BLOCKED).kind).toBe('aggregator');
+    expect(classifyAttention({ assist_blockers: ['navigation failed: HTTP 404 not found'] }, APP_STATUS.BLOCKED).kind).toBe('dead_link');
   });
 });

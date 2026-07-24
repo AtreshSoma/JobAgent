@@ -335,6 +335,58 @@ describe('assistApply', () => {
     expect(record.clicks).not.toContainEqual({ selector: '#final_submit' }); // never submitted
   });
 
+  it('advances from a fieldless Workday landing page before requiring the resume upload', async () => {
+    let step = 0;
+    const record = { fills: [], uploads: [], clicks: [] };
+    const page = {
+      record,
+      locator(selector) {
+        const exists = (step === 0 && selector === '#start')
+          || (step === 1 && ['#resume', '#final_submit'].includes(selector));
+        return {
+          count: async () => (exists ? 1 : 0),
+          first: () => ({
+            setInputFiles: async (path) => { record.uploads.push({ selector, path }); },
+            click: async () => { record.clicks.push({ selector }); if (selector === '#start') step = 1; },
+          }),
+        };
+      },
+      evaluate: async (fn) => {
+        const name = typeof fn === 'function' ? fn.name : '';
+        if (name === 'collectFields') return [];
+        if (name === 'collectClickables') return step === 0
+          ? [{ text: 'Apply now', selector: '#start' }]
+          : [{ text: 'Submit application', selector: '#final_submit' }];
+        return [];
+      },
+    };
+    const packet = basePacket();
+    packet.fillPlan.steps = [];
+    packet.fillPlan.submitSelector = null;
+    packet.fillPlan.uploads = [
+      { type: 'resume', path: RESUME, selector: '#resume', required: true },
+      { type: 'coverLetter', path: RESUME, selector: null, required: false },
+    ];
+    const r = await assistApply({
+      packet,
+      config: { runtime: { maxApplicationsPerDay: 15, assistMaxSteps: 4 }, scoring: {}, candidate: {}, screeningAnswers: {} },
+      mode: 'LIVE_ASSIST',
+      approval: { approval_status: APPROVAL_STATUS.APPROVED, approved_by_user: 1 },
+      options: { headless: true },
+      deps: {
+        createSession: async () => ({ page, close: async () => {} }),
+        openPage: async (_p, url) => ({ status: 200, html: '<main></main>', guard: { blocked: false }, url }),
+        inspectPage: async (_p, url) => ({ status: null, html: '<form></form>', guard: { blocked: false }, url }),
+        wait: async () => {},
+      },
+    });
+    expect(record.clicks).toContainEqual({ selector: '#start' });
+    expect(record.uploads).toEqual([{ selector: '#resume', path: RESUME }]);
+    expect(r.status).toBe(LIFECYCLE.READY_FOR_SUBMIT);
+    expect(r.blockers).toEqual([]);
+    expect(record.clicks).not.toContainEqual({ selector: '#final_submit' });
+  });
+
   it('fills into an EMBEDDED ATS iframe instead of the empty host page', async () => {
     // The host page (Dropbox/Samsara style) has no fields; the real Greenhouse
     // form lives in a child iframe. assistApply must descend into the frame.

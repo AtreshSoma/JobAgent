@@ -111,3 +111,25 @@ def test_overlapping_preferred_qualifications_heading_is_not_reopened_as_require
     assert "sql" in tiered["tier1"]
     assert "dbt" in tiered["tier2"]
     assert "kafka" in tiered["tier2"]
+
+
+def test_recruitment_fraud_warning_does_not_create_banking_requirement():
+    jd = (
+        "Minimum qualifications: SQL and Spark. "
+        "Legitimate Anthropic recruiters will never ask for money, fees, or "
+        "banking information before your first day."
+    )
+    tiered = extract_jd_keywords(
+        jd,
+        "Data Engineer",
+        ["sql", "spark", "banking"],
+        required_markers=["minimum qualifications"],
+    )
+    classified = classify_qualification_keywords(
+        jd,
+        ["sql", "spark", "banking"],
+        required_markers=["minimum qualifications"],
+    )
+    assert "banking" not in tiered["all"]
+    banking = next(item for item in classified["items"] if item["keyword"] == "banking")
+    assert banking["jd_evidence"] == []

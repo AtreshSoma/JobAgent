@@ -52,7 +52,17 @@ describe('Auto-Apply eligibility', () => {
     const result = evaluateAutoApplyEligibility(eligible({ autoSubmitAuthorized: false }));
     expect(result.eligible).toBe(true);
     expect(result.autoSubmitAuthorized).toBe(false);
-    expect(result.warnings.join(' ')).toMatch(/explicitly enable/);
+    expect(result.warnings.join(' ')).toMatch(/stop before Submit/);
+  });
+
+  it('does not block assisted fill when sponsorship is Unconfirmed', () => {
+    const result = evaluateAutoApplyEligibility(eligible({
+      job: { sponsorship: 'Unconfirmed' }, autoSubmitAuthorized: false,
+    }));
+    expect(result.eligible).toBe(true);
+    expect(result.reasons).toEqual([]);
+    expect(result.warnings.join(' ')).toMatch(/verify compatibility before final submission/i);
+    expect(result.nextAction).toMatch(/assisted fill/i);
   });
 
   it('summarizes a mixed batch and publishes the fixture-tested ATS list', () => {

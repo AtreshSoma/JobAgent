@@ -379,6 +379,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
   let resumePath = master;
   let resumePdfPath = null;
+  let resumePreviewWarning = null;
   let resumeTailored = false;
   let resumeWarning = null;
   let resumeValidation = null;
@@ -405,12 +406,22 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     });
     if (tailored?.output_path) resumePath = tailored.output_path;
     resumePdfPath = tailored?.pdf_path ?? null;
+    resumePreviewWarning = tailored?.pdfWarning ?? null;
     resumeTailored = Boolean(tailored?.tailored);
     resumeWarning = tailored?.warning ?? null;
     resumeValidation = tailored?.validation ?? null;
     resumeAtsReport = tailored?.atsReport ?? null;
     resumeTailoring = tailored?.tailored
-      ? { changes: tailored.changes ?? [], gaps: tailored.gaps ?? [], summaryLine: tailored.summaryLine ?? null }
+      ? {
+          changes: tailored.changes ?? [],
+          gaps: tailored.gaps ?? [],
+          summaryLine: tailored.summaryLine ?? null,
+          qualifications: tailored.qualifications ?? {},
+          selectedContent: tailored.selectedContent ?? {},
+          rewritePolicy: tailored.rewritePolicy ?? null,
+          invariants: tailored.invariants ?? null,
+          limitations: tailored.limitations ?? [],
+        }
       : null;
     // A resume that fails hard validation (empty/unreadable/no sections/no
     // contact) must not be silently submitted — surface it as a warning so the
@@ -423,7 +434,8 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
       logger.event(EVENT_TYPES.RESUME_GENERATED, {
         jobId: job.id, message: `tailored resume (${tailored.emphasized ?? 0} emphasized)`,
         meta: {
-          output_path: resumePath, pdf_path: resumePdfPath, validation: resumeValidation,
+          output_path: resumePath, pdf_path: resumePdfPath, pdf_warning: resumePreviewWarning,
+          validation: resumeValidation,
           atsScore: resumeAtsReport?.match_score ?? null, atsBand: resumeAtsReport?.band ?? null,
         },
       });
@@ -455,7 +467,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     candidate: config.candidate,
     screeningAnswers: config.screeningAnswers,
     resumePath, coverLetter: cover, coverLetterPath,
-    resumeTailored, resumeWarning, resumePdfPath, resumeValidation,
+    resumeTailored, resumeWarning, resumePdfPath, resumePreviewWarning, resumeValidation,
     tailoring: resumeTailoring,
     atsReport: resumeAtsReport,
     formFields: job.formFields ?? [],

@@ -1,7 +1,7 @@
 /**
  * Scoring guardrails — the board must never over-rank roles the candidate
- * cannot or should not pursue: no-sponsorship roles, contract-only (C2C)
- * postings, unrelated management roles, and unrelated stacks.
+ * cannot or should not pursue: no-sponsorship roles, unrelated management
+ * roles, and unrelated stacks. Employment arrangements remain visible.
  */
 import { describe, it, expect } from 'vitest';
 
@@ -59,11 +59,12 @@ describe('scoring guardrails', () => {
     } finally { cleanup(); }
   });
 
-  it('a contract-only (C2C) role is hard-excluded', async () => {
+  it('a matching contract-only (C2C) role remains visible and scored', async () => {
     const { db, cleanup } = await runWith([c2cOnly]);
     try {
       const row = db.getJob(c2cOnly.id);
-      expect(row.status).toBe('discarded');
+      expect(row.status).toBe('scored');
+      expect(row.discard_reason).toBeFalsy();
     } finally { cleanup(); }
   });
 

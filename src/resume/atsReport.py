@@ -33,6 +33,7 @@ def build_ats_report(
     lint: Dict[str, Any] | None,
     *,
     config: Dict[str, Any] | None = None,
+    evidence_aliases: Dict[str, List[str]] | None = None,
 ) -> Dict[str, Any]:
     """Compose the ATS readiness report.
 
@@ -51,8 +52,8 @@ def build_ats_report(
     tier1 = list(jd_keywords.get("tier1") or [])
     tier2 = list(jd_keywords.get("tier2") or [])
 
-    a1 = audit_keywords(resume_text, tier1)
-    a2 = audit_keywords(resume_text, tier2)
+    a1 = audit_keywords(resume_text, tier1, evidence_aliases=evidence_aliases)
+    a2 = audit_keywords(resume_text, tier2, evidence_aliases=evidence_aliases)
     tier1_ratio = _ratio(len(a1["present"]), len(tier1))
     tier2_ratio = _ratio(len(a2["present"]), len(tier2))
 
@@ -67,7 +68,9 @@ def build_ats_report(
     else:
         # No vocabulary terms found in the JD at all; fall back to overall list.
         all_terms = list(jd_keywords.get("all") or [])
-        a_all = audit_keywords(resume_text, all_terms)
+        a_all = audit_keywords(
+            resume_text, all_terms, evidence_aliases=evidence_aliases
+        )
         score = _ratio(len(a_all["present"]), len(all_terms))
 
     match_score = _pct(score)

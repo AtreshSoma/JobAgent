@@ -31,7 +31,7 @@
         "note": "REAL multi-portal discovery via your own Apify account. Set APIFY_TOKEN in .env, set enabled:true, then list one or more actors. Each actor: { actorId: 'username~actor-name', label, source, input: {...actor-specific...}, fieldMap?: {...overrides...} }. Or read a previous run: { datasetId: '...' }. Find actors at https://apify.com/store (search 'jobs').",
         "tokenEnv": "APIFY_TOKEN",
         "maxItemsPerActor": 100,
-        "maxActorsPerRun": 4,
+        "maxActorsPerRun": 16,
         "cacheMinutes": 15,
         "actors": [
           {
@@ -236,53 +236,109 @@
       "priority": 2,
       "rateLimitMs": 2000,
       "options": {
-        "note": "DISCOVERY via LinkedIn through YOUR OWN Apify account using valig~linkedin-jobs-scraper. PAY-PER-RESULT (~$0.0004/job + ~$0.001/run on the FREE plan) — no monthly rental required. Compliance: official Apify REST API with your token only; no login replay, CAPTCHA solving, or evasion. These searches are set to the LAST 24 HOURS (datePosted r86400) to surface brand-new postings. Other datePosted values: r604800 = past week, r2592000 = past month, '' = any time. Optional array inputs: remote ['1' on-site,'2' remote,'3' hybrid], experienceLevel ['1'..'6' Internship..Executive], contractType ['F','P','C','T','I','O']. Each search's `limit` caps results (and cost). A failing/empty actor is logged and skipped, never crashes the run.",
+        "note": "Nationwide US discovery via LinkedIn through YOUR OWN Apify account using valig~linkedin-jobs-scraper. PAY-PER-RESULT (~$0.0004/job + ~$0.001/run on the FREE plan). Compliance: official Apify REST API with your token only; no login replay, CAPTCHA solving, or evasion. Searches cover the past month and the candidate's major Data Engineering, Data Platform, Analytics Engineering, BI, Data Warehouse, ETL, and Power BI title families. Deduplication and skill scoring rank overlap. Each search's limit caps results and cost.",
         "tokenEnv": "APIFY_TOKEN",
         "maxItemsPerActor": 100,
+        "maxActorsPerRun": 9,
         "cacheMinutes": 15,
         "actors": [
           {
             "actorId": "valig~linkedin-jobs-scraper",
-            "label": "linkedin-sr-data-eng-us-24h",
+            "label": "linkedin-sr-data-eng-us-30d",
             "source": "linkedin",
             "input": {
               "title": "Senior Data Engineer",
               "location": "United States",
-              "datePosted": "r86400",
-              "limit": 50
+              "datePosted": "r2592000",
+              "limit": 100
             }
           },
           {
             "actorId": "valig~linkedin-jobs-scraper",
-            "label": "linkedin-data-eng-us-24h",
+            "label": "linkedin-data-eng-us-30d",
             "source": "linkedin",
             "input": {
               "title": "Data Engineer",
               "location": "United States",
-              "datePosted": "r86400",
-              "limit": 50
+              "datePosted": "r2592000",
+              "limit": 100
             }
           },
           {
             "actorId": "valig~linkedin-jobs-scraper",
-            "label": "linkedin-analytics-eng-us-24h",
+            "label": "linkedin-analytics-eng-us-30d",
             "source": "linkedin",
             "input": {
               "title": "Analytics Engineer",
               "location": "United States",
-              "datePosted": "r86400",
-              "limit": 30
+              "datePosted": "r2592000",
+              "limit": 100
             }
           },
           {
             "actorId": "valig~linkedin-jobs-scraper",
-            "label": "linkedin-bi-developer-us-24h",
+            "label": "linkedin-bi-developer-us-30d",
             "source": "linkedin",
             "input": {
               "title": "Business Intelligence Developer",
               "location": "United States",
-              "datePosted": "r86400",
-              "limit": 30
+              "datePosted": "r2592000",
+              "limit": 100
+            }
+          },
+          {
+            "actorId": "valig~linkedin-jobs-scraper",
+            "label": "linkedin-data-platform-eng-us-30d",
+            "source": "linkedin",
+            "input": {
+              "title": "Data Platform Engineer",
+              "location": "United States",
+              "datePosted": "r2592000",
+              "limit": 100
+            }
+          },
+          {
+            "actorId": "valig~linkedin-jobs-scraper",
+            "label": "linkedin-bi-eng-us-30d",
+            "source": "linkedin",
+            "input": {
+              "title": "Business Intelligence Engineer",
+              "location": "United States",
+              "datePosted": "r2592000",
+              "limit": 100
+            }
+          },
+          {
+            "actorId": "valig~linkedin-jobs-scraper",
+            "label": "linkedin-data-warehouse-eng-us-30d",
+            "source": "linkedin",
+            "input": {
+              "title": "Data Warehouse Engineer",
+              "location": "United States",
+              "datePosted": "r2592000",
+              "limit": 100
+            }
+          },
+          {
+            "actorId": "valig~linkedin-jobs-scraper",
+            "label": "linkedin-etl-developer-us-30d",
+            "source": "linkedin",
+            "input": {
+              "title": "ETL Developer",
+              "location": "United States",
+              "datePosted": "r2592000",
+              "limit": 100
+            }
+          },
+          {
+            "actorId": "valig~linkedin-jobs-scraper",
+            "label": "linkedin-power-bi-developer-us-30d",
+            "source": "linkedin",
+            "input": {
+              "title": "Power BI Developer",
+              "location": "United States",
+              "datePosted": "r2592000",
+              "limit": 100
             }
           }
         ]

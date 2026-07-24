@@ -3,6 +3,9 @@
  * the JSON API end to end against an in-memory db. No network beyond loopback.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { openDatabase } from '../../src/logging/db.js';
 import { startDashboard, installProcessSafetyNet } from '../../src/dashboard/server.js';
@@ -50,6 +53,7 @@ describe('dashboard server API', () => {
     dash = await startDashboard({
       config: {}, db, logger: null, port: 0,
       deps: {
+        extensionKey: 'k'.repeat(32),
         now: () => NOW,
         readFileImpl: () => JSON.stringify({
           id: 'pk', ats: { platform: 'greenhouse' }, blockers: [],
@@ -84,6 +88,51 @@ describe('dashboard server API', () => {
     expect(dash.server.address().address).toBe('127.0.0.1');
   });
 
+  it('gates extension payloads by Chromium origin, shared key, and packet approval', async () => {
+    const origin = `chrome-extension://${'a'.repeat(32)}`;
+    const call = (headers) => fetch(dash.url + '/api/extension/jobs/j1/payload', { headers });
+    expect((await call({ origin: 'https://evil.test', 'x-job-agent-key': 'k'.repeat(32) })).status).toBe(403);
+    expect((await call({ origin, 'x-job-agent-key': 'x'.repeat(32) })).status).toBe(401);
+    expect((await call({ origin, 'x-job-agent-key': 'k'.repeat(32) })).status).toBe(403);
+    await post('/api/jobs/j1/approve');
+    const approved = await call({ origin, 'x-job-agent-key': 'k'.repeat(32) });
+    expect(approved.status).toBe(200);
+    expect(approved.headers.get('access-control-allow-origin')).toBe(origin);
+    expect((await approved.json()).approval.stopBeforeSubmit).toBe(true);
+  });
+
+  it('supports Edge originless privileged fetches only with the shared key', async () => {
+    await post('/api/jobs/j1/approve');
+    const url = dash.url + '/api/extension/jobs/j1/payload';
+    expect((await fetch(url, { headers: { 'x-job-agent-key': 'x'.repeat(32) } })).status).toBe(401);
+    expect((await fetch(url, { headers: { 'x-job-agent-key': 'k'.repeat(32) } })).status).toBe(200);
+    expect((await fetch(url, { headers: {
+      origin: 'https://evil.test', 'sec-fetch-site': 'cross-site', 'x-job-agent-key': 'k'.repeat(32),
+    } })).status).toBe(403);
+  });
+
+  it('records extension progress truthfully and never marks a zero-field page ready', async () => {
+    await post('/api/jobs/j1/approve');
+    const endpoint = dash.url + '/api/extension/jobs/j1/result';
+    const headers = {
+      origin: `chrome-extension://${'a'.repeat(32)}`,
+      'content-type': 'application/json', 'x-job-agent-key': 'k'.repeat(32),
+    };
+    const noForm = await fetch(endpoint, {
+      method: 'POST', headers,
+      body: JSON.stringify({ stage: 'application_started', startedApplication: true, formDetected: false, filled: [], blockers: [] }),
+    });
+    expect((await noForm.json()).status).toBe('assist_started');
+    expect(db.getJob('j1').status).toBe('assist_started');
+
+    const filled = await fetch(endpoint, {
+      method: 'POST', headers,
+      body: JSON.stringify({ formDetected: true, readyForReview: true, filled: [{ field: 'email', label: 'Email', source: 'candidate_profile' }], blockers: [] }),
+    });
+    expect((await filled.json()).status).toBe('ready_for_submit');
+    expect(db.getJob('j1').status).toBe('ready_for_submit');
+  });
+
   it('GET /api/stats returns tiles and breakdowns', async () => {
     const { status, body } = await get('/api/stats');
     expect(status).toBe(200);
@@ -100,6 +149,96 @@ describe('dashboard server API', () => {
     expect(detail.body.packet.ats.platform).toBe('greenhouse');
     expect(detail.body.packet.submitReady).toBe(false);
     expect((await get('/api/jobs/ghost')).status).toBe(404);
+  });
+
+  it('serves generated resume previews only from inside the configured workspace', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jobagent-resume-preview-'));
+    const outside = mkdtempSync(join(tmpdir(), 'jobagent-resume-outside-'));
+    try {
+      const docs = join(root, 'applications', 'output', 'Acme');
+      mkdirSync(docs, { recursive: true });
+      const pdf = join(docs, 'resume.pdf');
+      const docx = join(docs, 'resume.docx');
+      const escaped = join(outside, 'private.pdf');
+      writeFileSync(pdf, '%PDF-1.4\n% local preview');
+      writeFileSync(docx, 'docx-bytes');
+      const newer = new Date(Date.now() + 10_000);
+      utimesSync(pdf, newer, newer);
+      writeFileSync(escaped, '%PDF-1.4\n% outside');
+      db.upsertJob({ id: 'j1', resume_pdf_path: pdf, resume_docx_path: docx, resume_path: docx });
+
+      await dash.close();
+      dash = await startDashboard({ config: { root }, db, logger: null, port: 0, deps: { now: () => NOW } });
+
+      const preview = await fetch(dash.url + '/api/jobs/j1/resume?format=pdf');
+      expect(preview.status).toBe(200);
+      expect(preview.headers.get('content-type')).toBe('application/pdf');
+      expect(preview.headers.get('content-disposition')).toContain('inline');
+      expect(preview.headers.get('x-frame-options')).toBe('SAMEORIGIN');
+
+      const download = await fetch(dash.url + '/api/jobs/j1/resume?format=docx');
+      expect(download.status).toBe(200);
+      expect(download.headers.get('content-disposition')).toContain('attachment');
+
+      db.upsertJob({ id: 'j1', resume_pdf_path: escaped });
+      expect((await fetch(dash.url + '/api/jobs/j1/resume?format=pdf')).status).toBe(403);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('creates a missing PDF preview on demand and persists the recovered path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'jobagent-resume-generate-'));
+    try {
+      const docs = join(root, 'applications', 'output', 'Acme');
+      mkdirSync(docs, { recursive: true });
+      const docx = join(docs, 'tailored.docx');
+      const pdf = join(docs, 'tailored.pdf');
+      writeFileSync(docx, 'docx-bytes');
+      writeFileSync(pdf, '%PDF-1.4\n% stale preview');
+      utimesSync(pdf, new Date(0), new Date(0));
+      utimesSync(docx, new Date(), new Date());
+      db.upsertJob({ id: 'j1', resume_docx_path: docx, resume_path: docx, resume_pdf_path: null });
+      await dash.close();
+      dash = await startDashboard({
+        config: { root }, db, logger: null, port: 0,
+        deps: {
+          now: () => NOW,
+          ensureResumePdfFn: async (path) => {
+            expect(path).toBe(docx);
+            writeFileSync(pdf, '%PDF-1.4\n% generated preview');
+            return { exported: true, pdfPath: pdf, reason: 'ok' };
+          },
+        },
+      });
+      const generated = await post('/api/jobs/j1/resume-preview');
+      expect(generated.status).toBe(200);
+      expect(generated.body).toMatchObject({ ready: true, generated: true });
+      expect(db.getJob('j1').resume_pdf_path).toBe(pdf);
+      expect((await fetch(dash.url + generated.body.url)).status).toBe(200);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('checks link health and lets the user replace an aggregator URL with a direct application URL', async () => {
+    await dash.close();
+    db.upsertJob({ id: 'j1', url: 'https://www.linkedin.com/jobs/view/123' });
+    dash = await startDashboard({
+      config: {}, db, logger: null, port: 0,
+      deps: {
+        now: () => NOW,
+        checkLinkFn: async () => ({ kind: 'aggregator', status: 'restricted', httpStatus: 403,
+          finalUrl: 'https://www.linkedin.com/jobs/view/123', message: 'Aggregator restricts automated access.' }),
+      },
+    });
+    const health = await post('/api/jobs/j1/check-link');
+    expect(health.body).toMatchObject({ kind: 'aggregator', status: 'restricted', httpStatus: 403 });
+    expect((await post('/api/jobs/j1/link', { url: 'https://www.indeed.com/viewjob?jk=x' })).status).toBe(400);
+    const updated = await post('/api/jobs/j1/link', { url: 'https://company.wd5.myworkdayjobs.com/job/123' });
+    expect(updated.status).toBe(200);
+    expect(db.getJob('j1').url).toBe('https://company.wd5.myworkdayjobs.com/job/123');
   });
 
   it('decision endpoint validates and persists', async () => {
@@ -325,10 +464,19 @@ describe('dashboard batch actions + CSV export', () => {
     expect(Number(db.getJob('j1').applied)).toBe(0);
   });
 
-  it('auto-apply submits ONLY with the explicit per-run autoSubmit opt-in', async () => {
-    // Without the flag: fills and stops (asserted above). With it: submitted.
-    const r = await post('/api/jobs/j1/auto-apply', { autoSubmit: true });
-    expect(r.status).toBe(202);
+  it('Auto-apply ignores legacy autoSubmit flags; only the explicit advanced route submits', async () => {
+    // Regression: the primary UI used to send autoSubmit:true after an
+    // ambiguous confirm dialog, causing Unconfirmed sponsorship to block a
+    // perfectly valid assisted fill. The named Auto-apply route is now safe.
+    const safe = await post('/api/jobs/j1/auto-apply', { autoSubmit: true });
+    expect(safe.status).toBe(202);
+    await new Promise((res) => setTimeout(res, 60));
+    expect(Number(db.getJob('j1').applied)).toBe(0);
+    expect(db.getJob('j1').status).toBe('ready_for_submit');
+
+    expect((await post('/api/auto-submit-batch', { jobIds: ['j1'] })).status).toBe(400);
+    const explicit = await post('/api/auto-submit-batch', { jobIds: ['j1'], confirmed: true });
+    expect(explicit.status).toBe(202);
     await new Promise((res) => setTimeout(res, 60));
     const job = db.getJob('j1');
     expect(Number(job.applied)).toBe(1);

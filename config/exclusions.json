@@ -65,18 +65,7 @@
     "blockchain only",
     "smart contract developer"
   ],
-  "employmentMismatch": [
-    "c2c only",
-    "corp to corp only",
-    "1099 only",
-    "1099 contract",
-    "part-time",
-    "part time only",
-    "freelance only",
-    "no w2",
-    "no w-2",
-    "w2 not available"
-  ],
+  "employmentMismatch": [],
   "geographyMismatch": [
     "must be located outside the us",
     "non-us role",
@@ -123,12 +112,12 @@
     ]
   },
   "staleness": {
-    "skipOlderThanDays": 14,
+    "skipOlderThanDays": 45,
     "flagOlderThanDays": 7,
     "highApplicantThreshold": 200
   },
   "employmentTypes": {
-    "_note": "Deterministic Full-time vs Contract categorization (src/scoring/employmentClassifier.js). Multi-word phrases only, so incidental words like 'data contract' never mis-tag a role. Absence of any contract/part-time signal implies full-time (defaultToFullTime). This CATEGORIZES for the dashboard; it does not discard (see employmentMismatch for hard exclusions).",
+    "_note": "Deterministic Full-time vs Contract categorization (src/scoring/employmentClassifier.js). Multi-word phrases only, so incidental words like 'data contract' never mis-tag a role. Absence of any contract/part-time signal implies full-time (defaultToFullTime). Employment arrangements are categorized for the dashboard and are not hard-discarded; employmentMismatch is intentionally empty.",
     "defaultToFullTime": true,
     "contractToHire": [
       "contract to hire",

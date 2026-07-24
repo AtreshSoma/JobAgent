@@ -12,6 +12,11 @@ describe('restored command-center workbench shell', () => {
     expect(html).toContain('id="tiles"');
     expect(html).toContain('id="rows"');
     expect(html).toContain('id="detail"');
+    expect(html).toContain('Job ID:');
+    expect(html).toContain('copyJobId(this)');
+    expect(html).toContain("history.replaceState(null, '', `#job=${encodeURIComponent(id)}`)");
+    expect(html).toContain('const initialJobId = jobIdFromHash()');
+    expect(html).toContain('if (initialJobId) select(initialJobId)');
     expect(html).toContain('Source performance');
     expect(html).toContain('Sponsorship feasibility');
     expect(html).toContain('Daily progress (last 7 days)');
@@ -20,7 +25,7 @@ describe('restored command-center workbench shell', () => {
   it('keeps the complete primary workflow in the restored header and selection bar', () => {
     for (const label of [
       'Find New Jobs', 'Re-score', 'Auto-Prepare Best', 'Add by URL',
-      'Interview Prep', 'Reports', 'Auto-apply', 'Prepare selected', 'Approve',
+      'Interview Prep', 'Reports', 'Auto-fill', 'Prepare selected', 'Approve',
     ]) expect(html).toContain(label);
   });
 
@@ -32,12 +37,29 @@ describe('restored command-center workbench shell', () => {
     expect(html).toContain('cancelled · completed results kept');
   });
 
-  it('retains auto-submit eligibility and verified-submission safety', () => {
-    expect(html).toContain('/api/auto-apply/eligibility');
-    expect(html).toContain('authorizedAutoSubmitIds');
-    expect(html).toContain('autoSubmit: true');
+  it('keeps primary Auto-fill fill-only and retains verified manual submission safety', () => {
+    expect(html).not.toContain('askAutoSubmit');
+    expect(html).not.toContain('authorizedAutoSubmitIds');
+    expect(html).toContain('autoSubmit: false');
+    expect(html).toContain('stops before Submit');
     expect(html).toContain('verified: Boolean(confirmation)');
     expect(html).toContain('not counted as applied yet');
+  });
+
+  it('shows a compact tailored-resume review and minimal discovery activity state', () => {
+    expect(html).toContain('Tailored resume review');
+    expect(html).toContain('What was updated');
+    expect(html).toContain('toggleResumePreview');
+    expect(html).toContain('closeResumePreview');
+    expect(html).toContain('body.preview-open');
+    expect(html).toContain('position: fixed; inset: 24px');
+    expect(html).toContain('/resume?format=pdf');
+    expect(html).toContain('/resume-preview');
+    expect(html).toContain('Needs your evidence (not auto-added)');
+    expect(html).toContain('Check link');
+    expect(html).toContain('setDiscovering');
+    expect(html).toContain("button.textContent = on ? 'Finding jobs' : 'Find New Jobs'");
+    expect(html).toContain('aria-live="polite"');
   });
 
   it('keeps responsive behavior without changing the restored desktop design', () => {

@@ -27,6 +27,7 @@ env/
 *.egg-info/
 
 # --- Local data & generated artifacts ---
+.tmp/
 data/*.db
 data/*.db-shm
 data/*.db-wal

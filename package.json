@@ -38,6 +38,7 @@
     "migrate-output-names": "node scripts/migrateOutputNames.js",
     "cleanup-outputs": "node scripts/cleanupGeneratedOutputs.js",
     "regenerate-resumes": "node scripts/regenerateResumes.js",
+    "audit:resumes": "node scripts/auditTailoredResumes.js --limit=3",
     "verify": "node scripts/verifyRepoHealth.js",
     "db:maintenance": "node scripts/dbMaintenance.mjs",
     "test": "vitest run",

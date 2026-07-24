@@ -32,7 +32,10 @@ describe('exclusionFilter', () => {
   });
 
   it('discards postings older than skipOlderThanDays', () => {
-    const r = applyExclusions(F.staleHighApplicants, exclusions, opts);
+    const tooOld = new Date(F.NOW);
+    tooOld.setUTCDate(tooOld.getUTCDate() - exclusions.staleness.skipOlderThanDays - 1);
+    const job = { ...F.staleHighApplicants, postedAt: tooOld.toISOString() };
+    const r = applyExclusions(job, exclusions, opts);
     expect(r.excluded).toBe(true);
     expect(r.category).toBe('stale_posting');
   });
@@ -41,6 +44,20 @@ describe('exclusionFilter', () => {
     const r = applyExclusions(F.azureFabricSenior, exclusions, opts);
     expect(r.excluded).toBe(false);
   });
+
+  it.each(['C2C only', '1099 contract', 'part-time', 'freelance only'])(
+    'keeps matching roles regardless of employment arrangement: %s',
+    (arrangement) => {
+      const job = {
+        ...F.azureFabricSenior,
+        employmentType: arrangement,
+        jdText: `${F.azureFabricSenior.jdText} Employment arrangement: ${arrangement}.`,
+      };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(false);
+      expect(r.category).toBe(null);
+    },
+  );
 
   it('flags (not discards) older high-applicant roles within skip window', () => {
     const job = { ...F.azureFabricSenior, postedAt: '2026-05-25T00:00:00Z', applicantCount: 350 };

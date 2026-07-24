@@ -100,6 +100,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     tailored: false,
     output_path: master,
     pdf_path: null,
+    pdfWarning: null,
     audit: null,
     emphasized: null,
     summaryLine: null,
@@ -132,6 +133,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     keywords: keywordsForJob(score),
     // Vocabulary + ATS rules drive the deterministic ATS readiness report.
     vocabulary: vocabularyFromScoring(config.scoring),
+    evidence_aliases: config.scoring?.evidenceAliases ?? {},
     ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
     add_summary_line: options.addSummaryLine === true,
@@ -154,6 +156,9 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     tailored: true,
     output_path: response.output_path,
     pdf_path: response.pdf_path ?? null,
+    pdfWarning: options.exportPdf === true && response.pdf_path == null
+      ? (response.pdf_result?.reason ?? 'PDF preview could not be generated')
+      : null,
     audit: response.audit ?? null,
     emphasized: response.emphasized ?? null,
     summaryLine: response.summary_line ?? null,

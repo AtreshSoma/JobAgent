@@ -63,7 +63,9 @@ export async function uploadFiles(page, fillPlan = {}, { dryRun = false, fileExi
       continue;
     }
     if (!u.selector) {
-      blockers.push(`${u.type}: no upload selector resolved`);
+      const message = `${u.type}: no upload selector resolved`;
+      if (u.required === false) skipped.push({ type: u.type, path: u.path, reason: message });
+      else blockers.push(message);
       continue;
     }
     let count = 0;
@@ -73,7 +75,9 @@ export async function uploadFiles(page, fillPlan = {}, { dryRun = false, fileExi
       count = 0;
     }
     if (count < 1) {
-      blockers.push(`${u.type}: upload input not found (${u.selector})`);
+      const message = `${u.type}: upload input not found (${u.selector})`;
+      if (u.required === false) skipped.push({ type: u.type, path: u.path, selector: u.selector, reason: message });
+      else blockers.push(message);
       continue;
     }
     if (dryRun) {

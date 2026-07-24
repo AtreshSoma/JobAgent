@@ -59,6 +59,11 @@
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
   #runStatus.busy::before { content: ''; display: inline-block; width: 7px; height: 7px;
     border-radius: 50%; background: var(--accent); margin-right: 6px; animation: pulse 1s infinite; }
+  #btnDiscover.finding { display: inline-flex; align-items: center; gap: 7px; color: var(--text); }
+  #btnDiscover.finding::before { content: ''; width: 11px; height: 11px; border-radius: 50%;
+    border: 2px solid rgba(77,163,255,.28); border-top-color: var(--accent);
+    animation: findspin .7s linear infinite; }
+  @keyframes findspin { to { transform: rotate(360deg); } }
 
   /* ── Context strip: key numbers as quiet stat chips ── */
   .ctxbar { display: flex; align-items: stretch; gap: 10px; flex-wrap: wrap;
@@ -196,6 +201,44 @@
   .nba { background: linear-gradient(135deg, rgba(77,163,255,.14), rgba(62,207,142,.08));
     border: 1px solid rgba(77,163,255,.55); border-radius: var(--r-md); padding: 11px 13px; margin: 4px 0 2px; }
   .nba b { color: var(--accent); }
+  .assist-flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin: 9px 0 10px; }
+  .assist-step { border: 1px solid var(--hair); border-radius: 7px; padding: 5px 6px;
+    color: var(--faint); font-size: 10.5px; text-align: center; background: rgba(11,14,19,.35); }
+  .assist-step.done { color: var(--good); border-color: rgba(62,207,142,.3); }
+  .assist-step.now { color: var(--accent); border-color: rgba(77,163,255,.55); }
+  .attention { display: flex; gap: 8px; align-items: flex-start; border-left: 3px solid var(--warn);
+    background: rgba(240,180,76,.08); border-radius: 7px; padding: 8px 10px; font-size: 12.5px; }
+  .link-health { margin-top: 8px; font-size: 12px; color: var(--dim); min-height: 18px; }
+  .link-health.good { color: var(--good); } .link-health.bad { color: var(--bad); }
+  .resume-review { margin-top: 14px; border: 1px solid var(--line); border-radius: var(--r-md);
+    background: rgba(77,163,255,.045); overflow: hidden; }
+  .resume-review > summary { cursor: pointer; list-style: none; padding: 10px 12px;
+    display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+  .resume-review > summary::-webkit-details-marker { display: none; }
+  .resume-review > summary::after { content: '›'; color: var(--dim); font-size: 18px;
+    transform: rotate(90deg); transition: transform .15s; }
+  .resume-review[open] > summary::after { transform: rotate(-90deg); }
+  .resume-review .review-body { border-top: 1px solid var(--hair); padding: 10px 12px 12px; }
+  .resume-meta { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 3px; }
+  .resume-preview { display: none; margin-top: 10px; }
+  .resume-preview.show { position: fixed; inset: 24px; z-index: 80; display: flex;
+    flex-direction: column; margin: 0; padding: 48px 14px 14px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: var(--r-lg);
+    box-shadow: 0 0 0 100vmax rgba(4,7,12,.78), var(--shadow); }
+  .resume-preview iframe { width: 100%; min-height: 0; flex: 1; border: 1px solid var(--line);
+    border-radius: var(--r-sm); background: #fff; }
+  .preview-toolbar { position: absolute; inset: 9px 12px auto; display: flex;
+    align-items: center; justify-content: space-between; gap: 10px; }
+  .preview-toolbar b { font-size: 13px; }
+  body.preview-open { overflow: hidden; }
+  @media (max-width: 600px) {
+    .resume-preview.show { inset: 8px; padding: 46px 8px 8px; }
+  }
+  .preview-status { min-height: 18px; color: var(--dim); font-size: 12px; margin-top: 7px; }
+  .evidence-note { border-left: 3px solid var(--accent); background: rgba(77,163,255,.08);
+    border-radius: 7px; padding: 8px 10px; color: var(--dim); font-size: 12px; margin-top: 10px; }
+  .change-list { margin: 7px 0 0; padding-left: 18px; }
+  .change-list li { margin: 4px 0; }
   .notes textarea { width: 100%; background: var(--panel2); color: var(--text); border: 1px solid var(--line);
     border-radius: 8px; padding: 8px; font: inherit; resize: vertical; min-height: 54px; }
   a { color: var(--accent); }
@@ -251,10 +294,10 @@
   <button class="small" onclick="location.reload()">Reload</button></div>
 <header>
   <h1>JobAgent</h1>
-  <span class="safety" title="Runs only on 127.0.0.1. By default it stops before Submit; auto-submit is an explicit choice you make per run, and only fires on a completely clean form.">local-only · submit is your call</span>
+  <span class="safety" title="Runs only on 127.0.0.1. Auto-fill prepares and fills; it always stops before the final Submit button.">local-only · submit is your call</span>
   <span class="spacer"></span>
   <span id="conn" class="conn" title="Connection to the local dashboard server">● connecting…</span>
-  <span id="runStatus"></span>
+  <span id="runStatus" aria-live="polite"></span>
   <button id="btnCancel" class="small ghost" hidden onclick="cancelRun()">Cancel</button>
   <div class="btnrow">
     <button id="btnDiscover" class="runBtn" onclick="runPhase('discover')"
@@ -399,7 +442,7 @@
 <div id="toast"></div>
 <div id="selbar">
   <span id="selCount">0 selected</span>
-  <button id="autoApplyBtn" class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-apply</button>
+  <button id="autoApplyBtn" class="small primary" onclick="batchAutoApply()" title="Approve if needed, then open each in a browser and fill it — stops before submit">▶ Auto-fill</button>
   <button class="small" onclick="batchPrepare()" title="Tailor a resume + build an application packet for each selected job (your pick overrides the auto-prepare tiers; packets still need your approval)">📄 Prepare selected</button>
   <button class="small" onclick="batchApprove()" title="Approve prepared packets">✓ Approve</button>
   <button class="small" onclick="batchDecide('shortlisted')">★ Shortlist</button>
@@ -648,10 +691,11 @@ async function loadJobs() {
       <td><span class="chip ${esc(j.sponsorship ?? '')}">${esc(j.sponsorship ?? '—')}</span></td>
       <td>${typeChip(j)}</td>
       <td><span class="dot ${j.postedConfidence}" title="posting date ${j.postedConfidence}"></span>${esc(j.postedLabel)}${j.postedLast24h ? ' <span class="chip strong">new</span>' : ''}</td>
-      <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span></td>
+      <td><span class="rs ${j.resumeStatus}">${j.resumeStatus === 'tailored' ? 'tailored' : j.resumeStatus === 'prepared' ? 'prepared' : '—'}</span>
+        ${(j.resumeDocxPath || j.resumePdfPath) ? ` <button class="small ghost" title="Preview tailored resume" aria-label="Preview tailored resume for ${esc(j.company)} ${esc(j.title)}" onclick="event.stopPropagation();select('${esc(j.id)}').then(()=>openResumeReview())">◉</button>` : ''}</td>
       <td class="muted">${esc(j.atsPlatform ?? '—')}</td>
       <td>${progressBar(j.progress)}</td>
-      <td class="st-${j.appStatus}" title="${esc(j.statusReason ?? '')}">${j.appStatus.replace(/_/g, ' ')}${j.statusReason ? ' <span class="muted" style="cursor:help">ⓘ</span>' : ''}</td>
+      <td class="st-${j.appStatus}" title="${esc(j.statusReason ?? '')}">${esc(statusLabel(j))}${j.statusReason ? ' <span class="muted" style="cursor:help">ⓘ</span>' : ''}</td>
     </tr>`).join('');
   syncSelAll();
 }
@@ -665,90 +709,86 @@ function fitLabel(fit) {
 function isAggregatorUrl(u) {
   return /https?:\/\/[^/]*\b(indeed|linkedin|glassdoor|ziprecruiter|simplyhired|monster|dice)\.[a-z.]+/i.test(u || '');
 }
-const AUTO_APPLY_BTN = (id, label = '⚡ Auto-apply') =>
+const AUTO_APPLY_BTN = (id, label = '⚡ Auto-fill application') =>
   `<button class="small primary" onclick="autoApplyOne('${esc(id)}')"
      title="One click: tailor a packet if needed, approve it, open the posting in a browser, fill everything it can, and stop before Submit for your review.">${label}</button>`;
+function statusLabel(j) {
+  return j.attention?.label || ({ ready_for_submit: 'Ready for your review', needs_review: 'Review resume',
+    approved: 'Ready to Auto-fill', submitted: 'Submitted' }[j.appStatus]) || j.appStatus.replace(/_/g, ' ');
+}
+function assistantFlow(j) {
+  const prepared = Boolean(j.packetPath || j.resumeDocxPath || j.resumePath);
+  const filled = ['ready_for_submit','submitted'].includes(j.appStatus);
+  const submitted = j.appStatus === 'submitted';
+  const current = !prepared ? 0 : !filled ? 2 : !submitted ? 3 : 4;
+  return `<div class="assist-flow" aria-label="Application progress">
+    ${['Resume','Direct link','Auto-fill','You submit'].map((label, i) =>
+      `<div class="assist-step ${i < current ? 'done' : i === current ? 'now' : ''}">${i < current ? '✓ ' : ''}${label}</div>`).join('')}
+  </div>`;
+}
 function nextBestAction(j) {
   // The single most useful thing to do next, with a one-click button.
   if (j.appStatus === 'submitted') return { text: 'Submitted — no further action.', btn: '' };
-  if (j.appStatus === 'needs_review') return { text: 'Auto-apply approves this packet and fills the application in a browser — you review and click Submit.',
+  if (j.appStatus === 'needs_review') return { text: 'Review the tailored resume, then Auto-fill opens the application, fills supported fields, and stops for your review.',
     btn: AUTO_APPLY_BTN(j.id)
       + ` <button class="small" onclick="act('${esc(j.id)}','approve','Packet approved')">✓ Approve only</button>` };
   if (j.appStatus === 'approved') return { text: 'Approved. Open it in the browser — it fills the form and stops before submit.',
     btn: `<button class="small primary" onclick="act('${esc(j.id)}','assist','Browser opening — stops before submit')">▶ Fill in browser</button>` };
-  if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting — review the browser tab and click Submit, then record it here. (If you closed the browser, re-run auto-apply any time.)',
+  if (j.appStatus === 'ready_for_submit') return { text: 'Filled and waiting — review the browser tab and click Submit, then record it here. (If you closed the browser, run Auto-fill again.)',
     btn: `<button class="small primary" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>`
       + ` ${AUTO_APPLY_BTN(j.id, '↻ Re-fill')}` };
   if (j.appStatus === 'blocked') {
-    if (isAggregatorUrl(j.url)) return {
-      text: 'This is an Indeed/LinkedIn-style aggregator link — those sites wall off automated form filling (CAPTCHA/verification), so auto-apply cannot fill it. Open it yourself to apply; if it redirects you to the company’s own site, apply there and mark it submitted here.',
+    if (j.attention?.kind === 'form_step') return {
+      text: 'The prior run looked for the resume field before reaching the application wizard. That flow is fixed: retry Auto-fill to advance through Apply/Continue and attach the resume when the upload step appears.',
+      btn: AUTO_APPLY_BTN(j.id, '↻ Retry Auto-fill')
+        + ` <a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small">Open application ↗</button></a>` };
+    if (isAggregatorUrl(j.url) || j.attention?.kind === 'aggregator') return {
+      text: 'This is an aggregator listing, not a reliable application form. Open it, follow Apply to the employer/ATS page, then save that direct URL here for Auto-fill.',
       btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
-        + ` <button class="small" onclick="markSubmittedFlow('${esc(j.id)}')">I submitted it myself</button>` };
-    return { text: 'An assisted-fill attempt stopped at an application wall (login / CAPTCHA / a question it refuses to guess). Open the posting to finish manually, or re-run auto-apply to capture the current blocker.',
+        + ` <button class="small" onclick="replaceJobLink('${esc(j.id)}')">Save direct URL</button>` };
+    if (['dead_link','restricted_link'].includes(j.attention?.kind)) return {
+      text: j.attention.summary,
+      btn: `<button class="small primary" onclick="checkSelectedLink('${esc(j.id)}')">Check link</button>
+        <button class="small" onclick="replaceJobLink('${esc(j.id)}')">Replace with direct URL</button>` };
+    return { text: j.attention?.summary || 'The assistant stopped because this step needs you. Open the application, complete the requested sign-in/verification/question, then retry Auto-fill.',
       btn: `<a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small primary">Open posting ↗</button></a>`
-        + ` ${AUTO_APPLY_BTN(j.id, '↻ Re-try auto-apply')}` };
+        + ` ${AUTO_APPLY_BTN(j.id, '↻ Retry Auto-fill')}` };
   }
-  if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit — auto-apply tailors the resume, fills the application, and stops before Submit.',
+  if (j.fit === 'strong' && !j.userDecision) return { text: 'Strong fit — Auto-fill tailors the resume, fills supported application fields, and stops before Submit.',
     btn: AUTO_APPLY_BTN(j.id) + ` <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>` };
-  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — auto-apply prepares the tailored packet and fills the application in one go.',
+  if (j.appStatus === 'shortlisted') return { text: 'Shortlisted — Auto-fill prepares the tailored packet and fills the application in one go.',
     btn: AUTO_APPLY_BTN(j.id) + ` <button class="small" onclick="prepareOne('${esc(j.id)}')">📄 Prepare only</button>` };
   if (['no_fit', 'weak'].includes(j.fit)) return { text: 'Low fit — likely not worth your time. Reject to keep the board focused.',
     btn: `<button class="small" onclick="decide('${esc(j.id)}','rejected')">✕ Reject</button>` };
-  if (j.appStatus === 'scored' || j.appStatus === 'discovered') return { text: 'Looks reasonable? Auto-apply handles everything up to the final Submit click.',
+  if (j.appStatus === 'scored' || j.appStatus === 'discovered') return { text: 'Looks reasonable? Auto-fill handles everything it safely can up to the final Submit click.',
     btn: AUTO_APPLY_BTN(j.id) };
   return { text: 'Review the fit and sponsorship below, then shortlist or reject.', btn: '' };
-}
-/** Ask once per action whether to also click the final Submit. */
-function askAutoSubmit(count = 1) {
-  return confirm(
-    `Also click the final SUBMIT automatically for ${count === 1 ? 'this job' : count + ' jobs'}?\n\n`
-    + 'OK — after filling, it clicks Submit — but ONLY on a completely clean form '
-    + '(every required field filled, no unanswered questions, truthful sponsorship answers) '
-    + 'and within your daily application cap. Anything uncertain is left open for you.\n\n'
-    + 'Cancel — fill only; you review each form and click Submit yourself.');
-}
-async function authorizedAutoSubmitIds(ids) {
-  const preview = await api('/api/auto-apply/eligibility', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ jobIds: ids, autoSubmit: true }),
-  });
-  const eligible = (preview.items || []).filter((item) => item.eligible).map((item) => item.jobId);
-  if (!eligible.length) {
-    const reasons = (preview.items || []).flatMap((item) => item.reasons || []).slice(0, 3).join(' ');
-    throw new Error(`Auto-submit precheck blocked every job.${reasons ? ` ${reasons}` : ''}`);
-  }
-  return eligible;
 }
 async function autoApplyOne(id) {
   if (isRunning) { toast('A run is in progress — wait for it to finish.', true); return; }
   if (isAggregatorUrl(jobsById[id]?.url)) {
-    toast('Aggregator link — it will hit a verification wall. Open the posting instead.', true); return;
+    toast('Use the employer/ATS application URL for Auto-fill. Open this listing and save its direct Apply URL.', true); return;
   }
-  const autoSubmit = askAutoSubmit(1);
   try {
-    if (autoSubmit && !(await authorizedAutoSubmitIds([id])).includes(id)) {
-      throw new Error('This job did not pass the final auto-submit eligibility check.');
-    }
     await api(`/api/jobs/${encodeURIComponent(id)}/auto-apply`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ autoSubmit }),
+      body: JSON.stringify({ autoSubmit: false }),
     });
-    toast(autoSubmit
-      ? 'Auto-applying — filling, and submitting automatically if the form is completely clean.'
-      : 'Auto-applying — tailoring if needed, then filling in a browser. It stops before Submit.');
+    toast('Auto-fill started — preparing if needed, then filling in a browser. It stops before Submit.');
     pollRun();
   } catch (e) { toast(e.message, true); }
 }
 function stepper(pr) {
   if (!pr) return '';
   const labels = ['Found', 'Scored', 'Shortlist', 'Prepared', 'Approved', 'Ready', 'Submitted'];
-  if (pr.offRamp) return `<div class="muted" style="margin:6px 0">Off-track: <b class="st-blocked">${esc(pr.stage.replace(/_/g, ' '))}</b></div>`;
+  if (pr.offRamp) return `<div class="muted" style="margin:6px 0">Needs attention: <b class="st-blocked">${esc(pr.stage.replace(/_/g, ' '))}</b></div>`;
   const cells = labels.map((_, i) =>
     `<div class="s ${i < pr.index ? 'done' : i === pr.index ? 'now' : ''}"></div>`).join('');
   return `<div class="stepper">${cells}</div><div class="steplabels"><span>${labels[0]}</span><span>${labels[pr.index] ?? ''}</span><span>${labels[labels.length - 1]}</span></div>`;
 }
 async function select(id) {
   selectedId = id;
+  history.replaceState(null, '', `#job=${encodeURIComponent(id)}`);
   loadJobs();
   let j;
   try { j = await api('/api/jobs/' + encodeURIComponent(id)); }
@@ -766,12 +806,16 @@ async function select(id) {
         <h2 style="margin:0">${esc(j.company || 'Company on posting')} — ${esc(j.title)}</h2>
         <div class="muted">${esc(j.location ?? '')}${j.remote ? ' · remote' : ''} · ${esc(j.postedLabel)} · via ${esc(j.source)}
           ${j.atsPlatform ? '· ATS: ' + esc(j.atsPlatform) : ''}</div>
+        <div class="muted" style="margin-top:5px;display:flex;align-items:center;gap:7px;flex-wrap:wrap">
+          Job ID: <code style="color:var(--text);user-select:all;word-break:break-all">${esc(j.id)}</code>
+          <button class="small" data-job-id="${esc(j.id)}" onclick="copyJobId(this)" title="Copy this ID into the Chrome/Edge Job Agent extension">Copy ID</button>
+        </div>
         <div style="margin-top:6px">
           ${j.score != null ? `<span class="chip" title="Skills-match score and letter grade">score ${j.score}/100${g ? ' · grade ' + g.letter : ''}</span>` : '<span class="chip unscored">unscored</span>'}
           <span class="chip ${j.fit}" title="Fit tier (may be downgraded by the sponsorship gate)">${esc(fitLabel(j.fit))}</span>
           <span class="chip ${esc(j.sponsorship ?? '')}">sponsorship: ${esc(j.sponsorship ?? 'unknown')}</span>
           ${j.employmentLabel ? `<span class="chip" title="Employment type (Full-time vs Contract)">type: ${esc(j.employmentLabel)}</span>` : ''}
-          <span class="chip st-${j.appStatus}">${j.appStatus.replace(/_/g,' ')}</span>
+          <span class="chip st-${j.appStatus}">${esc(statusLabel(j))}</span>
         </div>
       </div>
     </div>
@@ -779,13 +823,16 @@ async function select(id) {
     ${stepper(j.progress)}
 
     ${j.statusReason && ['blocked','rejected','discarded','skipped','date_unconfirmed'].includes(j.appStatus)
-      ? `<h3>Why it's ${j.appStatus.replace(/_/g, ' ')}</h3><div class="why st-blocked">${esc(j.statusReason)}</div>` : ''}
+      ? `<h3>What needs attention</h3><div class="attention"><span>!</span><div><b>${esc(statusLabel(j))}</b><br>${esc(j.attention?.summary || j.statusReason)}
+        ${j.statusReason !== j.attention?.summary ? `<details><summary class="muted">Technical detail</summary><div class="muted">${esc(j.statusReason)}</div></details>` : ''}</div></div>` : ''}
 
-    <h3>Next best action</h3>
-    <div class="nba">${esc(nba.text)}${nba.btn ? `<div style="margin-top:8px">${nba.btn}</div>` : ''}</div>
+    <h3>Application assistant</h3>
+    <div class="nba">${assistantFlow(j)}${esc(nba.text)}${nba.btn ? `<div style="margin-top:8px">${nba.btn}</div>` : ''}</div>
 
     <div class="actions">
       <a href="${esc(j.url)}" target="_blank" rel="noopener"><button class="small">Open posting ↗</button></a>
+      <button class="small" onclick="checkSelectedLink('${esc(j.id)}')">Check link</button>
+      <button class="small" onclick="replaceJobLink('${esc(j.id)}')">Replace URL</button>
       <button class="small" onclick="decide('${esc(j.id)}','shortlisted')">★ Shortlist</button>
       <button class="small" onclick="decide('${esc(j.id)}','rejected')">✕ Reject</button>
       <button class="small" onclick="decide('${esc(j.id)}','archived')">Archive</button>
@@ -812,11 +859,161 @@ async function select(id) {
     ${j.assistFilledCount != null ? `<h3>Last assisted fill</h3>
       <div>${j.assistFilledCount} field(s) filled${j.assistBlockers.length
         ? `; blockers: <ul class="plan">${j.assistBlockers.map((b) => `<li class="st-blocked">${esc(b)}</li>`).join('')}</ul>` : ' · no blockers'}</div>` : ''}
+    ${p ? renderResumeReview(j, p) : ''}
     ${p ? renderPacket(p) : '<h3>Packet</h3><div class="muted">Not prepared yet — shortlist it and run Find & Prepare.</div>'}
-    ${j.resumePath ? `<h3>Documents</h3><div class="muted" style="word-break:break-all">${esc(j.resumePath)}<br>${esc(j.coverLetterPath ?? '')}</div>` : ''}
     ${(j.events ?? []).length ? `<h3>Audit trail</h3><ul class="plan">${j.events.map((e) =>
       `<li><span class="muted">${esc((e.at ?? '').slice(0, 16).replace('T', ' '))}</span> ${esc(e.type)} — ${esc(e.message ?? '')}</li>`).join('')}</ul>` : ''}
   </div>`;
+}
+function resumeChangeLabel(change = {}) {
+  const labels = {
+    reorder_skills: 'Reordered existing skills so JD-supported strengths appear first.',
+    reorder_summary: 'Prioritized existing summary content for this role.',
+    reorder_experience_bullets: 'Prioritized existing experience bullets within the same employer and role.',
+    emphasize: 'Emphasized JD terms already supported by the master resume.',
+    focus_line: 'Added an evidence-backed role-focus line.',
+    flatten_tables_for_ats: 'Converted layout tables to single-column text for safer ATS parsing.',
+    stabilize_page_breaks: 'Kept section and role headings with their first content line.',
+  };
+  return labels[change.type] || change.reason || String(change.type ?? 'Recorded a resume update').replace(/_/g, ' ');
+}
+function renderResumeReview(j, p) {
+  const changes = Array.isArray(p.tailoring?.changes) ? p.tailoring.changes : [];
+  const gaps = Array.isArray(p.tailoring?.gaps) ? p.tailoring.gaps : [];
+  const validation = p.resumeValidation;
+  const ats = p.atsReport;
+  const atsSafety = ats?.ats_safety;
+  const truth = p.tailoring?.invariants;
+  const hasPdf = Boolean(j.resumePdfPath || p.resumePdfPath);
+  const hasDocx = Boolean(j.resumeDocxPath || j.resumePath || p.resumePath);
+  const key = encodeURIComponent(j.id);
+  const status = p.resumeTailored ? 'Tailored' : 'Master resume fallback';
+  const validationLabel = validation
+    ? (validation.ok ? 'content checks passed' : 'content checks need review')
+    : 'content check not recorded';
+  const safetyLabel = atsSafety
+    ? (atsSafety.ok ? 'ATS structure passed' : 'ATS structure needs review')
+    : 'ATS structure not recorded';
+  const changeItems = changes.length
+    ? changes.map((change) => `<li>${esc(resumeChangeLabel(change))}</li>`).join('')
+    : '<li class="muted">No content was reordered because the existing resume was already aligned, or this is a legacy packet. Re-tailor to refresh its audit.</li>';
+  const gapItems = gaps.slice(0, 6).map((gap) =>
+    `<li><b>${esc(gap.keyword ?? 'Requirement')}</b> — not added because it is not evidenced in the master resume.</li>`).join('');
+  return `<details class="resume-review">
+    <summary>
+      <span><b>Tailored resume review</b><br><span class="muted">${esc(status)} · ${changes.length} update(s) · ${gaps.length} honest gap(s)</span></span>
+    </summary>
+    <div class="review-body" aria-live="polite">
+      <div class="resume-meta">
+        ${ats?.match_score != null ? `<span class="chip">ATS match ${esc(ats.match_score)}%</span>` : ''}
+        ${ats?.band ? `<span class="chip ${ats.band === 'strong' ? 'strong' : ''}">${esc(ats.band)}</span>` : ''}
+        <span class="chip ${validation?.ok === false ? 'weak' : 'strong'}">${esc(validationLabel)}</span>
+        <span class="chip ${atsSafety?.ok === false ? 'weak' : 'strong'}">${esc(safetyLabel)}</span>
+        ${truth ? `<span class="chip ${truth.employment_facts_unchanged ? 'strong' : 'weak'}">${truth.employment_facts_unchanged ? 'claims preserved' : 'claims need review'}</span>` : ''}
+      </div>
+      <div class="actions">
+        ${(hasDocx || hasPdf) ? `<button class="small primary resume-preview-button" onclick="toggleResumePreview('${key}',this)">Preview resume</button>` : ''}
+        ${hasPdf ? `<a class="resume-full-link" href="/api/jobs/${key}/resume?format=pdf" target="_blank" rel="noopener"><button class="small">Open full size ↗</button></a>` : ''}
+        ${hasDocx ? `<a href="/api/jobs/${key}/resume?format=docx"><button class="small">Download DOCX</button></a>` : ''}
+        <button class="small" onclick="prepareOne('${esc(j.id)}')" title="Generate a fresh tailored resume and update this audit">Re-tailor</button>
+      </div>
+      <div id="resumePreviewStatus" class="preview-status">${!hasPdf && hasDocx ? esc(p.resumePreviewWarning || 'PDF preview will be created when you open it.') : ''}</div>
+      <h3>What was updated</h3><ul class="change-list">${changeItems}</ul>
+      ${gapItems ? `<h3>Needs your evidence (not auto-added)</h3>
+        <div class="evidence-note">These are job-description terms, not proven resume facts. They were intentionally not inserted. If you genuinely have this experience, add a truthful project/bullet to the master resume and choose Re-tailor.</div>
+        <ul class="change-list">${gapItems}</ul>` : ''}
+      <div id="resumePreview" class="resume-preview"></div>
+    </div>
+    <div id="linkHealth" class="link-health" aria-live="polite"></div>
+  </details>`;
+}
+async function toggleResumePreview(encodedJobId, button) {
+  const box = $('resumePreview');
+  if (!box) return;
+  const open = !box.classList.contains('show');
+  if (!open) { closeResumePreview(); return; }
+  box.classList.add('show');
+  document.body.classList.add('preview-open');
+  if (open && !box.firstChild) {
+    const status = $('resumePreviewStatus');
+    const old = button?.textContent;
+    if (button) { button.disabled = true; button.textContent = 'Preparing preview…'; }
+    if (status) status.textContent = 'Creating or recovering the PDF preview…';
+    try {
+      const ready = await api(`/api/jobs/${encodedJobId}/resume-preview`, { method: 'POST' });
+      const frame = document.createElement('iframe');
+      frame.title = 'Tailored resume PDF preview';
+      frame.loading = 'lazy';
+      frame.src = `${ready.url}&v=${Date.now()}`;
+      const toolbar = document.createElement('div');
+      toolbar.className = 'preview-toolbar';
+      toolbar.innerHTML = '<b>Tailored resume preview</b><button class="small" type="button" onclick="closeResumePreview()">Close ✕</button>';
+      box.appendChild(toolbar);
+      box.appendChild(frame);
+      if (status) status.textContent = ready.generated ? 'Preview generated from the tailored DOCX.' : 'Preview ready.';
+      if (!document.querySelector('.resume-full-link')) {
+        const link = document.createElement('a');
+        link.className = 'resume-full-link'; link.href = ready.url; link.target = '_blank'; link.rel = 'noopener';
+        link.innerHTML = '<button class="small">Open full size ↗</button>';
+        button?.parentElement?.insertBefore(link, button.nextSibling);
+      }
+    } catch (e) {
+      closeResumePreview();
+      if (status) { status.textContent = e.message; status.className = 'preview-status st-blocked'; }
+    } finally {
+      if (button) { button.disabled = false; button.textContent = old; }
+    }
+  }
+}
+function closeResumePreview() {
+  $('resumePreview')?.classList.remove('show');
+  document.body.classList.remove('preview-open');
+}
+function openResumeReview() {
+  const details = document.querySelector('.resume-review');
+  if (!details) return;
+  details.open = true;
+  details.querySelector('.resume-preview-button')?.click();
+}
+async function checkSelectedLink(id) {
+  const box = $('linkHealth');
+  if (box) { box.className = 'link-health'; box.textContent = 'Checking the saved posting link…'; }
+  try {
+    const result = await api(`/api/jobs/${encodeURIComponent(id)}/check-link`, { method: 'POST' });
+    if (box) {
+      box.className = `link-health ${result.status === 'reachable' ? 'good' : ['closed','invalid','error'].includes(result.status) ? 'bad' : ''}`;
+      box.textContent = `${result.message}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`;
+    }
+  } catch (e) {
+    if (box) { box.className = 'link-health bad'; box.textContent = e.message; }
+  }
+}
+async function replaceJobLink(id) {
+  const current = jobsById[id]?.url || '';
+  const replacement = prompt('Paste the direct employer or ATS application URL:', current);
+  if (replacement == null || !replacement.trim() || replacement.trim() === current) return;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(id)}/link`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: replacement.trim() }),
+    });
+    toast('Direct application URL saved. The next Auto-fill starts from this link.');
+    if (jobsById[id]) jobsById[id].url = replacement.trim();
+    refresh();
+    await select(id);
+  } catch (e) { toast(e.message, true); }
+}
+async function copyJobId(button) {
+  const id = button?.dataset?.jobId ?? '';
+  if (!id) return;
+  try {
+    await navigator.clipboard.writeText(id);
+  } catch {
+    const area = document.createElement('textarea');
+    area.value = id; area.style.position = 'fixed'; area.style.opacity = '0';
+    document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+  }
+  toast(`Copied Job ID: ${id}`);
 }
 function renderPacket(p) {
   if (p.error) return `<h3>Packet</h3><div class="st-blocked">${esc(p.error)}</div>`;
@@ -990,12 +1187,16 @@ async function act(id, action, okMsg) {
 }
 async function runPhase(phase) {
   if (isRunning) { toast('A pipeline run is already in progress — wait for it to finish.', true); return; }
+  if (phase === 'discover') setDiscovering(true);
   try {
     await api('/api/run', { method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ phase }) });
     toast(`${phase} started…`);
     pollRun();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    if (phase === 'discover') setDiscovering(false);
+    toast(e.message, true);
+  }
 }
 /** Human-friendly one-line summary of a finished run. */
 function prettyResult(r) {
@@ -1006,8 +1207,8 @@ function prettyResult(r) {
     const ok = list.filter((x) => x.status !== 'failed').length;
     const sub = list.filter((x) => x.submitted).length;
     return sub > 0
-      ? `auto-apply done · ${sub} submitted · ${ok - sub} left for your review`
-      : `auto-apply done · ${ok}/${r.total ?? list.length} filled (review &amp; submit)`;
+      ? `Auto-fill done · ${sub} submitted · ${ok - sub} left for your review`
+      : `Auto-fill done · ${ok}/${r.total ?? list.length} filled (review &amp; submit)`;
   }
   if (r.phase === 'assist') return `assist done · ${r.status ?? ''}`;
   const c = r.counters || {};
@@ -1017,6 +1218,13 @@ function prettyResult(r) {
   return `${r.phase ?? 'run'} done`;
 }
 /** Reflect the live run state in the header + gate conflicting buttons. */
+function setDiscovering(on) {
+  const button = $('btnDiscover');
+  if (!button) return;
+  button.classList.toggle('finding', Boolean(on));
+  button.setAttribute('aria-busy', on ? 'true' : 'false');
+  button.textContent = on ? 'Finding jobs' : 'Find New Jobs';
+}
 function applyRunGate(s) {
   isRunning = !!(s && s.running);
   for (const id of ['btnDiscover', 'btnScore', 'btnPrepare']) {
@@ -1024,6 +1232,7 @@ function applyRunGate(s) {
   }
   const rs = $('runStatus');
   const cancel = $('btnCancel');
+  setDiscovering(isRunning && String(s?.phase ?? '').startsWith('discover'));
   cancel.hidden = !isRunning;
   cancel.disabled = !isRunning || s.cancelRequested;
   cancel.textContent = s.cancelRequested ? 'Cancelling…' : 'Cancel';
@@ -1125,33 +1334,32 @@ async function batchAutoApply() {
   const ids = selIds();
   if (!ids.length) return;
   if (isRunning) {
-    toast('A pipeline run is in progress — wait for it to finish, then auto-apply.', true);
+    toast('A pipeline run is in progress — wait for it to finish, then Auto-fill.', true);
     return;
   }
-  // Auto-apply only makes sense for live, not-yet-submitted postings. Warn about
-  // any selected jobs that are blocked / already submitted / rejected / archived.
-  const NON_APPLICABLE = new Set(['blocked', 'submitted', 'rejected', 'archived', 'discarded']);
-  const skippable = ids.filter((id) => NON_APPLICABLE.has(jobsById[id]?.appStatus));
-  const actionable = ids.filter((id) => !NON_APPLICABLE.has(jobsById[id]?.appStatus));
+  // Recoverable blocked jobs (sign-in, form step, browser session) are valid
+  // retries. Closed jobs and non-direct aggregator/restricted links are skipped.
+  const CLOSED = new Set(['submitted', 'rejected', 'archived', 'discarded']);
+  const canFill = (job) => job && !CLOSED.has(job.appStatus)
+    && (job.appStatus !== 'blocked' || job.attention?.retryable === true);
+  const skippable = ids.filter((id) => !canFill(jobsById[id]));
+  const actionable = ids.filter((id) => canFill(jobsById[id]));
   if (!actionable.length) {
-    toast(`All ${ids.length} selected job(s) are blocked/submitted/closed — nothing to auto-apply.`, true);
+    toast(`All ${ids.length} selected job(s) need a direct link or are already closed/submitted.`, true);
     return;
   }
   let warn = '';
   if (skippable.length) {
     warn = `\n\nNote: ${skippable.length} selected job(s) are blocked/submitted/closed and will be skipped.`;
   }
-  if (!confirm(`Auto-apply ${actionable.length} job(s)?${warn}\n\nFor each job it will: tailor a resume packet if one doesn't exist yet, approve it, open the posting in a browser, and fill everything it can.`)) return;
-  const autoSubmit = askAutoSubmit(actionable.length);
+  if (!confirm(`Auto-fill ${actionable.length} job application(s)?${warn}\n\nFor each job it will: tailor a resume packet if one doesn't exist yet, approve it, open the direct posting, and fill supported fields. It always stops before the final Submit button.`)) return;
   try {
-    const launchIds = autoSubmit ? await authorizedAutoSubmitIds(actionable) : actionable;
-    // The server orchestrates the whole chain (prepare -> approve -> fill[-> submit]).
+    // The server orchestrates the whole chain (prepare -> approve -> fill),
+    // while the human retains the final submission decision.
     const r = await api('/api/assist-batch', { method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ jobIds: launchIds, autoSubmit }) });
-    toast(autoSubmit
-      ? `Auto-applying ${r.queued} job(s) — clean forms are submitted automatically; anything uncertain is left open for you.`
-      : `Auto-applying ${r.queued} job(s) — preparing where needed, then filling one browser at a time. Stops before submit.`);
+      body: JSON.stringify({ jobIds: actionable, autoSubmit: false }) });
+    toast(`Auto-filling ${r.queued} job(s) — preparing where needed, then filling one browser at a time. Always stops before Submit.`);
     pollRun();
   } catch (e) { toast(e.message, true); }
 }
@@ -1191,6 +1399,9 @@ async function saveNote(id) {
 function toggleMenu(ev) { ev.stopPropagation(); $('exportMenu').classList.toggle('show'); }
 function closeMenus() { $('exportMenu')?.classList.remove('show'); }
 document.addEventListener('click', closeMenus);
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape') closeResumePreview();
+});
 
 /* ── compare (uses the current selection, first 3) ── */
 async function showCompare() {
@@ -1223,6 +1434,12 @@ function refresh() {
   loadStats().then(loadSections).catch(() => {});
   loadJobs().catch(() => {});
 }
+function jobIdFromHash() {
+  const match = location.hash.match(/^#job=(.+)$/);
+  if (!match) return null;
+  try { return decodeURIComponent(match[1]); }
+  catch { return null; }
+}
 // Manually changing a filter steps out of any active section tab, so the board
 // and the tab badges never silently disagree.
 function onFilterChange() {
@@ -1241,7 +1458,10 @@ $('addUrlInput').addEventListener('keydown', (e) => {
 // pollRun() runs continuously (fast while a run is active, slow when idle) so it
 // doubles as a health ping: the connection indicator recovers and the board
 // reloads automatically once the server is restarted or a run finishes.
-refresh(); pollRun(); syncSelbar();
+refresh();
+const initialJobId = jobIdFromHash();
+if (initialJobId) select(initialJobId);
+pollRun(); syncSelbar();
 </script>
 </body>
 </html>

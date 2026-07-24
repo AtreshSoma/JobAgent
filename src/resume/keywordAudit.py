@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Mapping, Sequence
 
 
 def read_docx_text(path: str | Path) -> str:
@@ -28,10 +28,41 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
-def audit_keywords(resume_text: str, keywords: Iterable[str]) -> Dict[str, List[str]]:
+def _phrase_pattern(phrase: str) -> re.Pattern:
+    """Boundary-aware matcher so short skills do not match inside other words."""
+    escaped = re.escape(_normalize(phrase))
+    return re.compile(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", re.IGNORECASE)
+
+
+def _evidence_terms(
+    keyword: str,
+    evidence_aliases: Mapping[str, Sequence[str]] | None,
+) -> List[str]:
+    aliases = {
+        _normalize(term): list(values or [])
+        for term, values in (evidence_aliases or {}).items()
+    }
+    result: List[str] = []
+    seen = set()
+    for term in [keyword, *aliases.get(_normalize(keyword), [])]:
+        key = _normalize(term)
+        if key and key not in seen:
+            seen.add(key)
+            result.append(str(term))
+    return result
+
+
+def audit_keywords(
+    resume_text: str,
+    keywords: Iterable[str],
+    *,
+    evidence_aliases: Mapping[str, Sequence[str]] | None = None,
+) -> Dict[str, List[str]]:
     """Split ``keywords`` into those present vs. missing in ``resume_text``.
 
-    Matching is case-insensitive, whitespace-normalized substring matching.
+    Matching is case-insensitive and boundary-aware. Configured evidence aliases
+    can support a JD term (for example, PySpark supports Spark) without claiming
+    that genuinely absent technologies are present.
     """
     haystack = _normalize(resume_text)
     present: List[str] = []
@@ -42,7 +73,11 @@ def audit_keywords(resume_text: str, keywords: Iterable[str]) -> Dict[str, List[
         if not key or key in seen:
             continue
         seen.add(key)
-        (present if key in haystack else missing).append(kw)
+        supported = any(
+            _phrase_pattern(term).search(haystack)
+            for term in _evidence_terms(str(kw), evidence_aliases)
+        )
+        (present if supported else missing).append(kw)
     return {"present": present, "missing": missing}
 
 

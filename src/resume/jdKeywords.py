@@ -19,6 +19,21 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
+def _strip_non_role_boilerplate(text: str) -> str:
+    """Remove recruiting-safety copy that must not become a job requirement."""
+    cleaned = text or ""
+    patterns = (
+        # Common Greenhouse/Anthropic-style fraud warning. Without this guard,
+        # "banking information" is incorrectly tiered as required domain skill.
+        r"legitimate\s+[^.]{0,160}?\s+recruiters?\s+will\s+never\s+ask\s+for\s+"
+        r"[^.]{0,360}?(?:\.|$)",
+        r"recruitment\s+fraud\s+(?:notice|warning)[^.]{0,360}?(?:\.|$)",
+    )
+    for pattern in patterns:
+        cleaned = re.sub(pattern, " ", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
+
 def _phrase_pattern(phrase: str) -> re.Pattern:
     """Word-boundary-ish matcher tolerant of tech punctuation (ci/cd, node.js)."""
     escaped = re.escape(phrase.lower())
@@ -125,7 +140,9 @@ def classify_qualification_keywords(
     """
     # Normalize whitespace up front so multi-word headings and technologies can
     # span line breaks in copied job descriptions without losing classification.
-    text = re.sub(r"\s+", " ", jd_text or "").strip()
+    text = re.sub(
+        r"\s+", " ", _strip_non_role_boilerplate(jd_text or "")
+    ).strip()
     required = list(required_markers or [])
     preferred = list(preferred_markers or [])
     events = _marker_events(text, required, preferred)
@@ -217,7 +234,7 @@ def extract_jd_keywords(
           "title_terms": [...],
         }
     """
-    jd_norm = _normalize(jd_text)
+    jd_norm = _normalize(_strip_non_role_boilerplate(jd_text))
     title_norm = _normalize(title)
     required_markers = list(required_markers or [])
     preferred_markers = list(preferred_markers or [])

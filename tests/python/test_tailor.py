@@ -133,8 +133,11 @@ def test_reorders_competencies_to_put_jd_skills_first(sample_resume_with_compete
     )
     from docx import Document
     doc = Document(result["output_path"])
-    platforms = doc.tables[0].rows[0].cells[1].text
-    pipelines = doc.tables[0].rows[1].cells[1].text
+    assert len(doc.tables) == 0
+    platforms = next(p.text.removeprefix("Data Platforms:").strip()
+                     for p in doc.paragraphs if p.text.startswith("Data Platforms:"))
+    pipelines = next(p.text.removeprefix("Pipelines:").strip()
+                     for p in doc.paragraphs if p.text.startswith("Pipelines:"))
     # JD-matched skills moved to the FRONT of their category…
     assert platforms.startswith("Microsoft Fabric")
     assert pipelines.startswith("PySpark")
@@ -176,6 +179,46 @@ def test_tailored_resume_never_contains_unsupported_requirements(
     for kw in unsupported:
         assert kw in gap_keywords
         assert kw not in tailored_tokens
+
+
+def test_truthful_aliases_remove_false_gaps_without_adding_new_claims(
+    sample_resume_with_competencies, tmp_path, humanizer_patterns
+):
+    result = tailor_resume(
+        sample_resume_with_competencies,
+        tmp_path / "out",
+        {
+            "company": "Acme",
+            "title": "Data Engineer",
+            "jd_text": "Spark and ELT; dbt required.",
+        },
+        keywords=["spark", "elt", "dbt"],
+        patterns=humanizer_patterns,
+        evidence_aliases={
+            "spark": ["pyspark"],
+            "elt": ["adf pipelines"],
+        },
+    )
+
+    assert {"spark", "elt"} <= {
+        str(term).lower() for term in result["audit"]["present"]
+    }
+    assert {gap["keyword"] for gap in result["gaps"]} == {"dbt"}
+    assert result["audit"]["supported_by"]["spark"][0]["matched_term"] == "pyspark"
+    assert result["audit"]["supported_by"]["elt"][0]["matched_term"] == "adf pipelines"
+
+
+def test_nonempty_current_jd_suppresses_stale_missing_keywords(
+    sample_resume_with_competencies, tmp_path, humanizer_patterns
+):
+    result = tailor_resume(
+        sample_resume_with_competencies,
+        tmp_path / "out",
+        {"company": "Acme", "title": "Data Engineer", "jd_text": "Required: SQL."},
+        keywords=["sql", "scala"],
+        patterns=humanizer_patterns,
+    )
+    assert {gap["keyword"] for gap in result["gaps"]} == {"sql"}
 
 
 def test_changes_log_traces_every_action_to_evidence(sample_resume_with_competencies, tmp_path, humanizer_patterns):
@@ -236,7 +279,13 @@ def _employment_anchor_sequence(document):
         "Acme Corporation", "Senior Data Engineer", "January 2022 - Present",
         "Beta Systems", "Data Engineer", "June 2019 - December 2021",
     }
-    return [paragraph.text for paragraph in document.paragraphs if paragraph.text in expected]
+    return [
+        unit
+        for paragraph in document.paragraphs
+        for line in paragraph.text.splitlines()
+        for unit in line.split("  |  ")
+        if unit in expected
+    ]
 
 
 def test_required_content_ranks_before_preferred_within_original_scopes(
@@ -262,9 +311,9 @@ def test_required_content_ranks_before_preferred_within_original_scopes(
     summary_start = texts.index("PROFESSIONAL SUMMARY")
     assert texts[summary_start + 1].startswith("Built SQL")
 
-    acme_sql = texts.index("Built SQL pipelines with tested data-quality controls.")
+    acme_sql = next(index for index, text in enumerate(texts) if "Built SQL pipelines with tested data-quality controls." in text)
     acme_tableau = texts.index("Created Tableau dashboards for business users.")
-    beta_python = texts.index("Developed Python validation for scheduled loads.")
+    beta_python = next(index for index, text in enumerate(texts) if "Developed Python validation for scheduled loads." in text)
     beta_kafka = texts.index("Maintained Kafka ingestion for internal datasets.")
     assert acme_sql < acme_tableau
     assert beta_python < beta_kafka
@@ -380,8 +429,8 @@ def test_duplicate_protection_is_idempotent_and_preserves_docx_layout(
     doc = Document(second["output_path"])
     texts = [paragraph.text for paragraph in doc.paragraphs]
     assert sum(text.lower().startswith("most relevant to this role:") for text in texts) == 1
-    assert Counter(texts)["Built SQL pipelines with tested data-quality controls."] == 1
-    assert [
+    assert sum(text.count("Built SQL pipelines with tested data-quality controls.") for text in texts) == 1
+    standalone_styles = [
         paragraph.style.name for paragraph in doc.paragraphs
         if paragraph.text in {
             "Built SQL pipelines with tested data-quality controls.",
@@ -389,7 +438,14 @@ def test_duplicate_protection_is_idempotent_and_preserves_docx_layout(
             "Developed Python validation for scheduled loads.",
             "Maintained Kafka ingestion for internal datasets.",
         }
-    ] == ["List Bullet"] * 4
+    ]
+    assert standalone_styles
+    assert standalone_styles == ["List Bullet"] * len(standalone_styles)
+    assert any(
+        paragraph.paragraph_format.keep_together is True
+        and "Built SQL pipelines with tested data-quality controls." in paragraph.text
+        for paragraph in doc.paragraphs
+    )
     assert second["invariants"]["duplicate_protection_passed"] is True
     assert not any(change["type"] == "focus_line" for change in second["changes"])
 
@@ -438,7 +494,7 @@ def test_cli_propagates_truthfulness_contract(tmp_path, humanizer_patterns):
     assert response["gaps"][0]["keyword"] == "terraform"
 
 
-def test_non_competency_tables_are_immutable(tmp_path, humanizer_patterns):
+def test_non_competency_tables_are_flattened_without_rewriting(tmp_path, humanizer_patterns):
     from docx import Document
 
     doc = Document()
@@ -462,5 +518,86 @@ def test_non_competency_tables_are_immutable(tmp_path, humanizer_patterns):
         patterns=humanizer_patterns,
     )
     tailored = Document(result["output_path"])
-    assert tailored.tables[0].rows[0].cells[1].text == "Tableau, SQL, Python"
+    assert len(tailored.tables) == 0
+    assert any(
+        paragraph.text == "Acme Corporation  Tableau, SQL, Python"
+        for paragraph in tailored.paragraphs
+    )
     assert not any(change["type"] == "reorder_skills" for change in result["changes"])
+    assert any(change["type"] == "flatten_tables_for_ats" for change in result["changes"])
+    assert result["invariants"]["tables_removed_for_ats"] is True
+
+
+def test_role_heading_date_and_project_lead_stay_together(tmp_path, humanizer_patterns):
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Candidate Name")
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph("Senior Data Engineer")
+    doc.add_paragraph("Acme - Remote - March 2022 - Present")
+    doc.add_paragraph("Enterprise data-platform modernization")
+    doc.add_paragraph("Built SQL pipelines.", style="List Bullet")
+    master = tmp_path / "PAGING_MASTER.docx"
+    doc.save(master)
+
+    result = tailor_resume(
+        master, tmp_path / "out",
+        {"company": "Example", "title": "Data Engineer", "jd_text": "Required: SQL."},
+        keywords=["sql"], patterns=humanizer_patterns,
+    )
+    tailored = Document(result["output_path"])
+    by_text = {paragraph.text: paragraph for paragraph in tailored.paragraphs}
+    assert by_text["PROFESSIONAL EXPERIENCE"].paragraph_format.keep_with_next is True
+    role = next(
+        paragraph for paragraph in tailored.paragraphs
+        if paragraph.text.startswith("Senior Data Engineer  |  Acme - Remote")
+    )
+    assert role.paragraph_format.keep_with_next is False
+    assert role.paragraph_format.keep_together is True
+    assert role.paragraph_format.widow_control is True
+    assert "Enterprise data-platform modernization" in role.text
+    assert "Enterprise data-platform modernization" not in by_text
+    assert result["invariants"]["page_breaks_stabilized"] is True
+    assert any(change["type"] == "stabilize_page_breaks" for change in result["changes"])
+
+
+def test_dense_resume_groups_complete_role_context_without_changing_text(tmp_path, humanizer_patterns):
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Candidate Name")
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph("Senior Data Engineer")
+    doc.add_paragraph("Acme - Remote - March 2022 - Present")
+    for index in range(12):
+        doc.add_paragraph((f"Delivered SQL and Python platform outcome {index}. " * 12), style="List Bullet")
+    doc.add_paragraph("Data Engineer")
+    doc.add_paragraph("Example - Remote - January 2020 - February 2022")
+    doc.add_paragraph("Built reliable data pipelines.", style="List Bullet")
+    doc.add_paragraph("BI Developer")
+    doc.add_paragraph("Older Co - Remote - January 2018 - December 2019")
+    doc.add_paragraph("Built reliable analytics models.", style="List Bullet")
+    master = tmp_path / "DENSE_PAGING_MASTER.docx"
+    doc.save(master)
+
+    result = tailor_resume(
+        master, tmp_path / "out",
+        {"company": "Example", "title": "Data Engineer", "jd_text": "Required: SQL and Python."},
+        keywords=["sql", "python"], patterns=humanizer_patterns,
+    )
+    tailored = Document(result["output_path"])
+    second_role = next(
+        paragraph for paragraph in tailored.paragraphs
+        if paragraph.text.startswith("Data Engineer  |  Example - Remote")
+    )
+    assert second_role.paragraph_format.page_break_before is not True
+    assert second_role.paragraph_format.keep_together is True
+    assert "Built reliable data pipelines." in second_role.text
+    assert sum(paragraph.text.count("Built reliable data pipelines.") for paragraph in tailored.paragraphs) == 1
+    assert 'w:type="page"' in tailored._element.xml
+    pagination = next(change for change in result["changes"] if change["type"] == "stabilize_page_breaks")
+    assert pagination["evidence"][0]["grouped_role_indexes"]
+    assert pagination["evidence"][0]["role_boundary_page_breaks"] == 1
+    assert pagination["evidence"][0]["text_changed"] is False
+    assert result["invariants"]["role_context_text_preserved"] is True

@@ -50,6 +50,7 @@ def _run(request: dict) -> dict:
     job = request.get("job") or {}
     keywords = request.get("keywords") or []
     vocabulary = request.get("vocabulary") or []
+    evidence_aliases = request.get("evidence_aliases") or {}
     ats_config = request.get("ats_config") or {}
     add_summary_line = bool(request.get("add_summary_line", False))
     export_pdf = bool(request.get("export_pdf", False))
@@ -68,16 +69,18 @@ def _run(request: dict) -> dict:
         add_summary_line=add_summary_line,
         required_markers=ats_config.get("requiredMarkers"),
         preferred_markers=ats_config.get("preferredMarkers"),
+        evidence_aliases=evidence_aliases,
         enable_rewrites=bool(request.get("enable_rewrites", False)),
         output_name=output_name,
     )
 
     pdf_path = None
+    pdf_result = None
     if export_pdf:
         from pdfExport import export_to_pdf
 
-        pdf = export_to_pdf(result["output_path"])
-        pdf_path = pdf.get("pdf_path") if pdf.get("exported") else None
+        pdf_result = export_to_pdf(result["output_path"])
+        pdf_path = pdf_result.get("pdf_path") if pdf_result.get("exported") else None
 
     # Validate the generated resume's format + content (honest quality gate).
     validation = None
@@ -93,7 +96,9 @@ def _run(request: dict) -> dict:
     # Wrapped so an analysis failure never breaks the tailoring contract.
     ats_report = None
     try:
-        ats_report = _build_ats_report(result["output_path"], job, vocabulary, ats_config)
+        ats_report = _build_ats_report(
+            result["output_path"], job, vocabulary, ats_config, evidence_aliases
+        )
     except Exception as err:  # noqa: BLE001 - ATS analysis is best-effort
         ats_report = {"error": f"ats report skipped: {type(err).__name__}: {err}"}
 
@@ -101,6 +106,7 @@ def _run(request: dict) -> dict:
         "ok": True,
         "output_path": result["output_path"],
         "pdf_path": pdf_path,
+        "pdf_result": pdf_result,
         "audit": result.get("audit"),
         "emphasized": result.get("emphasized"),
         "summary_line": result.get("summary_line"),
@@ -117,7 +123,7 @@ def _run(request: dict) -> dict:
     }
 
 
-def _build_ats_report(resume_path, job, vocabulary, ats_config):
+def _build_ats_report(resume_path, job, vocabulary, ats_config, evidence_aliases=None):
     """Tier JD keywords, lint the resume, and compose the ATS readiness report."""
     from jdKeywords import extract_jd_keywords
     from atsLint import lint_resume
@@ -135,7 +141,13 @@ def _build_ats_report(resume_path, job, vocabulary, ats_config):
     )
     lint = lint_resume(resume_path, config=ats_config)
     resume_text = read_docx_text(resume_path)
-    report = build_ats_report(resume_text, jd_keywords, lint, config=ats_config)
+    report = build_ats_report(
+        resume_text,
+        jd_keywords,
+        lint,
+        config=ats_config,
+        evidence_aliases=evidence_aliases or {},
+    )
     # Carry the tiering forward so reviewers can see exactly what the JD demanded.
     report["jd_tier1"] = jd_keywords.get("tier1", [])
     report["jd_tier2"] = jd_keywords.get("tier2", [])

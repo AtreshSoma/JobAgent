@@ -1,11 +1,10 @@
 /**
- * Deterministic, side-effect-free Auto-Apply precheck.
+ * Deterministic, side-effect-free assisted-fill / Auto-submit precheck.
  *
- * This is deliberately stricter than ordinary "Fill in browser". Auto-Apply
- * may reach the final Submit control, so every fact that can be checked before
- * opening a browser must be known and safe. Dynamic browser checks (login,
- * CAPTCHA, required fields, uploads, and final confirmation) still run inside
- * applyRunner and can stop the attempt at any time.
+ * Ordinary Auto-apply only fills for human review: uncertain sponsorship or an
+ * unanswered question is a warning, not a reason to prevent the browser from
+ * opening. The same preview becomes deliberately strict only when final
+ * Auto-submit is explicitly authorized for this run.
  */
 
 import { APPROVAL_STATUS } from './approvalQueue.js';
@@ -61,9 +60,12 @@ export function evaluateAutoApplyEligibility({
   const reasons = [];
   const warnings = [];
   const checks = [];
-  const add = (id, passed, label, detail) => {
+  const add = (id, passed, label, detail, strictOnly = false) => {
     checks.push({ id, passed, label, detail });
-    if (!passed) reasons.push(detail);
+    if (!passed) {
+      if (strictOnly && !autoSubmitAuthorized) warnings.push(detail);
+      else reasons.push(detail);
+    }
   };
 
   const applied = Number(job.applied) === 1 || DUPLICATE_STATUSES.has(job.status);
@@ -85,12 +87,12 @@ export function evaluateAutoApplyEligibility({
     && !/no sponsorship|not sponsor|unlikely/i.test(sponsorship);
   add('sponsorship', sponsorshipSafe, 'Sponsorship precheck passes', sponsorshipSafe
     ? `Stored sponsorship assessment: ${sponsorship}.`
-    : `Sponsorship is ${sponsorship}; verify compatibility before Auto-Apply.`);
+    : `Sponsorship is ${sponsorship}; verify compatibility before final submission.`, true);
 
   const ats = inferredAts(job, packet);
   add('ats', VERIFIED_ATS.has(ats), 'ATS has a fixture-tested contract', VERIFIED_ATS.has(ats)
     ? `${ats} is covered by a local no-submit fixture.`
-    : `ATS is ${ats}; Auto-Apply is disabled until a supported contract is identified.`);
+    : `ATS is ${ats}; final Auto-submit requires a supported contract, while assisted fill may need manual completion.`, true);
 
   add('packet', Boolean(packet), 'Application packet exists', packet
     ? 'A prepared packet is available for review.'
@@ -100,7 +102,7 @@ export function evaluateAutoApplyEligibility({
     const packetBlockers = unique(packet.blockers ?? []);
     add('packet_blockers', packetBlockers.length === 0, 'Packet has no blockers', packetBlockers.length
       ? `Packet blockers: ${packetBlockers.join('; ')}`
-      : 'No packet blockers are recorded.');
+      : 'No packet blockers are recorded.', true);
 
     const needsUser = unique([
       ...(packet.prefill?.needsUser ?? []).map((x) => x?.label ?? x?.field ?? x),
@@ -108,7 +110,7 @@ export function evaluateAutoApplyEligibility({
     ]);
     add('answers', needsUser.length === 0, 'Required saved answers are complete', needsUser.length
       ? `Questions still need your answer: ${needsUser.join('; ')}`
-      : 'No unresolved packet questions are recorded.');
+      : 'No unresolved packet questions are recorded.', true);
 
     const uploadBlockers = unique(packet.uploads?.blockers ?? []);
     const resumePath = clean(packet.resumePath ?? job.resume_docx_path ?? job.resume_path);
@@ -119,7 +121,7 @@ export function evaluateAutoApplyEligibility({
         : 'The packet references a resume document with no recorded warning.');
     add('uploads', uploadBlockers.length === 0, 'Upload plan has no blockers', uploadBlockers.length
       ? `Upload blockers: ${uploadBlockers.join('; ')}`
-      : 'No upload-plan blockers are recorded.');
+      : 'No upload-plan blockers are recorded.', true);
   }
 
   if (approval?.approval_status === APPROVAL_STATUS.REJECTED) {
@@ -129,7 +131,7 @@ export function evaluateAutoApplyEligibility({
   }
 
   if (!autoSubmitAuthorized) {
-    warnings.push('Final submission is not authorized until you explicitly enable it for this run.');
+    warnings.push('Assisted fill will stop before Submit; final submission is not authorized.');
   }
   warnings.push('Browser prechecks still stop for login, CAPTCHA/MFA, changed fields, upload failure, or missing confirmation evidence.');
 
@@ -145,7 +147,7 @@ export function evaluateAutoApplyEligibility({
     warnings: unique(warnings),
     checks,
     nextAction: eligible
-      ? (autoSubmitAuthorized ? 'Eligible for this explicitly authorized Auto-Apply run.' : 'Review the warnings, then explicitly authorize final submission for this run.')
+      ? (autoSubmitAuthorized ? 'Eligible for this explicitly authorized Auto-submit run.' : 'Eligible for assisted fill; review the browser form and submit it yourself.')
       : reasons[0],
   };
 }

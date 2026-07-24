@@ -99,6 +99,7 @@ export function createHostGate({
    * @property {number} inFlight
    * @property {Array<() => void>} queue waiters for a slot
    * @property {number} nextStartAt earliest ms at which a request may start
+   * @property {Promise<void>} startTail serializes actual request starts
    * @property {number} consecutiveThrottles
    * @property {number} openUntil breaker open until this ms (0 = closed)
    * @property {number} throttleEvents total 429/503 seen (for reporting)
@@ -109,7 +110,15 @@ export function createHostGate({
   function stateFor(key) {
     let s = hosts.get(key);
     if (!s) {
-      s = { inFlight: 0, queue: [], nextStartAt: 0, consecutiveThrottles: 0, openUntil: 0, throttleEvents: 0 };
+      s = {
+        inFlight: 0,
+        queue: [],
+        nextStartAt: 0,
+        startTail: Promise.resolve(),
+        consecutiveThrottles: 0,
+        openUntil: 0,
+        throttleEvents: 0,
+      };
       hosts.set(key, s);
     }
     return s;
@@ -194,23 +203,38 @@ export function createHostGate({
       // waited for a slot, in which case there is no point spending the request.
       if (isOpenKey(key)) throw new HostCircuitOpenError(key);
 
-      // Reserve a distinct start time while still in the synchronous section.
-      // Previously every queued caller observed the same nextStartAt, slept to
-      // the same instant, and then woke as a burst — defeating the limiter.
       const spacing = Math.max(0, Number(runOptions.minSpacingMs ?? minSpacingMs) || 0);
+      let releaseStart = null;
+      if (spacing > 0) {
+        // Serialize the *actual* start, not only its nominal reservation. When
+        // the event loop is busy, several overdue timers can otherwise wake in
+        // one tick and create the exact burst this gate is meant to prevent.
+        const previousStart = s.startTail;
+        s.startTail = new Promise((resolve) => { releaseStart = resolve; });
+        await previousStart;
+      }
+
       const startAt = Math.max(s.nextStartAt, now());
-      if (spacing > 0) s.nextStartAt = startAt + spacing;
       const waitMs = startAt - now();
       if (waitMs > 0) await sleepFn(waitMs);
+      if (spacing > 0) s.nextStartAt = now() + spacing;
 
       try {
-        const out = await fn();
+        // Calling fn starts its synchronous portion before the next spaced
+        // caller is released. The network operation itself remains concurrent.
+        const operation = fn();
+        releaseStart?.();
+        releaseStart = null;
+        const out = await operation;
         s.consecutiveThrottles = 0; // a clean response means we're within budget
         return out;
       } catch (err) {
         const status = Number(err?.status ?? err?.statusCode ?? NaN);
         if (isThrottleStatus(status)) noteThrottle(key, err?.retryAfterMs);
         throw err;
+      } finally {
+        // Also unlock if waiting or fn() throws synchronously.
+        releaseStart?.();
       }
     } finally {
       release(s);

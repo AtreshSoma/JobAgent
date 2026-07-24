@@ -254,6 +254,48 @@ export function explainStatus(job = {}, appStatus = '', approval = null) {
   }
 }
 
+/**
+ * Turn the overloaded technical `assist_blocked` state into the action the
+ * person actually needs to take. This is presentation metadata only: it does
+ * not weaken any automation guard or guess an answer.
+ */
+export function classifyAttention(job = {}, appStatus = '') {
+  if (![APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED].includes(appStatus)) return null;
+  const reason = jsonList(job.assist_blockers).join(' ').toLowerCase();
+  let aggregator = false;
+  try { aggregator = /(^|\.)(linkedin|indeed|glassdoor|dice|ziprecruiter|simplyhired|monster)\./i.test(new URL(job.url).hostname); }
+  catch { /* invalid URL is classified below */ }
+  if (appStatus === APP_STATUS.CANCELLED) return {
+    kind: 'paused', label: 'Paused safely', summary: 'Resume Auto-fill when you are ready.', retryable: true,
+  };
+  if (/captcha|verification challenge|human verification/.test(reason)) return {
+    kind: 'verification', label: 'Needs verification', summary: 'Complete the site verification in the open browser, then retry Auto-fill.', retryable: true,
+  };
+  if (/login|sign[ -]?in|account required|authenticate|\bmfa\b/.test(reason)) return {
+    kind: 'sign_in', label: 'Needs sign-in', summary: 'Sign in on the employer site, then retry Auto-fill.', retryable: true,
+  };
+  if (/upload input not found|no upload selector resolved/.test(reason)) return {
+    kind: 'form_step', label: 'Continue to form', summary: 'The resume field was not on the current page. Continue to the application form and retry Auto-fill.', retryable: true,
+  };
+  if (/could not start browser|profile.*lock|target.*closed/.test(reason)) return {
+    kind: 'browser_session', label: 'Browser needs attention', summary: 'The browser session could not start. Retry with the dedicated Job Agent session.', retryable: true,
+  };
+  if (/404|not found|\bgone\b|posting.*closed/.test(reason)) return {
+    kind: 'dead_link', label: 'Check posting link', summary: 'The saved posting may be closed or stale. Check it or replace it with the direct employer URL.', retryable: false,
+  };
+  if (/403|forbidden|access denied/.test(reason) || aggregator) return {
+    kind: aggregator ? 'aggregator' : 'restricted_link', label: 'Open manually',
+    summary: aggregator ? 'Use the employer Apply link, then save that direct URL here.' : 'The site restricts automated access; opening it manually may still work.',
+    retryable: false,
+  };
+  if (appStatus === APP_STATUS.FAILED) return {
+    kind: 'retry', label: 'Retry needed', summary: 'Review the recorded error, then retry Auto-fill.', retryable: true,
+  };
+  return {
+    kind: 'needs_help', label: 'Needs your help', summary: 'Open the application to complete the step the assistant could not safely answer.', retryable: true,
+  };
+}
+
 /** An Error carrying the HTTP status the server should reply with. */
 function httpError(statusCode, message) {
   return Object.assign(new Error(message), { statusCode });
@@ -407,6 +449,7 @@ function boardRow(job, approval, now) {
     appStatus,
     progress: progressFor(appStatus),
     statusReason: explainStatus(job, appStatus, approval),
+    attention: classifyAttention(job, appStatus),
     lastAction: lastActionFor(job, appStatus),
     userDecision: job.user_decision ?? null,
     atsPlatform: job.ats_platform ?? null,
@@ -423,6 +466,8 @@ function boardRow(job, approval, now) {
     approvalStatus: approval?.approval_status ?? null,
     packetPath: job.application_packet_path ?? null,
     resumePath: job.resume_path ?? null,
+    resumeDocxPath: job.resume_docx_path ?? job.resume_path ?? null,
+    resumePdfPath: job.resume_pdf_path ?? null,
     coverLetterPath: job.cover_letter_path ?? null,
     notes: job.notes ?? null,
     submittedConfirmation: job.submitted_confirmation ?? null,
@@ -790,6 +835,10 @@ export function jobDetail(db, jobId, deps = {}) {
         blockers: full.blockers ?? [],
         resumeTailored: Boolean(full.resumeTailored),
         resumeWarning: full.resumeWarning ?? null,
+        resumePath: full.resumePath ?? null,
+        resumePdfPath: full.resumePdfPath ?? null,
+        resumePreviewWarning: full.resumePreviewWarning ?? null,
+        resumeValidation: full.resumeValidation ?? null,
         tailoring: full.tailoring ?? null,
         atsReport: full.atsReport ?? null,
         prefillPlan: full.prefill?.plan ?? [],

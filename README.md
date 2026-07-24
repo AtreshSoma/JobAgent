@@ -116,8 +116,8 @@ What happens at each stage, concretely:
 | Search | `src/search/` | Calls Greenhouse/Lever public APIs, parses JSON-LD from public job pages, and imports your CSV/URL lists. No login automation, no stealth. |
 | Normalize | `src/search/normalize.js` | Converts every source into one canonical job shape with a stable ID. |
 | De-dupe | `src/search/deduplicator.js` | Drops repeats (keeps the richer JD); skips jobs you've already **applied** to (toggle via `EXCLUDE_ALREADY_APPLIED`). |
-| Freshness | `src/search/freshnessFilter.js` | Keeps recent **dated** postings only, per `JOB_FRESHNESS_MODE` (LAST_24_HOURS / LAST_3_DAYS / LAST_7_DAYS / ALL — **default LAST_7_DAYS**: requisitions stay open for weeks, and a 3-day hard window was measured discarding >75% of scoreable jobs before ranking). Auto-widens to a 3-day window when a strict window is thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs are **never** mixed into fresh results; with `INCLUDE_UNKNOWN_DATE_JOBS=true` they go to a separate review bucket (`data/unknown_date_review.json`), otherwise they are dropped. |
-| Exclude | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior, C2C/part-time, wrong-geo, and stale postings — all phrases come from `config/exclusions.json`. |
+| Freshness | `src/search/freshnessFilter.js` | Keeps dated postings per `JOB_FRESHNESS_MODE` (LAST_24_HOURS / LAST_3_DAYS / LAST_7_DAYS / ALL). The supplied broad-coverage configuration uses **ALL**, then applies the separate 45-day stale-posting guard. Auto-widens to a 3-day window when a strict window is thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs go to a visible date-unconfirmed review bucket when `INCLUDE_UNKNOWN_DATE_JOBS=true`, rather than being silently dropped. |
+| Exclude | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior/unrelated, wrong-geo, and stale postings. C2C, 1099, part-time, freelance, and other employment arrangements remain visible and are classified for UI filtering. |
 | Sponsorship | `src/scoring/sponsorshipClassifier.js` | Confirmed / Likely / Unconfirmed from JD phrases + known-sponsor list in config. |
 | Score | `src/scoring/scorer.js` | 13 weighted categories (title, seniority, Azure/Fabric stack, data-eng stack, BI/semantic, Python/SQL/PySpark, domain, sponsorship, geography, freshness, direct-ATS, company likelihood, resume alignment) → normalized 0–100. Fully deterministic. |
 | Tier + gate | `src/scoring/explainScore.js` | Priority ≥85, Apply ≥75, Queue ≥60, Near miss ≥50. Downgrades Apply/Priority → Queue unless sponsorship is acceptable or you approved it. The dashboard still shows these gated 75+ roles as **strong fits** with a "⚠ verify sponsorship first" action — fit measures the ROLE match; sponsorship feasibility is reported separately, and the gate only blocks auto-preparation. Only Priority/Apply tiers are auto-prepared; Queue-tier jobs are prepared **only** when you select them yourself ("Prepare selected"). |
@@ -130,6 +130,18 @@ What happens at each stage, concretely:
 | Report | `src/reports/reportGenerator.js` | Writes JSON + CSV + HTML summaries to `reports/`. |
 
 ---
+
+## Chrome / Edge assisted-fill extension
+
+The unpacked Manifest V3 extension in `extension/` moves an approved job from its posting to the real application and fills the current form step in your normal signed-in Chrome or Edge profile. It uses only a human-approved application packet, recognizes verified LinkedIn/Indeed redirects, clicks only an initial Apply/Apply Now control, highlights fields it filled, uploads only the packet's approved resume/cover-letter artifacts, records a privacy-minimized truthful result in the dashboard, and always leaves final submission to you.
+
+1. Start the dashboard with `npm run dashboard`.
+2. Open `chrome://extensions` or `edge://extensions`, enable **Developer mode**, choose **Load unpacked**, and select this repository's `extension` folder.
+3. Open the extension's **Connection settings**. Keep the server at `http://127.0.0.1:4646` and paste the value of `JOB_AGENT_EXTENSION_KEY` from your local `.env` file.
+4. Prepare and approve a job in the Job Agent UI, select its row, and click the extension. The selected ID is transferred automatically through the dashboard URL—no copying or pasting.
+5. Choose **Open application**. On LinkedIn/Indeed or an employer job page, choose **Start / fill application**: the extension safely starts the application when needed, or fills the visible form step and attaches the approved resume. Review the step, continue, and run it again on later ATS steps. You always click the final Submit button yourself.
+
+Security boundaries: the server remains loopback-only; extension requests require the high-entropy shared key and reject cross-site browser traffic; only approved packets are readable; artifact paths must remain inside the repository; already-submitted jobs are blocked; the extension receives no permanent website access (`activeTab` only); job context is verified before navigation/filling; and it never fills passwords, CAPTCHAs, voluntary demographic fields, legal attestations, or submit controls. Rotate the key if it is ever exposed and restart the dashboard after changing it.
 
 ## Safety & compliance principles
 

@@ -76,6 +76,29 @@ describe('createHostGate', () => {
     expect(started[3] - started[2]).toBeGreaterThanOrEqual(10);
   });
 
+  it('keeps starts spaced when overdue timers resume after an event-loop stall', async () => {
+    const gate = createHostGate({ maxConcurrent: 4 });
+    const started = [];
+    const zero = Date.now();
+    const requests = Promise.all(Array.from({ length: 4 }, () => gate.run(
+      'https://nvidia.wd5.myworkdayjobs.com/x',
+      async () => { started.push(Date.now() - zero); },
+      { minSpacingMs: 20 },
+    )));
+
+    // Let the old implementation schedule all nominal timers, then make every
+    // timer overdue. It used to wake them as one burst after this stall.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const blockedUntil = Date.now() + 90;
+    while (Date.now() < blockedUntil) { /* intentionally block this test's event loop */ }
+    await requests;
+
+    started.sort((a, b) => a - b);
+    expect(started[1] - started[0]).toBeGreaterThanOrEqual(10);
+    expect(started[2] - started[1]).toBeGreaterThanOrEqual(10);
+    expect(started[3] - started[2]).toBeGreaterThanOrEqual(10);
+  });
+
   it('honors Retry-After for every caller of the host, not just the throttled one', async () => {
     const slept = [];
     const gate = createHostGate({

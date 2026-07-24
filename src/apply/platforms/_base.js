@@ -46,6 +46,10 @@ export function makePlatform({ key, name, selectors = {}, fileInputs = {}, submi
         path: u.path,
         selector: fileInputs[u.type] ?? null,
         resolved: Boolean(fileInputs[u.type]),
+        // A resume is required for the assisted application flow. A generated
+        // cover letter is an optional enhancement: many ATSes (including most
+        // Workday configurations) do not expose a cover-letter input at all.
+        required: u.type === 'resume',
       }));
 
       const needsUser = packet.prefill?.needsUser ?? [];

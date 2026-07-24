@@ -84,7 +84,15 @@ describe('tailorResumeForJob', () => {
     const r = await tailorResumeForJob({
       job: { company: 'Acme', title: 'SDE', jdText: 'spark' },
       score: { matchedKeywords: ['spark'], missingKeywords: ['dbt'] },
-      config: { root, humanizerPatterns: {}, scoring: { keywords: { azureFabric: ['Databricks'] } }, atsResume: { coverage: {} } },
+      config: {
+        root,
+        humanizerPatterns: {},
+        scoring: {
+          keywords: { azureFabric: ['Databricks'] },
+          evidenceAliases: { spark: ['pyspark'] },
+        },
+        atsResume: { coverage: {} },
+      },
       deps: { spawnImpl },
     });
 
@@ -98,6 +106,7 @@ describe('tailorResumeForJob', () => {
     // The request carried the grounding vocabulary + ATS config to Python.
     const sent = JSON.parse(written);
     expect(sent.vocabulary).toContain('Databricks');
+    expect(sent.evidence_aliases).toEqual({ spark: ['pyspark'] });
     expect(sent.ats_config).toMatchObject({ coverage: {} });
   });
 
