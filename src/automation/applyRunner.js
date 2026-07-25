@@ -35,7 +35,7 @@ import { scanFields, resolveFormScope, detectValidationErrors } from './domScann
 import { fillScannedFields } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
-import { assertTruthfulSponsorship } from '../apply/screeningQA.js';
+import { assertTruthfulSponsorship, isInvertedSponsorshipQuestion } from '../apply/screeningQA.js';
 import {
   APPLICATION_PHASE,
   applicationStatePreventsReopen,
@@ -189,6 +189,9 @@ export async function assistApply({
     result.blockers.push(err.message);
     return result;
   }
+  // Packet-level truthfulness. Plan entries carry their question `label`, so
+  // this also catches an affirmative answer to an INVERTED sponsorship question
+  // (a bare "Yes" whose text looks innocent but whose meaning is false).
   const truthCheck = assertTruthfulSponsorship(packet?.screeningPlan?.answered ?? []);
   result.sponsorshipTruthful = truthCheck.truthful;
   if (!truthCheck.truthful) {
@@ -277,7 +280,11 @@ export async function assistApply({
         blockers: [],
         submissionEvidence: ['explicit per-run auto-submit authorization', 'submit attempt initiated'],
       }, 'final submit attempt initiated; verification required');
-      const clicked = await clickAndSettle(scope, { selector: result.submitSelector, text: 'Submit' }, deps);
+      // selectorOnly: click ONLY the selector we just verified resolves to
+      // exactly one control. No accessible-name fallback on the submit path.
+      const clicked = await clickAndSettle(
+        scope, { selector: result.submitSelector, text: 'Submit' }, deps, { selectorOnly: true },
+      );
       if (!clicked) {
         await checkpoint(APPLICATION_PHASE.VERIFYING, {
           currentStep: result.currentStep,
@@ -456,6 +463,18 @@ export async function assistApply({
       dynamicNeedsUser = [...needsUserByKey.values()];
       for (const err of conditional.errors ?? []) stepBlockers.push(`field ${err.label ?? err.field}: ${err.error}`);
       result.unresolved = staticUnresolved;
+
+      // Invariant: the screening matcher must never answer an INVERTED
+      // sponsorship question ("…work WITHOUT sponsorship?"). It refuses by
+      // design, so reaching here means a config/matcher regression — treat it
+      // as a hard blocker rather than submit a false immigration claim.
+      for (const f of completedThisStep) {
+        if (f.source === 'screening' && isInvertedSponsorshipQuestion(f.label)) {
+          stepBlockers.push(
+            `refusing to auto-answer an inverted sponsorship question: "${f.label}" — answer it yourself`,
+          );
+        }
+      }
 
       // A dynamic form field we cannot answer blocks the run ONLY when the live
       // form marks it required. Optional unknowns (middle name, address line 2,

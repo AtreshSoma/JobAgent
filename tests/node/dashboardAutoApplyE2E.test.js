@@ -73,8 +73,10 @@ describe('dashboard Auto-fill browser flow', () => {
       await expect.poll(() => db.getJob('j1').status).toBe('ready_for_submit');
       expect(Number(db.getJob('j1').applied)).toBe(0);
       expect(db.getApprovalByJob('j1').approval_status).toBe('approved');
+      // No native browser dialogs: confirmations use an in-page <dialog>, and
+      // an ordinary Auto-fill must never prompt about auto-submit at all.
       expect(dialogs).toEqual([]);
-      expect(await page.locator('#toast').textContent()).not.toMatch(/Auto-submit precheck/i);
+      expect(await page.locator('#toasts').textContent()).not.toMatch(/Auto-submit precheck/i);
     } finally {
       await page.close();
       await dash.close();

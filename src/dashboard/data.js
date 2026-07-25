@@ -18,14 +18,17 @@
  *     UI can show exactly WHY a job ranked where it did.
  */
 
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply/approvalQueue.js';
 import { jsonList } from '../utils/json.js';
-import { isWithinLast24Hours, formatPostedRelative } from '../utils/dates.js';
+import { isWithinLast24Hours, isWithinLastHours, formatPostedRelative } from '../utils/dates.js';
 import { EMPLOYMENT_LABELS } from '../scoring/employmentClassifier.js';
 import { applicationStatePath } from '../apply/applicationState.js';
+import { isSponsorshipGated, configureGateThreshold, gateThreshold } from '../scoring/explainScore.js';
+import { extractDocxText } from '../resume/docxText.js';
+import { usLocationSignal, US_STATE_COUNT } from '../utils/usGeography.js';
 
 /** Derived application statuses shown on the board (ordered by precedence). */
 export const APP_STATUS = Object.freeze({
@@ -79,18 +82,11 @@ export function deriveAppStatus(job = {}, approval = null) {
   return APP_STATUS.DISCOVERED;
 }
 
-/**
- * Was a job's tier downgraded to Queue by the sponsorship gate?
- * The ONLY path to a 75+ score sitting in Queue is explainScore's sponsorship
- * gate (raw Apply/Priority, sponsorship not Confirmed/Likely/Approved).
- * Deriving it here (mirroring gradeFromScore's thresholds) makes the flag
- * available for every historical row without a schema migration.
- * @param {{tier?: string|null, score?: number|null}} job
- * @returns {boolean}
- */
-export function isSponsorshipGated(job = {}) {
-  return job.tier === 'Queue' && typeof job.score === 'number' && job.score >= 75;
-}
+// The sponsorship gate is a SCORING concept; it lives in scoring/explainScore.js
+// next to the rule that creates it. Re-exported here (alongside a real local
+// import, since `export … from` alone would not bind it for use below) so every
+// existing dashboard consumer and its tests keep one import site.
+export { isSponsorshipGated, configureGateThreshold, gateThreshold };
 
 /**
  * Map a scoring tier to a fit bucket.
@@ -353,6 +349,18 @@ function dayOf(value) {
   return String(value ?? '').slice(0, 10);
 }
 
+/**
+ * Was this row dropped purely because its posting date was unreadable?
+ *
+ * Matches both the current honest reason and the historical "stale: unknown
+ * posting date" label, so counts stay correct on databases written before the
+ * mislabeling was fixed (and whether or not the relabel migration has run).
+ * @param {object} job jobs-table row
+ */
+export function isUndatedDrop(job = {}) {
+  return /unknown posting date/i.test(String(job.discard_reason ?? ''));
+}
+
 /** Statuses considered "closed" — hidden from the default board. */
 export const CLOSED_STATUSES = Object.freeze([
   APP_STATUS.ARCHIVED, APP_STATUS.REJECTED, APP_STATUS.DISCARDED,
@@ -446,6 +454,7 @@ function boardRow(job, approval, now) {
     postedLabel: formatPostedRelative(job.posted_at, now),
     postedLast24h: isWithinLast24Hours(job.posted_at, now),
     postedConfidence: postedConfidence(job),
+    undatedDrop: isUndatedDrop(job),
     appStatus,
     progress: progressFor(appStatus),
     statusReason: explainStatus(job, appStatus, approval),
@@ -515,6 +524,11 @@ function computeDashboardStats(db, now) {
       rejected: 0,
       skipped: 0,
       dateUnconfirmed: 0,
+      // Rows the freshness gate dropped ONLY because the source gave no
+      // parseable posting date. These are not stale and not judged on fit —
+      // they are unreviewed. Counted separately (and including closed rows,
+      // since that is exactly where they land) so the volume is never hidden.
+      undatedDropped: 0,
       preparedToday: 0,
       submittedToday: 0,
       submittedThisWeek: 0,
@@ -534,14 +548,16 @@ function computeDashboardStats(db, now) {
     byStatus: {},
     // sponsorship status -> { count, strong } so feasibility is visible at a glance
     bySponsorship: {},
+    // USPS code -> { count, strong }. Makes nationwide coverage VERIFIABLE
+    // rather than assumed: the searches say "United States", and this says
+    // which states actually came back. A gap here is a real coverage gap.
+    byState: {},
     daily: [],
     nextActions: [],
     // Section-tab counts — derived from the SAME predicates the board filters by,
     // so each tab badge equals exactly what clicking it shows.
     views: Object.fromEntries(Object.keys(BOARD_VIEWS).map((k) => [k, 0])),
   };
-
-  let strongUntriaged = 0;
 
   for (const job of jobs) {
     const approval = approvals.get(job.id) ?? null;
@@ -573,6 +589,7 @@ function computeDashboardStats(db, now) {
     if (status === APP_STATUS.REJECTED) stats.totals.rejected += 1;
     if (status === APP_STATUS.SKIPPED) stats.totals.skipped += 1;
     if (status === APP_STATUS.DATE_UNCONFIRMED) stats.totals.dateUnconfirmed += 1;
+    if (isUndatedDrop(job)) stats.totals.undatedDropped += 1;
     if (dayOf(preparedAtOf(job)) === today && Number(job.applied) !== 1) stats.totals.preparedToday += 1;
     if (Number(job.applied) === 1 && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
     if (Number(job.applied) === 1 && job.applied_at
@@ -590,8 +607,6 @@ function computeDashboardStats(db, now) {
     if (status === APP_STATUS.READY_FOR_SUBMIT) stats.totals.readyForSubmit += 1;
     if (status === APP_STATUS.SUBMIT_UNVERIFIED) stats.totals.submitUnverified += 1;
     if (Number(job.applied) === 1) stats.totals.submittedTotal += 1;
-    if (fit === 'strong' && !job.user_decision && !approval
-        && [APP_STATUS.SCORED, APP_STATUS.DISCOVERED].includes(status)) strongUntriaged += 1;
 
     if (!stats.bySource[source]) {
       stats.bySource[source] = { found: 0, strong: 0, prepared: 0, submitted: 0 };
@@ -620,6 +635,18 @@ function computeDashboardStats(db, now) {
     stats.bySponsorship[spon].count += 1;
     if (fit === 'strong') stats.bySponsorship[spon].strong += 1;
 
+    // Where the jobs actually are. Remote-only and unnamed locations carry no
+    // state, and are counted as such rather than guessed at.
+    if (!CLOSED_SET.has(status)) {
+      const signal = usLocationSignal(job.location);
+      const key = signal.state ?? (signal.isUs ? 'US' : 'unknown');
+      if (!stats.byState[key]) {
+        stats.byState[key] = { count: 0, strong: 0, name: signal.stateName ?? (key === 'US' ? 'Nationwide / remote' : 'Not stated') };
+      }
+      stats.byState[key].count += 1;
+      if (fit === 'strong') stats.byState[key].strong += 1;
+    }
+
     // Daily progress strip.
     const created = dayOf(job.created_at);
     if (daily.has(created)) daily.get(created).discovered += 1;
@@ -632,7 +659,19 @@ function computeDashboardStats(db, now) {
   }
 
   stats.daily = [...daily.values()];
-  stats.nextActions = buildNextActions(stats.totals, strongUntriaged);
+  // "Are we really searching the whole country?" answered with data, not a
+  // promise: how many distinct states the open board actually covers.
+  const statesSeen = Object.keys(stats.byState).filter((key) => key !== 'US' && key !== 'unknown');
+  stats.coverage = {
+    statesCovered: statesSeen.length,
+    statesPossible: US_STATE_COUNT,
+    nationwide: stats.byState.US?.count ?? 0,
+    unstated: stats.byState.unknown?.count ?? 0,
+  };
+  // The untriaged-strong action opens the Best matches view, so it must be
+  // COUNTED by that view's predicate. Keeping a second, slightly different
+  // predicate here is how the sentence and the board came to disagree.
+  stats.nextActions = buildNextActions(stats.totals, stats.views.best);
   return stats;
 }
 
@@ -667,20 +706,30 @@ export function buildNextActions(totals, strongUntriaged = 0) {
   if (totals.blocked > 0) {
     actions.push({
       text: `${totals.blocked} application(s) are blocked (login / CAPTCHA / unanswered questions) and need you`,
-      filter: { appStatus: APP_STATUS.BLOCKED },
+      // totals.blocked counts blocked + failed + cancelled, so this must open
+      // the "Needs you" VIEW. Filtering on appStatus: blocked alone showed
+      // fewer rows than the sentence promised.
+      filter: { view: 'blocked' },
     });
   }
   if (strongUntriaged > 0) {
     actions.push({
       text: `${strongUntriaged} strong-fit job(s) have no decision yet — shortlist or reject them`,
-      filter: { fit: 'strong' },
+      // "No decision yet" is exactly the Best matches view. The old
+      // { fit: 'strong' } filter also showed every strong job already
+      // shortlisted, prepared, or submitted, so the board returned far more
+      // rows than the count.
+      filter: { view: 'best' },
     });
   }
   if (totals.needsSponsorshipCheck > 0) {
     actions.push({
       text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check — verify the employer `
         + 'sponsors H-1B (their careers page, past filings), then shortlist and prepare',
-      filter: { fit: 'strong', sponsorship: 'Unconfirmed' },
+      // The count is isSponsorshipGated(); the board has a filter for exactly
+      // that. Matching on sponsorship: 'Unconfirmed' both missed gated rows
+      // classified differently and included ungated ones.
+      filter: { sponsorshipGated: true },
     });
   }
   if (totals.dateUnconfirmed > 0) {
@@ -721,7 +770,8 @@ const SORTS = {
  * @param {string} [filters.source]
  * @param {string} [filters.sponsorship]
  * @param {string} [filters.employmentType] full_time|contract|contract_to_hire|part_time|unknown
- * @param {boolean} [filters.last24h] only roles posted in the last 24 hours
+ * @param {number|string} [filters.postedWithinHours] only roles posted in the last 3, 6, or 24 hours
+ * @param {boolean} [filters.last24h] legacy alias for postedWithinHours=24
  * @param {boolean} [filters.hideClosed] hide archived/rejected/discarded (default true)
  * @param {string} [filters.sort=score] score|posted|company|updated
  * @param {number} [filters.limit=200]
@@ -779,13 +829,26 @@ export function boardPage(db, filters = {}) {
     rows = rows.filter((r) => r.appStatus === APP_STATUS.SUBMITTED && r.appliedAt
       && (now.getTime() - new Date(r.appliedAt).getTime()) < 7 * 86_400_000);
   }
+  // Jobs held back only because their posting date was unreadable. Closed rows
+  // are intentionally in scope: that is precisely where the freshness gate put
+  // them, so the filter must reach past the default hide-closed pass.
+  if (filters.undated === true || filters.undated === 'true') {
+    rows = rows.filter((r) => r.undatedDrop || r.postedConfidence === 'unconfirmed');
+  }
   if (filters.remote === true || filters.remote === 'true') rows = rows.filter((r) => r.remote);
   if (filters.last24h === true || filters.last24h === 'true') {
     rows = rows.filter((r) => r.postedLast24h);
   }
+  if (filters.postedWithinHours !== undefined && filters.postedWithinHours !== '') {
+    const hours = Number(filters.postedWithinHours);
+    if ([3, 6, 24].includes(hours)) {
+      rows = rows.filter((r) => isWithinLastHours(r.postedAt, hours, now));
+    }
+  }
   // Hide closed jobs by default — but never override an explicit status/view
   // request (e.g. the Blocked/Submitted tabs, or a "rejected" status filter).
-  if (hideClosed && !filters.appStatus && !filters.view) {
+  const undatedRequested = filters.undated === true || filters.undated === 'true';
+  if (hideClosed && !filters.appStatus && !filters.view && !undatedRequested) {
     rows = rows.filter((r) => !CLOSED_SET.has(r.appStatus));
   }
 
@@ -840,6 +903,7 @@ export function jobDetail(db, jobId, deps = {}) {
         resumePreviewWarning: full.resumePreviewWarning ?? null,
         resumeValidation: full.resumeValidation ?? null,
         tailoring: full.tailoring ?? null,
+        llmRequirements: full.tailoring?.llmRequirements ?? null,
         atsReport: full.atsReport ?? null,
         prefillPlan: full.prefill?.plan ?? [],
         needsUser: full.prefill?.needsUser ?? [],
@@ -1329,6 +1393,8 @@ export function buildDocuments(db, {
           summaryLine: tailoring.summaryLine ?? null,
           changeCount: changes.length,
           gapCount: gaps.length,
+          pageCount: tailoring.pageCount ?? null,
+          estimatedPages: tailoring.estimatedPages ?? null,
         } : null,
         provenance: packet ? {
           packetId: packet.id ?? null,
@@ -1342,4 +1408,106 @@ export function buildDocuments(db, {
     .sort((a, b) => String(b.preparedAt ?? '').localeCompare(String(a.preparedAt ?? '')));
 
   return { generatedAt: now.toISOString(), master, tailored: rows };
+}
+
+/** Where the master resume lives, and where replaced copies are kept. */
+export const MASTER_RESUME_RELATIVE = join('resumes', 'base', 'MASTER_RESUME.docx');
+export const MASTER_HISTORY_RELATIVE = join('resumes', 'base', 'history');
+
+/**
+ * Everything the master-resume screen needs: the file's metadata, its readable
+ * text (so the user can VERIFY the document tailoring reads, not just its
+ * filename), previous versions kept when it was replaced, and how many already
+ * tailored resumes predate the current master and are therefore stale.
+ *
+ * Never throws: a missing/unreadable master is a normal first-run state and the
+ * screen has to explain it rather than 500.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {object} [options]
+ * @param {string|null} [options.root] workspace root (null -> unavailable)
+ * @param {Date} [options.now]
+ * @param {Function} [options.readFileImpl] (path) => Buffer
+ * @param {Function} [options.statImpl] (path) => { exists, bytes, modifiedAt }
+ * @param {Function} [options.listDirImpl] (path) => string[]
+ * @param {number} [options.previewParagraphs] cap on returned paragraphs
+ * @returns {object}
+ */
+export function buildMasterResume(db, {
+  root = null, now = new Date(), readFileImpl = null, statImpl = null,
+  listDirImpl = null, previewParagraphs = 400,
+} = {}) {
+  const stat = statImpl ?? ((p) => {
+    try {
+      const s = statSync(p);
+      return { exists: s.isFile(), bytes: s.size, modifiedAt: s.mtime.toISOString() };
+    } catch { return { exists: false, bytes: 0, modifiedAt: null }; }
+  });
+  if (!root) {
+    return {
+      generatedAt: now.toISOString(),
+      available: false,
+      reason: 'no workspace root is configured, so the master resume cannot be located',
+      exists: false, path: null, relativePath: MASTER_RESUME_RELATIVE,
+      bytes: 0, modifiedAt: null, wordCount: null, paragraphCount: null,
+      paragraphs: [], truncated: false, textError: null, backups: [], stalePackets: 0,
+    };
+  }
+
+  const path = join(root, MASTER_RESUME_RELATIVE);
+  const info = stat(path);
+  let paragraphs = [];
+  let wordCount = null;
+  let truncated = false;
+  let textError = null;
+  if (info.exists) {
+    try {
+      const read = readFileImpl ?? ((p) => readFileSync(p));
+      const extracted = extractDocxText(read(path));
+      wordCount = extracted.wordCount;
+      truncated = extracted.paragraphs.length > previewParagraphs;
+      paragraphs = extracted.paragraphs.slice(0, previewParagraphs);
+    } catch (err) {
+      // A present-but-unreadable master is exactly the case worth surfacing:
+      // tailoring will fall back to it verbatim and the user needs to know.
+      textError = err.message;
+    }
+  }
+
+  const listDir = listDirImpl ?? ((p) => {
+    try { return readdirSync(p); } catch { return []; }
+  });
+  const historyDir = join(root, MASTER_HISTORY_RELATIVE);
+  const backups = listDir(historyDir)
+    .filter((name) => /^MASTER_RESUME\..+\.docx$/i.test(name))
+    .map((name) => ({ name, ...stat(join(historyDir, name)) }))
+    .filter((b) => b.exists)
+    .sort((a, b) => String(b.modifiedAt ?? '').localeCompare(String(a.modifiedAt ?? '')));
+
+  // Tailored resumes generated BEFORE the current master no longer reflect it.
+  const stalePackets = info.modifiedAt
+    ? listSummaryRows(db).filter((j) => {
+      const preparedAt = preparedAtOf(j);
+      return (j.resume_docx_path || j.resume_path) && preparedAt
+        && preparedAt < info.modifiedAt;
+    }).length
+    : 0;
+
+  return {
+    generatedAt: now.toISOString(),
+    available: true,
+    reason: null,
+    path,
+    relativePath: MASTER_RESUME_RELATIVE,
+    exists: info.exists,
+    bytes: info.bytes,
+    modifiedAt: info.modifiedAt,
+    wordCount,
+    paragraphCount: paragraphs.length,
+    paragraphs,
+    truncated,
+    textError,
+    backups,
+    stalePackets,
+  };
 }

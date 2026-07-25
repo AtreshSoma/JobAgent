@@ -10,6 +10,14 @@ import { run as runApify, isRetryableBilledRun } from '../../src/search/adapters
 
 const env = { APIFY_TOKEN: 'test-token' };
 
+/**
+ * Billed actor calls only. Before running any actor the adapter makes ONE free
+ * metadata call to check the account still has credit — counting raw fetches
+ * would conflate that with a charge.
+ */
+const billedCalls = (fetchImpl) => fetchImpl.mock.calls
+  .filter(([url]) => !String(url).includes('/users/me/limits'));
+
 const actorSource = (extra = {}) => ({
   id: 'apify-scrapers',
   options: { actors: [{ actorId: 'valig~indeed-jobs-scraper', label: 'indeed', input: {} }], ...extra },
@@ -26,7 +34,7 @@ describe('Apify billed-run retry policy', () => {
     expect(jobs).toHaveLength(0);
     expect(errors).toHaveLength(1);
     // Exactly one billed attempt, not four.
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(billedCalls(fetchImpl)).toHaveLength(1);
   });
 
   it('does NOT re-run a billed actor on a 5xx — the run may already have been charged', async () => {
@@ -34,16 +42,85 @@ describe('Apify billed-run retry policy', () => {
       ok: false, status: 502, headers: { get: () => null },
     });
     await runApify(actorSource(), { fetchImpl, env, maxRetries: 3 });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(billedCalls(fetchImpl)).toHaveLength(1);
   });
 
   it('DOES retry a 429 — Apify rejected us at the gate, so no run was created or billed', async () => {
-    const fetchImpl = vi.fn()
-      .mockResolvedValueOnce({ ok: false, status: 429, headers: { get: () => null } })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => [] });
+    // Routed by URL, not call order: the free credit check is its own request
+    // and must not consume the actor's queued responses.
+    let actorAttempts = 0;
+    const fetchImpl = vi.fn(async (url) => {
+      if (String(url).includes('/users/me/limits')) {
+        return { ok: true, status: 200, json: async () => ({ data: {} }) };
+      }
+      actorAttempts += 1;
+      if (actorAttempts === 1) return { ok: false, status: 429, headers: { get: () => null } };
+      return { ok: true, status: 200, json: async () => [] };
+    });
 
     await runApify(actorSource(), { fetchImpl, env, maxRetries: 3 });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(billedCalls(fetchImpl)).toHaveLength(2);
+  });
+
+  it('spends nothing when the account is out of credit for the cycle', async () => {
+    // Apify refuses every new run once the monthly limit is reached, so firing
+    // all the configured actors produced one identical rejection each and no
+    // indication of the cause. One free check up front replaces all of them.
+    const fetchImpl = vi.fn(async (url) => {
+      if (String(url).includes('/users/me/limits')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            data: {
+              current: { monthlyUsageUsd: 5.25 },
+              limits: { maxMonthlyUsageUsd: 5 },
+              monthlyUsageCycle: { endAt: '2026-08-07T23:59:59.999Z' },
+            },
+          }),
+        };
+      }
+      throw new Error('an actor must not be started with no credit left');
+    });
+    const source = {
+      id: 'apify-scrapers',
+      options: {
+        actors: Array.from({ length: 16 }, (_, i) => ({ actorId: 'valig~indeed-jobs-scraper', label: `a${i}`, input: {} })),
+      },
+    };
+
+    const { jobs, errors } = await runApify(source, { fetchImpl, env, maxRetries: 3 });
+    expect(jobs).toHaveLength(0);
+    expect(billedCalls(fetchImpl)).toHaveLength(0);
+    // ONE explanation naming the cause, the numbers, and the reset date.
+    expect(errors).toHaveLength(1);
+    expect(errors[0].category).toBe('quota_exhausted');
+    expect(errors[0].error).toMatch(/\$5\.25 of \$5\.00 used/);
+    expect(errors[0].error).toMatch(/resets on 2026-08-07/);
+    expect(errors[0].error).toMatch(/Other job boards are unaffected/);
+  });
+
+  it('still reads a free saved dataset when there is no credit left', async () => {
+    // Reading an existing dataset costs nothing, so it must not be gated on
+    // credit — and must not spend a request asking about it either.
+    const fetchImpl = vi.fn(async (url) => {
+      if (String(url).includes('/users/me/limits')) throw new Error('should not check credit');
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    const source = { id: 'apify-scrapers', options: { actors: [{ datasetId: 'abc123', label: 'saved' }] } };
+    const { errors } = await runApify(source, { fetchImpl, env, maxRetries: 3 });
+    expect(errors).toHaveLength(0);
+  });
+
+  it('runs normally when the credit check cannot be reached', async () => {
+    // A failed probe must never block a run that would otherwise work.
+    const fetchImpl = vi.fn(async (url) => {
+      if (String(url).includes('/users/me/limits')) throw new Error('network down');
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    const { errors } = await runApify(actorSource(), { fetchImpl, env, maxRetries: 3 });
+    expect(errors).toHaveLength(0);
+    expect(billedCalls(fetchImpl)).toHaveLength(1);
   });
 
   it('a free, idempotent dataset READ keeps the normal retry policy', async () => {

@@ -67,20 +67,39 @@ def _run(request: dict) -> dict:
         keywords,
         request.get("patterns") or {},
         add_summary_line=add_summary_line,
+        max_pages=int(request.get("max_pages") or 2),
         required_markers=ats_config.get("requiredMarkers"),
         preferred_markers=ats_config.get("preferredMarkers"),
         evidence_aliases=evidence_aliases,
         enable_rewrites=bool(request.get("enable_rewrites", False)),
         output_name=output_name,
+        # Optional grounded requirement classification. Every phrase here was
+        # verified verbatim against this posting before it was sent, and it can
+        # only influence ORDERING priority — never resume content.
+        llm_qualifications=request.get("llm_requirements") or None,
     )
 
     pdf_path = None
     pdf_result = None
+    page_count = None
     if export_pdf:
         from pdfExport import export_to_pdf
 
         pdf_result = export_to_pdf(result["output_path"])
         pdf_path = pdf_result.get("pdf_path") if pdf_result.get("exported") else None
+        # A rendered PDF settles the page count for real. Record it next to the
+        # estimate so the packet can say "2 pages (measured)" instead of only
+        # ever predicting it.
+        page_count = pdf_result.get("pages")
+        if page_count is not None:
+            result.setdefault("invariants", {})["rendered_pages"] = page_count
+            result["invariants"]["within_page_budget"] = page_count <= int(request.get("max_pages") or 2)
+            if page_count > int(request.get("max_pages") or 2):
+                result.setdefault("limitations", []).append(
+                    f"The rendered PDF is {page_count} pages, over the "
+                    f"{int(request.get('max_pages') or 2)}-page target. Shorten bullets in "
+                    "the master resume — the tailor omits whole bullets but never rewrites them."
+                )
 
     # Validate the generated resume's format + content (honest quality gate).
     validation = None
@@ -107,6 +126,7 @@ def _run(request: dict) -> dict:
         "output_path": result["output_path"],
         "pdf_path": pdf_path,
         "pdf_result": pdf_result,
+        "page_count": page_count,
         "audit": result.get("audit"),
         "emphasized": result.get("emphasized"),
         "summary_line": result.get("summary_line"),

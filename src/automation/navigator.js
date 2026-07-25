@@ -117,15 +117,23 @@ export async function findSubmitControl(page) {
  * @param {{selector: string|null, text: string}} control
  * @param {object} [deps]
  * @param {Function} [deps.wait] async settle hook (default: load-state + 400ms)
+ * @param {object} [options]
+ * @param {boolean} [options.selectorOnly=false] forbid the accessible-name
+ *   fallback. Set for the FINAL submit: the runner earns the right to click only
+ *   after verifying that one specific selector resolves to exactly one element.
+ *   If the DOM changed since that check, falling back to "any button named
+ *   Submit" could click a different form's submit, so we refuse and let the
+ *   human finish instead.
  * @returns {Promise<boolean>} true if the click was issued
  */
-export async function clickAndSettle(page, control, deps = {}) {
+export async function clickAndSettle(page, control, deps = {}, options = {}) {
   if (!control) return false;
   let loc;
   if (control.selector) {
     try { if ((await page.locator(control.selector).count()) !== 1) loc = null; else loc = page.locator(control.selector).first(); }
     catch { loc = null; }
   }
+  if (!loc && options.selectorOnly === true) return false;
   if (!loc && typeof page.getByRole === 'function' && control.text) {
     try { loc = page.getByRole('button', { name: control.text }).first(); } catch { loc = null; }
   }

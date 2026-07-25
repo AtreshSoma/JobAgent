@@ -83,18 +83,25 @@ export function dateStamp(value = new Date()) {
 }
 
 /**
- * True when a posting was published within the last 24 hours (or in the
+ * True when a posting was published within the requested number of hours (or in the
  * future, e.g. a feed that timestamps slightly ahead). Unknown/unparseable
  * dates return false. Used to surface and rank the freshest roles first.
  * @param {Date|string|number} postedAt
+ * @param {number} hours
  * @param {Date|string|number} [reference]
  * @returns {boolean}
  */
-export function isWithinLast24Hours(postedAt, reference = new Date()) {
+export function isWithinLastHours(postedAt, hours, reference = new Date()) {
   const posted = parseDate(postedAt);
   const ref = parseDate(reference) ?? new Date();
-  if (!posted) return false;
-  return ref.getTime() - posted.getTime() < MS_PER_DAY;
+  const windowHours = Number(hours);
+  if (!posted || !Number.isFinite(windowHours) || windowHours <= 0) return false;
+  return ref.getTime() - posted.getTime() < windowHours * 60 * 60 * 1000;
+}
+
+/** Backward-compatible convenience wrapper used by existing freshness metrics. */
+export function isWithinLast24Hours(postedAt, reference = new Date()) {
+  return isWithinLastHours(postedAt, 24, reference);
 }
 
 const MONTH_ABBR = Object.freeze([

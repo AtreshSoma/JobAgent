@@ -18,6 +18,8 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { extractJdRequirements } from '../llm/jdRequirements.js';
+
 /** Default master resume location (never overwritten). */
 export function masterResumePath(root) {
   return join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
@@ -45,6 +47,25 @@ export function keywordsForJob(score = {}) {
     if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(kw);
+  }
+  return out;
+}
+
+/**
+ * Merge extra terms into a term list, de-duplicated case-insensitively and
+ * preserving the original ordering/display form of the existing entries.
+ * @param {string[]} base
+ * @param {string[]} extra
+ * @returns {string[]}
+ */
+export function mergeTerms(base = [], extra = []) {
+  const seen = new Set();
+  const out = [];
+  for (const term of [...base, ...extra]) {
+    const key = String(term ?? '').toLowerCase().trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
   }
   return out;
 }
@@ -100,6 +121,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     tailored: false,
     output_path: master,
     pdf_path: null,
+    pageCount: null,
     pdfWarning: null,
     audit: null,
     emphasized: null,
@@ -115,11 +137,38 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     atsReport: null,
     warning: null,
     usedFallback: true,
+    llmRequirements: null,
   };
 
   if (!existsSync(master)) {
     return { ...fallback, warning: `master resume not found at ${master}; cannot tailor` };
   }
+
+  // ── Optional, grounded requirement expansion ──────────────────────────────
+  // The deterministic vocabulary in config/scoring.json cannot cover every
+  // employer's phrasing. When LLM assist is enabled, the model READS the posting
+  // and proposes requirement phrases; each one is verified to appear verbatim in
+  // that posting before it is accepted, then handed to the same deterministic
+  // tailor. It only widens what we can RECOGNIZE in the JD — resume content
+  // stays evidence-gated, so no claim can be added or reworded.
+  //
+  // Entirely best-effort: disabled, offline, or malformed all fall through to
+  // the deterministic path with a note in the audit trail.
+  let llmRequirements = null;
+  if (options.llmAssist !== false) {
+    try {
+      const extractFn = deps.extractJdRequirementsFn ?? extractJdRequirements;
+      llmRequirements = await extractFn({
+        jdText: job.jdText ?? '',
+        title: job.title ?? '',
+        root,
+        env: deps.env ?? process.env,
+      }, deps);
+    } catch (err) {
+      llmRequirements = { ok: false, phrases: [], provenance: { skipped: `llm assist error: ${err.message}` } };
+    }
+  }
+  const llmPhrases = Array.isArray(llmRequirements?.phrases) ? llmRequirements.phrases : [];
 
   const request = {
     master_path: master,
@@ -130,15 +179,32 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
       title: job.title ?? '',
       jd_text: job.jdText ?? '',
     },
-    keywords: keywordsForJob(score),
+    // Verified JD requirements join the emphasis set. The Python tailor still
+    // only emphasizes a term when the MASTER RESUME already contains it, and
+    // reports the rest as gaps — that contract is unchanged.
+    keywords: mergeTerms(keywordsForJob(score), llmPhrases),
     // Vocabulary + ATS rules drive the deterministic ATS readiness report.
-    vocabulary: vocabularyFromScoring(config.scoring),
+    vocabulary: mergeTerms(vocabularyFromScoring(config.scoring), llmPhrases),
+    // Grounded requirement classification. Only phrases verified verbatim
+    // against this posting are sent, and Python applies them to ORDERING
+    // priority only — never to resume content.
+    ...(llmRequirements?.ok
+      ? {
+          llm_requirements: {
+            required: llmRequirements.required ?? [],
+            preferred: llmRequirements.preferred ?? [],
+          },
+        }
+      : {}),
     evidence_aliases: config.scoring?.evidenceAliases ?? {},
     ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
     add_summary_line: options.addSummaryLine === true,
     enable_rewrites: options.enableRewrites === true,
     export_pdf: options.exportPdf === true,
+    // Hard length target. The tailor omits whole low-relevance bullets from the
+    // oldest roles to hit it; it never shortens or rewrites a claim.
+    max_pages: Number(options.maxPages) > 0 ? Number(options.maxPages) : 2,
   };
 
   let response;
@@ -156,6 +222,9 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     tailored: true,
     output_path: response.output_path,
     pdf_path: response.pdf_path ?? null,
+    // Measured page count when a PDF was rendered; null when Word was not
+    // available and only the tailor's estimate exists.
+    pageCount: Number.isFinite(response.page_count) ? response.page_count : null,
     pdfWarning: options.exportPdf === true && response.pdf_path == null
       ? (response.pdf_result?.reason ?? 'PDF preview could not be generated')
       : null,
@@ -174,6 +243,18 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     limitations: response.limitations ?? [],
     validation: response.validation ?? null,
     atsReport: response.ats_report ?? null,
+    // Audit trail for the optional grounded requirement expansion: which
+    // phrases were verified against the posting, and which were rejected.
+    llmRequirements: llmRequirements
+      ? {
+          ok: llmRequirements.ok === true,
+          verified: llmRequirements.phrases ?? [],
+          required: llmRequirements.required ?? [],
+          preferred: llmRequirements.preferred ?? [],
+          rejected: llmRequirements.rejected ?? [],
+          provenance: llmRequirements.provenance ?? null,
+        }
+      : null,
     warning: null,
     usedFallback: false,
   };

@@ -49,6 +49,56 @@ export function clearApifyResultCache() {
 }
 
 /**
+ * Read the account's monthly usage against its limit.
+ *
+ * This is a FREE metadata endpoint — it starts no actor and costs nothing. It
+ * exists because of a real and expensive-to-diagnose failure mode: once the
+ * plan's monthly usage limit is reached, Apify rejects every new actor run, so a
+ * discovery pass fired all 25 configured actors, got 25 rejections, and reported
+ * "16 error(s)" with no indication that the account was simply out of credit
+ * until the next billing cycle. One free call up front turns that into one
+ * sentence naming the cause and the reset date.
+ *
+ * Never throws: a failure here must not stop a run that might otherwise work.
+ *
+ * @returns {Promise<{ usedUsd: number, limitUsd: number, exhausted: boolean,
+ *                     resetsAt: string|null }|null>} null when unknown
+ */
+export async function fetchUsage(fetchImpl, token, timeoutMs = 15_000) {
+  try {
+    const res = await fetchWithTimeout(fetchImpl, `${API_BASE}/users/me/limits`, {
+      headers: { authorization: `Bearer ${token}` },
+    }, timeoutMs);
+    if (!res.ok) return null;
+    const body = await res.json();
+    const data = body?.data ?? {};
+    const usedUsd = Number(data.current?.monthlyUsageUsd);
+    const limitUsd = Number(data.limits?.maxMonthlyUsageUsd);
+    if (!Number.isFinite(usedUsd) || !Number.isFinite(limitUsd) || limitUsd <= 0) return null;
+    return {
+      usedUsd,
+      limitUsd,
+      exhausted: usedUsd >= limitUsd,
+      resetsAt: data.monthlyUsageCycle?.endAt ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The message shown when the account has no credit left this cycle. */
+export function quotaMessage({ usedUsd, limitUsd, resetsAt }) {
+  const reset = resetsAt ? new Date(resetsAt) : null;
+  const when = reset && !Number.isNaN(reset.getTime())
+    ? ` It resets on ${reset.toISOString().slice(0, 10)}.`
+    : '';
+  return `Apify monthly usage limit reached: $${usedUsd.toFixed(2)} of $${limitUsd.toFixed(2)} used, `
+    + `so Apify is rejecting every new actor run and no actors were started.${when} `
+    + 'Other job boards are unaffected. Raise the plan limit, or leave this source '
+    + 'disabled until the cycle resets.';
+}
+
+/**
  * Apify `run-sync-get-dataset-items` EXECUTES an actor (e.g. scraping Indeed)
  * and can legitimately take a minute or two. It must NOT inherit the short
  * board-API request timeout, or runs would be aborted mid-scrape. Use a
@@ -122,6 +172,21 @@ export async function run(source = {}, ctx = {}) {
   if (!token) {
     errors.push({ error: `Missing Apify token. Set ${tokenEnv} in your .env file.` });
     return { jobs, errors };
+  }
+
+  // Check the account has credit BEFORE spending a run-sync call per actor. When
+  // the monthly limit is reached Apify rejects them all, and 25 identical
+  // rejections say far less than one sentence naming the cause and reset date.
+  //
+  // Only worth asking when something here actually costs money: reading an
+  // existing dataset is free and works fine with no credit left.
+  const anyBillable = actors.some((actor) => !actor.datasetId && Boolean(actor.actorId));
+  if (anyBillable && ctx.checkUsage !== false) {
+    const usage = await fetchUsage(fetchImpl, token);
+    if (usage?.exhausted) {
+      errors.push({ error: quotaMessage(usage), category: 'quota_exhausted', status: 402 });
+      return { jobs, errors, usage };
+    }
   }
 
   // Actors are independent runs — execute them in parallel (bounded), since a

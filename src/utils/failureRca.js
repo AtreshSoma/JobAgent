@@ -12,9 +12,9 @@
 
 /** Failure categories the UI understands. Keep in sync with the RCA panel. */
 export const RCA_CATEGORIES = Object.freeze([
-  'timeout', 'network', 'dns', 'auth', 'rate_limit', 'provider_error',
-  'invalid_json', 'schema_changed', 'empty_response', 'db_busy',
-  'missing_config', 'missing_resume', 'browser_launch', 'unknown',
+  'timeout', 'network', 'dns', 'auth', 'rate_limit', 'quota_exhausted',
+  'provider_error', 'invalid_json', 'schema_changed', 'empty_response',
+  'db_busy', 'missing_config', 'missing_resume', 'browser_launch', 'unknown',
 ]);
 
 /** Human guidance per category — actionable, never alarmist. */
@@ -23,6 +23,7 @@ const GUIDANCE = Object.freeze({
   network: 'Could not reach the network endpoint. Check your internet connection, VPN, or proxy, then retry.',
   dns: 'The hostname could not be resolved. Check the source URL/domain in config/jobboards.json and your DNS/VPN.',
   auth: 'The source rejected the credentials (401/403). Verify the API token in .env is current and has the right scopes.',
+  quota_exhausted: 'The account has spent its usage allowance for the billing period, so the provider is refusing new work. Nothing is wrong with the setup and no other source is affected — raise the plan limit, or leave this source disabled until the cycle resets.',
   rate_limit: 'The source rate-limited us (429). It is throttling by host, so every board/tenant on that host shares one budget. Wait a few minutes and retry; if it repeats, raise rateLimitMs or lower detailConcurrency for this source.',
   provider_error: 'The provider returned an error (5xx, or a 4xx rejecting our request). Usually on their side — retry later; if a 4xx repeats, the adapter contract needs updating.',
   invalid_json: 'The source answered with malformed JSON. Usually transient; if it persists the provider changed or is erroring.',

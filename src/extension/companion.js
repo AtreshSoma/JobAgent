@@ -1,9 +1,10 @@
 /** Secure data boundary for the Chrome/Edge assisted-fill extension. */
 import { timingSafeEqual } from 'node:crypto';
-import { basename, isAbsolute, resolve, sep } from 'node:path';
+import { basename, isAbsolute, resolve } from 'node:path';
 import { realpathSync, readFileSync, statSync } from 'node:fs';
 
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
+import { isInsideDirectory } from '../utils/pathSafe.js';
 import { loadPacket } from '../cli/commands.js';
 
 // Chrome uses chrome-extension://<id>; current Edge builds may expose the
@@ -83,7 +84,9 @@ export function readApprovedArtifact({ db, config, jobId, kind, loadPacketImpl =
   if (!raw) throw statusError(404, `approved packet has no ${kind} artifact`);
   const root = realpathSync(config.root);
   const candidate = realpathSync(isAbsolute(raw) ? raw : resolve(root, raw));
-  if (candidate !== root && !candidate.startsWith(root + sep)) {
+  // Platform-correct containment (see utils/pathSafe.js): comparing strings
+  // directly rejected valid artifacts whenever the drive-letter case differed.
+  if (!isInsideDirectory(root, candidate)) {
     throw statusError(403, 'artifact path escapes the Job Agent workspace');
   }
   const size = statSync(candidate).size;

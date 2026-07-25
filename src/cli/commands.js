@@ -29,6 +29,7 @@ import { jsonList } from '../utils/json.js';
 import { writeFoundJobs } from '../outputs.js';
 import { emptyCounters } from '../outputs.js';
 import { LIFECYCLE, isProtectedJobRow } from '../lifecycle.js';
+import { assertPublicHttpUrl } from '../utils/publicUrl.js';
 import {
   listPending, approve, reject, APPROVAL_STATUS,
 } from '../apply/approvalQueue.js';
@@ -123,11 +124,16 @@ const RESCORABLE_STATUSES = new Set([LIFECYCLE.FOUND, LIFECYCLE.SCORED, LIFECYCL
  */
 export async function runRescore({ config, db, logger, deps = {} } = {}) {
   const now = typeof deps.now === 'function' ? deps.now() : deps.now ?? new Date();
-  const rows = db.listJobs({});
+  // Stream by id rather than materializing every row: each row carries its full
+  // JD text (~150 MB across a 32k-job corpus) and only one is needed at a time.
+  // Falls back to the eager read for test stubs without listJobIds.
+  const ids = typeof db.listJobIds === 'function' ? db.listJobIds() : null;
+  const eagerRows = ids ? null : db.listJobs({});
+  const total = ids ? ids.length : eagerRows.length;
   const counters = { jobs_rescored: 0, jobs_excluded: 0, jobs_skipped_protected: 0 };
 
   let i = 0;
-  for (const row of rows) {
+  for (let index = 0; index < total; index += 1) {
     if (deps.shouldCancel?.()) {
       counters.jobs_cancelled = (counters.jobs_cancelled ?? 0) + 1;
       break;
@@ -136,6 +142,8 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     // while tens of thousands of rows are re-scored in the background.
     i += 1;
     if (i % 250 === 0) await new Promise((r) => setImmediate(r));
+    const row = ids ? db.getJob(ids[index]) : eagerRows[index];
+    if (!row) continue;
     if (isProtectedJobRow(row) || !RESCORABLE_STATUSES.has(row.status)) {
       counters.jobs_skipped_protected += 1;
       continue;
@@ -200,6 +208,13 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
   const clean = String(url ?? '').trim();
   if (!/^https?:\/\/\S+$/i.test(clean)) {
     throw Object.assign(new Error('please paste a valid public job URL (http/https)'), { statusCode: 400 });
+  }
+  // Same guard the check-link / replace-link endpoints already applied. Without
+  // it this was the one path that would fetch an arbitrary host on request —
+  // including loopback, link-local metadata, and private LAN addresses.
+  const publicCheck = assertPublicHttpUrl(clean);
+  if (!publicCheck.ok) {
+    throw Object.assign(new Error(publicCheck.reason), { statusCode: 400 });
   }
   const now = deps.now ?? new Date();
   const fetchImpl = deps.fetchImpl ?? fetch;

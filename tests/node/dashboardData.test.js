@@ -145,6 +145,24 @@ describe('stats, board, decisions against a seeded db', () => {
     expect(byCompany[0].company).toBe('Acme');
   });
 
+  it('filters posting age at 3, 6, and 24 hour boundaries', () => {
+    db.upsertJob({
+      id: 'fresh-2h', company: 'Fresh', title: 'DE', url: 'http://fresh',
+      source: 'manual', score: 70, tier: 'Apply', posted_at: '2026-06-04T10:00:01Z',
+    });
+    db.upsertJob({
+      id: 'fresh-5h', company: 'Recent', title: 'DE', url: 'http://recent',
+      source: 'manual', score: 70, tier: 'Apply', posted_at: '2026-06-04T07:00:01Z',
+    });
+
+    expect(listBoardJobs(db, { now: NOW, postedWithinHours: '3', sort: 'posted' }).map((r) => r.id))
+      .toEqual(['fresh-2h']);
+    expect(listBoardJobs(db, { now: NOW, postedWithinHours: '6', sort: 'posted' }).map((r) => r.id))
+      .toEqual(['fresh-2h', 'fresh-5h']);
+    expect(listBoardJobs(db, { now: NOW, postedWithinHours: '24', sort: 'posted' }).map((r) => r.id))
+      .toEqual(['fresh-2h', 'fresh-5h', 'strong']);
+  });
+
   it('board rows parse keyword JSON and expose why-fit fields', () => {
     const [row] = listBoardJobs(db, { now: NOW, q: 'acme' });
     expect(row.matchedKeywords).toEqual(['azure', 'pyspark']);

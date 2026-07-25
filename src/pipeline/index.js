@@ -25,7 +25,7 @@ import { writeFileAtomic } from '../utils/fsSafe.js';
 import { runSearch } from '../search/index.js';
 import { urlKeyFor } from '../search/deduplicator.js';
 import { classifyDiscovery } from '../search/discoveryFilter.js';
-import { applyFreshnessFilter } from '../search/freshnessFilter.js';
+import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
@@ -148,15 +148,25 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
 
   // Record freshness-dropped jobs in the audit trail + report so they remain
   // visible (as discarded) rather than silently vanishing.
+  //
+  // "stale" is a claim about AGE. A posting with no parseable date is not old —
+  // its date is unknown, which is a different problem with a different fix
+  // (verify the link). Blanket-prefixing every drop with "stale:" mislabeled
+  // thousands of undated rows as expired, and hid them from the "needs date
+  // check" review the UI offers. Undated drops therefore keep their own honest
+  // reason and are tagged so the dashboard can count them.
   for (const { job, reason } of freshness.dropped) {
     counters.jobs_discarded += 1;
+    const undated = reason === UNDATED_REASON;
+    if (undated) counters.jobs_unknown_date_review += 1;
+    const discardReason = undated ? reason : `stale: ${reason}`;
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'discarded', discard_reason: `stale: ${reason}` }, config.exclusions?.employmentTypes);
+    persistJob(db, job, { status: 'discarded', discard_reason: discardReason }, config.exclusions?.employmentTypes);
     discovered.push(discoveredRow(job, discovery, {
-      keptForScoring: false, discardReason: `stale: ${reason}`, lifecycle: LIFECYCLE.HARD_DISCARDED,
+      keptForScoring: false, discardReason, lifecycle: LIFECYCLE.HARD_DISCARDED,
     }));
-    reportRows.push(reportRow(job, discovery, { status: 'discarded', discard_reason: `stale: ${reason}` }));
+    reportRows.push(reportRow(job, discovery, { status: 'discarded', discard_reason: discardReason }));
   }
 
   // Record undated jobs in the SEPARATE review bucket. They are NOT scored,
@@ -421,6 +431,12 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
           rewritePolicy: tailored.rewritePolicy ?? null,
           invariants: tailored.invariants ?? null,
           limitations: tailored.limitations ?? [],
+          // Length is a review fact: the measured page count when a PDF was
+          // rendered, the tailor's estimate otherwise.
+          pageCount: tailored.pageCount ?? null,
+          estimatedPages: tailored.invariants?.estimated_pages ?? null,
+          // Audit for the optional grounded JD-requirement expansion.
+          llmRequirements: tailored.llmRequirements ?? null,
         }
       : null;
     // A resume that fails hard validation (empty/unreadable/no sections/no

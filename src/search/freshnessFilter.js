@@ -25,6 +25,13 @@ import { ageInDays } from '../utils/dates.js';
 import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 
 /**
+ * The exact drop reason for a posting with no parseable date. Exported so the
+ * pipeline can recognize it and avoid mislabeling it as "stale" — an unknown
+ * date is not an old date, and the two need different follow-up from the user.
+ */
+export const UNDATED_REASON = 'unknown posting date';
+
+/**
  * @typedef {object} FreshnessSettings
  * @property {string} jobFreshnessMode
  * @property {boolean} includeLast3DaysFallback
@@ -89,7 +96,7 @@ export function applyFreshnessFilter(jobs = [], settings = {}, { now = new Date(
         review.push(job);
         counts.undatedReview += 1;
       } else {
-        dropped.push({ job, reason: 'unknown posting date' });
+        dropped.push({ job, reason: UNDATED_REASON });
         counts.undatedDropped += 1;
       }
       continue;

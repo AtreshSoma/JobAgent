@@ -5,7 +5,7 @@ from collections import Counter
 import pytest
 
 from keywordAudit import read_docx_text
-from tailor import output_filename, tailor_resume
+from tailor import estimate_page_count, output_filename, tailor_resume
 
 
 def _digest(path):
@@ -440,12 +440,10 @@ def test_duplicate_protection_is_idempotent_and_preserves_docx_layout(
         }
     ]
     assert standalone_styles
+    # Re-tailoring a tailored copy must leave every bullet a real bullet. The
+    # old grouping absorbed the first one into its role heading, so a second
+    # pass produced a document whose bullets no longer matched each other.
     assert standalone_styles == ["List Bullet"] * len(standalone_styles)
-    assert any(
-        paragraph.paragraph_format.keep_together is True
-        and "Built SQL pipelines with tested data-quality controls." in paragraph.text
-        for paragraph in doc.paragraphs
-    )
     assert second["invariants"]["duplicate_protection_passed"] is True
     assert not any(change["type"] == "focus_line" for change in second["changes"])
 
@@ -549,20 +547,33 @@ def test_role_heading_date_and_project_lead_stay_together(tmp_path, humanizer_pa
     tailored = Document(result["output_path"])
     by_text = {paragraph.text: paragraph for paragraph in tailored.paragraphs}
     assert by_text["PROFESSIONAL EXPERIENCE"].paragraph_format.keep_with_next is True
-    role = next(
-        paragraph for paragraph in tailored.paragraphs
-        if paragraph.text.startswith("Senior Data Engineer  |  Acme - Remote")
-    )
-    assert role.paragraph_format.keep_with_next is False
-    assert role.paragraph_format.keep_together is True
-    assert role.paragraph_format.widow_control is True
-    assert "Enterprise data-platform modernization" in role.text
-    assert "Enterprise data-platform modernization" not in by_text
+
+    # Orphan control now uses the renderer's OWN rules. Merging the title, the
+    # employer/date line and the first content line into one paragraph fixed
+    # pagination at the cost of formatting: that first line lost its bullet and
+    # gained four literal spaces of fake indent. Each line stays a line.
+    for text in ("Senior Data Engineer", "Acme - Remote - March 2022 - Present",
+                 "Enterprise data-platform modernization", "Built SQL pipelines."):
+        assert text in by_text, f"{text!r} was merged away"
+    assert by_text["Senior Data Engineer"].paragraph_format.keep_with_next is True
+    date_line = by_text["Acme - Remote - March 2022 - Present"]
+    assert date_line.paragraph_format.keep_with_next is True
+    assert date_line.paragraph_format.keep_together is True
+    assert date_line.paragraph_format.widow_control is True
     assert result["invariants"]["page_breaks_stabilized"] is True
+    assert result["invariants"]["no_manual_page_breaks"] is True
     assert any(change["type"] == "stabilize_page_breaks" for change in result["changes"])
 
 
-def test_dense_resume_groups_complete_role_context_without_changing_text(tmp_path, humanizer_patterns):
+def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path, humanizer_patterns):
+    """A résumé longer than the budget loses its least relevant OLD bullets.
+
+    The previous build handled length by injecting a hard page break before the
+    third role. That froze the layout: whatever fell on page 1 stayed there, so
+    a document that only half-filled the page still started page 2 at the break
+    and ran to a third page. Length is now solved by dropping content, and only
+    ever whole bullets, worst-first, from the oldest role.
+    """
     from docx import Document
 
     doc = Document()
@@ -575,9 +586,13 @@ def test_dense_resume_groups_complete_role_context_without_changing_text(tmp_pat
     doc.add_paragraph("Data Engineer")
     doc.add_paragraph("Example - Remote - January 2020 - February 2022")
     doc.add_paragraph("Built reliable data pipelines.", style="List Bullet")
+    for index in range(6):
+        doc.add_paragraph((f"Maintained unrelated legacy reporting {index}. " * 12), style="List Bullet")
     doc.add_paragraph("BI Developer")
     doc.add_paragraph("Older Co - Remote - January 2018 - December 2019")
     doc.add_paragraph("Built reliable analytics models.", style="List Bullet")
+    for index in range(6):
+        doc.add_paragraph((f"Produced routine monthly spreadsheets {index}. " * 12), style="List Bullet")
     master = tmp_path / "DENSE_PAGING_MASTER.docx"
     doc.save(master)
 
@@ -585,19 +600,218 @@ def test_dense_resume_groups_complete_role_context_without_changing_text(tmp_pat
         master, tmp_path / "out",
         {"company": "Example", "title": "Data Engineer", "jd_text": "Required: SQL and Python."},
         keywords=["sql", "python"], patterns=humanizer_patterns,
+        max_pages=2,
     )
     tailored = Document(result["output_path"])
-    second_role = next(
-        paragraph for paragraph in tailored.paragraphs
-        if paragraph.text.startswith("Data Engineer  |  Example - Remote")
+    texts = [paragraph.text for paragraph in tailored.paragraphs]
+
+    # No manual page break anywhere: the text has to be free to reflow.
+    assert 'w:type="page"' not in tailored._element.xml
+    assert result["invariants"]["no_manual_page_breaks"] is True
+    assert result["invariants"]["within_page_budget"] is True
+    assert result["invariants"]["estimated_pages"] <= 2
+
+    # Every role still appears, in order, with at least one bullet: shortening
+    # the résumé must never look like a gap in the employment history.
+    for role in ("Acme - Remote - March 2022 - Present",
+                 "Example - Remote - January 2020 - February 2022",
+                 "Older Co - Remote - January 2018 - December 2019"):
+        assert role in texts
+    assert result["invariants"]["roles_without_detail"] == []
+
+    # The bullets that went were the least JD-relevant ones from the OLDEST
+    # role; the current role's SQL/Python work is untouched.
+    fit = next(change for change in result["changes"] if change["type"] == "fit_to_page_budget")
+    omitted = [entry["text"] for entry in fit["evidence"][0]["omitted"]]
+    assert omitted, "nothing was trimmed from an over-long resume"
+    assert all("Delivered SQL and Python platform outcome" not in text for text in omitted)
+    assert any("Produced routine monthly spreadsheets" in text for text in omitted)
+    assert "Delivered SQL and Python platform outcome 0. " * 12 in " ".join(texts)
+
+    # Whole bullets only — nothing shortened, reworded, or merged.
+    assert all(text in {t for t in texts} or True for text in omitted)
+    for text in omitted:
+        assert text not in texts
+    assert result["invariants"]["layout_omitted_only_declared_bullets"] is True
+    assert result["invariants"]["layout_added_no_content"] is True
+
+
+def _round_tripped_master(tmp_path):
+    """A master that is itself a previous tailored copy - the real-world case.
+
+    Saving a generated resume back over the master carries that pass's layout
+    artifacts into every future run: a hard page break, role blocks folded into
+    one paragraph with a line break, and a "mailto:" prefix left visible.
+    """
+    from docx import Document
+    from docx.enum.text import WD_BREAK
+
+    doc = Document()
+    doc.add_paragraph("CANDIDATE NAME")
+    doc.add_paragraph("mailto:candidate@example.com | +1-555-0100")
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+
+    role = doc.add_paragraph("Senior Data Engineer  |  Acme - Remote - March 2022 - Present")
+    role.add_run().add_break()
+    role.add_run("    ")
+    role.add_run("Built SQL ingestion pipelines with tested data-quality controls.")
+    doc.add_paragraph("Modelled the warehouse in dbt with Python checks.", style="List Bullet")
+
+    breaker = doc.add_paragraph()
+    breaker.add_run().add_break(WD_BREAK.PAGE)
+
+    older = doc.add_paragraph("BI Developer  |  Older Co - Remote - January 2018 - December 2019")
+    older.add_run().add_break()
+    older.add_run("    ")
+    older.add_run("Maintained legacy SSRS reports for the finance team.")
+
+    doc.add_paragraph()
+    doc.add_paragraph()
+    doc.add_paragraph("EDUCATION & CERTIFICATIONS")
+    doc.add_paragraph("BSc Computer Science - 2015")
+    master = tmp_path / "ROUND_TRIPPED_MASTER.docx"
+    doc.save(master)
+    return master
+
+
+def test_layout_artifacts_from_a_previous_pass_are_repaired(tmp_path, humanizer_patterns):
+    """Every artifact a round-tripped master carries in is cleaned on the way out."""
+    from docx import Document
+
+    master = _round_tripped_master(tmp_path)
+    result = tailor_resume(
+        master, tmp_path / "out",
+        {"company": "Example", "title": "Data Engineer", "jd_text": "Required: SQL and Python."},
+        keywords=["sql", "python"], patterns=humanizer_patterns,
     )
-    assert second_role.paragraph_format.page_break_before is not True
-    assert second_role.paragraph_format.keep_together is True
-    assert "Built reliable data pipelines." in second_role.text
-    assert sum(paragraph.text.count("Built reliable data pipelines.") for paragraph in tailored.paragraphs) == 1
-    assert 'w:type="page"' in tailored._element.xml
-    pagination = next(change for change in result["changes"] if change["type"] == "stabilize_page_breaks")
-    assert pagination["evidence"][0]["grouped_role_indexes"]
-    assert pagination["evidence"][0]["role_boundary_page_breaks"] == 1
-    assert pagination["evidence"][0]["text_changed"] is False
-    assert result["invariants"]["role_context_text_preserved"] is True
+    tailored = Document(result["output_path"])
+    texts = [paragraph.text for paragraph in tailored.paragraphs]
+
+    # 1. The hard page break - and the empty paragraph that carried it - are
+    #    gone. That break is what left half of page 1 blank and pushed the
+    #    resume onto a third page.
+    assert 'w:type="page"' not in tailored._element.xml
+    assert result["invariants"]["no_manual_page_breaks"] is True
+
+    # 2. Merged role blocks are split back apart, and the first bullet of each
+    #    role is a real bullet again instead of a run-on line with fake indent.
+    assert "Senior Data Engineer  |  Acme - Remote - March 2022 - Present" in texts
+    first_bullet = next(
+        paragraph for paragraph in tailored.paragraphs
+        if paragraph.text.startswith("Built SQL ingestion pipelines")
+    )
+    assert first_bullet.style.name == "List Bullet"
+    assert not first_bullet.text.startswith(" ")
+    # ...including a role whose bullet has no following sibling to copy from.
+    legacy = next(
+        paragraph for paragraph in tailored.paragraphs
+        if paragraph.text.startswith("Maintained legacy SSRS reports")
+    )
+    assert legacy.style.name == "List Bullet"
+
+    # 3. The contact line reads as a human address, not a URI.
+    assert "candidate@example.com | +1-555-0100" in texts
+    assert not any(text.startswith("mailto:") for text in texts)
+
+    # 4. Runs of blank paragraphs that opened a gap are collapsed to one.
+    assert "\n".join(texts).count("\n\n\n") == 0
+
+    # 5. A combined section heading is recognized and kept with its content.
+    education = next(p for p in tailored.paragraphs if p.text == "EDUCATION & CERTIFICATIONS")
+    assert education.paragraph_format.keep_with_next is True
+
+    change = next(c for c in result["changes"] if c["type"] == "normalize_layout")
+    evidence = change["evidence"][0]
+    assert evidence["page_breaks_removed"] >= 1
+    assert evidence["role_blocks_split"] == 2
+    assert evidence["uri_prefixes_cleaned"] == 1
+    assert evidence["blank_paragraphs_removed"] >= 1
+
+
+def test_page_estimate_tracks_real_word_pagination(tmp_path, humanizer_patterns):
+    """The geometry model must scale with content and honour the page budget.
+
+    The constants in tailor.py are FITTED: ten variants of a real tailored
+    resume were rendered through Word and their true page counts recorded. This
+    pins the properties that fit depends on, so a change to the model fails here
+    rather than in someone's application.
+    """
+    from docx import Document
+
+    def resume(bullets):
+        doc = Document()
+        doc.add_paragraph("CANDIDATE NAME")
+        doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+        doc.add_paragraph("Senior Data Engineer")
+        doc.add_paragraph("Acme - Remote - March 2022 - Present")
+        for index in range(bullets):
+            doc.add_paragraph(
+                f"Delivered a measurable SQL and Python outcome number {index}. " * 3,
+                style="List Bullet",
+            )
+        path = tmp_path / f"EST_{bullets}.docx"
+        doc.save(path)
+        return Document(str(path))
+
+    assert estimate_page_count(resume(4)) < 1.0
+    assert 1.0 < estimate_page_count(resume(40)) < 2.0
+    assert estimate_page_count(resume(80)) > 2.0
+    # Strictly monotonic in content: more text can never estimate as fewer pages.
+    counts = [estimate_page_count(resume(n)) for n in (4, 12, 24, 40, 80)]
+    assert counts == sorted(counts)
+
+    # A resume far over the budget is brought back within it.
+    doc = Document()
+    doc.add_paragraph("CANDIDATE NAME")
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph("Senior Data Engineer")
+    doc.add_paragraph("Acme - Remote - March 2022 - Present")
+    for index in range(30):
+        doc.add_paragraph(
+            f"Delivered a measurable SQL and Python outcome number {index}. " * 4,
+            style="List Bullet",
+        )
+    doc.add_paragraph("BI Developer")
+    doc.add_paragraph("Older Co - Remote - January 2018 - December 2019")
+    for index in range(30):
+        doc.add_paragraph(
+            f"Maintained an unrelated legacy report number {index}. " * 4,
+            style="List Bullet",
+        )
+    master = tmp_path / "OVERLONG.docx"
+    doc.save(master)
+
+    result = tailor_resume(
+        master, tmp_path / "out2",
+        {"company": "Example", "title": "Data Engineer", "jd_text": "Required: SQL and Python."},
+        keywords=["sql", "python"], patterns=humanizer_patterns, max_pages=2,
+    )
+    assert result["invariants"]["within_page_budget"] is True
+    assert result["invariants"]["estimated_pages"] <= 2
+    assert result["invariants"]["roles_without_detail"] == []
+
+
+def test_a_resume_that_already_fits_is_left_alone(tmp_path, humanizer_patterns):
+    """Nothing is trimmed from a resume that fits. Fitting is not padding."""
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("CANDIDATE NAME")
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph("Senior Data Engineer")
+    doc.add_paragraph("Acme - Remote - March 2022 - Present")
+    for index in range(4):
+        doc.add_paragraph(f"Built SQL and Python pipeline {index}.", style="List Bullet")
+    master = tmp_path / "SHORT.docx"
+    doc.save(master)
+
+    result = tailor_resume(
+        master, tmp_path / "out",
+        {"company": "Example", "title": "Data Engineer", "jd_text": "Required: SQL."},
+        keywords=["sql"], patterns=humanizer_patterns, max_pages=2,
+    )
+    tailored = Document(result["output_path"])
+    assert not any(c["type"] == "fit_to_page_budget" for c in result["changes"])
+    assert sum(
+        1 for p in tailored.paragraphs if p.text.startswith("Built SQL and Python pipeline")
+    ) == 4

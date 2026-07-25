@@ -35,8 +35,51 @@ def sample_resume(tmp_path):
 
 
 @pytest.fixture()
+def sample_resume_paragraph_competencies(tmp_path):
+    """A master resume shaped like the REAL one: no tables anywhere.
+
+    CORE COMPETENCIES is a set of "Label:  a, b, c" paragraphs, and one skill
+    carries a bracketed qualifier containing a comma
+    ("Dimensional Modeling (Kimball, Inmon)"). Both details matter: the tailor
+    originally only reordered competency TABLES, so this layout was skipped
+    entirely, and a naive comma split tore the bracketed skill in half.
+
+    Bullets are List Paragraph style so the bullet-run detection sees them.
+    """
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("PROFESSIONAL SUMMARY")
+    doc.add_paragraph(
+        "Senior Data Engineer with 10+ years building cloud data platforms."
+    )
+    doc.add_paragraph("CORE COMPETENCIES")
+    doc.add_paragraph(
+        "Analytics & BI:  Power BI, DAX, Semantic Models, "
+        "Dimensional Modeling (Kimball, Inmon)"
+    )
+    doc.add_paragraph(
+        "Pipelines:  SSIS, ADF Pipelines, PySpark, Kafka"
+    )
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph("Senior Data Engineer | Acme | 2022 - Present")
+    doc.add_paragraph(
+        "Built medallion pipelines on Azure Databricks with PySpark and Delta Lake.",
+        style="List Paragraph",
+    )
+    doc.add_paragraph(
+        "Developed Power BI semantic models and DAX measures for finance analytics.",
+        style="List Paragraph",
+    )
+    path = tmp_path / "MASTER_RESUME.docx"
+    doc.save(str(path))
+    return path
+
+
+@pytest.fixture()
 def sample_resume_with_competencies(tmp_path):
-    """A master resume with a competencies TABLE (like the real master)."""
+    """A master resume whose competencies live in a 2-column TABLE."""
     from docx import Document
 
     doc = Document()

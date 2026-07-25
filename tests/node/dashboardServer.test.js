@@ -387,14 +387,33 @@ describe('dashboard batch actions + CSV export', () => {
         // Avoid touching the real filesystem in tests.
         writeJobTrackerImpl: () => { trackerWrites += 1; return { path: '/fake/root/data/job_tracker.csv' }; },
         readTextImpl: () => 'Company,Job Role\nAcme,Senior Data Engineer',
+        // The tracker rewrite is coalesced off the request path (it is an
+        // O(all jobs) export). Keep the window tiny so tests stay fast.
+        trackerDebounceMs: 5,
       },
     });
   });
   afterEach(async () => { await dash.close(); db.close(); });
 
+  /** Wait past the tracker debounce window so the coalesced write has run. */
+  const settleTracker = () => new Promise((r) => setTimeout(r, 30));
+
   it('refreshes the tracker CSV after a human-gated action', async () => {
     await post('/api/jobs/j1/approve');
+    await settleTracker();
     expect(trackerWrites).toBeGreaterThan(0);
+  });
+
+  it('coalesces a burst of actions into a single tracker rewrite', async () => {
+    // Rewriting the whole spreadsheet once per click is what made bulk actions
+    // slow. The guarantee is "the CSV catches up", not "one write per action".
+    await Promise.all([
+      post('/api/jobs/j1/decision', { decision: 'shortlisted' }),
+      post('/api/jobs/j2/decision', { decision: 'shortlisted' }),
+      post('/api/jobs/j1/decision', { decision: 'clear' }),
+    ]);
+    await settleTracker();
+    expect(trackerWrites).toBe(1);
   });
 
   it('GET /api/export/tracker.csv streams the spreadsheet as an attachment', async () => {

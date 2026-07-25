@@ -45,6 +45,51 @@ export function explainScore(scoreResult, scoring, { userApproved = false } = {}
   };
 }
 
+/**
+ * Score at or above which a Queue-tier row must have been downgraded by the
+ * sponsorship gate. Mirrors config/scoring.json `tiers.apply`.
+ *
+ * Consumers that only see a DB row (the dashboard data layer, the auto-apply
+ * precheck) cannot re-run explainScore, so they derive "was this gated?" from
+ * tier + score. That derivation needs the real threshold: hardcoding 75 meant
+ * editing tiers.apply silently misclassified every gated row.
+ */
+export const DEFAULT_APPLY_THRESHOLD = 75;
+let applyThreshold = DEFAULT_APPLY_THRESHOLD;
+
+/**
+ * Point the gate derivation at the live config threshold. Called once at
+ * startup with a loaded config; safe to call repeatedly.
+ * @param {number} threshold config.scoring.tiers.apply
+ * @returns {number} the threshold now in effect
+ */
+export function configureGateThreshold(threshold) {
+  const n = Number(threshold);
+  if (Number.isFinite(n) && n > 0 && n <= 100) applyThreshold = n;
+  return applyThreshold;
+}
+
+/** The gate threshold currently in effect (diagnostics/tests). */
+export function gateThreshold() {
+  return applyThreshold;
+}
+
+/**
+ * Was this job's tier downgraded to Queue by the sponsorship gate?
+ *
+ * The ONLY path to an Apply-scoring row sitting in Queue is the gate above
+ * (raw Apply/Priority, sponsorship not Confirmed/Likely/Approved), so the flag
+ * is recoverable for every historical row without a schema migration.
+ *
+ * @param {{tier?: string|null, score?: number|null}} job jobs-table row or board row
+ * @returns {boolean}
+ */
+export function isSponsorshipGated(job = {}) {
+  return job.tier === TIERS.QUEUE
+    && typeof job.score === 'number'
+    && job.score >= applyThreshold;
+}
+
 /** Raw tier purely from score thresholds. */
 export function rawTier(total, tiers) {
   if (total >= tiers.priority) return TIERS.PRIORITY;

@@ -117,11 +117,11 @@ What happens at each stage, concretely:
 | Normalize | `src/search/normalize.js` | Converts every source into one canonical job shape with a stable ID. |
 | De-dupe | `src/search/deduplicator.js` | Drops repeats (keeps the richer JD); skips jobs you've already **applied** to (toggle via `EXCLUDE_ALREADY_APPLIED`). |
 | Freshness | `src/search/freshnessFilter.js` | Keeps dated postings per `JOB_FRESHNESS_MODE` (LAST_24_HOURS / LAST_3_DAYS / LAST_7_DAYS / ALL). The supplied broad-coverage configuration uses **ALL**, then applies the separate 45-day stale-posting guard. Auto-widens to a 3-day window when a strict window is thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs go to a visible date-unconfirmed review bucket when `INCLUDE_UNKNOWN_DATE_JOBS=true`, rather than being silently dropped. |
-| Exclude | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior/unrelated, wrong-geo, and stale postings. C2C, 1099, part-time, freelance, and other employment arrangements remain visible and are classified for UI filtering. |
+| Exclude | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior/unrelated, wrong-geo, and stale postings. The US-only gate reads its US signal from `src/utils/usGeography.js` (all 50 states, DC, and the territories, by name and USPS code), so a US city that shares a name with a foreign one is kept; only a genuinely foreign location is dropped, and an unknown or ambiguous one is always kept for you to judge. C2C, 1099, part-time, freelance, and other employment arrangements remain visible and are classified for UI filtering. |
 | Sponsorship | `src/scoring/sponsorshipClassifier.js` | Confirmed / Likely / Unconfirmed from JD phrases + known-sponsor list in config. |
 | Score | `src/scoring/scorer.js` | 13 weighted categories (title, seniority, Azure/Fabric stack, data-eng stack, BI/semantic, Python/SQL/PySpark, domain, sponsorship, geography, freshness, direct-ATS, company likelihood, resume alignment) → normalized 0–100. Fully deterministic. |
 | Tier + gate | `src/scoring/explainScore.js` | Priority ≥85, Apply ≥75, Queue ≥60, Near miss ≥50. Downgrades Apply/Priority → Queue unless sponsorship is acceptable or you approved it. The dashboard still shows these gated 75+ roles as **strong fits** with a "⚠ verify sponsorship first" action — fit measures the ROLE match; sponsorship feasibility is reported separately, and the gate only blocks auto-preparation. Only Priority/Apply tiers are auto-prepared; Queue-tier jobs are prepared **only** when you select them yourself ("Prepare selected"). |
-| Tailor resume | `src/resume/tailor.py` | Opens the master read-only and bolds skills you already have that match the JD. Saves into the job's `applications/output/` folder. Never fabricates skills. (An optional per-job "Most relevant to this role" focus line is available but **off by default** — enable with `config.runtime.resumeFocusLine === true`.) |
+| Tailor resume | `src/resume/tailor.py` | Opens the master read-only and bolds skills you already have that match the JD. Saves into the job's `applications/output/` folder. Never fabricates skills. Repairs layout artifacts (manual page breaks, merged role blocks, blank filler) and holds the result to **2 pages** by omitting whole low-relevance bullets from the oldest roles — never shortening or rewording a claim, never dropping a role, its dates, or its last bullet. Omissions are listed for review. (An optional per-job "Most relevant to this role" focus line is available but **off by default** — enable with `config.runtime.resumeFocusLine === true`.) |
 | Cover letter | `src/apply/coverLetter.js` | Deterministic template filled from your profile, then humanized (banned phrases + em dashes removed), 180–260 words, only when score ≥ threshold or required. |
 | Packet | `src/apply/applicationPacket.js` | Bundles job + score + tier + resume path + cover letter + ATS + fill plan + upload plan. Always `submitReady: false`. |
 | Approval | `src/apply/approvalQueue.js` | Writes the packet to the approval queue as `pending_review`. The compliance choke point. |
@@ -152,8 +152,54 @@ Security boundaries: the server remains loopback-only; extension requests requir
 5. Auto-search, auto-score, auto-tailor, and form pre-fill *planning* are allowed; **the final submit is human-gated** — either you click it, or you explicitly opted in to auto-submit for that run.
 6. The only automated submit path is `applyRunner.tryAutoSubmit`, strictly gated behind the per-run `options.autoSubmit === true` opt-in, a clean form, and the daily cap — and "submitted" is only recorded after the submission is verified (`npm run verify` asserts these gates exist).
 7. Every application packet is fully reviewable before anything happens.
-8. Sponsorship/work-authorization answers are always truthful and config-driven; the agent never claims "no sponsorship required."
+8. Sponsorship/work-authorization answers are always truthful and config-driven; the agent never claims "no sponsorship required." **Negatively-phrased sponsorship questions** ("can you work here *without* sponsorship?") are never auto-answered at all — pattern matching is polarity-blind, so inverting the stored answer would be a guess about immigration status. They always go to you.
 9. Ambiguous, legal, immigration, salary, or relocation questions pause and ask you.
+
+---
+
+## Optional LLM assist — what it may and may not do
+
+Off by default. Enable with `LLM_ASSIST=on` plus an API key (see `.env.example`).
+It is deliberately confined to **one narrow, verifiable job**.
+
+**The problem it solves.** The deterministic tailor can only recognize
+requirements that already appear in `config/scoring.json`'s keyword vocabulary. A
+posting asking for "dimensional modeling", "Iceberg", or "dbt exposures" surfaces
+nothing if those terms were never listed — so the resume is never reordered to
+answer them, and they are never reported as gaps. Hand-maintaining that
+vocabulary across every employer's phrasing does not scale.
+
+**What it does.** The model READS the job description and proposes requirement
+phrases. That is all.
+
+**Why it cannot fabricate.** Every proposed phrase is verified to occur
+**verbatim in that job description** before it is accepted. A phrase the model
+invented cannot survive the check, so hallucination is structurally impossible
+rather than merely discouraged. Rejected phrases are counted and shown in the
+packet.
+
+**What it never touches.** It does not write, reword, or suggest resume prose.
+Accepted phrases are handed to the same deterministic tailor, which only
+reorders and emphasizes text **already present in your master resume** and
+reports everything else as an honest gap. Free-form resume rewriting stays
+disabled — see the module docstring in `src/resume/tailor.py` for why.
+
+**Privacy boundary.** Only the public job description and title are sent. Your
+resume, contact details, EEO answers, and salary expectations are never
+transmitted.
+
+**Other guarantees.** Never consulted on the auto-submit path. Deterministic
+(`temperature: 0`) and cached by content hash, so re-preparing a job is free and
+its audit trail is reproducible. Disabled, offline, slow, or malformed responses
+all fall back silently to the deterministic path.
+
+| Layer | Who decides | Can it invent? |
+|---|---|---|
+| JD requirement extraction | LLM proposes, grounding check verifies | No — unverifiable phrases are dropped |
+| Resume content selection | Deterministic tailor | No — only reorders existing text |
+| Gap reporting | Deterministic tailor | No — reports what is missing, adds nothing |
+| Screening answers | Your `config/screening_answers.json` | No — LLM is not involved |
+| Final submit | You | n/a |
 
 ---
 
@@ -209,6 +255,13 @@ Place your master resume at `resumes/base/MASTER_RESUME.docx`. It is opened
 **read-only** and is **never overwritten** — tailored copies go to
 `resumes/output/`.
 
+Or do it from the dashboard: **More ▾ → 🧾 Master resume…** shows the document's
+real text (so you can confirm what tailoring reads, not just the filename),
+downloads it for editing, and uploads a replacement. An upload is validated
+before it lands — a renamed PDF or a file with no readable text is refused — and
+the version it replaces is kept in `resumes/base/history/` for one-click
+rollback.
+
 ### Preflight (recommended before the first run)
 
 ```bash
@@ -246,9 +299,21 @@ drives the whole workflow from the browser:
 - **Tiles**: jobs tracked, discovered today, posted in the last 24 h, strong /
   medium / weak fit, shortlisted, pending review, prepared today, ready to
   submit, submitted today, blocked, rejected — each tile filters the board.
-- **Board**: search, filter (fit / status / source / sponsorship / last-24 h),
-  sort (score / newest / company / recently updated), and compare up to three
-  jobs side by side.
+- **Board**: search, filter, sort (grade / company / newest), and compare up to
+  three jobs side by side. Filters sit in two visible lanes — search, fit,
+  status, posting age and remote on the first; sponsorship, job type, source,
+  ATS, resume state and closed jobs on a quieter second lane. Nothing is behind
+  a dropdown, so a filter can never narrow the board out of sight. Every applied
+  filter also appears as a chip you can clear individually.
+- **Nationwide coverage, stated as data**: every configured search asks for the
+  whole United States, and the header shows how many of the 56 US states and
+  territories the open board actually spans (with a per-state breakdown under
+  "Where the jobs are"). The US-only gate recognizes all of them by name and by
+  USPS code, so US cities that share a name with a foreign one — Dublin OH,
+  Vienna VA, Ontario CA, Athens GA, Cambridge MA — are never discarded.
+- **Master resume**: view the document's real text, download it to edit, and
+  upload a replacement — validated before it lands, with the previous version
+  kept for one-click rollback (**More ▾ → 🧾 Master resume…**).
 - **Why it fits**: every job shows its score explanation, the JD skills you
   have, and the JD skills not evidenced in your profile. A skill-alias
   ontology (`config/scoring.json` → `evidenceAliases`) keeps these two lists
@@ -262,7 +327,13 @@ drives the whole workflow from the browser:
   (stops before submit)* · *I submitted it myself* (the only path to
   "submitted" — the system never sets it on its own).
 - **Pipeline buttons**: Discover / Score / Find & Prepare run the real pipeline
-  in the background; status is shown live in the header.
+  in the background. A run shows live in the header as a progress pill —
+  what it is doing, how many of how many boards are done, which board is
+  current, and elapsed time — with a determinate progress line on the header's
+  bottom edge. **Details** opens the per-board breakdown (found counts, errors,
+  duration, cache hits) and, when something failed, its *cause*: the failure
+  category, HTTP status, the provider's own message, and what to do about it.
+  Results stay until you dismiss them.
 - **Source breakdown**: found / strong / prepared / submitted per source
   (Greenhouse, Lever, Ashby, SmartRecruiters, Workday, manual lists, …).
 - **Sponsorship breakdown**: Confirmed / Likely / Unconfirmed counts with how
@@ -348,9 +419,35 @@ a per-actor `fieldMap`. The token is sent as an `Authorization: Bearer` header
 the run. Jobs found this way carry real apply URLs, so `assist` can navigate to
 and fill the actual application pages.
 
+**Cost and the monthly allowance.** Running an actor spends real money on your
+Apify account; reading a saved `datasetId` does not. Retries reflect that — only
+a 429 (rejected at the gate, nothing charged) is retried, because re-running a
+timed-out `run-sync` call would pay for the same scrape twice.
+
+Once the plan's monthly usage limit is reached, Apify **rejects every new actor
+run**. The adapter therefore makes one free usage check before starting anything
+and, if the allowance is spent, skips the actors entirely and reports a single
+line naming the numbers and the reset date — instead of firing all 25 configured
+actors at a wall and reporting 25 identical rejections with no cause. Other job
+boards are unaffected, so a run still completes with everything they found. The
+free plan's allowance is $5/month, which a full nationwide sweep can use up in a
+day or two.
+
 ---
 
 ## Commands
+
+### Maintenance / one-off scripts
+
+```bash
+npm run verify                          # repo + safety gate health check
+node scripts/relabelUndatedJobs.mjs     # report rows mislabelled "stale: unknown posting date"
+node scripts/relabelUndatedJobs.mjs --apply   # relabel them as "unknown posting date"
+pip install -r requirements-llm.txt     # ONLY if you enable LLM_ASSIST
+python test_api_key.py                  # check the LLM key/endpoint (reads env only)
+```
+
+
 
 ### One command (recommended)
 

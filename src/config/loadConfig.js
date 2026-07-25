@@ -15,6 +15,7 @@ import dotenv from 'dotenv';
 
 import { SCHEMA_FILES, createValidator, assertValidConfig } from './validateConfig.js';
 import { getRuntimeSettings } from '../utils/credentialManager.js';
+import { configureGateThreshold } from '../scoring/explainScore.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -92,5 +93,15 @@ export function loadConfig({ root = PROJECT_ROOT, loadEnv = true, env = process.
 
   bundle.runtime = getRuntimeSettings(env);
   bundle.root = root;
+
+  // Consumers that only ever see a DB row (the dashboard data layer, the
+  // auto-apply precheck) derive "was this downgraded by the sponsorship gate?"
+  // from tier + score, because the flag is not a stored column. They need the
+  // real Apply threshold: with it hardcoded, editing scoring.tiers.apply
+  // silently misclassified fit for every gated row. Every entry point funnels
+  // through loadConfig, so setting it here keeps the derivation honest
+  // everywhere without threading config into pure functions.
+  configureGateThreshold(bundle.scoring?.tiers?.apply);
+
   return Object.freeze(bundle);
 }

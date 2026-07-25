@@ -30,21 +30,43 @@ const BLOCKING_PHRASES = Object.freeze({
     'create an account or sign in', 'before applying on company site',
     'you must create an indeed account',
   ],
+  // Only imperative, second-person prompts belong here — they are things a
+  // challenge page SAYS TO YOU, not vocabulary a job description can contain.
+  // The bare "two-factor"/"multi-factor" nouns moved to THIN_ONLY_TOKENS.
   mfa: [
-    'two-factor', 'two factor', 'multi-factor', 'multifactor',
     'one-time passcode', 'one time passcode', 'authenticator app',
     'enter the code we sent', 'enter the verification code',
     'security code we sent',
   ],
   bot: [
     'checking your browser', 'ddos protection', 'perimeterx',
-    'access denied', 'request blocked', 'unusual traffic', 'bot detection',
+    'request blocked', 'unusual traffic', 'bot detection',
     'datadome', 'incapsula', 'akamai bot manager',
     // Cloudflare's "Additional Verification Required" interstitial (shows a
     // Ray ID). Indeed fronts its pages with this and blocks automated browsers.
-    'additional verification required', 'ray id', 'cf-ray',
-    'troubleshooting cloudflare errors', 'attention required',
+    'additional verification required', 'cf-ray',
+    'troubleshooting cloudflare errors',
   ],
+});
+
+/**
+ * Tokens that DO appear on real bot walls but also appear innocently inside
+ * ordinary application pages and job descriptions — so they count only on a
+ * THIN, dedicated interstitial (same rule as the captcha/MFA widget tokens).
+ *
+ * Every one of these was previously a STRONG signal matched against the whole
+ * page HTML including the JD text, which stopped legitimate runs:
+ *   - "access denied"     : appears in security-engineering JDs and in ordinary
+ *                           inline form errors
+ *   - "attention required": Cloudflare's title, but also a perfectly normal ATS
+ *                           validation banner ("Attention required: complete
+ *                           all fields")
+ *   - "ray id"            : matched any page containing that two-word sequence
+ *   - "two-factor"/"multi-factor": extremely common in security/platform JDs
+ */
+const THIN_ONLY_TOKENS = Object.freeze({
+  bot: ['access denied', 'attention required', 'ray id'],
+  mfa: ['two-factor', 'two factor', 'multi-factor', 'multifactor'],
 });
 
 /**
@@ -110,13 +132,18 @@ export function detectBlocker({ html = '', url = '', status } = {}) {
     if (hit) return block(kind, `${kind} signal: "${hit}"`, [...signals, `text:${hit}`]);
   }
 
-  // 2) Weak widget tokens only count on a THIN, dedicated challenge page — not
-  //    when a captcha/2FA widget is merely embedded in a full content page.
+  // 2) Weak tokens count only on a THIN, dedicated challenge page — not when a
+  //    captcha/2FA widget (or the words "access denied") merely appear inside a
+  //    full job/application page.
   const thin = html.length > 0 && html.length <= THIN_PAGE_MAX;
   if (thin) {
     for (const kind of ['captcha', 'mfa']) {
       const hit = WIDGET_TOKENS[kind].find((token) => haystack.includes(token));
       if (hit) return block(kind, `${kind} challenge: "${hit}"`, [...signals, `text:${hit}`]);
+    }
+    for (const kind of ['bot', 'mfa']) {
+      const hit = (THIN_ONLY_TOKENS[kind] ?? []).find((token) => haystack.includes(token));
+      if (hit) return block(kind, `${kind} interstitial: "${hit}"`, [...signals, `text:${hit}`]);
     }
   }
 
@@ -159,6 +186,6 @@ export function isSafeToProceed(input) {
 export const GUARD_SIGNALS = Object.freeze({
   captcha: [...BLOCKING_PHRASES.captcha, ...WIDGET_TOKENS.captcha],
   login: [...BLOCKING_PHRASES.login],
-  mfa: [...BLOCKING_PHRASES.mfa, ...WIDGET_TOKENS.mfa],
-  bot: [...BLOCKING_PHRASES.bot],
+  mfa: [...BLOCKING_PHRASES.mfa, ...WIDGET_TOKENS.mfa, ...THIN_ONLY_TOKENS.mfa],
+  bot: [...BLOCKING_PHRASES.bot, ...THIN_ONLY_TOKENS.bot],
 });

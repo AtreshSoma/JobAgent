@@ -74,7 +74,12 @@ export function submitStatus(job = {}, approval = null) {
  * @returns {{ path: string, total: number, prepared: number, submitted: number }}
  */
 export function writeJobTracker(db, root) {
-  const jobs = db.listJobs({});
+  // Every column below is metadata — the JD body is never exported. Use the
+  // summary read so the tracker does not haul ~150 MB of jd_text out of SQLite
+  // on each rewrite (this runs after every mutating dashboard action, where it
+  // measured ~520 ms of pure waste per click). Falls back for test stubs that
+  // only implement listJobs.
+  const jobs = typeof db.listJobsSummary === 'function' ? db.listJobsSummary() : db.listJobs({});
   const approvals = approvalsByJob(db);
 
   let prepared = 0;

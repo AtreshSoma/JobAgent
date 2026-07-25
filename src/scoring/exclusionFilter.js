@@ -16,6 +16,7 @@
 
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
+import { usLocationSignal } from '../utils/usGeography.js';
 
 /**
  * @param {object} job normalized job
@@ -109,23 +110,42 @@ function wordMatch(text, term) {
  * clearly names a non-US country/city AND carries no US signal; otherwise null.
  * Unknown/blank locations are never discarded here (kept for scoring).
  *
+ * The US signal comes from `utils/usGeography.js`, which knows all 50 states,
+ * DC, and the territories by name and USPS code. Before that, the signal was a
+ * five-entry marker list, so every US city sharing a name with a foreign one —
+ * Dublin OH, Vienna VA, Ontario CA, Athens GA, Cambridge MA and many more —
+ * matched the foreign list, matched nothing on the US list, and was discarded
+ * before it could be scored. That is 15 of 39 sampled real US locations.
+ *
  * @param {object} job normalized job
  * @param {object} [geo] exclusions.geography config
- *   { usOnly: boolean, usLocationMarkers: string[], nonUsLocationMarkers: string[] }
+ *   { usOnly, usLocationMarkers, nonUsLocationMarkers, nonUsCountryMarkers }
  */
 function checkUsOnly(job, geo = {}) {
   if (!geo || geo.usOnly !== true) return null;
   const loc = normalizeText(job.location);
   if (!loc) return null; // unknown location -> defer, do not hard-discard
 
-  // An explicit US signal always wins (protects "New Mexico", "Washington", etc.).
+  const signal = usLocationSignal(job.location);
+  // A spelled-out state or a national marker is conclusive.
+  if (signal.isUs && signal.strength !== 'abbreviation') return null;
+
+  // Any extra marker the user configured also wins outright.
   const usMarkers = geo.usLocationMarkers ?? [];
   if (usMarkers.some((m) => wordMatch(loc, normalizeText(m)))) return null;
 
   const foreign = (geo.nonUsLocationMarkers ?? [])
     .filter((m) => wordMatch(loc, normalizeText(m)));
-  if (foreign.length) {
+  if (!foreign.length) return null;
+
+  // A bare two-letter code is the one ambiguous case ("Berlin, DE" is Germany,
+  // not Delaware), so an explicitly named foreign COUNTRY outranks it. Against
+  // a foreign CITY, the state code still wins: "Ontario, CA" is California.
+  if (signal.strength === 'abbreviation') {
+    const countries = (geo.nonUsCountryMarkers ?? [])
+      .filter((m) => wordMatch(loc, normalizeText(m)));
+    if (!countries.length) return null;
     return discard('geography_mismatch', [`location not in US: ${job.location}`]);
   }
-  return null;
+  return discard('geography_mismatch', [`location not in US: ${job.location}`]);
 }

@@ -2,6 +2,12 @@
 .env
 *.env
 !.env.example
+# Ad-hoc probe/experiment scripts at the repo root. These routinely get a real
+# key pasted into them "just to test"; keeping them untracked means a stray
+# `git add -A` can never publish one. Committed tooling lives in scripts/.
+/test_*.py
+/scratch*.py
+/scratch*.mjs
 
 # --- Personal data (real name/contact/EEO/salary answers) — keep local only ---
 config/candidate.json

@@ -199,10 +199,16 @@ describe('dashboard: sponsorship-gated strong fits are visible', () => {
     expect(stats.totals.strongFit).toBe(1);
     expect(stats.totals.mediumFit).toBe(1);
     expect(stats.totals.needsSponsorshipCheck).toBe(1);
-    // The gated job produces a concrete "verify sponsorship" next action.
+    // The gated job produces a concrete "verify sponsorship" next action, and
+    // that action's filter must select EXACTLY the jobs it counted — matching
+    // on sponsorship text instead both missed gated rows classified some other
+    // way and swept in ungated ones.
     const gatedAction = stats.nextActions.find((a) => a.text.includes('sponsorship check'));
     expect(gatedAction).toBeDefined();
-    expect(gatedAction.filter).toEqual({ fit: 'strong', sponsorship: 'Unconfirmed' });
+    expect(gatedAction.filter).toEqual({ sponsorshipGated: true });
+    const gatedRows = listBoardJobs(db, { ...gatedAction.filter, now });
+    expect(gatedRows).toHaveLength(stats.totals.needsSponsorshipCheck);
+    expect(gatedRows.map((r) => r.id)).toEqual(['gated-1']);
 
     const rows = listBoardJobs(db, { fit: 'strong', now });
     expect(rows.map((r) => r.id)).toEqual(['gated-1']);
@@ -214,6 +220,60 @@ describe('dashboard: sponsorship-gated strong fits are visible', () => {
   it('buildNextActions omits the sponsorship action when nothing is gated', () => {
     const actions = buildNextActions({ needsSponsorshipCheck: 0, discoveredLast24h: 5 }, 0);
     expect(actions.find((a) => a.text.includes('sponsorship check'))).toBeUndefined();
+  });
+});
+
+describe('every next action shows exactly as many jobs as it counted', () => {
+  /**
+   * A sentence like "19 application(s) are blocked" that opens a board of 6 rows
+   * reads as a bug in the numbers. The count and the filter must be two views of
+   * ONE predicate, so this walks every generated action and reconciles them.
+   */
+  const now = new Date('2026-07-11T12:00:00Z');
+
+  it('reconciles the count in each action with the rows its filter returns', () => {
+    const db = openDatabase({ path: ':memory:' });
+    const add = (id, fields) => db.upsertJob({
+      id, company: `Co-${id}`, title: 'Data Engineer', url: `https://example.com/${id}`,
+      location: 'Remote, US', source: 'greenhouse', ...fields,
+    });
+    // assist_blocked / failed / cancelled all feed the SAME "need you" count.
+    add('b1', { status: 'assist_blocked', score: 90, tier: 'Priority' });
+    add('b2', { status: 'failed', score: 88, tier: 'Priority' });
+    add('b3', { status: 'cancelled', score: 87, tier: 'Priority' });
+    // strong fits with no decision yet
+    add('s1', { status: 'scored', score: 92, tier: 'Priority' });
+    add('s2', { status: 'discovered', score: 86, tier: 'Apply' });
+    // a strong fit that has already moved on — must NOT be counted as untriaged
+    add('s3', { status: 'scored', score: 91, tier: 'Priority', user_decision: 'shortlisted' });
+    // sponsorship-gated strong fits
+    add('g1', { status: 'scored', score: 80, tier: 'Queue', sponsorship: 'Unconfirmed' });
+    add('g2', { status: 'scored', score: 82, tier: 'Queue', sponsorship: 'Likely' });
+    // an unverified submit and an undated review row
+    add('u1', { status: 'submit_unverified', score: 90, tier: 'Priority' });
+    add('d1', { status: 'unknown_date_review', score: 90, tier: 'Priority' });
+
+    const stats = dashboardStats(db, { now });
+    const actions = stats.nextActions.filter((a) => a.filter);
+    expect(actions.length).toBeGreaterThan(3);
+
+    for (const action of actions) {
+      const counted = Number(action.text.match(/^(\d+)/)?.[1]);
+      expect(counted, `no leading count in "${action.text}"`).toBeGreaterThan(0);
+      const { view, ...rest } = action.filter;
+      const rows = listBoardJobs(db, { ...rest, ...(view ? { view } : {}), now });
+      expect(rows.length, `"${action.text}" filters to ${rows.length} row(s)`).toBe(counted);
+    }
+
+    // Spot-check the two that used to disagree.
+    const blocked = actions.find((a) => a.text.includes('blocked'));
+    expect(blocked.filter).toEqual({ view: 'blocked' });
+    expect(blocked.text.startsWith('3 ')).toBe(true);
+    const untriaged = actions.find((a) => a.text.includes('no decision yet'));
+    expect(untriaged.filter).toEqual({ view: 'best' });
+    // s1, s2 and the two gated strong fits — never the shortlisted s3.
+    expect(untriaged.text.startsWith('4 ')).toBe(true);
+    db.close();
   });
 });
 

@@ -28,6 +28,10 @@
  *   GET  /api/jobs/:id                    full detail incl. packet summary
  *   GET  /api/jobs/:id/resume?format=…    secure PDF preview / DOCX download
  *   POST /api/jobs/:id/resume-preview     create/recover a PDF preview on demand
+ *   GET  /api/master-resume               master resume metadata + readable text
+ *   GET  /api/master-resume/file          download the master resume DOCX
+ *   POST /api/master-resume               replace it (validated, previous kept)
+ *   POST /api/master-resume/restore       roll back to a kept previous version
  *   POST /api/jobs/:id/check-link         classify current URL availability
  *   POST /api/jobs/:id/link {url}         replace stale URL with a direct job URL
  *   POST /api/jobs/:id/decision {decision} shortlist | rejected | archived | clear
@@ -47,9 +51,12 @@
  */
 
 import { createServer } from 'node:http';
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import {
-  join, dirname, normalize, extname, sep, isAbsolute, resolve, basename,
+  copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync,
+  rmSync, statSync, writeFileSync,
+} from 'node:fs';
+import {
+  join, dirname, normalize, extname, isAbsolute, resolve, basename,
 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -57,13 +64,16 @@ import { ensureResumePdf } from '../resume/pdfPreview.js';
 import { checkJobLink } from './linkHealth.js';
 
 import { buildRca, sanitizeErrorMessage } from '../utils/failureRca.js';
+import { isPublicHttpUrl } from '../utils/publicUrl.js';
+import { assertInsideDirectory, isInsideDirectory } from '../utils/pathSafe.js';
 
 import {
   dashboardStats, boardPage, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
-  buildDocuments,
+  buildDocuments, buildMasterResume, MASTER_RESUME_RELATIVE, MASTER_HISTORY_RELATIVE,
 } from './data.js';
+import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import {
   runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult,
   preparePacketsForJobs, ingestUrl,
@@ -92,6 +102,22 @@ const MAX_BATCH_JOBS = 200;
 
 /** Keep local resume previews bounded even when a DB path is corrupt. */
 const MAX_RESUME_PREVIEW_BYTES = 12 * 1024 * 1024;
+
+/** A Word resume is tens of KB; anything near this is not a resume. */
+const MAX_MASTER_RESUME_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Smallest word count accepted as a master resume. Every tailored resume is
+ * built from this file, so an empty template or an image-only scan must be
+ * refused at upload time rather than quietly breaking every future packet.
+ */
+const MIN_MASTER_RESUME_WORDS = 40;
+
+/** Previous master resumes kept for one-click rollback. */
+const MAX_MASTER_BACKUPS = 10;
+
+/** Upload body cap: base64 inflates the payload by ~4/3, plus JSON overhead. */
+const MAX_UPLOAD_BODY_BYTES = 12 * 1024 * 1024;
 
 /**
  * Fold RCA entries that say the same thing into one row carrying a count.
@@ -236,7 +262,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
    *
    * @returns {string|null} the CSV path, or null when skipped
    */
-  function refreshTracker() {
+  function writeTrackerNow() {
     const root = config?.root;
     if (!root) return null;
     try {
@@ -246,6 +272,44 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       logger?.warn?.(`tracker refresh failed: ${err.message}`);
       return null;
     }
+  }
+
+  /**
+   * Coalescing scheduler for the tracker rewrite.
+   *
+   * The CSV mirrors the whole jobs table, so writing it is O(all jobs) — at 32k
+   * rows that is a real chunk of blocked event loop. Doing it INLINE meant every
+   * shortlist/approve/note click paid for a full-table export before the
+   * response was sent, and a bulk action paid for it once per job.
+   *
+   * Now a mutation only marks the CSV dirty; one write runs shortly after the
+   * burst settles. The DB is already the source of truth, so a sub-second lag on
+   * a derived spreadsheet is invisible — and `/api/export/tracker.csv` still
+   * writes synchronously so an explicit download is never stale.
+   */
+  let trackerTimer = null;
+  let trackerDirty = false;
+  const TRACKER_DEBOUNCE_MS = deps.trackerDebounceMs ?? 400;
+  function refreshTracker() {
+    if (!config?.root) return;
+    trackerDirty = true;
+    if (trackerTimer) return;
+    trackerTimer = setTimeout(() => {
+      trackerTimer = null;
+      if (!trackerDirty) return;
+      trackerDirty = false;
+      track(Promise.resolve().then(writeTrackerNow));
+    }, TRACKER_DEBOUNCE_MS);
+    // Never hold the process open just for a pending CSV rewrite.
+    trackerTimer.unref?.();
+  }
+
+  /** Flush any pending tracker write (shutdown + explicit export). */
+  function flushTracker() {
+    if (trackerTimer) { clearTimeout(trackerTimer); trackerTimer = null; }
+    if (!trackerDirty) return null;
+    trackerDirty = false;
+    return writeTrackerNow();
   }
 
   /**
@@ -290,10 +354,11 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     } catch {
       throw Object.assign(new Error(missingMessage), { statusCode: 404 });
     }
-    if (candidate !== workspace && !candidate.startsWith(workspace + sep)) {
-      throw Object.assign(new Error('resume path escapes the Job Agent workspace'), { statusCode: 403 });
-    }
-    return candidate;
+    // Platform-correct containment. A raw `startsWith` compared drive-letter
+    // case literally, and since realpathSync preserves the case it is handed,
+    // a workspace of `c:\job-agent` never matched a stored `C:\job-agent\…`
+    // artifact — which 403'd every resume preview and download.
+    return assertInsideDirectory(workspace, candidate, 'resume path escapes the Job Agent workspace');
   }
 
   /** Find a recorded PDF or recover an already-generated sibling PDF. */
@@ -363,6 +428,158 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       ? 'application/pdf'
       : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
     return { bytes: readFileSync(candidate), name: basename(candidate), type, inline: extension === '.pdf' };
+  }
+
+  /* ───────────────────────── master resume ───────────────────────── */
+
+  /**
+   * Resolve the master resume + its version-history directory, or explain why
+   * they are unavailable. The paths are DERIVED from the workspace root (never
+   * from the request), and containment is asserted anyway so a hand-edited
+   * config root cannot point the writer outside the workspace.
+   */
+  function masterResumePaths() {
+    const root = config?.root;
+    if (!root) {
+      throw Object.assign(
+        new Error('the master resume is unavailable because no project root is configured'),
+        { statusCode: 503 },
+      );
+    }
+    const workspace = resolve(root);
+    const file = join(workspace, MASTER_RESUME_RELATIVE);
+    const historyDir = join(workspace, MASTER_HISTORY_RELATIVE);
+    assertInsideDirectory(workspace, file, 'master resume path escapes the Job Agent workspace');
+    assertInsideDirectory(workspace, historyDir, 'master resume history escapes the Job Agent workspace');
+    return { workspace, file, historyDir };
+  }
+
+  const masterResumeState = () => buildMasterResume(db, {
+    root: config?.root ?? null, now: nowDate(),
+  });
+
+  /** Timestamped, collision-free name for a kept previous version. */
+  function backupName(historyDir) {
+    const stamp = nowDate().toISOString().replace(/[:.]/g, '-');
+    let candidate = join(historyDir, `MASTER_RESUME.${stamp}.docx`);
+    for (let n = 2; existsSync(candidate) && n < 100; n += 1) {
+      candidate = join(historyDir, `MASTER_RESUME.${stamp}-${n}.docx`);
+    }
+    return candidate;
+  }
+
+  /** Keep the history directory bounded — it is a safety net, not an archive. */
+  function pruneBackups(historyDir) {
+    const kept = masterResumeState().backups ?? [];
+    for (const stale of kept.slice(MAX_MASTER_BACKUPS)) {
+      try { rmSync(join(historyDir, stale.name), { force: true }); }
+      catch (err) { logger?.warn?.(`could not prune old master resume ${stale.name}: ${err.message}`); }
+    }
+  }
+
+  /**
+   * Replace the master resume with validated bytes.
+   *
+   * This is the one place in the whole project that WRITES the master resume,
+   * so every guarantee lives here:
+   *   - the bytes must really be a readable Word document with resume-like
+   *     content (a renamed PDF, an empty template, or a corrupt upload is
+   *     rejected BEFORE anything is overwritten);
+   *   - the outgoing file is copied to resumes/base/history first, so the
+   *     replacement is always undoable;
+   *   - the new file is written to a temp name and renamed into place, so an
+   *     interrupted write can never leave a half-written master behind.
+   *
+   * @param {object} args
+   * @param {string} args.filename original name, for the extension check
+   * @param {Buffer} args.bytes file contents
+   * @returns {object} { replaced, backup, master }
+   */
+  function replaceMasterResume({ filename, bytes }) {
+    const { file, historyDir } = masterResumePaths();
+    const fail = (message, statusCode) => {
+      throw Object.assign(new Error(message), { statusCode });
+    };
+    if (!/\.docx$/i.test(String(filename ?? ''))) {
+      fail('the master resume must be a .docx file — the tailor reads Word documents only '
+        + '(export from Google Docs as .docx, or "Save As" .docx in Word)', 400);
+    }
+    if (!bytes.length) fail('the uploaded file is empty', 400);
+    if (bytes.length > MAX_MASTER_RESUME_BYTES) {
+      fail(`the file is ${Math.round(bytes.length / 1024)} KB — the limit is `
+        + `${Math.round(MAX_MASTER_RESUME_BYTES / 1024 / 1024)} MB`, 413);
+    }
+    if (!isDocxBuffer(bytes)) {
+      fail('that file is not a .docx. It has a .docx name but its contents are something else '
+        + '(often a PDF or an old .doc renamed) — open it in Word and use "Save As → .docx"', 415);
+    }
+    let extracted;
+    try {
+      extracted = extractDocxText(bytes);
+    } catch (err) {
+      fail(`the .docx could not be read: ${err.message}`, 422);
+    }
+    if (extracted.wordCount < MIN_MASTER_RESUME_WORDS) {
+      fail(`only ${extracted.wordCount} words of text were found in that document. `
+        + 'The master resume is the source every tailored resume is built from, so an empty '
+        + 'or image-only file is rejected rather than silently breaking every future packet', 422);
+    }
+
+    mkdirSync(dirname(file), { recursive: true });
+    mkdirSync(historyDir, { recursive: true });
+
+    let backup = null;
+    if (existsSync(file)) {
+      const backupPath = backupName(historyDir);
+      // COPY, not rename: if the write below fails, the current master is
+      // still exactly where every runner expects it.
+      copyFileSync(file, backupPath);
+      backup = basename(backupPath);
+    }
+    const temp = `${file}.uploading`;
+    try {
+      writeFileSync(temp, bytes);
+      renameSync(temp, file);
+    } catch (err) {
+      try { rmSync(temp, { force: true }); } catch { /* nothing to clean up */ }
+      throw err;
+    }
+    pruneBackups(historyDir);
+    logger?.info?.(`master resume replaced (${bytes.length} bytes, ${extracted.wordCount} words)`
+      + `${backup ? `; previous version kept as ${backup}` : ''}`);
+    return { replaced: true, backup, master: masterResumeState() };
+  }
+
+  /** Roll back to a kept previous version (itself backed up first). */
+  function restoreMasterResume(name) {
+    const { historyDir } = masterResumePaths();
+    // The name comes from the client, so it is reduced to a bare filename,
+    // pattern-checked, and re-asserted to live inside the history directory.
+    const safe = basename(String(name ?? ''));
+    if (!/^MASTER_RESUME\..+\.docx$/i.test(safe)) {
+      throw Object.assign(new Error('that is not a kept master resume version'), { statusCode: 400 });
+    }
+    const source = join(historyDir, safe);
+    assertInsideDirectory(historyDir, source, 'version path escapes the master resume history');
+    if (!existsSync(source)) {
+      throw Object.assign(new Error(`no kept version named ${safe}`), { statusCode: 404 });
+    }
+    // Reuse the write path so a restore is validated and backed up exactly
+    // like an upload — restoring is never a way around the checks.
+    const result = replaceMasterResume({ filename: safe, bytes: readFileSync(source) });
+    return { ...result, restored: safe };
+  }
+
+  function readMasterResumeFile() {
+    const { file } = masterResumePaths();
+    if (!existsSync(file)) {
+      throw Object.assign(new Error('there is no master resume to download yet'), { statusCode: 404 });
+    }
+    const size = statSync(file).size;
+    if (size > MAX_MASTER_RESUME_BYTES) {
+      throw Object.assign(new Error('the master resume is too large to serve'), { statusCode: 413 });
+    }
+    return { bytes: readFileSync(file), name: basename(file) };
   }
 
   /** Build a privacy-safe, mutation-free Auto-Apply preview for the UI/API. */
@@ -463,6 +680,11 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
           // happens to contain "fetch failed" gets reported as a network fault.
           error: e.error ?? e,
           status: e.status ?? undefined,
+          // An adapter that knows exactly what went wrong — an exhausted usage
+          // allowance, say — must not have that overwritten by a guess from the
+          // HTTP status. Dropping it classified a spent Apify credit as a
+          // generic "provider error" and offered the wrong advice.
+          category: e.category ?? undefined,
           attempt: e.attempts ?? 0,
           degraded: e.degraded === true,
           count: e.count ?? 1,
@@ -530,7 +752,10 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       running: true, phase: `assist:${jobId}`, startedAt: new Date().toISOString(),
       finishedAt: null, lastError: null, cancelRequested: false,
       runId, rca: [], partial: false,
-      progress: { total: 1, completed: 0, currentJobId: jobId, items: [{ jobId, status: 'queued' }] },
+      progress: {
+        kind: 'jobs', total: 1, completed: 0, currentJobId: jobId,
+        items: [{ jobId, status: 'queued' }],
+      },
     });
     track((async () => {
       try {
@@ -605,7 +830,8 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
       cancelRequested: false, runId, rca: [], partial: false,
       progress: {
-        total: ids.length, completed: 0, currentJobId: null,
+        // `kind` tells the UI whether to label these rows as boards or jobs.
+        kind: 'jobs', total: ids.length, completed: 0, currentJobId: null,
         items: ids.map((jobId) => ({ jobId, status: 'queued' })),
       },
     });
@@ -691,7 +917,14 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
             continue;
           }
           const liveSkip = liveSkipReason(jobId);
-          if (liveSkip) { skipped.push({ jobId, reason: liveSkip }); done += 1; continue; }
+          if (liveSkip) {
+            skipped.push({ jobId, reason: liveSkip });
+            done += 1;
+            // Keep the visible counter moving; without this the header stalled
+            // (e.g. stuck at 2/5) whenever a queued job was skipped mid-run.
+            runState.progress.completed += 1;
+            continue;
+          }
           runState.phase = `auto-apply (${done + 1}/${queue.length}) — ${jobId}`;
           runState.progress.currentJobId = jobId;
           const progressItem = runState.progress.items.find((x) => x.jobId === jobId);
@@ -934,6 +1167,42 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method === 'GET' && path === '/api/documents') {
       return sendJson(res, 200, buildDocuments(db, { root: config?.root ?? null, now: nowDate() }));
     }
+    if (req.method === 'GET' && path === '/api/master-resume') {
+      return sendJson(res, 200, masterResumeState());
+    }
+    if (req.method === 'GET' && path === '/api/master-resume/file') {
+      const artifact = readMasterResumeFile();
+      // A DOCX can never render in the browser, so it is always a download and
+      // is locked down accordingly.
+      res.setHeader('content-security-policy', "default-src 'none'; frame-ancestors 'none'");
+      res.writeHead(200, {
+        'content-type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'content-length': artifact.bytes.length,
+        'content-disposition': `attachment; filename="${artifact.name.replace(/["\r\n]/g, '_')}"`,
+      });
+      res.end(artifact.bytes);
+      return;
+    }
+    if (req.method === 'POST' && path === '/api/master-resume') {
+      const body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+      const encoded = String(body.contentBase64 ?? '');
+      if (!encoded) {
+        return sendJson(res, 400, { error: 'no file contents were received' });
+      }
+      // Reject anything that is not strict base64 before decoding: Buffer.from
+      // silently DISCARDS invalid characters, which would turn a mangled
+      // upload into a plausible-looking but corrupt resume.
+      if (!/^[A-Za-z0-9+/\r\n]*={0,2}$/.test(encoded)) {
+        return sendJson(res, 400, { error: 'the file contents were not transferred correctly — try again' });
+      }
+      const bytes = Buffer.from(encoded, 'base64');
+      const result = replaceMasterResume({ filename: body.filename, bytes });
+      return sendJson(res, 200, result);
+    }
+    if (req.method === 'POST' && path === '/api/master-resume/restore') {
+      const body = await readBody(req);
+      return sendJson(res, 200, restoreMasterResume(body.name));
+    }
     if (req.method === 'GET' && path === '/api/health') {
       // Full doctor pass (config, resume, python, browsers, dirs) — the
       // Settings page's system-health panel. Doctor spawns Python etc., so it
@@ -952,6 +1221,9 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method === 'GET' && path === '/api/export/tracker.csv') {
       const root = config?.root;
       if (!root) return sendJson(res, 400, { error: 'no project root configured for export' });
+      // Explicit download: flush any pending debounced write, then rewrite
+      // synchronously so the bytes the user gets are never stale.
+      flushTracker();
       const writeImpl = deps.writeJobTrackerImpl ?? writeJobTracker;
       const { path: csvPath } = writeImpl(db, root);
       const csv = (deps.readTextImpl ?? ((p) => readFileSync(p, 'utf8')))(csvPath);
@@ -1010,10 +1282,17 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       if (runState.running) {
         return sendJson(res, 409, { error: `busy: ${runState.phase} is in progress` });
       }
+      // Reset the FULL run state, including runId/rca/progress. Leaving the
+       // previous run's `progress` in place made the header report stale
+       // counters (e.g. "prepare-selected (3) running… 13/13").
       Object.assign(runState, {
         running: true, phase: `prepare-selected (${ids.length})`,
         startedAt: new Date().toISOString(), finishedAt: null, lastError: null,
-        cancelRequested: false,
+        cancelRequested: false, runId: randomUUID(), rca: [], partial: false,
+        progress: {
+          total: ids.length, completed: 0, currentJobId: null,
+          items: ids.map((jobId) => ({ jobId, status: 'queued' })),
+        },
       });
       track((async () => {
         try {
@@ -1023,6 +1302,18 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
             deps: { ...deps, shouldCancel: () => runState.cancelRequested },
           });
           refreshTracker();
+          // Mirror the outcome onto the progress items so the UI can show which
+          // specific jobs were prepared and which failed.
+          if (runState.progress?.items) {
+            const failedById = new Map((r.failed ?? []).map((f) => [f.jobId, f.error]));
+            for (const item of runState.progress.items) {
+              const failure = failedById.get(item.jobId);
+              Object.assign(item, failure
+                ? { status: 'failed', error: failure }
+                : { status: 'prepared' });
+            }
+            runState.progress.completed = runState.progress.items.length;
+          }
           runState.lastResult = {
             phase: 'prepare-selected',
             counters: { jobs_prepared: r.prepared.length },
@@ -1184,7 +1475,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     sendJson(res, 404, { error: `no route: ${req.method} ${path}` });
   }
 
-  return { server, runState, inFlight };
+  return { server, runState, inFlight, flushTracker };
 }
 
 /**
@@ -1194,7 +1485,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
  * @returns {Promise<{ server: import('node:http').Server, port: number, url: string, close: Function }>}
  */
 export function startDashboard({ config, db, logger, port = 4646, deps = {} } = {}) {
-  const { server, runState, inFlight } = createDashboardServer({ config, db, logger, deps });
+  const { server, runState, inFlight, flushTracker } = createDashboardServer({ config, db, logger, deps });
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       if (err?.code === 'EADDRINUSE') {
@@ -1217,6 +1508,9 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
           runState.cancelRequested = true;
           await new Promise((r) => server.close(r));
           await Promise.allSettled([...inFlight]);
+          // Write out any tracker refresh still sitting in the debounce window
+          // so shutting down never loses the last action's CSV update.
+          try { flushTracker(); } catch { /* best effort on shutdown */ }
         },
       });
     });
@@ -1310,13 +1604,14 @@ function isAggregatorUrl(value) {
   } catch { return false; }
 }
 
+/**
+ * A URL is only an application URL if it is a PUBLIC http(s) address. Delegates
+ * to the shared guard so this endpoint, the link-replacement endpoint, and
+ * add-url all reject the same things (loopback, RFC-1918, link-local/metadata,
+ * internal hostnames, embedded credentials).
+ */
 function isSafeObservedApplicationUrl(value) {
-  try {
-    const url = new URL(String(value ?? ''));
-    return ['http:', 'https:'].includes(url.protocol)
-      && !LOOPBACK_HOSTNAMES.has(url.hostname)
-      && url.href.length <= 2048;
-  } catch { return false; }
+  return isPublicHttpUrl(value);
 }
 
 function batchJobIds(value) {
@@ -1340,9 +1635,12 @@ function setSecurityHeaders(res) {
     "form-action 'self'",
     "img-src 'self' data:",
     "object-src 'none'",
-    // The dashboard is intentionally a single-file local SPA. Inline script
-    // and style remain necessary until it is split into fingerprinted assets.
-    "script-src 'self' 'unsafe-inline'",
+    // The SPA now loads from /assets/js/app.js and uses delegated listeners
+    // instead of inline on* handlers, so inline SCRIPT is no longer permitted
+    // at all — an injected <script> or handler cannot execute.
+    "script-src 'self'",
+    // Inline STYLE is still required: progress/meter widths are set as style
+    // attributes from data (element.style.width), which style-src governs.
     "style-src 'self' 'unsafe-inline'",
   ].join('; '));
   res.setHeader('x-content-type-options', 'nosniff');
@@ -1384,7 +1682,9 @@ function serveStatic(res, urlPath) {
   try { rel = decodeURIComponent(urlPath); }
   catch { rel = urlPath; }
   const abs = normalize(join(PUBLIC_DIR, rel));
-  if (abs !== PUBLIC_DIR && !abs.startsWith(PUBLIC_DIR + sep)) {
+  // Same containment helper as the artifact reads, so both use the platform's
+  // real path semantics rather than raw string prefixes.
+  if (!isInsideDirectory(PUBLIC_DIR, abs)) {
     return sendJson(res, 403, { error: 'forbidden' });
   }
   let buf;
@@ -1401,26 +1701,47 @@ function serveStatic(res, urlPath) {
   res.end(buf);
 }
 
-/** Read and parse a JSON request body (empty body -> {}). */
-function readBody(req) {
+/**
+ * Read and parse a JSON request body (empty body -> {}).
+ *
+ * @param {import('node:http').IncomingMessage} req
+ * @param {number} [maxBytes=1e6] cap for this route. Only the master-resume
+ *   upload raises it; every other endpoint keeps the small default so a stray
+ *   local request cannot make the dashboard buffer megabytes.
+ */
+function readBody(req, maxBytes = 1_000_000) {
   return new Promise((resolve, reject) => {
-    let data = '';
+    /** @type {Buffer[]} */
+    let chunks = [];
+    let size = 0;
     let tooLarge = false;
+    const fail = (message, statusCode) => reject(Object.assign(new Error(message), { statusCode }));
     req.on('data', (chunk) => {
-      if (tooLarge) return;
-      data += chunk;
-      if (data.length > 1_000_000) {
-        tooLarge = true;
-        reject(Object.assign(new Error('body too large'), { statusCode: 413 }));
-        req.destroy(); // stop buffering — the promise is already settled
+      if (tooLarge) {
+        // Keep DRAINING an over-sized body instead of destroying the socket.
+        // Killing it here meant the browser reported a generic network failure
+        // and never saw the 413 that explains what to do about it.
+        size += chunk.length;
+        // A client that keeps streaming far past the limit is not a mistake.
+        if (size > maxBytes * 4) req.destroy();
+        return;
       }
+      size += chunk.length;
+      if (size > maxBytes) {
+        tooLarge = true;
+        chunks = []; // release what was buffered
+        return;
+      }
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     });
     req.on('end', () => {
-      if (tooLarge) return;
+      if (tooLarge) return fail('body too large', 413);
+      const data = Buffer.concat(chunks).toString('utf8');
       if (!data.trim()) return resolve({});
       try { resolve(JSON.parse(data)); }
-      catch { reject(Object.assign(new Error('invalid JSON body'), { statusCode: 400 })); }
+      catch { fail('invalid JSON body', 400); }
     });
-    req.on('error', (err) => { if (!tooLarge) reject(err); });
+    req.on('error', (err) => reject(err));
+    req.on('aborted', () => fail('the request was interrupted before it finished', 400));
   });
 }

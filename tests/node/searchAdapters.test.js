@@ -371,10 +371,16 @@ describe('apify adapter', () => {
     const fetchImpl = vi.fn().mockResolvedValue(actorRun([{ title: 'Data Engineer', url: 'http://x' }]));
     const source = { options: { actors: [{ actorId: 'user~actor', input: {} }] } };
     await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'secret-tok' }, maxRetries: 0 });
-    const [calledUrl, init] = fetchImpl.mock.calls[0];
-    expect(String(calledUrl)).not.toContain('secret-tok');
-    expect(init.headers.Authorization).toBe('Bearer secret-tok');
-    expect(init.method).toBe('POST');
+    // Every call, including the free credit check that precedes the actor run,
+    // must carry the token in a header and never in the URL.
+    for (const [calledUrl, init] of fetchImpl.mock.calls) {
+      expect(String(calledUrl)).not.toContain('secret-tok');
+      expect(init.headers.authorization ?? init.headers.Authorization).toBe('Bearer secret-tok');
+    }
+    const [actorUrl, actorInit] = fetchImpl.mock.calls
+      .find(([url]) => !String(url).includes('/users/me/limits'));
+    expect(String(actorUrl)).toContain('run-sync-get-dataset-items');
+    expect(actorInit.method).toBe('POST');
   });
 
   it('reports a config error (no throw) when the token is missing', async () => {

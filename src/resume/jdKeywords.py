@@ -46,6 +46,52 @@ def _count(text: str, phrase: str) -> int:
     return len(_phrase_pattern(phrase).findall(text))
 
 
+#: Words that, appearing just before a "requirement(s)" hit, mean the heading is
+#: about something other than job qualifications. Real postings routinely carry
+#: "Physical Requirements & Working Conditions" and "Degree Requirement"
+#: sections; treating those as the qualifications heading silently reclassified
+#: the genuine skill requirements that came BEFORE them.
+_NON_QUALIFICATION_PREFIXES = (
+    "physical", "degree", "education", "license", "licensing", "travel",
+    "visa", "background", "working condition", "environmental", "legal",
+    "citizenship", "clearance", "vaccination", "residency",
+)
+
+#: A marker this short, appearing inside brackets, is a MODIFIER not a heading:
+#: "(Databricks preferred)", "(AWS a plus)". Longer bracketed labels such as
+#: "(Nice to have)" are still honoured as headings.
+_MAX_BRACKETED_MODIFIER_WORDS = 2
+
+
+def _inside_brackets(text: str, position: int) -> bool:
+    """True when ``position`` falls inside an unclosed ( [ { pair."""
+    depth = 0
+    for index, char in enumerate(text):
+        if index >= position:
+            break
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(0, depth - 1)
+    return depth > 0
+
+
+def _is_modifier_not_heading(text: str, hit, marker: str) -> bool:
+    """Reject marker hits that are prose modifiers rather than section headings.
+
+    Job descriptions are frequently stored as a single blob with no newlines, so
+    a bare phrase match cannot rely on layout. These two shapes account for the
+    misclassifications seen on real postings.
+    """
+    if len(marker.split()) <= _MAX_BRACKETED_MODIFIER_WORDS and _inside_brackets(text, hit.start()):
+        return True
+    if marker.startswith("requirement") or marker == "required":
+        window = text[max(0, hit.start() - 40):hit.start()].lower()
+        if any(prefix in window for prefix in _NON_QUALIFICATION_PREFIXES):
+            return True
+    return False
+
+
 def _marker_events(
     text: str, required_markers: Sequence[str], preferred_markers: Sequence[str]
 ) -> List[tuple]:
@@ -56,6 +102,9 @@ def _marker_events(
     as headings incorrectly turns the preferred section back into a required
     section halfway through the heading.  We therefore prefer the longest
     marker at an overlapping location and discard the shorter nested hit.
+
+    Hits that are clearly prose modifiers rather than headings are dropped
+    entirely — see _is_modifier_not_heading.
 
     Each event is ``(start, end, kind, marker)`` and events are returned in
     document order.
@@ -69,6 +118,8 @@ def _marker_events(
             if not marker:
                 continue
             for hit in _phrase_pattern(marker).finditer(text):
+                if _is_modifier_not_heading(text, hit, marker):
+                    continue
                 candidates.append((hit.start(), hit.end(), kind, marker))
 
     # At a shared/overlapping position, keep the most specific (longest)

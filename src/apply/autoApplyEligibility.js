@@ -8,6 +8,7 @@
  */
 
 import { APPROVAL_STATUS } from './approvalQueue.js';
+import { isSponsorshipGated } from '../scoring/explainScore.js';
 
 /** ATS contracts exercised by local, no-submit browser fixtures. */
 export const FIXTURE_VERIFIED_AUTO_APPLY_ATS = Object.freeze([
@@ -82,12 +83,22 @@ export function evaluateAutoApplyEligibility({
     ? 'The saved URL uses HTTP(S).'
     : 'A valid HTTP(S) application URL is required.');
 
+  // The gate flag is DERIVED (tier Queue at an Apply-level score), not a stored
+  // column. Reading `job.sponsorshipGated` off a snake_case DB row always
+  // yielded undefined, so this guard silently never fired — it only looked
+  // effective because the sponsorship STRING check happened to cover the same
+  // rows. Derive it properly so the structural check is real, and accept a
+  // caller-supplied flag for already-decorated board rows.
+  const gated = job.sponsorshipGated === true || isSponsorshipGated(job);
   const sponsorship = clean(job.sponsorship) || 'Unconfirmed';
-  const sponsorshipSafe = !job.sponsorshipGated && !/^unconfirmed$/i.test(sponsorship)
-    && !/no sponsorship|not sponsor|unlikely/i.test(sponsorship);
+  const sponsorshipSafe = !gated && !/^unconfirmed$/i.test(sponsorship)
+    && !/no sponsorship|not sponsor|unlikely|verify/i.test(sponsorship);
   add('sponsorship', sponsorshipSafe, 'Sponsorship precheck passes', sponsorshipSafe
     ? `Stored sponsorship assessment: ${sponsorship}.`
-    : `Sponsorship is ${sponsorship}; verify compatibility before final submission.`, true);
+    : gated
+      ? `Fit qualifies for Apply but the sponsorship gate parked it in Queue (${sponsorship}); `
+        + 'verify the employer sponsors before any final submission.'
+      : `Sponsorship is ${sponsorship}; verify compatibility before final submission.`, true);
 
   const ats = inferredAts(job, packet);
   add('ats', VERIFIED_ATS.has(ats), 'ATS has a fixture-tested contract', VERIFIED_ATS.has(ats)

@@ -51,6 +51,9 @@ export function ensureResumePdf(docxPath, { spawnImpl = spawn, env = process.env
         finish({
           exported: parsed.exported === true,
           pdfPath: parsed.pdf_path ?? null,
+          // The true page count, when Word produced one. The tailor's page
+          // budget is an estimate; this is the measured fact.
+          pages: Number.isFinite(parsed.pages) ? parsed.pages : null,
           reason: parsed.reason ?? (parsed.exported ? 'ok' : stderr.trim() || 'preview conversion failed'),
         });
       } catch (err) {

@@ -358,6 +358,21 @@ export class Database {
   }
 
   /**
+   * Ids of every job a re-score could touch, cheapest possible read.
+   *
+   * Re-scoring needs each row's jd_text, but it needs them ONE AT A TIME. Doing
+   * `SELECT *` up front materialized the entire corpus (~150 MB of JD text at
+   * 32k rows) in memory before the first row was scored. Fetching ids first and
+   * then loading each row on demand keeps peak memory flat and lets the loop
+   * yield to the event loop between rows.
+   *
+   * @returns {string[]}
+   */
+  listJobIds() {
+    return this.db.prepare('SELECT id FROM jobs ORDER BY score DESC').all().map((r) => r.id);
+  }
+
+  /**
    * Every job WITHOUT the jd_text column. jd_text dominates row size (~8 KB
    * avg on real data — ~200 MB across 25k jobs), and the dashboard board/stats
    * never render it (job detail loads it via getJob). Excluding it cuts each

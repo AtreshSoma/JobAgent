@@ -14,8 +14,21 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 
-/** Sources considered "direct ATS" for the directAtsAvailability category. */
-const DIRECT_ATS_SOURCES = new Set(['greenhouse', 'lever', 'manual']);
+/**
+ * Sources considered "direct ATS" for the directAtsAvailability category — a
+ * posting we can apply to on the employer's own ATS, with no aggregator in the
+ * way. This must track the discovery adapters in search/sources.js: when Ashby,
+ * SmartRecruiters, Workday, and company careers pages were added as real
+ * discovery sources, they kept scoring 0 here, quietly penalizing 43% of the
+ * corpus against otherwise-identical Greenhouse/Lever roles.
+ *
+ * `manual` / `manual-url` are direct by definition: the human pasted the
+ * employer's own application URL.
+ */
+const DIRECT_ATS_SOURCES = new Set([
+  'greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workday', 'careers',
+  'manual', 'manual-url',
+]);
 
 /** Seniority ranking for seniorityFit. */
 const SENIORITY_RANK = { junior: 1, mid: 2, senior: 3, lead: 4, staff: 4, principal: 5, manager: 4 };
