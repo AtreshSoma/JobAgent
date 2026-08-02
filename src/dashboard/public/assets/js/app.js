@@ -241,9 +241,21 @@ const FIELD_LABELS = {
   ats: 'ATS', resumeStatus: 'Resume',
 };
 
+/**
+ * Render a posting-age window the way the button that set it is labelled.
+ * Without this a week reads as "168h", which no one thinks in.
+ */
+function humanizeHours(value) {
+  const h = Number(value);
+  if (!Number.isFinite(h)) return `${value}`;
+  if (h % 168 === 0) return h === 168 ? '1 week' : `${h / 168} weeks`;
+  if (h % 24 === 0) return h === 24 ? '24 hours' : `${h / 24} days`;
+  return `${h} hours`;
+}
+
 /** Chip text for filters that are not <select>s (no option label to borrow). */
 const VALUE_LABELS = {
-  postedWithinHours: (value) => `Posted < ${value}h ago`,
+  postedWithinHours: (value) => `Posted < ${humanizeHours(value)} ago`,
 };
 
 /** Human-readable chips for every active filter, each individually clearable. */
@@ -341,6 +353,9 @@ const HEALTH_FACTS = [
   { key: 'jobsTracked', label: 'tracked', filter: { includeClosed: true }, title: 'Every job ever seen, including closed ones' },
   { key: 'discoveredLast24h', label: 'found 24h', tone: 'hot', title: 'Jobs discovered in the last 24 hours' },
   { key: 'postedLast24h', label: 'posted 24h', tone: 'hot', filter: { postedWithinHours: '24' }, title: 'Jobs whose POSTING is less than 24 hours old' },
+  // The 24h count is often single digits while a week holds hundreds. Without
+  // this chip the bar implies there is nothing to apply to.
+  { key: 'postedLast7d', label: 'posted 1w', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Jobs whose POSTING is less than 1 week old' },
   { key: 'strongFit', label: 'strong fit', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match' },
 ];
 

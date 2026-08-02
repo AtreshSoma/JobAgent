@@ -13,6 +13,35 @@
  */
 
 /**
+ * How this agent identifies itself to every public endpoint it reads.
+ *
+ * This is a compliance feature, not cosmetics. The whole discovery layer rests
+ * on the claim that it reads public endpoints openly and never evades — but
+ * until now every request went out under Node's default UA, which says nothing
+ * about who is calling. A server that can identify a caller can rate-limit or
+ * contact it instead of blanket-blocking the IP.
+ *
+ * It deliberately does NOT imitate a browser. Spoofing a Chrome UA to slip past
+ * bot detection is precisely the evasion this codebase refuses to do, so the
+ * string names the tool and its purpose and nothing else.
+ */
+export const DISCOVERY_USER_AGENT = 'job-agent/0.1 (personal job-search assistant; contact via repository owner)';
+
+/**
+ * Merge the identifying User-Agent into a header bag.
+ *
+ * A caller-supplied User-Agent always wins, so a test or a source that must
+ * present something specific stays in control.
+ *
+ * @param {Record<string, string>} [extra] caller headers
+ * @returns {Record<string, string>}
+ */
+export function discoveryHeaders(extra = {}) {
+  const hasUa = Object.keys(extra).some((k) => k.toLowerCase() === 'user-agent');
+  return hasUa ? { ...extra } : { 'User-Agent': DISCOVERY_USER_AGENT, ...extra };
+}
+
+/**
  * Parse a `Retry-After` header into milliseconds.
  *
  * The header is either delta-seconds ("120") or an HTTP-date. Honoring it is

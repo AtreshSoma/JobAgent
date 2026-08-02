@@ -23,7 +23,11 @@ import { fetchUrl } from './genericPublicPage.js';
 import * as greenhouse from './greenhouse.js';
 import * as lever from './lever.js';
 import * as workday from './workday.js';
+import * as ashby from './ashby.js';
+import * as smartrecruiters from './smartrecruiters.js';
 import { withRetry } from '../../utils/retryHandler.js';
+import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { fetchWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 
 export const adapterId = 'careers';
 
@@ -32,27 +36,43 @@ const DEFAULT_MAX_LINKS = 50;
 const MAX_LINKS_CEILING = 200;
 /** How many nested sitemaps from a sitemap index we will follow (one level). */
 const MAX_NESTED_SITEMAPS = 25;
+/** Default number of companies processed in parallel. */
+const DEFAULT_COMPANY_CONCURRENCY = 6;
+/** Default number of posting URLs parsed in parallel within one company. */
+const DEFAULT_LINK_CONCURRENCY = 4;
 
 /**
  * @param {object} source jobboards entry: { companies: object[], maxLinksPerCompany?: number }
  * @param {object} ctx adapter context (fetchImpl, rateLimiter, maxRetries)
- * @returns {Promise<{ jobs: object[], errors: Array<object> }>}
+ * @returns {Promise<{ jobs: object[], errors: Array<object>, cancelled: boolean }>}
  */
 export async function run(source = {}, ctx = {}) {
   const companies = Array.isArray(source.companies) ? source.companies : [];
   const maxLinks = clampInt(source.maxLinksPerCompany, DEFAULT_MAX_LINKS, MAX_LINKS_CEILING);
+  const concurrency = ctx.boardConcurrency ?? DEFAULT_COMPANY_CONCURRENCY;
   const jobs = [];
   const errors = [];
+  let cancelled = false;
 
-  for (const company of companies) {
+  // Companies are independent public sites, so they run in parallel (bounded)
+  // like every other adapter. This used to be a sequential `for...of`, which
+  // made the source unusably slow at any real list size — and it is the source
+  // the harvester grows to hundreds of entries. The shared host gate in ctx is
+  // what keeps the fan-out polite.
+  const perCompany = await mapWithConcurrency(companies, concurrency, async (company) => {
+    if (ctx.shouldCancel?.()) { cancelled = true; return null; }
     try {
-      const result = await runCompany(company, source, ctx, maxLinks);
-      jobs.push(...result.jobs);
-      errors.push(...result.errors);
+      return await runCompany(company, source, ctx, maxLinks);
     } catch (err) {
       // A single company must never crash discovery for the rest.
-      errors.push({ company: companyLabel(company), error: err.message });
+      return { jobs: [], errors: [{ company: companyLabel(company), error: err.message }] };
     }
+  });
+
+  for (const r of perCompany) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    errors.push(...r.errors);
   }
 
   if (companies.length === 0) {
@@ -63,7 +83,7 @@ export async function run(source = {}, ctx = {}) {
     });
   }
 
-  return { jobs, errors };
+  return { jobs, errors, cancelled };
 }
 
 /** Discover one company entry by its declared (or inferred) strategy. */
@@ -99,6 +119,21 @@ async function runCompany(company = {}, source, ctx, maxLinks) {
       ctx,
     ), company);
   }
+  // Ashby and SmartRecruiters have official public board APIs and adapters too;
+  // omitting them here forced those companies down the HTML-scraping path for
+  // no reason.
+  if (ats === 'ashby') {
+    return tagDelegated(await ashby.run(
+      { boards: [company.slug ?? company.token].filter(Boolean), rateLimitMs: source.rateLimitMs },
+      ctx,
+    ), company);
+  }
+  if (ats === 'smartrecruiters') {
+    return tagDelegated(await smartrecruiters.run(
+      { boards: [company.slug ?? company.token].filter(Boolean), rateLimitMs: source.rateLimitMs },
+      ctx,
+    ), company);
+  }
 
   // 2. Public careers/listing page -> extract links -> parse each.
   if (company.careersUrl) {
@@ -115,11 +150,11 @@ async function runCompany(company = {}, source, ctx, maxLinks) {
 
 /** Strategy 2: scrape job links off a public careers page, then parse each. */
 async function fromCareersPage(company, source, ctx, maxLinks) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const errors = [];
 
   if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
-  const page = await fetchPage(company.careersUrl, { fetchImpl, maxRetries });
+  const page = await fetchPage(company.careersUrl, { fetchImpl, maxRetries, requestTimeoutMs, hostGate });
   if (page.blocked) {
     return { jobs: [], errors: [{ company: companyLabel(company), url: company.careersUrl, error: `blocked (${page.reason}); skipped` }] };
   }
@@ -137,11 +172,11 @@ async function fromCareersPage(company, source, ctx, maxLinks) {
 
 /** Strategy 3: read a public sitemap (or sitemap index), then parse job-like URLs. */
 async function fromSitemap(company, source, ctx, maxLinks) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const errors = [];
 
   if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
-  const root = await fetchPage(company.sitemap, { fetchImpl, maxRetries });
+  const root = await fetchPage(company.sitemap, { fetchImpl, maxRetries, requestTimeoutMs, hostGate });
   if (root.blocked) {
     return { jobs: [], errors: [{ company: companyLabel(company), url: company.sitemap, error: `blocked (${root.reason}); skipped` }] };
   }
@@ -155,7 +190,7 @@ async function fromSitemap(company, source, ctx, maxLinks) {
     const nested = extractLocs(root.html).slice(0, MAX_NESTED_SITEMAPS);
     for (const sm of nested) {
       if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
-      const child = await fetchPage(sm, { fetchImpl, maxRetries });
+      const child = await fetchPage(sm, { fetchImpl, maxRetries, requestTimeoutMs, hostGate });
       if (child.blocked || child.error) {
         errors.push({ company: companyLabel(company), url: sm, error: child.blocked ? `blocked (${child.reason}); skipped` : child.error });
         continue;
@@ -176,20 +211,31 @@ async function fromSitemap(company, source, ctx, maxLinks) {
 
 /** Parse a list of public posting URLs via the JSON-LD reader, tagging company. */
 async function parseLinks(urls, company, source, ctx, errors) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3 } = ctx;
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
+  const concurrency = ctx.detailConcurrency ?? DEFAULT_LINK_CONCURRENCY;
   const jobs = [];
-  for (const url of urls) {
+
+  const perUrl = await mapWithConcurrency(urls, concurrency, async (url) => {
+    if (ctx.shouldCancel?.()) return null;
     try {
       if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
-      const found = await fetchUrl(url, { fetchImpl, source: 'careers', maxRetries });
+      const found = await fetchUrl(url, {
+        fetchImpl, source: 'careers', maxRetries, requestTimeoutMs, hostGate,
+      });
       for (const job of found) {
         job.rawMetadata = { ...(job.rawMetadata ?? {}), company: company.name ?? job.company, via: 'careers' };
         if (!job.company && company.name) job.company = company.name;
-        jobs.push(job);
       }
+      return { jobs: found, error: null };
     } catch (err) {
-      errors.push({ company: companyLabel(company), url, error: err.message });
+      return { jobs: [], error: { company: companyLabel(company), url, error: err.message } };
     }
+  });
+
+  for (const r of perUrl) {
+    if (!r) continue;
+    jobs.push(...r.jobs);
+    if (r.error) errors.push(r.error);
   }
   return jobs;
 }
@@ -205,26 +251,41 @@ function tagDelegated(result, company) {
 
 /**
  * Fetch a page's raw text, classifying common blocks instead of bypassing them.
+ *
+ * Carries the same request timeout and host gate as every other adapter: this
+ * one visits arbitrary company domains, so it is the likeliest to meet a server
+ * that accepts a connection and then never responds, and a hang here used to
+ * stall the entire discovery run.
+ *
  * @returns {Promise<{ html?: string, blocked?: boolean, reason?: string, error?: string }>}
  */
-async function fetchPage(url, { fetchImpl, maxRetries }) {
+async function fetchPage(url, { fetchImpl, maxRetries, requestTimeoutMs, hostGate }) {
+  const call = async () => {
+    const res = await fetchWithTimeout(
+      fetchImpl,
+      url,
+      { headers: discoveryHeaders({ Accept: 'text/html,application/xhtml+xml,application/xml' }) },
+      requestTimeoutMs,
+    );
+    const status = res.status ?? 200;
+    const body = await res.text();
+    const reason = blockReason(status, body);
+    if (reason) {
+      // Do NOT retry or evade a block — surface it and stop for this URL.
+      return { blocked: true, reason };
+    }
+    if (!res.ok) {
+      const e = new Error(`HTTP ${status} for ${url}`);
+      e.status = status;
+      throw e;
+    }
+    return { html: body };
+  };
   try {
-    return await withRetry(async () => {
-      const res = await fetchImpl(url, { headers: { Accept: 'text/html,application/xhtml+xml,application/xml' } });
-      const status = res.status ?? 200;
-      const body = await res.text();
-      const reason = blockReason(status, body);
-      if (reason) {
-        // Do NOT retry or evade a block — surface it and stop for this URL.
-        return { blocked: true, reason };
-      }
-      if (!res.ok) {
-        const e = new Error(`HTTP ${status} for ${url}`);
-        e.status = status;
-        throw e;
-      }
-      return { html: body };
-    }, { maxRetries });
+    return await withRetry(
+      () => (hostGate ? hostGate.run(url, call) : call()),
+      { maxRetries },
+    );
   } catch (err) {
     return { error: err.message };
   }

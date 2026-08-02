@@ -46,6 +46,117 @@ const DEFAULT_TENANT_CONCURRENCY = 6;
 const DEFAULT_PAGE_CONCURRENCY = 4;
 
 /**
+ * How many distinct search phrases to run against each tenant.
+ *
+ * Every extra term multiplies the tenant's page cost, so this is deliberately
+ * small — see `deriveSearchTerms` for why two is enough.
+ */
+const DEFAULT_MAX_SEARCH_TERMS = 2;
+
+/** Level/seniority words: they never change WHICH role a title refers to. */
+const SENIORITY_TOKENS = new Set([
+  'senior', 'sr', 'junior', 'jr', 'lead', 'principal', 'staff', 'mid', 'level',
+  'associate', 'entry', 'i', 'ii', 'iii', 'iv', 'v', 'vp', 'head',
+]);
+
+/** Words that carry no search signal. */
+const STOP_TOKENS = new Set(['the', 'of', 'and', 'an', 'for', 'to', 'in', 'with', 'at', 'on']);
+
+/**
+ * Significant, lowercased tokens of a job title.
+ * @param {string} title
+ * @returns {string[]}
+ */
+function titleTokens(title) {
+  return String(title ?? '')
+    .toLowerCase()
+    .split(/[^a-z0-9+#]+/)
+    .filter((t) => t.length > 1 && !STOP_TOKENS.has(t) && !SENIORITY_TOKENS.has(t));
+}
+
+/** Do two token sets share at least one member? */
+function overlaps(a, b) {
+  for (const t of a) if (b.has(t)) return true;
+  return false;
+}
+
+/**
+ * Choose the search phrases to send this tenant, derived from the candidate's
+ * own target titles rather than a hardcoded string.
+ *
+ * Two measured facts about Workday's public CXS search drive the design:
+ *
+ *  1. It NARROWS as tokens are added — it is fuzzy-AND, not OR. On one tenant:
+ *     "data" 115 hits, "engineer" 57, "data engineer" 51, "data engineer bi" 27,
+ *     "data engineer bi developer analytics" 13, and a nine-word query 0. So a
+ *     long "cover everything" phrase is the worst possible query, and each term
+ *     is kept to the trailing two significant tokens of a title.
+ *  2. It is fuzzy enough that one phrase already reaches sibling titles:
+ *     "data engineer" surfaced "Senior Business Intelligence Engineer". Measured
+ *     across 12 configured tenants, that single phrase recovered every on-target
+ *     title except three — two "ETL Developer" roles and one "Quantitative
+ *     Analytics Engineer" — all of which share the token `developer`/`analytics`
+ *     rather than `data`/`engineer`.
+ *
+ * So the job is a small set cover: pick the fewest phrases such that every
+ * target title shares a token with at least one of them. For the 17 real target
+ * titles this yields ["data engineer", "bi developer"] — the first covering the
+ * 12 data/engineer titles, the second the five developer-suffixed ones that the
+ * old hardcoded string missed entirely.
+ *
+ * @param {string[]} titles candidate.targetTitles
+ * @param {number} [maxTerms]
+ * @returns {string[]} search phrases, most valuable first
+ */
+export function deriveSearchTerms(titles, maxTerms = DEFAULT_MAX_SEARCH_TERMS) {
+  const cap = Number.isFinite(maxTerms) ? Math.max(0, Math.trunc(maxTerms)) : DEFAULT_MAX_SEARCH_TERMS;
+  if (cap === 0) return [];
+
+  const entries = [];
+  for (const raw of Array.isArray(titles) ? titles : []) {
+    const tokens = titleTokens(raw);
+    if (tokens.length) entries.push({ tokens, set: new Set(tokens) });
+  }
+  if (!entries.length) return [];
+
+  // How central each token is across the whole title list — used only to break
+  // ties, so the chosen phrase is the one most representative of the profile.
+  const freq = new Map();
+  for (const e of entries) for (const t of e.set) freq.set(t, (freq.get(t) ?? 0) + 1);
+
+  const candidates = [];
+  const seen = new Set();
+  for (const e of entries) {
+    const tail = e.tokens.slice(-2);
+    const term = tail.join(' ');
+    if (seen.has(term)) continue;
+    seen.add(term);
+    candidates.push({
+      term,
+      set: new Set(tail),
+      weight: tail.reduce((s, t) => s + (freq.get(t) ?? 0), 0),
+    });
+  }
+
+  const uncovered = new Set(entries.keys());
+  const chosen = [];
+  while (chosen.length < cap && uncovered.size) {
+    let best = null;
+    for (const c of candidates) {
+      if (chosen.includes(c.term)) continue;
+      let n = 0;
+      for (const i of uncovered) if (overlaps(c.set, entries[i].set)) n += 1;
+      if (n === 0) continue;
+      if (!best || n > best.n || (n === best.n && c.weight > best.c.weight)) best = { c, n };
+    }
+    if (!best) break;
+    chosen.push(best.c.term);
+    for (const i of [...uncovered]) if (overlaps(best.c.set, entries[i].set)) uncovered.delete(i);
+  }
+  return chosen;
+}
+
+/**
  * Default number of per-job detail GETs in flight per tenant. Bounded
  * concurrency (NOT a fixed inter-request delay) is the politeness mechanism.
  *
@@ -77,7 +188,12 @@ const DEFAULT_HOST_CONCURRENCY = 4;
 export async function run(source = {}, ctx = {}) {
   const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
   const tenants = Array.isArray(source.tenants) ? source.tenants : [];
-  const tenantConcurrency = ctx.boardConcurrency ?? DEFAULT_TENANT_CONCURRENCY;
+  // Tenant parallelism is cheap and safe to raise: every tenant is a DIFFERENT
+  // host, and per-host politeness is enforced by the host gate regardless. With
+  // 200+ boards the wall clock is (waves x slowest tenant in the wave), so a
+  // low tenant concurrency is pure serialization, not courtesy. The source may
+  // therefore raise it above the global board default.
+  const tenantConcurrency = source.boardConcurrency ?? ctx.boardConcurrency ?? DEFAULT_TENANT_CONCURRENCY;
   const pageConcurrency = ctx.pageConcurrency ?? DEFAULT_PAGE_CONCURRENCY;
   const detailConcurrency = ctx.detailConcurrency ?? DEFAULT_DETAIL_CONCURRENCY;
   const maxDetailFetches = Number.isFinite(source.maxDetailFetches)
@@ -95,10 +211,18 @@ export async function run(source = {}, ctx = {}) {
   const errors = [];
   let cancelled = false;
 
+  // Search phrases for tenants that do not pin their own. Derived from the
+  // candidate's target titles so the profile is the single source of truth —
+  // adding a title to candidate.json changes what every tenant is searched for,
+  // with no per-tenant edit. `source.searchTexts` overrides the derivation.
+  const defaultTerms = Array.isArray(source.searchTexts) && source.searchTexts.length
+    ? source.searchTexts.map((s) => String(s ?? '').trim())
+    : deriveSearchTerms(ctx.candidate?.targetTitles, source.maxSearchTerms);
+
   // Tenants are independent public career sites — fetch them in parallel.
   const perTenant = await mapWithConcurrency(tenants, tenantConcurrency, async (tenant) => {
     if (ctx.shouldCancel?.()) return { jobs: [], errors: [], cancelled: true };
-    const cfg = validateTenant(tenant);
+    const cfg = validateTenant(tenant, defaultTerms);
     if (cfg.error) {
       return { jobs: [], errors: [{ tenant: tenant?.tenant ?? null, error: cfg.error }] };
     }
@@ -137,14 +261,33 @@ export async function run(source = {}, ctx = {}) {
   return { jobs, errors, cancelled };
 }
 
-/** Validate and normalize a tenant config entry. */
-function validateTenant(t = {}) {
+/**
+ * Validate and normalize a tenant config entry.
+ * @param {object} t raw tenant entry
+ * @param {string[]} [defaultTerms] phrases to search when the tenant names none
+ */
+function validateTenant(t = {}, defaultTerms = []) {
   const host = String(t.host ?? '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
   const tenant = String(t.tenant ?? '').trim();
   const site = String(t.site ?? '').trim();
   if (!host || !tenant || !site) {
     return { error: 'workday tenant requires host, tenant, and site' };
   }
+  const searchText = String(t.searchText ?? '').trim();
+
+  // Precedence: an explicit per-tenant list, then the legacy single string,
+  // then the phrases derived from the candidate's own target titles. A tenant
+  // that deliberately sets `searchText: ""` still means "enumerate everything",
+  // so an EMPTY STRING is only overridden when the key is absent entirely.
+  let searchTexts;
+  if (Array.isArray(t.searchTexts) && t.searchTexts.length) {
+    searchTexts = t.searchTexts.map((s) => String(s ?? '').trim());
+  } else if (t.searchText !== undefined) {
+    searchTexts = [searchText];
+  } else {
+    searchTexts = defaultTerms.length ? [...defaultTerms] : [''];
+  }
+
   return {
     host,
     tenant,
@@ -156,7 +299,8 @@ function validateTenant(t = {}) {
     // for anything larger. Clamp here so a generous config value never breaks
     // the request — pagination still walks the full result set across pages.
     pageSize: Number.isFinite(t.pageSize) && t.pageSize > 0 ? Math.min(t.pageSize, 20) : 20,
-    searchText: String(t.searchText ?? '').trim(),
+    searchText,
+    searchTexts: [...new Set(searchTexts)],
     fetchDetails: t.fetchDetails !== false,
   };
 }
@@ -177,45 +321,81 @@ async function fetchTenant(cfg, ctx) {
   // returned instantly and the limiter did nothing.
   const spacingKey = `workday:${cfg.host}`;
 
-  // Page 0 — fetched first so we learn `total` and can fan out the rest.
-  if (shouldCancel?.()) return { jobs: [], errors: [], cancelled: true };
-  if (rateLimiter) await rateLimiter.wait(spacingKey, rateLimitMs);
-  const first = await withRetry(
-    () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, pageBody(cfg, 0), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
-    { maxRetries },
-  );
-  const firstPostings = Array.isArray(first.jobPostings) ? first.jobPostings : [];
-  const total = Number.isFinite(first.total) ? first.total : firstPostings.length;
-  const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / cfg.pageSize)));
+  /** Walk every page for ONE search phrase. */
+  const fetchTerm = async (searchText) => {
+    // Page 0 — fetched first so we learn `total` and can fan out the rest.
+    if (rateLimiter) await rateLimiter.wait(spacingKey, rateLimitMs);
+    const body = (offset) => pageBody(cfg, offset, searchText);
+    const first = await withRetry(
+      () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(0), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
+      { maxRetries },
+    );
+    const firstPostings = Array.isArray(first.jobPostings) ? first.jobPostings : [];
+    // `total` is reported on the FIRST page only — later pages return 0, so it
+    // must be read here and never re-derived mid-walk.
+    const total = Number.isFinite(first.total) ? first.total : firstPostings.length;
+    const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / cfg.pageSize)));
 
-  // Remaining pages have computable offsets, so fetch them concurrently. The
-  // host gate — not a per-offset rate-limit key — is what keeps the fan-out
-  // polite, and it counts against the whole pod.
-  const remainingOffsets = [];
-  for (let page = 1; page < pageCount; page += 1) remainingOffsets.push(page * cfg.pageSize);
-  const restPages = await mapWithConcurrency(remainingOffsets, pageConcurrency, async (offset) => {
-    if (shouldCancel?.()) { cancelled = true; return { postings: [], error: null }; }
-    try {
-      const data = await withRetry(
-        () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, pageBody(cfg, offset), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
-        { maxRetries },
-      );
-      return { postings: Array.isArray(data.jobPostings) ? data.jobPostings : [], error: null };
-    } catch (err) {
-      return {
-        postings: [],
-        error: {
-          offset, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0,
-        },
-      };
+    // Remaining pages have computable offsets, so fetch them concurrently. The
+    // host gate — not a per-offset rate-limit key — is what keeps the fan-out
+    // polite, and it counts against the whole pod.
+    const remainingOffsets = [];
+    for (let page = 1; page < pageCount; page += 1) remainingOffsets.push(page * cfg.pageSize);
+    const restPages = await mapWithConcurrency(remainingOffsets, pageConcurrency, async (offset) => {
+      if (shouldCancel?.()) { cancelled = true; return { postings: [], error: null }; }
+      try {
+        const data = await withRetry(
+          () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(offset), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
+          { maxRetries },
+        );
+        return { postings: Array.isArray(data.jobPostings) ? data.jobPostings : [], error: null };
+      } catch (err) {
+        return {
+          postings: [],
+          error: {
+            offset, searchText, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0,
+          },
+        };
+      }
+    });
+
+    const found = [...firstPostings];
+    for (const r of restPages) {
+      if (!r) continue;
+      found.push(...r.postings);
+      if (r.error) errors.push(r.error);
     }
-  });
+    return found;
+  };
 
-  const postings = [...firstPostings];
-  for (const r of restPages) {
-    if (!r) continue;
-    postings.push(...r.postings);
-    if (r.error) errors.push(r.error);
+  // Each term is a separate search, so the SAME requisition comes back under
+  // more than one of them. Dedupe on the posting's own path before mapping —
+  // detail enrichment and its per-tenant budget must be spent once per job,
+  // not once per phrase that happened to match it.
+  const postings = [];
+  const seenPostings = new Set();
+  for (const term of cfg.searchTexts) {
+    if (shouldCancel?.()) { cancelled = true; break; }
+    let found;
+    try {
+      found = await fetchTerm(term);
+    } catch (err) {
+      // One failing phrase must not cost the tenant the other phrase's results.
+      errors.push({
+        searchText: term, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0,
+      });
+      continue;
+    }
+    for (const p of found) {
+      const key = p?.externalPath ?? p?.id ?? p?.title;
+      if (key == null || seenPostings.has(key)) continue;
+      seenPostings.add(key);
+      postings.push(p);
+    }
+  }
+  if (!postings.length && errors.length === cfg.searchTexts.length && cfg.searchTexts.length > 0) {
+    // Every phrase failed — that is a tenant-level failure, not a partial one.
+    throw Object.assign(new Error(errors[0].error), { status: errors[0].status });
   }
 
   const out = postings.map((p) => mapJob(p, cfg));
@@ -300,9 +480,9 @@ function summarizeDetailFailures(failed, cfg, totalJobs) {
   };
 }
 
-/** Build the CXS list-request body for a given offset. */
-function pageBody(cfg, offset) {
-  return { limit: cfg.pageSize, offset, searchText: cfg.searchText, appliedFacets: {} };
+/** Build the CXS list-request body for a given offset and search phrase. */
+function pageBody(cfg, offset, searchText = cfg.searchText) {
+  return { limit: cfg.pageSize, offset, searchText: searchText ?? '', appliedFacets: {} };
 }
 
 async function postJson(fetchImpl, url, body, requestTimeoutMs) {
@@ -456,7 +636,7 @@ export function parseWorkdayPostedOn(postedOn, now = new Date()) {
 export function mapJob(p, cfg, { now = new Date() } = {}) {
   const externalPath = String(p.externalPath ?? '');
   const base = `https://${cfg.host}${cfg.locale ? `/${cfg.locale}` : ''}/${cfg.site}`;
-  const url = externalPath ? safeJoinUrl(`https://${cfg.host}`, externalPath, base) : base;
+  const url = jobUrl(base, externalPath);
   const bullets = Array.isArray(p.bulletFields) ? p.bulletFields.filter(Boolean) : [];
   const location = p.locationsText ?? p.location ?? '';
   const jdText = htmlToText([p.title, location, ...bullets].filter(Boolean).join('. '));
@@ -511,10 +691,33 @@ export function workdayReqId(p = {}) {
 }
 
 /** Build an absolute job URL from a Workday externalPath. */
-function safeJoinUrl(origin, externalPath, base) {
+/**
+ * Build the public posting URL for a CXS row.
+ *
+ * REGRESSION GUARD. This used to be `new URL(externalPath, 'https://' + host)`,
+ * which silently produced a 404 for every Workday job ever discovered — the
+ * single largest source in the database. `externalPath` is always root-relative
+ * (`/job/Remote-Kentucky/Lead-Cloud---Data-Platform-Engineer_R-422722`), and a
+ * root-relative path RESOLVES AGAINST THE ORIGIN, discarding the `/{locale}/`
+ * and `/{site}` segments that identify which career site the job lives on.
+ * Verified live: without the site segment Workday answers 404; with it, 200.
+ *
+ * So this concatenates rather than resolves. It deliberately does NOT try to
+ * detect a site already present in the path — Citi's site is literally "2",
+ * which appears inside plenty of requisition numbers, so any such test
+ * produces false positives on exactly the tenants it would corrupt.
+ *
+ * @param {string} base `https://host[/locale]/site`, no trailing slash
+ * @param {string} externalPath root-relative path from the CXS row
+ * @returns {string}
+ */
+function jobUrl(base, externalPath) {
+  if (!externalPath) return base;
+  const path = externalPath.startsWith('/') ? externalPath : `/${externalPath}`;
+  const joined = `${base}${path}`;
   try {
-    // externalPath usually starts with '/', resolving against origin is correct.
-    return new URL(externalPath, origin).href;
+    // Round-trip so a malformed path can never emit an unopenable link.
+    return new URL(joined).href;
   } catch {
     return base;
   }

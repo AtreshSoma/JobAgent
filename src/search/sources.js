@@ -25,6 +25,10 @@ export const DISCOVERY_ADAPTERS = Object.freeze(new Set([
   'apify',
   'ashby',
   'smartrecruiters',
+  // Query-first discovery: these search ACROSS employers rather than
+  // enumerating one configured board at a time.
+  'atsSearch',
+  'adzuna',
 ]));
 
 /** Adapter ids that only read user-supplied public posting URLs (no search). */
@@ -66,6 +70,8 @@ const SOURCE_STRING_KIND = Object.freeze({
   apify: 'discovery',
   ashby: 'discovery',
   smartrecruiters: 'discovery',
+  atsSearch: 'discovery',
+  adzuna: 'discovery',
   dice: 'url-reader',
   linkedin: 'url-reader',
   indeed: 'url-reader',

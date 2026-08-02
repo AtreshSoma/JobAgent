@@ -15,6 +15,9 @@ config/screening_answers.json
 !config/candidate.example.json
 !config/screening_answers.example.json
 
+# Timestamped backups written by scripts/harvestSources.mjs --apply
+config/*.bak
+
 # --- Node ---
 node_modules/
 npm-debug.log*
@@ -37,6 +40,9 @@ env/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+# Timestamped backups written by scripts/repairJobUrls.mjs --apply (contains
+# the same personal application data as the live DB, so it must never commit)
+data/*.db.*.bak
 data/found_jobs.json
 data/scored_jobs.json
 data/queued_jobs.json

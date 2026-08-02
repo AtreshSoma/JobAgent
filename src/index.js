@@ -40,6 +40,7 @@ import { runApply } from './cli/applyOneByOne.js';
 import { runWatch } from './cli/watch.js';
 import { runDoctor, printDoctorReport } from './cli/doctor.js';
 import { quickPreflight } from './cli/preflight.js';
+import { withSourceSelection, selectionFromArgs } from './cli/sourceSelection.js';
 import { parseDashboardPort } from './cli/app.js';
 import { ui } from './cli/ui.js';
 import { formatPostedRelative } from './utils/dates.js';
@@ -235,17 +236,29 @@ async function runCommand(command, parsed, env) {
       }
       case 'discover': {
         ui.heading('Discover');
-        ui.step('Searching enabled job boards for matching roles…');
-        const r = await runDiscover({ config, logger });
+        const sel = withSourceSelection(config, selectionFromArgs(parsed));
+        if (sel.unmatched.length) {
+          ui.warn?.(`No source matches: ${sel.unmatched.join(', ')} — check --source= against config/jobboards.json ids or adapters.`);
+        }
+        ui.step(sel.selected.length && sel.selected.length < (config.jobboards?.sources?.length ?? 0)
+          ? `Searching ${sel.selected.length} selected source(s): ${sel.selected.join(', ')}…`
+          : 'Searching enabled job boards for matching roles…');
+        const r = await runDiscover({ config: sel.config, logger });
         pino.info({ counters: r.counters, file: r.found }, `Discover: found ${r.counters.jobs_found} jobs`);
         summarizeDiscover(r, config);
         return { command, ...r };
       }
       case 'score': {
         ui.heading('Score');
-        ui.step('Scoring discovered jobs against your profile and sponsorship needs…');
+        const sel = withSourceSelection(config, selectionFromArgs(parsed));
+        if (sel.unmatched.length) {
+          ui.warn?.(`No source matches: ${sel.unmatched.join(', ')} — check --source= against config/jobboards.json ids or adapters.`);
+        }
+        ui.step(sel.selected.length && sel.selected.length < (config.jobboards?.sources?.length ?? 0)
+          ? `Discovering from ${sel.selected.length} selected source(s) and scoring against your profile…`
+          : 'Scoring discovered jobs against your profile and sponsorship needs…');
         logger.startRun('DRY_RUN');
-        const r = await runScore({ config, db, logger });
+        const r = await runScore({ config: sel.config, db, logger });
         pino.info({ counters: r.counters }, `Score: ${r.counters.jobs_scored} scored, ${r.counters.jobs_queued} queued`);
         summarizeScore(r, config);
         return { command, ...r };

@@ -345,6 +345,48 @@
       }
     },
     {
+      "id": "ats-search",
+      "adapter": "atsSearch",
+      "enabled": true,
+      "priority": 2,
+      "rateLimitMs": 1500,
+      "options": {
+        "note": "QUERY-FIRST DISCOVERY, no API key, no per-run cost. Searches ACROSS every employer hosted by an ATS vendor instead of enumerating one configured board at a time — this is the capability the paid Apify actors provided. Queries default to candidate.targetTitles so the title list lives in exactly one place. Both providers OR-match query terms, so queries are phrase-quoted and every hit must clear a title gate before it is kept. Providers: 'workable' (real pagination, full JD inline, relevance-ranked so dayRange is the only recency lever) and 'smartrecruiters' (already newest-first; newest 100 per query, server ignores offset). Public unauthenticated vendor search endpoints only — no login, CAPTCHA solving, or evasion.",
+        "providers": [
+          "workable",
+          "smartrecruiters"
+        ],
+        "location": "United States",
+        "country": "us",
+        "dayRange": 7,
+        "maxAgeDays": 180,
+        "maxPages": 5,
+        "maxDetailFetches": 25,
+        "fetchDetails": true,
+        "strictTitleMatch": true,
+        "queryConcurrency": 4
+      }
+    },
+    {
+      "id": "adzuna-aggregator",
+      "adapter": "adzuna",
+      "enabled": true,
+      "priority": 2,
+      "rateLimitMs": 2000,
+      "options": {
+        "note": "VERIFIED LIVE 2026-08-01 with a real key (docs/SUPPORT_MATRIX.md). Official Adzuna aggregator API — the closest legitimate substitute for Apify's Indeed/LinkedIn breadth. Queries default to candidate.targetTitles; 17 titles x 2 pages daily is ~1,020 calls/month against the ~1,000/month free-tier cap, so lower maxPages to 1 or set maxQueries if you approach it. `what_phrase` matches anywhere in the posting body, not just the title (a bare 'Data Engineer' query returned 31,148 hits including unrelated roles) — a client-side title gate (same one atsSearch uses) filters this; disable with strictTitleMatch:false if it ever drops something you wanted.",
+        "appIdEnv": "ADZUNA_APP_ID",
+        "appKeyEnv": "ADZUNA_APP_KEY",
+        "country": "us",
+        "where": "United States",
+        "maxPages": 2,
+        "resultsPerPage": 50,
+        "maxDaysOld": 7,
+        "queryConcurrency": 3,
+        "strictTitleMatch": true
+      }
+    },
+    {
       "id": "greenhouse-boards",
       "adapter": "greenhouse",
       "enabled": true,
@@ -390,7 +432,35 @@
         "upstart",
         "flexport",
         "squarespace",
-        "checkr"
+        "checkr",
+        "natera",
+        "grafanalabs",
+        "striveworks",
+        "ginkgobioworks",
+        "8451",
+        "veeamsoftware",
+        "trueanomalyinc",
+        "clickhouse",
+        "zetaglobal",
+        "neuraflash",
+        "torcrobotics",
+        "newrelic",
+        "maymobility",
+        "tanium",
+        "backblaze",
+        "blacksky",
+        "project44",
+        "codepath",
+        "fleetio",
+        "censys",
+        "prove",
+        "brave",
+        "getbuilt",
+        "goodsservices",
+        "protonai",
+        "able",
+        "karat",
+        "datavations"
       ],
       "options": {
         "note": "DISCOVERY. Greenhouse board tokens (the company slug in boards.greenhouse.io/<token>). These are verified-live H-1B-friendly tech companies that currently list Data/BI/Analytics-Engineer roles. A dead/empty board is logged and skipped, never crashes the run."
@@ -408,7 +478,51 @@
         "palantir",
         "zoox",
         "outreach",
-        "highspot"
+        "highspot",
+        "shieldai",
+        "InfrastructureandCapitalProjects",
+        "thinkahead",
+        "protective",
+        "cti-md",
+        "aledade",
+        "grailbio",
+        "sprymethods",
+        "planettechnologies",
+        "nextech",
+        "lemnis",
+        "lyrahealth",
+        "idt",
+        "stanleygroup",
+        "extremenetworks",
+        "anavationllc",
+        "provectus",
+        "smarsh",
+        "coatesgroup",
+        "steerbridge",
+        "levelai",
+        "kobie",
+        "AviveSolutions",
+        "sugarcrm",
+        "coalfire",
+        "auw",
+        "todaytixgroup",
+        "civitech",
+        "foodsmart",
+        "atmosera",
+        "makpar",
+        "airslate",
+        "smiledigitalhealth",
+        "RoboticAssistanceDevices",
+        "seerinteractive",
+        "terawattinfrastructure",
+        "easypost-2",
+        "Ketch",
+        "mcaconnect",
+        "repurposeglobal",
+        "askfavor",
+        "getsquire",
+        "railroad19",
+        "playonsports"
       ],
       "options": {
         "note": "DISCOVERY. Lever company slugs (jobs.lever.co/<slug>). Verified-live boards that currently list Data/Analytics roles."
@@ -459,27 +573,1457 @@
       "enabled": true,
       "priority": 3,
       "tenants": [
-        { "host": "tmobile.wd1.myworkdayjobs.com", "tenant": "tmobile", "site": "External", "company": "T-Mobile", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "nvidia.wd5.myworkdayjobs.com", "tenant": "nvidia", "site": "NVIDIAExternalCareerSite", "company": "NVIDIA", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "salesforce.wd12.myworkdayjobs.com", "tenant": "salesforce", "site": "External_Career_Site", "company": "Salesforce", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "adobe.wd5.myworkdayjobs.com", "tenant": "adobe", "site": "external_experienced", "company": "Adobe", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "mastercard.wd1.myworkdayjobs.com", "tenant": "mastercard", "site": "CorporateCareers", "company": "Mastercard", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "paypal.wd1.myworkdayjobs.com", "tenant": "paypal", "site": "jobs", "company": "PayPal", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "cvshealth.wd1.myworkdayjobs.com", "tenant": "cvshealth", "site": "CVS_Health_Careers", "company": "CVS Health", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "comcast.wd5.myworkdayjobs.com", "tenant": "comcast", "site": "Comcast_Careers", "company": "Comcast", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "target.wd5.myworkdayjobs.com", "tenant": "target", "site": "targetcareers", "company": "Target", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "blackrock.wd1.myworkdayjobs.com", "tenant": "blackrock", "site": "BlackRock_Professional", "company": "BlackRock", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "citi.wd5.myworkdayjobs.com", "tenant": "citi", "site": "2", "company": "Citi", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "hpe.wd5.myworkdayjobs.com", "tenant": "hpe", "site": "Jobsathpe", "company": "Hewlett Packard Enterprise", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "warnerbros.wd5.myworkdayjobs.com", "tenant": "warnerbros", "site": "global", "company": "Warner Bros. Discovery", "searchText": "data engineer", "pageSize": 20 },
-        { "host": "workday.wd5.myworkdayjobs.com", "tenant": "workday", "site": "Workday", "company": "Workday", "searchText": "data engineer", "pageSize": 20 }
+        {
+          "host": "tmobile.wd1.myworkdayjobs.com",
+          "tenant": "tmobile",
+          "site": "External",
+          "company": "T-Mobile",
+          "pageSize": 20
+        },
+        {
+          "host": "nvidia.wd5.myworkdayjobs.com",
+          "tenant": "nvidia",
+          "site": "NVIDIAExternalCareerSite",
+          "company": "NVIDIA",
+          "pageSize": 20
+        },
+        {
+          "host": "salesforce.wd12.myworkdayjobs.com",
+          "tenant": "salesforce",
+          "site": "External_Career_Site",
+          "company": "Salesforce",
+          "pageSize": 20
+        },
+        {
+          "host": "adobe.wd5.myworkdayjobs.com",
+          "tenant": "adobe",
+          "site": "external_experienced",
+          "company": "Adobe",
+          "pageSize": 20
+        },
+        {
+          "host": "mastercard.wd1.myworkdayjobs.com",
+          "tenant": "mastercard",
+          "site": "CorporateCareers",
+          "company": "Mastercard",
+          "pageSize": 20
+        },
+        {
+          "host": "paypal.wd1.myworkdayjobs.com",
+          "tenant": "paypal",
+          "site": "jobs",
+          "company": "PayPal",
+          "pageSize": 20
+        },
+        {
+          "host": "cvshealth.wd1.myworkdayjobs.com",
+          "tenant": "cvshealth",
+          "site": "CVS_Health_Careers",
+          "company": "CVS Health",
+          "pageSize": 20
+        },
+        {
+          "host": "comcast.wd5.myworkdayjobs.com",
+          "tenant": "comcast",
+          "site": "Comcast_Careers",
+          "company": "Comcast",
+          "pageSize": 20
+        },
+        {
+          "host": "target.wd5.myworkdayjobs.com",
+          "tenant": "target",
+          "site": "targetcareers",
+          "company": "Target",
+          "pageSize": 20
+        },
+        {
+          "host": "blackrock.wd1.myworkdayjobs.com",
+          "tenant": "blackrock",
+          "site": "BlackRock_Professional",
+          "company": "BlackRock",
+          "pageSize": 20
+        },
+        {
+          "host": "citi.wd5.myworkdayjobs.com",
+          "tenant": "citi",
+          "site": "2",
+          "company": "Citi",
+          "pageSize": 20
+        },
+        {
+          "host": "hpe.wd5.myworkdayjobs.com",
+          "tenant": "hpe",
+          "site": "Jobsathpe",
+          "company": "Hewlett Packard Enterprise",
+          "pageSize": 20
+        },
+        {
+          "host": "warnerbros.wd5.myworkdayjobs.com",
+          "tenant": "warnerbros",
+          "site": "global",
+          "company": "Warner Bros. Discovery",
+          "pageSize": 20
+        },
+        {
+          "host": "workday.wd5.myworkdayjobs.com",
+          "tenant": "workday",
+          "site": "Workday",
+          "company": "Workday",
+          "pageSize": 20
+        },
+        {
+          "host": "bah.wd1.myworkdayjobs.com",
+          "tenant": "bah",
+          "site": "BAH_Jobs",
+          "company": "Booz Allen Hamilton",
+          "pageSize": 20
+        },
+        {
+          "host": "genpact.wd108.myworkdayjobs.com",
+          "tenant": "genpact",
+          "site": "External_Careers",
+          "company": "Genpact",
+          "pageSize": 20
+        },
+        {
+          "host": "cw.wd1.myworkdayjobs.com",
+          "tenant": "cw",
+          "site": "External",
+          "company": "Cushman & Wakefield",
+          "pageSize": 20
+        },
+        {
+          "host": "highmarkhealth.wd1.myworkdayjobs.com",
+          "tenant": "highmarkhealth",
+          "site": "highmark",
+          "company": "United Concordia Dental",
+          "pageSize": 20
+        },
+        {
+          "host": "capitalone.wd12.myworkdayjobs.com",
+          "tenant": "capitalone",
+          "site": "Capital_One",
+          "company": "Capital One",
+          "pageSize": 20
+        },
+        {
+          "host": "blueorigin.wd5.myworkdayjobs.com",
+          "tenant": "blueorigin",
+          "site": "BlueOrigin",
+          "company": "Blue Origin",
+          "pageSize": 20
+        },
+        {
+          "host": "guidehouse.wd1.myworkdayjobs.com",
+          "tenant": "guidehouse",
+          "site": "External",
+          "company": "Guidehouse",
+          "pageSize": 20
+        },
+        {
+          "host": "generalmotors.wd5.myworkdayjobs.com",
+          "tenant": "generalmotors",
+          "site": "Careers_GM",
+          "company": "General Motors (GM)",
+          "pageSize": 20
+        },
+        {
+          "host": "marathonhealth.wd501.myworkdayjobs.com",
+          "tenant": "marathonhealth",
+          "site": "Marathon-Health-Careers",
+          "company": "Marathon Health",
+          "pageSize": 20
+        },
+        {
+          "host": "kemper.wd5.myworkdayjobs.com",
+          "tenant": "kemper",
+          "site": "Kemper_Careers",
+          "company": "Kemper",
+          "pageSize": 20
+        },
+        {
+          "host": "autodesk.wd1.myworkdayjobs.com",
+          "tenant": "autodesk",
+          "site": "Ext",
+          "company": "Autodesk",
+          "pageSize": 20
+        },
+        {
+          "host": "pfizer.wd1.myworkdayjobs.com",
+          "tenant": "pfizer",
+          "site": "PfizerCareers",
+          "company": "Pfizer",
+          "pageSize": 20
+        },
+        {
+          "host": "r1rcm.wd1.myworkdayjobs.com",
+          "tenant": "r1rcm",
+          "site": "R1RCM",
+          "company": "R1 RCM",
+          "pageSize": 20
+        },
+        {
+          "host": "oshkoshcorporation.wd5.myworkdayjobs.com",
+          "tenant": "oshkoshcorporation",
+          "site": "Oshkosh",
+          "company": "JLG",
+          "pageSize": 20
+        },
+        {
+          "host": "ensemblehp.wd5.myworkdayjobs.com",
+          "tenant": "ensemblehp",
+          "site": "EnsembleHealthPartnersCareers",
+          "company": "Ensemble Health Partners",
+          "pageSize": 20
+        },
+        {
+          "host": "crowdstrike.wd5.myworkdayjobs.com",
+          "tenant": "crowdstrike",
+          "site": "crowdstrikecareers",
+          "company": "CrowdStrike",
+          "pageSize": 20
+        },
+        {
+          "host": "nwis.wd12.myworkdayjobs.com",
+          "tenant": "nwis",
+          "site": "NW",
+          "company": "Nightwing",
+          "pageSize": 20
+        },
+        {
+          "host": "modernatx.wd1.myworkdayjobs.com",
+          "tenant": "modernatx",
+          "site": "M_tx",
+          "company": "Moderna",
+          "pageSize": 20
+        },
+        {
+          "host": "vantagedc.wd1.myworkdayjobs.com",
+          "tenant": "vantagedc",
+          "site": "Vantage",
+          "company": "Vantage Data Centers",
+          "pageSize": 20
+        },
+        {
+          "host": "aep.wd1.myworkdayjobs.com",
+          "tenant": "aep",
+          "site": "AEPCareerSite",
+          "company": "American Electric Power",
+          "pageSize": 20
+        },
+        {
+          "host": "radiancetech.wd12.myworkdayjobs.com",
+          "tenant": "radiancetech",
+          "site": "Radiance_External",
+          "company": "Radiance Technologies Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "fico.wd1.myworkdayjobs.com",
+          "tenant": "fico",
+          "site": "External",
+          "company": "FICO",
+          "pageSize": 20
+        },
+        {
+          "host": "cotality.wd115.myworkdayjobs.com",
+          "tenant": "cotality",
+          "site": "Global",
+          "company": "Cotality",
+          "pageSize": 20
+        },
+        {
+          "host": "jdpa.wd501.myworkdayjobs.com",
+          "tenant": "jdpa",
+          "site": "JDPower",
+          "company": "JD Power",
+          "pageSize": 20
+        },
+        {
+          "host": "bcbsri.wd1.myworkdayjobs.com",
+          "tenant": "bcbsri",
+          "site": "BCBSRICareers",
+          "company": "Blue Cross & Blue Shield of Rhode Island",
+          "pageSize": 20
+        },
+        {
+          "host": "humana.wd5.myworkdayjobs.com",
+          "tenant": "humana",
+          "site": "Humana_External_Career_Site",
+          "company": "Humana",
+          "pageSize": 20
+        },
+        {
+          "host": "abb.wd3.myworkdayjobs.com",
+          "tenant": "abb",
+          "site": "External_Career_Page",
+          "company": "ABB Motors and Mechanical Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "massgeneralbrigham.wd1.myworkdayjobs.com",
+          "tenant": "massgeneralbrigham",
+          "site": "MGBExternal",
+          "company": "Mass General Brigham",
+          "pageSize": 20
+        },
+        {
+          "host": "ag.wd3.myworkdayjobs.com",
+          "tenant": "ag",
+          "site": "Airbus",
+          "company": "Airbus",
+          "pageSize": 20
+        },
+        {
+          "host": "hitachi.wd1.myworkdayjobs.com",
+          "tenant": "hitachi",
+          "site": "hitachi",
+          "company": "Hitachi Rail",
+          "pageSize": 20
+        },
+        {
+          "host": "jabil.wd5.myworkdayjobs.com",
+          "tenant": "jabil",
+          "site": "Jabil_Careers",
+          "company": "Jabil",
+          "pageSize": 20
+        },
+        {
+          "host": "hyvee.wd1.myworkdayjobs.com",
+          "tenant": "hyvee",
+          "site": "HyVeeCareers",
+          "company": "Hy-Vee, Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "skechers.wd5.myworkdayjobs.com",
+          "tenant": "skechers",
+          "site": "One-career-site",
+          "company": "Skechers",
+          "pageSize": 20
+        },
+        {
+          "host": "td.wd3.myworkdayjobs.com",
+          "tenant": "td",
+          "site": "TD_Bank_Careers",
+          "company": "TD",
+          "pageSize": 20
+        },
+        {
+          "host": "livenation.wd503.myworkdayjobs.com",
+          "tenant": "livenation",
+          "site": "LNExternalSite",
+          "company": "Live Nation",
+          "pageSize": 20
+        },
+        {
+          "host": "otis.wd5.myworkdayjobs.com",
+          "tenant": "otis",
+          "site": "REC_Ext_Gateway",
+          "company": "OTIS",
+          "pageSize": 20
+        },
+        {
+          "host": "imh.wd108.myworkdayjobs.com",
+          "tenant": "imh",
+          "site": "IntermountainCareers",
+          "company": "Intermountain Health",
+          "pageSize": 20
+        },
+        {
+          "host": "jeffersonhealth.wd5.myworkdayjobs.com",
+          "tenant": "jeffersonhealth",
+          "site": "ThomasJeffersonExternal",
+          "company": "Thomas Jefferson University & Jefferson Health",
+          "pageSize": 20
+        },
+        {
+          "host": "medtronic.wd1.myworkdayjobs.com",
+          "tenant": "medtronic",
+          "site": "MedtronicCareers",
+          "company": "Medtronic",
+          "pageSize": 20
+        },
+        {
+          "host": "statestreet.wd1.myworkdayjobs.com",
+          "tenant": "statestreet",
+          "site": "Global",
+          "company": "State Street",
+          "pageSize": 20
+        },
+        {
+          "host": "bmo.wd3.myworkdayjobs.com",
+          "tenant": "bmo",
+          "site": "External",
+          "company": "BMO Financial Group",
+          "pageSize": 20
+        },
+        {
+          "host": "ilitch.wd5.myworkdayjobs.com",
+          "tenant": "ilitch",
+          "site": "LC",
+          "company": "ilitch",
+          "pageSize": 20
+        },
+        {
+          "host": "osu.wd1.myworkdayjobs.com",
+          "tenant": "osu",
+          "site": "OSUCareers",
+          "company": "The Ohio State University",
+          "pageSize": 20
+        },
+        {
+          "host": "cinemark.wd1.myworkdayjobs.com",
+          "tenant": "cinemark",
+          "site": "cinemark",
+          "company": "Cinemark",
+          "pageSize": 20
+        },
+        {
+          "host": "dentsuaegis.wd3.myworkdayjobs.com",
+          "tenant": "dentsuaegis",
+          "site": "DAN_GLOBAL",
+          "company": "Dentsu",
+          "pageSize": 20
+        },
+        {
+          "host": "mtb.wd5.myworkdayjobs.com",
+          "tenant": "mtb",
+          "site": "MTB",
+          "company": "M&T Bank",
+          "pageSize": 20
+        },
+        {
+          "host": "visa.wd5.myworkdayjobs.com",
+          "tenant": "visa",
+          "site": "Visa",
+          "company": "Visa",
+          "pageSize": 20
+        },
+        {
+          "host": "relx.wd3.myworkdayjobs.com",
+          "tenant": "relx",
+          "site": "relx",
+          "company": "RELX Group",
+          "pageSize": 20
+        },
+        {
+          "host": "dxctechnology.wd1.myworkdayjobs.com",
+          "tenant": "dxctechnology",
+          "site": "DXCJobs",
+          "company": "DXC Technology",
+          "pageSize": 20
+        },
+        {
+          "host": "moffitt.wd108.myworkdayjobs.com",
+          "tenant": "moffitt",
+          "site": "Moffitt",
+          "company": "Moffitt Cancer Center",
+          "pageSize": 20
+        },
+        {
+          "host": "topgolf.wd501.myworkdayjobs.com",
+          "tenant": "topgolf",
+          "site": "TopgolfCareers",
+          "company": "Topgolf",
+          "pageSize": 20
+        },
+        {
+          "host": "mufgub.wd3.myworkdayjobs.com",
+          "tenant": "mufgub",
+          "site": "MUFG-Careers",
+          "company": "MUFG",
+          "pageSize": 20
+        },
+        {
+          "host": "intel.wd1.myworkdayjobs.com",
+          "tenant": "intel",
+          "site": "External",
+          "company": "Intel Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "ntrs.wd1.myworkdayjobs.com",
+          "tenant": "ntrs",
+          "site": "northerntrust",
+          "company": "Northern Trust Corp.",
+          "pageSize": 20
+        },
+        {
+          "host": "medline.wd5.myworkdayjobs.com",
+          "tenant": "medline",
+          "site": "Medline",
+          "company": "Medline Industries",
+          "pageSize": 20
+        },
+        {
+          "host": "manulife.wd3.myworkdayjobs.com",
+          "tenant": "manulife",
+          "site": "MFCJH_Jobs",
+          "company": "Manulife",
+          "pageSize": 20
+        },
+        {
+          "host": "sec.wd3.myworkdayjobs.com",
+          "tenant": "sec",
+          "site": "Samsung_Careers",
+          "company": "Samsung Electronics",
+          "pageSize": 20
+        },
+        {
+          "host": "prim.wd108.myworkdayjobs.com",
+          "tenant": "prim",
+          "site": "Primoris",
+          "company": "Primoris Services Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "ferguson.wd1.myworkdayjobs.com",
+          "tenant": "ferguson",
+          "site": "Ferguson_Experienced",
+          "company": "Ferguson",
+          "pageSize": 20
+        },
+        {
+          "host": "ingrammicro.wd5.myworkdayjobs.com",
+          "tenant": "ingrammicro",
+          "site": "IngramMicro",
+          "company": "Ingram Micro",
+          "pageSize": 20
+        },
+        {
+          "host": "marvell.wd1.myworkdayjobs.com",
+          "tenant": "marvell",
+          "site": "MarvellCareers",
+          "company": "Marvell Technology",
+          "pageSize": 20
+        },
+        {
+          "host": "ivytech.wd1.myworkdayjobs.com",
+          "tenant": "ivytech",
+          "site": "Ivy_Tech_Careers",
+          "company": "Ivy Tech Community College",
+          "pageSize": 20
+        },
+        {
+          "host": "montefiore.wd12.myworkdayjobs.com",
+          "tenant": "montefiore",
+          "site": "MMC",
+          "company": "Montefiore Einstein",
+          "pageSize": 20
+        },
+        {
+          "host": "barrywehmiller.wd1.myworkdayjobs.com",
+          "tenant": "barrywehmiller",
+          "site": "BWCareers",
+          "company": "Barry Wehmiller Companies Inc",
+          "pageSize": 20
+        },
+        {
+          "host": "rockwellautomation.wd1.myworkdayjobs.com",
+          "tenant": "rockwellautomation",
+          "site": "External_Rockwell_Automation",
+          "company": "Rockwell Automation",
+          "pageSize": 20
+        },
+        {
+          "host": "thomsonreuters.wd5.myworkdayjobs.com",
+          "tenant": "thomsonreuters",
+          "site": "External_Career_Site",
+          "company": "Thomson Reuters",
+          "pageSize": 20
+        },
+        {
+          "host": "edwards.wd5.myworkdayjobs.com",
+          "tenant": "edwards",
+          "site": "EdwardsCareers",
+          "company": "Edwards Lifesciences",
+          "pageSize": 20
+        },
+        {
+          "host": "theirc.wd1.myworkdayjobs.com",
+          "tenant": "theirc",
+          "site": "External_Careers",
+          "company": "International Rescue Committee",
+          "pageSize": 20
+        },
+        {
+          "host": "evonik.wd3.myworkdayjobs.com",
+          "tenant": "evonik",
+          "site": "External_Careers",
+          "company": "Evonik",
+          "pageSize": 20
+        },
+        {
+          "host": "bakertilly.wd5.myworkdayjobs.com",
+          "tenant": "bakertilly",
+          "site": "BTCareers",
+          "company": "Baker Tilly Canada",
+          "pageSize": 20
+        },
+        {
+          "host": "lplfinancial.wd1.myworkdayjobs.com",
+          "tenant": "lplfinancial",
+          "site": "External",
+          "company": "LPL Financial",
+          "pageSize": 20
+        },
+        {
+          "host": "campbellsoup.wd5.myworkdayjobs.com",
+          "tenant": "campbellsoup",
+          "site": "ExternalCareers_GlobalSite",
+          "company": "Campbell's",
+          "pageSize": 20
+        },
+        {
+          "host": "curtisswright.wd1.myworkdayjobs.com",
+          "tenant": "curtisswright",
+          "site": "CW_External_Career_Site",
+          "company": "Curtiss-Wright",
+          "pageSize": 20
+        },
+        {
+          "host": "alcon.wd5.myworkdayjobs.com",
+          "tenant": "alcon",
+          "site": "careers_alcon",
+          "company": "Alcon",
+          "pageSize": 20
+        },
+        {
+          "host": "lsu.wd1.myworkdayjobs.com",
+          "tenant": "lsu",
+          "site": "LSU",
+          "company": "Louisiana State University",
+          "pageSize": 20
+        },
+        {
+          "host": "avav.wd1.myworkdayjobs.com",
+          "tenant": "avav",
+          "site": "AVAV",
+          "company": "AeroVironment",
+          "pageSize": 20
+        },
+        {
+          "host": "qtsdatacenters.wd5.myworkdayjobs.com",
+          "tenant": "qtsdatacenters",
+          "site": "qts",
+          "company": "QTS",
+          "pageSize": 20
+        },
+        {
+          "host": "dexcom.wd1.myworkdayjobs.com",
+          "tenant": "dexcom",
+          "site": "Dexcom",
+          "company": "Dexcom",
+          "pageSize": 20
+        },
+        {
+          "host": "uoflhealth.wd1.myworkdayjobs.com",
+          "tenant": "uoflhealth",
+          "site": "UofLHealthCareers",
+          "company": "UofL Health",
+          "pageSize": 20
+        },
+        {
+          "host": "jadeglobal.wd5.myworkdayjobs.com",
+          "tenant": "jadeglobal",
+          "site": "Jade_Careers",
+          "company": "Jade Global",
+          "pageSize": 20
+        },
+        {
+          "host": "pciservices.wd1.myworkdayjobs.com",
+          "tenant": "pciservices",
+          "site": "External",
+          "company": "PCI Pharma Services",
+          "pageSize": 20
+        },
+        {
+          "host": "victaulic.wd1.myworkdayjobs.com",
+          "tenant": "victaulic",
+          "site": "victaulic_careers",
+          "company": "Victaulic",
+          "pageSize": 20
+        },
+        {
+          "host": "wattswater.wd5.myworkdayjobs.com",
+          "tenant": "wattswater",
+          "site": "External",
+          "company": "Watts Water Technologies",
+          "pageSize": 20
+        },
+        {
+          "host": "tutorperini.wd12.myworkdayjobs.com",
+          "tenant": "tutorperini",
+          "site": "external",
+          "company": "FISK ELECTRIC",
+          "pageSize": 20
+        },
+        {
+          "host": "bloomenergy.wd1.myworkdayjobs.com",
+          "tenant": "bloomenergy",
+          "site": "BloomEnergyCareers",
+          "company": "Bloom Energy",
+          "pageSize": 20
+        },
+        {
+          "host": "nextracker.wd5.myworkdayjobs.com",
+          "tenant": "nextracker",
+          "site": "nextpower_careers",
+          "company": "NextPower",
+          "pageSize": 20
+        },
+        {
+          "host": "columbiabank.wd108.myworkdayjobs.com",
+          "tenant": "columbiabank",
+          "site": "Columbia",
+          "company": "Columbia Bank",
+          "pageSize": 20
+        },
+        {
+          "host": "woodward.wd5.myworkdayjobs.com",
+          "tenant": "woodward",
+          "site": "woodward",
+          "company": "Woodward, Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "crosscountrymortgage.wd1.myworkdayjobs.com",
+          "tenant": "crosscountrymortgage",
+          "site": "CCMCareers",
+          "company": "CrossCountry Mortgage, LLC",
+          "pageSize": 20
+        },
+        {
+          "host": "draper.wd5.myworkdayjobs.com",
+          "tenant": "draper",
+          "site": "Draper_Careers",
+          "company": "Draper",
+          "pageSize": 20
+        },
+        {
+          "host": "axos.wd5.myworkdayjobs.com",
+          "tenant": "axos",
+          "site": "Axos",
+          "company": "Axos Bank",
+          "pageSize": 20
+        },
+        {
+          "host": "logitech.wd5.myworkdayjobs.com",
+          "tenant": "logitech",
+          "site": "Logitech",
+          "company": "Logitech",
+          "pageSize": 20
+        },
+        {
+          "host": "worldpay.wd5.myworkdayjobs.com",
+          "tenant": "worldpay",
+          "site": "Worldpay_External_Careers_Site",
+          "company": "Worldpay",
+          "pageSize": 20
+        },
+        {
+          "host": "blackstone.wd1.myworkdayjobs.com",
+          "tenant": "blackstone",
+          "site": "Blackstone_Careers",
+          "company": "Blackstone",
+          "pageSize": 20
+        },
+        {
+          "host": "insulet.wd5.myworkdayjobs.com",
+          "tenant": "insulet",
+          "site": "insuletcareers",
+          "company": "Insulet Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "lplfinancial.wd1.myworkdayjobs.com",
+          "tenant": "lplfinancial",
+          "site": "CFN",
+          "company": "LPL Financial",
+          "pageSize": 20
+        },
+        {
+          "host": "minnstate.wd115.myworkdayjobs.com",
+          "tenant": "minnstate",
+          "site": "Minnesota_State_Careers",
+          "company": "Minnesota State",
+          "pageSize": 20
+        },
+        {
+          "host": "symbotic.wd504.myworkdayjobs.com",
+          "tenant": "symbotic",
+          "site": "Symbotic",
+          "company": "Symbotic",
+          "pageSize": 20
+        },
+        {
+          "host": "markelcorp.wd5.myworkdayjobs.com",
+          "tenant": "markelcorp",
+          "site": "GlobalCareers",
+          "company": "Markel Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "northwest.wd1.myworkdayjobs.com",
+          "tenant": "northwest",
+          "site": "Northwest_Careers",
+          "company": "Northwest Bank",
+          "pageSize": 20
+        },
+        {
+          "host": "mksinst.wd1.myworkdayjobs.com",
+          "tenant": "mksinst",
+          "site": "MKSCareersAmericas",
+          "company": "MKS",
+          "pageSize": 20
+        },
+        {
+          "host": "transamerica.wd5.myworkdayjobs.com",
+          "tenant": "transamerica",
+          "site": "US",
+          "company": "Transamerica",
+          "pageSize": 20
+        },
+        {
+          "host": "cna.wd1.myworkdayjobs.com",
+          "tenant": "cna",
+          "site": "CNA_Careers",
+          "company": "CNA Insurance",
+          "pageSize": 20
+        },
+        {
+          "host": "zoetis.wd5.myworkdayjobs.com",
+          "tenant": "zoetis",
+          "site": "zoetis",
+          "company": "Zoetis",
+          "pageSize": 20
+        },
+        {
+          "host": "aspentech.wd5.myworkdayjobs.com",
+          "tenant": "aspentech",
+          "site": "aspentech",
+          "company": "Aspen Technology",
+          "pageSize": 20
+        },
+        {
+          "host": "fluenceenergy.wd12.myworkdayjobs.com",
+          "tenant": "fluenceenergy",
+          "site": "fluenceenergy-jobs",
+          "company": "Fluence Energy",
+          "pageSize": 20
+        },
+        {
+          "host": "caresource.wd1.myworkdayjobs.com",
+          "tenant": "caresource",
+          "site": "CareSource",
+          "company": "CareSource",
+          "pageSize": 20
+        },
+        {
+          "host": "horizonmedia.wd1.myworkdayjobs.com",
+          "tenant": "horizonmedia",
+          "site": "CareerOpportunities",
+          "company": "Horizon Media, Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "cableone.wd1.myworkdayjobs.com",
+          "tenant": "cableone",
+          "site": "Cable_One_External_Careers",
+          "company": "Cable One",
+          "pageSize": 20
+        },
+        {
+          "host": "cree.wd108.myworkdayjobs.com",
+          "tenant": "cree",
+          "site": "EXT",
+          "company": "Wolfspeed",
+          "pageSize": 20
+        },
+        {
+          "host": "jm.wd103.myworkdayjobs.com",
+          "tenant": "jm",
+          "site": "External",
+          "company": "Johns Manville",
+          "pageSize": 20
+        },
+        {
+          "host": "american.wd1.myworkdayjobs.com",
+          "tenant": "american",
+          "site": "AU",
+          "company": "American University",
+          "pageSize": 20
+        },
+        {
+          "host": "unitytech.wd1.myworkdayjobs.com",
+          "tenant": "unitytech",
+          "site": "Unity",
+          "company": "Unity Technologies",
+          "pageSize": 20
+        },
+        {
+          "host": "baldwin.wd1.myworkdayjobs.com",
+          "tenant": "baldwin",
+          "site": "Baldwin",
+          "company": "The Baldwin Group",
+          "pageSize": 20
+        },
+        {
+          "host": "foxfactory.wd1.myworkdayjobs.com",
+          "tenant": "foxfactory",
+          "site": "FOX",
+          "company": "FOX Factory",
+          "pageSize": 20
+        },
+        {
+          "host": "thinkbrg.wd5.myworkdayjobs.com",
+          "tenant": "thinkbrg",
+          "site": "BRG_External_Career_Site",
+          "company": "Berkeley Research Group, LLC",
+          "pageSize": 20
+        },
+        {
+          "host": "smucker.wd5.myworkdayjobs.com",
+          "tenant": "smucker",
+          "site": "US_External_Careers",
+          "company": "The J. M. Smucker Company",
+          "pageSize": 20
+        },
+        {
+          "host": "roberthalf.wd1.myworkdayjobs.com",
+          "tenant": "roberthalf",
+          "site": "ProtivitiNA",
+          "company": "Protiviti",
+          "pageSize": 20
+        },
+        {
+          "host": "rbi.wd3.myworkdayjobs.com",
+          "tenant": "rbi",
+          "site": "RBI_External_Career_Site",
+          "company": "Restaurant Brands International",
+          "pageSize": 20
+        },
+        {
+          "host": "zillow.wd5.myworkdayjobs.com",
+          "tenant": "zillow",
+          "site": "Zillow_Group_External",
+          "company": "Zillow",
+          "pageSize": 20
+        },
+        {
+          "host": "sailpoint.wd1.myworkdayjobs.com",
+          "tenant": "sailpoint",
+          "site": "SailPoint",
+          "company": "SailPoint Technologies",
+          "pageSize": 20
+        },
+        {
+          "host": "aes.wd1.myworkdayjobs.com",
+          "tenant": "aes",
+          "site": "AES_US",
+          "company": "AES Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "lambweston.wd1.myworkdayjobs.com",
+          "tenant": "lambweston",
+          "site": "Lamb_External",
+          "company": "Lamb Weston",
+          "pageSize": 20
+        },
+        {
+          "host": "wgu.wd5.myworkdayjobs.com",
+          "tenant": "wgu",
+          "site": "External",
+          "company": "Western Governors University",
+          "pageSize": 20
+        },
+        {
+          "host": "amesconstruction.wd12.myworkdayjobs.com",
+          "tenant": "amesconstruction",
+          "site": "Ames",
+          "company": "Ames Construction, Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "coorstek.wd1.myworkdayjobs.com",
+          "tenant": "coorstek",
+          "site": "CoorsTekCareers",
+          "company": "CoorsTek",
+          "pageSize": 20
+        },
+        {
+          "host": "asu.wd1.myworkdayjobs.com",
+          "tenant": "asu",
+          "site": "ASUStaffCareers",
+          "company": "Arizona State University",
+          "pageSize": 20
+        },
+        {
+          "host": "cooley.wd1.myworkdayjobs.com",
+          "tenant": "cooley",
+          "site": "Cooley_US_LLP",
+          "company": "Cooley LLP",
+          "pageSize": 20
+        },
+        {
+          "host": "nshe.wd1.myworkdayjobs.com",
+          "tenant": "nshe",
+          "site": "UNR-external",
+          "company": "University of Nevada, Reno",
+          "pageSize": 20
+        },
+        {
+          "host": "epicorsoftware.wd5.myworkdayjobs.com",
+          "tenant": "epicorsoftware",
+          "site": "epicorjobs",
+          "company": "Epicor Software",
+          "pageSize": 20
+        },
+        {
+          "host": "fgcu.wd5.myworkdayjobs.com",
+          "tenant": "fgcu",
+          "site": "eaglejobs",
+          "company": "Florida Gulf Coast University",
+          "pageSize": 20
+        },
+        {
+          "host": "visa.wd5.myworkdayjobs.com",
+          "tenant": "visa",
+          "site": "Visa_Talent_Portal",
+          "company": "Visa",
+          "pageSize": 20
+        },
+        {
+          "host": "servicetitan.wd1.myworkdayjobs.com",
+          "tenant": "servicetitan",
+          "site": "ServiceTitan",
+          "company": "ServiceTitan",
+          "pageSize": 20
+        },
+        {
+          "host": "godirect.wd5.myworkdayjobs.com",
+          "tenant": "godirect",
+          "site": "voya_jobs",
+          "company": "Voya Financial",
+          "pageSize": 20
+        },
+        {
+          "host": "genpact.wd108.myworkdayjobs.com",
+          "tenant": "genpact",
+          "site": "campussite",
+          "company": "Genpact",
+          "pageSize": 20
+        },
+        {
+          "host": "pentair.wd5.myworkdayjobs.com",
+          "tenant": "pentair",
+          "site": "Pentair_Careers",
+          "company": "Pentair",
+          "pageSize": 20
+        },
+        {
+          "host": "kendallgroup.wd503.myworkdayjobs.com",
+          "tenant": "kendallgroup",
+          "site": "Kendall_Careers",
+          "company": "The Kendall Group",
+          "pageSize": 20
+        },
+        {
+          "host": "cni.wd503.myworkdayjobs.com",
+          "tenant": "cni",
+          "site": "CNI",
+          "company": "Chickasaw Nation Industries",
+          "pageSize": 20
+        },
+        {
+          "host": "plastipak.wd1.myworkdayjobs.com",
+          "tenant": "plastipak",
+          "site": "Plastipak",
+          "company": "Plastipak",
+          "pageSize": 20
+        },
+        {
+          "host": "pru.wd5.myworkdayjobs.com",
+          "tenant": "pru",
+          "site": "PGIM_Careers",
+          "company": "PGIM",
+          "pageSize": 20
+        },
+        {
+          "host": "chas.wd1.myworkdayjobs.com",
+          "tenant": "chas",
+          "site": "CHASHealth",
+          "company": "CHAS Health",
+          "pageSize": 20
+        },
+        {
+          "host": "fmc.wd12.myworkdayjobs.com",
+          "tenant": "fmc",
+          "site": "FMC",
+          "company": "FMC Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "alkami.wd12.myworkdayjobs.com",
+          "tenant": "alkami",
+          "site": "alkami",
+          "company": "Alkami Technology",
+          "pageSize": 20
+        },
+        {
+          "host": "canvasinc.wd108.myworkdayjobs.com",
+          "tenant": "canvasinc",
+          "site": "Canvas",
+          "company": "canvasinc",
+          "pageSize": 20
+        },
+        {
+          "host": "axcelis.wd1.myworkdayjobs.com",
+          "tenant": "axcelis",
+          "site": "axcelis",
+          "company": "Axcelis Technologies",
+          "pageSize": 20
+        },
+        {
+          "host": "kcura.wd1.myworkdayjobs.com",
+          "tenant": "kcura",
+          "site": "External_Career_Site",
+          "company": "Relativity",
+          "pageSize": 20
+        },
+        {
+          "host": "axiscapital.wd1.myworkdayjobs.com",
+          "tenant": "axiscapital",
+          "site": "axiscareers",
+          "company": "AXIS Capital",
+          "pageSize": 20
+        },
+        {
+          "host": "greenheckgroup.wd5.myworkdayjobs.com",
+          "tenant": "greenheckgroup",
+          "site": "External",
+          "company": "Greenheck Group",
+          "pageSize": 20
+        },
+        {
+          "host": "packsize.wd108.myworkdayjobs.com",
+          "tenant": "packsize",
+          "site": "Packsize_Careers",
+          "company": "Packsize",
+          "pageSize": 20
+        },
+        {
+          "host": "gnw.wd1.myworkdayjobs.com",
+          "tenant": "gnw",
+          "site": "GNW",
+          "company": "Genworth",
+          "pageSize": 20
+        },
+        {
+          "host": "ourhrconnect.wd501.myworkdayjobs.com",
+          "tenant": "ourhrconnect",
+          "site": "SCBlues",
+          "company": "Blue Cross Blue Shield",
+          "pageSize": 20
+        },
+        {
+          "host": "charlottenc.wd12.myworkdayjobs.com",
+          "tenant": "charlottenc",
+          "site": "citgov",
+          "company": "City of Charlotte, NC",
+          "pageSize": 20
+        },
+        {
+          "host": "bcbsaz.wd1.myworkdayjobs.com",
+          "tenant": "bcbsaz",
+          "site": "BCBSAZCareers",
+          "company": "Blue Cross Blue Shield of Arizona",
+          "pageSize": 20
+        },
+        {
+          "host": "badgermeter.wd5.myworkdayjobs.com",
+          "tenant": "badgermeter",
+          "site": "US_CareerSite",
+          "company": "Badger Meter",
+          "pageSize": 20
+        },
+        {
+          "host": "cubic.wd1.myworkdayjobs.com",
+          "tenant": "cubic",
+          "site": "cubic_USA_careers",
+          "company": "Cubic Corporation",
+          "pageSize": 20
+        },
+        {
+          "host": "ceritypartners.wd12.myworkdayjobs.com",
+          "tenant": "ceritypartners",
+          "site": "ceritypartnerscareers",
+          "company": "Cerity Partners",
+          "pageSize": 20
+        },
+        {
+          "host": "evolent.wd1.myworkdayjobs.com",
+          "tenant": "evolent",
+          "site": "External",
+          "company": "Evolent",
+          "pageSize": 20
+        },
+        {
+          "host": "automationanywhere.wd5.myworkdayjobs.com",
+          "tenant": "automationanywhere",
+          "site": "AutomationAnywhereJobs",
+          "company": "Automation Anywhere",
+          "pageSize": 20
+        },
+        {
+          "host": "teladoc.wd503.myworkdayjobs.com",
+          "tenant": "teladoc",
+          "site": "teladochealth_is_hiring",
+          "company": "Teladoc Health",
+          "pageSize": 20
+        },
+        {
+          "host": "bb.wd3.myworkdayjobs.com",
+          "tenant": "bb",
+          "site": "BlackBerry",
+          "company": "BlackBerry",
+          "pageSize": 20
+        },
+        {
+          "host": "omnionpower.wd5.myworkdayjobs.com",
+          "tenant": "omnionpower",
+          "site": "External",
+          "company": "OmniOn Power",
+          "pageSize": 20
+        },
+        {
+          "host": "velera.wd5.myworkdayjobs.com",
+          "tenant": "velera",
+          "site": "VeleraCareers",
+          "company": "Velera",
+          "pageSize": 20
+        },
+        {
+          "host": "creditacceptance.wd5.myworkdayjobs.com",
+          "tenant": "creditacceptance",
+          "site": "Credit_Acceptance",
+          "company": "Credit Acceptance",
+          "pageSize": 20
+        },
+        {
+          "host": "primerica.wd1.myworkdayjobs.com",
+          "tenant": "primerica",
+          "site": "PRI",
+          "company": "Primerica",
+          "pageSize": 20
+        },
+        {
+          "host": "pureinsurance.wd5.myworkdayjobs.com",
+          "tenant": "pureinsurance",
+          "site": "PURE",
+          "company": "PURE Insurance",
+          "pageSize": 20
+        },
+        {
+          "host": "cambiumlearning.wd1.myworkdayjobs.com",
+          "tenant": "cambiumlearning",
+          "site": "camb",
+          "company": "Cambium Learning Group",
+          "pageSize": 20
+        },
+        {
+          "host": "hl.wd1.myworkdayjobs.com",
+          "tenant": "hl",
+          "site": "Corporate",
+          "company": "Houlihan Lokey",
+          "pageSize": 20
+        },
+        {
+          "host": "dtn.wd1.myworkdayjobs.com",
+          "tenant": "dtn",
+          "site": "DTN_Careers",
+          "company": "DTN",
+          "pageSize": 20
+        },
+        {
+          "host": "browardcollege.wd5.myworkdayjobs.com",
+          "tenant": "browardcollege",
+          "site": "FT",
+          "company": "Broward College",
+          "pageSize": 20
+        },
+        {
+          "host": "risepoint.wd503.myworkdayjobs.com",
+          "tenant": "risepoint",
+          "site": "Risepoint",
+          "company": "Risepoint",
+          "pageSize": 20
+        },
+        {
+          "host": "kei.wd1.myworkdayjobs.com",
+          "tenant": "kei",
+          "site": "GlobalKimballCareers",
+          "company": "Kimball Electronics Group",
+          "pageSize": 20
+        },
+        {
+          "host": "cccis.wd1.myworkdayjobs.com",
+          "tenant": "cccis",
+          "site": "broadbean_external",
+          "company": "CCC Intelligent Solutions",
+          "pageSize": 20
+        },
+        {
+          "host": "merative.wd12.myworkdayjobs.com",
+          "tenant": "merative",
+          "site": "External_Career_Site",
+          "company": "Merative",
+          "pageSize": 20
+        },
+        {
+          "host": "countryfinancial.wd5.myworkdayjobs.com",
+          "tenant": "countryfinancial",
+          "site": "COUNTRYCorporateExternal",
+          "company": "COUNTRY Financial",
+          "pageSize": 20
+        },
+        {
+          "host": "tbc.wd12.myworkdayjobs.com",
+          "tenant": "tbc",
+          "site": "LyricCareers",
+          "company": "Lyric",
+          "pageSize": 20
+        },
+        {
+          "host": "jefferson.wd5.myworkdayjobs.com",
+          "tenant": "jefferson",
+          "site": "External",
+          "company": "Jefferson County Colorado",
+          "pageSize": 20
+        },
+        {
+          "host": "interfacesystems.wd5.myworkdayjobs.com",
+          "tenant": "interfacesystems",
+          "site": "InterfaceSystemsCareers",
+          "company": "Interface Systems",
+          "pageSize": 20
+        },
+        {
+          "host": "availity.wd1.myworkdayjobs.com",
+          "tenant": "availity",
+          "site": "Availity_Careers_US",
+          "company": "Availity, LLC.",
+          "pageSize": 20
+        },
+        {
+          "host": "progleasing.wd5.myworkdayjobs.com",
+          "tenant": "progleasing",
+          "site": "purchasingpower",
+          "company": "Purchasing Power, LLC",
+          "pageSize": 20
+        },
+        {
+          "host": "hennypenny.wd1.myworkdayjobs.com",
+          "tenant": "hennypenny",
+          "site": "hennypenny",
+          "company": "Henny Penny",
+          "pageSize": 20
+        },
+        {
+          "host": "lower.wd1.myworkdayjobs.com",
+          "tenant": "lower",
+          "site": "lower_external_careers",
+          "company": "Lower",
+          "pageSize": 20
+        },
+        {
+          "host": "gtefinancial.wd1.myworkdayjobs.com",
+          "tenant": "gtefinancial",
+          "site": "GTE_Financial_Career",
+          "company": "GTE Financial",
+          "pageSize": 20
+        },
+        {
+          "host": "asuep.wd5.myworkdayjobs.com",
+          "tenant": "asuep",
+          "site": "ASUEP",
+          "company": "ASU Enterprise Partners",
+          "pageSize": 20
+        },
+        {
+          "host": "bonterra.wd1.myworkdayjobs.com",
+          "tenant": "bonterra",
+          "site": "bonterratech",
+          "company": "Bonterra",
+          "pageSize": 20
+        },
+        {
+          "host": "suzano.wd108.myworkdayjobs.com",
+          "tenant": "suzano",
+          "site": "suzanopackaging",
+          "company": "Suzano",
+          "pageSize": 20
+        },
+        {
+          "host": "worldmarket.wd5.myworkdayjobs.com",
+          "tenant": "worldmarket",
+          "site": "cost_plus_world_market_careers",
+          "company": "World Market",
+          "pageSize": 20
+        },
+        {
+          "host": "nphosting.wd5.myworkdayjobs.com",
+          "tenant": "nphosting",
+          "site": "FDFCareers",
+          "company": "FirstDay Foundation",
+          "pageSize": 20
+        },
+        {
+          "host": "archwellessentials.wd1.myworkdayjobs.com",
+          "tenant": "archwellessentials",
+          "site": "modercareers",
+          "company": "Moder",
+          "pageSize": 20
+        },
+        {
+          "host": "volarisgroup.wd3.myworkdayjobs.com",
+          "tenant": "volarisgroup",
+          "site": "equivant",
+          "company": "Equivant",
+          "pageSize": 20
+        },
+        {
+          "host": "gaig.wd1.myworkdayjobs.com",
+          "tenant": "gaig",
+          "site": "Not_Posted_GAIG",
+          "company": "Great American Insurance Group",
+          "pageSize": 20
+        },
+        {
+          "host": "bcbskc.wd1.myworkdayjobs.com",
+          "tenant": "bcbskc",
+          "site": "BCBS_External_Career_Site",
+          "company": "Blue Cross and Blue Shield of Kansas City",
+          "pageSize": 20
+        },
+        {
+          "host": "newchartertech.wd12.myworkdayjobs.com",
+          "tenant": "newchartertech",
+          "site": "GreystoneTechnology",
+          "company": "newchartertech",
+          "pageSize": 20
+        }
       ],
       "rateLimitMs": 4000,
       "hostSpacingMs": 500,
-      "maxDetailFetches": 20,
+      "maxDetailFetches": 8,
       "options": {
-        "note": "DISCOVERY. Public Workday CXS career-site endpoints only — the same JSON each company's public career page loads. No login, no CAPTCHA bypass, no private endpoints. Each tenant is verified-reachable and returns data roles; a tenant that goes 404/422/500 is logged and skipped, never crashes the run. searchText focuses the public search box on data-engineering roles; fetchDetails (default) pulls the full JD so scoring is accurate. Add more via scripts/probe-workday*.mjs to confirm host/tenant/site before listing."
-      }
+        "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) — adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant."
+      },
+      "maxSearchTerms": 2,
+      "boardConcurrency": 24
     },
     {
       "id": "company-careers",
@@ -490,7 +2034,7 @@
       "maxLinksPerCompany": 50,
       "rateLimitMs": 4000,
       "options": {
-        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped \u2014 never bypassed."
+        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped — never bypassed."
       }
     },
     {
@@ -511,7 +2055,6 @@
       "boards": [
         "ramp",
         "linear",
-        "deel",
         "openai",
         "notion",
         "vanta",
@@ -521,7 +2064,42 @@
         "supabase",
         "clickhouse",
         "sierra",
-        "cursor"
+        "cursor",
+        "Clera",
+        "mercor",
+        "1password",
+        "delinea",
+        "Lambda",
+        "qumulo",
+        "gallatin",
+        "ScribdInc",
+        "mural",
+        "gen-digital",
+        "apex-technology-inc",
+        "socure",
+        "Deepgram",
+        "spoton",
+        "clickup",
+        "coderabbit",
+        "voleon",
+        "Tabs",
+        "frontcareers",
+        "SunnyData",
+        "allocate",
+        "ultralytics",
+        "april",
+        "hammes",
+        "megazone",
+        "generalintuition-medal",
+        "CloudZero",
+        "Magical",
+        "e-source",
+        "eliza",
+        "minerva",
+        "sciencelogic",
+        "dandelionhealth",
+        "Zingage",
+        "troveo"
       ],
       "options": {
         "note": "DISCOVERY via Ashby's official public posting API (api.ashbyhq.com/posting-api/job-board/<board>). Board slugs of tech companies hiring data roles; a dead board is logged and skipped."
@@ -532,16 +2110,130 @@
       "adapter": "smartrecruiters",
       "enabled": true,
       "priority": 3,
+      "maxPostingsPerCompany": 1000,
       "options": {
-        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting."
+        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). Pages through `offset` until totalFound is reached — it previously read only the first 100 postings per company, which silently truncated ServiceNow (442) and Experian (495). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting. Bosch and IKEA were removed after both returned 0 postings on verification."
       },
       "boards": [
         "ServiceNow",
         "Visa",
-        "Bosch",
-        "IKEA",
         "McDonaldsCorporation",
-        "Experian"
+        "Experian",
+        "AECOM2",
+        "TurnerTownsend",
+        "CityOfNewYork",
+        "AbbVie",
+        "NBCUniversal3",
+        "CityofPhiladelphia",
+        "Dominos",
+        "SonsoftInc",
+        "prosidianconsulting",
+        "JobsForHumanity",
+        "VeoliaEnvironnementSA",
+        "IntegratedResourcesINC",
+        "Collabera2",
+        "Jobsbridge1",
+        "360ITProfessionals1",
+        "USM2",
+        "NorthwesternMedicine",
+        "KrgTechnologyInc",
+        "ArtechInformationSystemLLC",
+        "StemXpert1",
+        "AvanceConsultingServices2",
+        "TecTammina",
+        "AtriaGroupLLC",
+        "InfojiniInc1",
+        "Socotec",
+        "PublicStorage",
+        "IDEALFORCELLC",
+        "GlobalChannelManagementInc",
+        "VTechSolution1",
+        "Sia",
+        "RightTalentRightNow",
+        "AskITConsulting",
+        "SonomaConsultingInc",
+        "BCforward3",
+        "Covista",
+        "ProcomConsultantsGroup",
+        "PSGGlobalSolutions2",
+        "NextLevelBusinessServicesInc2",
+        "SATechnologiesInc4",
+        "USITSolutionsInc",
+        "CheckPointSoftwareTechnologies2",
+        "Info-Ways",
+        "IFS1",
+        "Randstad4",
+        "AreteTechnologiesInc",
+        "WestgateResorts",
+        "PyramidIT1",
+        "ComtechLLC2",
+        "Xinnovit",
+        "SaxonGlobal",
+        "AmNetServicesInc",
+        "Versant3",
+        "TestingXperts",
+        "AYRGlobalITSolutionsInc",
+        "blueStone",
+        "Quantix",
+        "Blend360",
+        "WynnResorts",
+        "Paradigminfotech",
+        "SRITechSolutionsInc",
+        "MaaniaConsultancyServices",
+        "ArkaInfotechInc",
+        "PyramidConsulting1",
+        "CapTechConsulting",
+        "AIRCommunities",
+        "ScoutET",
+        "Idexcel3",
+        "RESPECInc",
+        "Prosum2",
+        "Sportradar",
+        "HaloGroup1",
+        "ReliableSoftwareResourcesInc",
+        "SouthTekResources",
+        "KGTiger2",
+        "AcumenSolutions",
+        "BostonTechnology1",
+        "EttainGroup",
+        "Confidential25",
+        "Samsung1",
+        "SamsungSDSA",
+        "VTS3Corp",
+        "CaliforniaCreativeSolutionsInc",
+        "JGWentworthHomeLendingLLC",
+        "LibSysInc3",
+        "SGSConsulting",
+        "Ustechsolutions5",
+        "SyncreonConsulting",
+        "KGSTechnologyGroupInc",
+        "TechnoConsulting",
+        "VTekisConsultingLLP",
+        "AltorelLLC",
+        "NumeroDataLLC",
+        "PrincipalSoftware",
+        "Heitman",
+        "ITBrainiac1",
+        "MastechDigital",
+        "InfowayGroup",
+        "ExParteInc",
+        "SteppingUpSolutions",
+        "JNITINC",
+        "BlueAlly",
+        "DerexTechnologiesInc",
+        "RenaissancePartners",
+        "KollaSoftInc1",
+        "NvelupConsulting",
+        "bacoStrategy",
+        "OperationIT",
+        "ArthurGrandTechnologiesInc",
+        "ISCS",
+        "IngeusViaAlexanderMannSolutions",
+        "WilsonLegalSolutions",
+        "Recruited1",
+        "EleventhHireInc1",
+        "PremierItSolutions",
+        "SYSRSITServicesLLC"
       ]
     }
   ]

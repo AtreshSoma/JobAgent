@@ -92,7 +92,9 @@
               "genericPublicPage",
               "apify",
               "ashby",
-              "smartrecruiters"
+              "smartrecruiters",
+              "atsSearch",
+              "adzuna"
             ]
           },
           "enabled": {
@@ -120,6 +122,36 @@
             "type": "integer",
             "minimum": 0,
             "description": "Maximum optional Workday full-description requests per tenant; cached descriptions do not consume this budget."
+          },
+          "maxPostingsPerCompany": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "SmartRecruiters: ceiling on postings read per company across all pages. The adapter pages until totalFound is reached; this only stops a runaway loop."
+          },
+          "boardConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many boards/tenants this source fetches in parallel, overriding the global default. Safe to raise for Workday: every tenant is a different host and per-host politeness is enforced separately by the host gate, so with 200+ boards a low value is pure serialization."
+          },
+          "maxSearchTerms": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Workday: how many search phrases to derive from candidate.targetTitles per tenant (default 2). Each term multiplies that tenant's page cost, and Workday's search is fuzzy enough that a minimal cover of the title list suffices — measured, one phrase already recovered all but 3 on-target titles across 12 tenants. 0 disables searching (enumerate everything)."
+          },
+          "searchTexts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Workday: pin the search phrases for every tenant in this source, overriding the derivation from candidate.targetTitles. Keep each phrase to ~2 tokens: Workday's CXS search NARROWS as tokens are added (measured: 'data' 115 hits, 'data engineer' 51, a nine-word query 0)."
+          },
+          "maxAgeDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "atsSearch: hard ceiling on posting age in days (default 180; 0 disables). A zombie guard, not a freshness filter — cross-company search indexes keep requisitions nobody ever closed, and 89% of SmartRecruiters rows measured over a year old (oldest: 2014). Undated rows are kept."
+          },
+          "dayRange": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "atsSearch/Workable: only return postings from the last N days (default 7). Workable ranks by relevance and accepts no sort parameter, so this is the only recency lever — and widening it displaces fresh jobs rather than merely adding old ones (measured: 7 days yields 137 jobs under a week old, 30 days only 76). Raise it only when back-filling."
           },
           "queries": {
             "type": "array",
@@ -169,7 +201,13 @@
                   "minimum": 1
                 },
                 "searchText": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Pin this tenant's single search phrase, overriding the phrases derived from candidate.targetTitles. An empty string means 'enumerate everything'."
+                },
+                "searchTexts": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Pin several search phrases for this tenant. Results are merged and de-duplicated before detail enrichment, so the per-tenant detail budget is spent once per job, not once per phrase."
                 }
               }
             }
@@ -191,7 +229,9 @@
                   "enum": [
                     "greenhouse",
                     "lever",
-                    "workday"
+                    "workday",
+                    "ashby",
+                    "smartrecruiters"
                   ]
                 },
                 "slug": {

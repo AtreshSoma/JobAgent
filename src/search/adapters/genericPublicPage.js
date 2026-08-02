@@ -10,29 +10,49 @@
 
 import { parseJsonLdJobs, normalizeJob, htmlToText, extractReadableContent } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
+import { fetchWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 
 export const adapterId = 'genericPublicPage';
 
 /**
  * Fetch and parse one public job URL.
+ *
+ * Unlike the official-API adapters, this one points at arbitrary company sites,
+ * so it is the MOST likely to meet a host that accepts a connection and then
+ * never answers. It therefore threads the same request timeout and host gate
+ * every other adapter uses — without them a single hung careers page stalled
+ * the whole discovery run, because `withRetry` cannot rescue a call that never
+ * throws.
+ *
  * @param {string} url
  * @param {object} ctx
  * @param {typeof fetch} [ctx.fetchImpl]
  * @param {string} [ctx.source]
  * @param {number} [ctx.maxRetries]
+ * @param {number} [ctx.requestTimeoutMs]
+ * @param {{ run: Function }} [ctx.hostGate]
  * @returns {Promise<object[]>} normalized jobs
  */
 export async function fetchUrl(url, ctx = {}) {
-  const { fetchImpl = fetch, source = 'public', maxRetries = 3 } = ctx;
-  const html = await withRetry(async () => {
-    const res = await fetchImpl(url, { headers: { Accept: 'text/html' } });
+  const { fetchImpl = fetch, source = 'public', maxRetries = 3, requestTimeoutMs, hostGate } = ctx;
+  const call = async () => {
+    const res = await fetchWithTimeout(
+      fetchImpl,
+      url,
+      { headers: discoveryHeaders({ Accept: 'text/html' }) },
+      requestTimeoutMs,
+    );
     if (!res.ok) {
       const e = new Error(`HTTP ${res.status} for ${url}`);
       e.status = res.status;
       throw e;
     }
     return res.text();
-  }, { maxRetries });
+  };
+  const html = await withRetry(
+    () => (hostGate ? hostGate.run(url, call) : call()),
+    { maxRetries },
+  );
 
   // 1. Preferred: structured schema.org JobPosting JSON-LD.
   let jobs = parseJsonLdJobs(html, { url, source });

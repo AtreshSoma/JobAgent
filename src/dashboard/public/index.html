@@ -136,6 +136,14 @@
             aria-label="Posted less than 6 hours ago">6h</button>
           <button type="button" data-action="set-posted" data-value="24" aria-pressed="false"
             aria-label="Posted less than 24 hours ago">24h</button>
+          <!-- 3d/7d are where the jobs actually are: a measured run held 5
+               postings under 24h old and 4,439 under a week. Values here MUST
+               appear in POSTED_WINDOWS (src/dashboard/data.js) or the chip
+               would look active over an unfiltered board. -->
+          <button type="button" data-action="set-posted" data-value="72" aria-pressed="false"
+            aria-label="Posted less than 3 days ago">3d</button>
+          <button type="button" data-action="set-posted" data-value="168" aria-pressed="false"
+            aria-label="Posted less than 1 week ago">1w</button>
           <input type="hidden" id="postedWithinHours" value="">
         </div>
         <label class="toggle"><input type="checkbox" id="remoteOnly"> Remote only</label>

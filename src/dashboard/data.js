@@ -361,6 +361,21 @@ export function isUndatedDrop(job = {}) {
   return /unknown posting date/i.test(String(job.discard_reason ?? ''));
 }
 
+/**
+ * Selectable posting-age windows, in hours — the ONLY values the board filter
+ * honors, and therefore the only ones the segmented control may offer.
+ *
+ * The two must not drift. A chip offering a window this list omits would render
+ * as active over a completely unfiltered board, which is the same class of lie
+ * as a tab badge that disagrees with the rows it opens.
+ *
+ * 3h/6h/24h answer "be first to apply". 72h/168h exist because on real data
+ * they are where the jobs actually are: one measured run held 5 postings under
+ * 24 hours old and 4,439 under a week, so a board capped at 24h looks empty
+ * while a week's worth of live, applicable roles sits one click away.
+ */
+export const POSTED_WINDOWS = Object.freeze([3, 6, 24, 72, 168]);
+
 /** Statuses considered "closed" — hidden from the default board. */
 export const CLOSED_STATUSES = Object.freeze([
   APP_STATUS.ARCHIVED, APP_STATUS.REJECTED, APP_STATUS.DISCARDED,
@@ -517,6 +532,7 @@ function computeDashboardStats(db, now) {
       discoveredToday: 0,
       discoveredLast24h: 0,
       postedLast24h: 0,
+      postedLast7d: 0,
       strongFit: 0,
       mediumFit: 0,
       weakFit: 0,
@@ -574,6 +590,11 @@ function computeDashboardStats(db, now) {
     // the header chip always reconciles with what the board's "last 24h"
     // filter shows — a big raw count over a mostly-hidden board reads as a bug.
     if (isWithinLast24Hours(job.posted_at, now) && !CLOSED_SET.has(status)) stats.totals.postedLast24h += 1;
+    // The week window matters more than it looks: on real data the 24h count
+    // is routinely single digits while a week holds hundreds of live roles, so
+    // a board that only offers 24h reads as "nothing to apply to today".
+    // Counted on the same actionable basis so its chip also reconciles.
+    if (isWithinLastHours(job.posted_at, 168, now) && !CLOSED_SET.has(status)) stats.totals.postedLast7d += 1;
     // Fit tiles count ACTIONABLE jobs only (not archived/rejected/discarded) so
     // clicking a tile shows exactly as many rows as the tile promised — the
     // default board hides closed jobs.
@@ -841,7 +862,7 @@ export function boardPage(db, filters = {}) {
   }
   if (filters.postedWithinHours !== undefined && filters.postedWithinHours !== '') {
     const hours = Number(filters.postedWithinHours);
-    if ([3, 6, 24].includes(hours)) {
+    if (POSTED_WINDOWS.includes(hours)) {
       rows = rows.filter((r) => isWithinLastHours(r.postedAt, hours, now));
     }
   }

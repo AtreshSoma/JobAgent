@@ -375,6 +375,146 @@ manual,Globex,Lead Data Engineer,"Remote, US",https://boards.greenhouse.io/globe
 To pull from live ATS boards, enable the relevant source in
 `config/jobboards.json` (e.g. add Greenhouse board tokens or Lever company slugs).
 
+### Two kinds of discovery source
+
+The distinction decides what you can possibly find, so it is worth internalizing:
+
+| | Company-first | Query-first |
+| --- | --- | --- |
+| Sources | Greenhouse, Lever, Ashby, SmartRecruiters, Workday, careers pages | `ats-search`, `adzuna`, `apify` |
+| You configure | a list of boards | a list of titles |
+| Finds | everything at those employers | matching roles at employers you have never heard of |
+| Cost | free, unmetered | free (`ats-search`) / metered (`adzuna`, `apify`) |
+
+Company-first sources return a company's *entire* requisition list, so only a
+small fraction is ever on-target for one candidate — they give depth, not reach.
+Query-first sources give reach. You need both, and they feed each other:
+query-first finds new employers, and `scripts/harvestSources.mjs` promotes those
+employers into permanent company-first board entries.
+
+### Keyless cross-company search (`ats-search`)
+
+**Enabled by default. No API key, no per-run cost.** Searches across *every*
+employer hosted by an ATS vendor, rather than one configured board at a time:
+
+- **Workable** — `jobs.workable.com/api/v1/jobs`. Real pagination, and the full
+  job description arrives inline, so no follow-up request is needed.
+- **SmartRecruiters** — `jobs.smartrecruiters.com/sr-jobs/search`. The newest 100
+  matches per query (the server ignores `offset`), with optional budgeted full-JD
+  enrichment.
+
+Queries default to `targetTitles` from `config/candidate.json`, so the title list
+lives in exactly one place. Both vendors OR-match query terms — a bare
+"data engineer" search returns anything containing "data" *or* "engineer" — so
+queries are phrase-quoted and every hit must clear a title gate before it is
+kept. SmartRecruiters also ignores every country parameter, so US-only filtering
+is enforced client-side.
+
+Two freshness controls, because a cross-company index keeps requisitions nobody
+ever closed — dead postings match on title just as well as live ones:
+
+- **`dayRange`** (default 7) bounds the Workable request server-side. Workable
+  ranks by relevance and offers no sort parameter, so this is the only recency
+  lever — and raising it *displaces* fresh jobs rather than merely adding old
+  ones, because relevance spends the fixed page budget on a larger corpus.
+  Measured: `dayRange=7` → 137 jobs under a week old; `dayRange=30` → only 76.
+- **`maxAgeDays`** (default 180) is a hard ceiling on both providers. Deliberately
+  loose: a zombie guard, not a freshness filter. Real requisitions stay open for
+  months, and what counts as "recent" is the pipeline's call. Undated postings
+  are kept, not assumed stale.
+
+Without them the adapter returned postings up to 12 years old — 89% of the
+SmartRecruiters rows were over a year old. With them, median age is 5.5 days.
+
+Both endpoints are the unauthenticated JSON their vendor's own public job-search
+site calls. No login, no CAPTCHA solving, no evasion; requests carry a
+`User-Agent` that names this tool rather than imitating a browser. See
+`docs/SUPPORT_MATRIX.md` for the per-host robots.txt notes.
+
+### Workday searches what YOUR profile says (`deriveSearchTerms`)
+
+Workday's public feed is a search endpoint, so something has to be typed into
+it. That used to be the literal string `"data engineer"` pasted onto every
+tenant — adding a title to `candidate.json` changed nothing, and BI/ETL roles
+were invisible.
+
+Phrases are now derived from `candidate.targetTitles`. Your 17 titles produce
+`["data engineer", "bi developer"]`: the fewest two-token phrases such that
+every target title shares a word with one of them. Change your titles and every
+board follows, with no per-tenant edit.
+
+Two-token, not longer, because Workday's search **narrows** as words are added
+(measured on one tenant: `data` 115 hits → `data engineer` 51 → a nine-word
+phrase **0**). Override with `searchTexts`, or cap cost with `maxSearchTerms`.
+
+### The fast "what's new today?" sweep
+
+A full sweep of ~492 boards takes ~14 minutes — right for a daily catch-all,
+far too slow for the question you actually ask most: *what was posted today that
+fits me?* Scope a run to one source:
+
+```bash
+npm run score -- --source=adzuna       # ~30s, fresh aggregator jobs onto the board
+npm run score -- --source=adzuna,ats-search
+npm run score -- --free-only           # everything except metered Apify
+```
+
+`--source=` matches a source `id` **or** an `adapter` name, comma-separated. It
+only ever *narrows*: naming a source that is disabled in `config/jobboards.json`
+will not switch it back on, and a selector matching nothing warns instead of
+silently sweeping everything.
+
+Use `score`, not `discover` — `discover` only writes `data/found_jobs.json`,
+while `score` discovers, scores, **and persists to the board**.
+
+### Growing your board list automatically (`harvestSources`)
+
+Every job URL you have already seen names the ATS board it came from. This mines
+them, verifies each against that vendor's public API, and adds the live ones to
+`config/jobboards.json`:
+
+```bash
+node scripts/harvestSources.mjs                  # dry run — report only
+node scripts/harvestSources.mjs --apply          # write (backs up first)
+node scripts/harvestSources.mjs --apply --limit=25 --min-jobs=2
+```
+
+Board enumeration is free and unmetered forever after, so each harvested
+coordinate converts a one-off metered lookup into permanent free coverage. Run it
+occasionally — it is the mechanism that makes discovery compound instead of
+resetting whenever a paid provider's quota does.
+
+**Runtime note.** A full sweep of 492 boards takes ~14 minutes and returns
+~72,000 jobs (measured, 0 errors). Workday is ~60% of that wall clock, so if you
+add many more tenants, raise `boardConcurrency` on the `workday-public` source
+before anything else: every tenant is a different host, per-host politeness is
+enforced separately by the host gate, and the total is
+(waves × slowest tenant in the wave) — a low value is serialization, not
+courtesy. Watch mode polls every `WATCH_INTERVAL_MINUTES` (default 20); with a
+board list this size, either raise that above the run time or use `--free-only`
+against a trimmed config.
+
+### Aggregator discovery via Adzuna (optional, free key)
+
+Official aggregator API and the closest keyed substitute for Apify's breadth.
+Register free at <https://developer.adzuna.com/> (~1,000 calls/month), put
+`ADZUNA_APP_ID` / `ADZUNA_APP_KEY` in `.env`, and confirm your key with:
+
+```bash
+node scripts/adzuna-check.mjs
+```
+
+This validates the credentials against the live API and runs the real adapter
+for one query, so you see actual mapped jobs before trusting it. Once your key
+is in, `adzuna-aggregator` is enabled by default (`config/jobboards.json`).
+
+**Verified live 2026-08-01.** The field mapping is correct, but that same run
+exposed that `what_phrase` matches anywhere in the posting body, not just the
+title — a bare "Data Engineer" query returned 31,148 hits, including unrelated
+roles. A client-side title gate (the same one `ats-search` uses for the
+identical problem on Workable/SmartRecruiters) filters this; disable with
+`options.strictTitleMatch: false` if it ever drops something you wanted.
+
 ### Real multi-portal discovery via Apify
 
 To discover jobs from LinkedIn, Indeed, Glassdoor, Google Jobs, etc. without
@@ -432,6 +572,14 @@ actors at a wall and reporting 25 identical rejections with no cause. Other job
 boards are unaffected, so a run still completes with everything they found. The
 free plan's allowance is $5/month, which a full nationwide sweep can use up in a
 day or two.
+
+**Apify is no longer a single point of failure.** It used to be the only
+query-first source, so exhausting that $5 quietly switched off the entire
+on-target top of the funnel while the company-first boards kept returning
+thousands of irrelevant roles and made coverage look healthy. `ats-search` now
+provides keyless query-first discovery unconditionally, and `harvestSources`
+converts whatever Apify *does* find into permanent free board coverage. Treat
+Apify as reach you top up when you want it, not as infrastructure.
 
 ---
 

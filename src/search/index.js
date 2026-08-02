@@ -27,6 +27,8 @@ import * as genericPublicPage from './adapters/genericPublicPage.js';
 import * as apify from './adapters/apify.js';
 import * as ashby from './adapters/ashby.js';
 import * as smartrecruiters from './adapters/smartrecruiters.js';
+import * as atsSearch from './adapters/atsSearch.js';
+import * as adzuna from './adapters/adzuna.js';
 
 /** adapter id -> module. */
 export const ADAPTERS = {
@@ -42,6 +44,8 @@ export const ADAPTERS = {
   apify,
   ashby,
   smartrecruiters,
+  atsSearch,
+  adzuna,
 };
 
 /** How many independent sources to run concurrently by default. */
@@ -95,6 +99,13 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
     rateLimiter,
     hostGate,
     maxRetries,
+    // Query-first adapters (atsSearch, adzuna) search ACROSS employers, so they
+    // need to know what to search FOR. Threading the candidate profile here lets
+    // them default their queries to `targetTitles`, which keeps the title list
+    // in config/candidate.json as the single source of truth instead of being
+    // copied into jobboards.json where the two would silently drift apart.
+    candidate: ctx.candidate ?? candidate,
+    scoring: ctx.scoring ?? scoring,
     requestTimeoutMs: ctx.requestTimeoutMs ?? defaults.requestTimeoutMs,
     boardConcurrency: ctx.boardConcurrency ?? defaults.boardConcurrency,
     pageConcurrency: ctx.pageConcurrency ?? defaults.pageConcurrency,

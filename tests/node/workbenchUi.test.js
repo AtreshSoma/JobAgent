@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 
+import { POSTED_WINDOWS } from '../../src/dashboard/data.js';
+
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 const html = read('../../src/dashboard/public/index.html');
@@ -51,22 +53,33 @@ describe('dashboard shell structure', () => {
     expect(filterBar).not.toContain('id="pageSize"');
   });
 
-  it('offers posting age as a three-way switch, not a dropdown', () => {
-    // Three mutually exclusive choices belong on one row where all three are
-    // visible and one click away, and where clicking the active one clears it —
-    // a <select> hid them behind a click and needed an extra "any date" option.
+  it('offers posting age as a segmented switch, not a dropdown', () => {
+    // Mutually exclusive choices belong on one row where each is visible and
+    // one click away, and where clicking the active one clears it — a <select>
+    // hid them behind a click and needed an extra "any date" option.
     expect(html).toContain('id="postedWithinHours"');
     expect(html).toContain('class="seg"');
-    for (const hours of ['3', '6', '24']) {
-      expect(html).toContain(`data-action="set-posted" data-value="${hours}"`);
-    }
     expect(html).not.toContain('id="last24h"');
     expect(app).toContain("'set-posted'");
     expect(app).toContain('function syncSegments');
-    // It still reads and writes like every other filter…
-    expect(app).toContain("postedWithinHours: (value) => `Posted < ${value}h ago`");
-    // …and clicking the active segment clears it.
+    // Clicking the active segment clears it.
     expect(app).toContain("filterValue('postedWithinHours') === target.dataset.value ? '' : target.dataset.value");
+  });
+
+  it('offers the windows the filter actually honors — including a week', () => {
+    // The button values and POSTED_WINDOWS must not drift: a chip offering a
+    // window the filter ignores would look active over an unfiltered board.
+    // A week matters because that is where the jobs are — one measured run had
+    // 5 postings under 24h old and 4,439 under a week.
+    const offered = [...html.matchAll(/data-action="set-posted"\s+data-value="(\d+)"/g)]
+      .map((m) => Number(m[1]));
+    expect(offered).toEqual(expect.arrayContaining([3, 6, 24, 72, 168]));
+    for (const v of offered) expect(POSTED_WINDOWS).toContain(v);
+  });
+
+  it('labels a week as a week, not as 168h', () => {
+    expect(app).toContain('function humanizeHours');
+    expect(app).toContain('humanizeHours(value)');
   });
 
   it('reads, writes, and clears every filter through one set of accessors', () => {

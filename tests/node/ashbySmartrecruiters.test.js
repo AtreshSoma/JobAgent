@@ -98,6 +98,83 @@ describe('smartrecruiters adapter', () => {
     );
     expect(errors[0].company).toBe('nope');
   });
+
+  // Regression: the adapter used to issue exactly ONE request per company and
+  // keep whatever the first 100 postings were. ServiceNow publishes 442 and
+  // Experian 495, so two thirds of both boards were silently invisible — and
+  // because the window rotates as postings change, the database filled with
+  // different first-100 slices and looked like healthy coverage.
+  describe('pagination (regression: first-100 truncation)', () => {
+    /** A board of `total` postings served in pages of 100 via ?offset=. */
+    const pagedBoard = (total) => async (url) => {
+      const { searchParams } = new URL(url);
+      const offset = Number(searchParams.get('offset') ?? 0);
+      const limit = Number(searchParams.get('limit') ?? 100);
+      const content = [];
+      for (let i = offset; i < Math.min(offset + limit, total); i += 1) {
+        content.push({ id: `p${i}`, name: `Role ${i}`, company: { identifier: 'Big', name: 'Big Co' } });
+      }
+      return { ok: true, json: async () => ({ totalFound: total, content }) };
+    };
+
+    it('pages until every posting on a large board is read', async () => {
+      const { jobs, errors } = await smartrecruiters.run(
+        { boards: ['Big'] }, { fetchImpl: pagedBoard(442), maxRetries: 0 },
+      );
+      expect(errors).toEqual([]);
+      expect(jobs).toHaveLength(442);
+    });
+
+    it('sends an increasing offset rather than refetching page one', async () => {
+      const offsets = [];
+      const fetchImpl = async (url) => {
+        offsets.push(Number(new URL(url).searchParams.get('offset')));
+        return pagedBoard(250)(url);
+      };
+      await smartrecruiters.run({ boards: ['Big'] }, { fetchImpl, maxRetries: 0 });
+      expect(offsets).toEqual([0, 100, 200]);
+    });
+
+    it('stops at maxPostingsPerCompany instead of looping forever', async () => {
+      const { jobs } = await smartrecruiters.run(
+        { boards: ['Big'], maxPostingsPerCompany: 150 },
+        { fetchImpl: pagedBoard(10_000), maxRetries: 0 },
+      );
+      expect(jobs).toHaveLength(150);
+    });
+
+    it('stops on a short page even when totalFound over-reports', async () => {
+      const fetchImpl = async () => ({
+        ok: true,
+        json: async () => ({ totalFound: 9999, content: [{ id: '1', name: 'Only one' }] }),
+      });
+      const { jobs } = await smartrecruiters.run({ boards: ['Odd'] }, { fetchImpl, maxRetries: 0 });
+      expect(jobs).toHaveLength(1);
+    });
+
+    it('keeps the pages it already read when a later page fails', async () => {
+      let call = 0;
+      const fetchImpl = async (url) => {
+        call += 1;
+        if (call > 2) return { ok: false, status: 500, headers: { get: () => null } };
+        return pagedBoard(500)(url);
+      };
+      const { jobs, errors } = await smartrecruiters.run(
+        { boards: ['Big'] }, { fetchImpl, maxRetries: 0 },
+      );
+      expect(jobs).toHaveLength(200);
+      expect(errors).toHaveLength(1);
+    });
+
+    it('stops promptly when the run is cancelled', async () => {
+      const fetchImpl = async (url) => pagedBoard(500)(url);
+      const { jobs, cancelled } = await smartrecruiters.run(
+        { boards: ['Big'] }, { fetchImpl, maxRetries: 0, shouldCancel: () => true },
+      );
+      expect(cancelled).toBe(true);
+      expect(jobs).toEqual([]);
+    });
+  });
 });
 
 describe('registration', () => {
