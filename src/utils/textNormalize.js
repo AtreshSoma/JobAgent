@@ -60,7 +60,42 @@ export function wholeWordIn(haystack, needle) {
 }
 
 /**
- * Case-insensitive substring containment.
+ * Compiled, boundary-aware pattern for one normalized phrase, memoized so a
+ * keyword vocabulary reused across thousands of jobs (scoring, exclusion
+ * filtering, discovery) is compiled once, not once per job.
+ *
+ * REGRESSION GUARD. Matching used to be plain substring containment
+ * (`haystack.includes(needle)`), which silently matched short acronym
+ * keywords inside unrelated words — e.g. the keyword "sql" matched inside
+ * "NoSQL" (a JD explicitly rejecting SQL still credited it), and "elt"
+ * (Extract-Load-Transform) matched inside "felt"/"belt". Verified live before
+ * this fix. `tailor.py`'s `_phrase_pattern` already solved this on the resume
+ * side with a boundary-aware regex; this ports the IDENTICAL rule to JS so
+ * scoring, exclusion filtering, and tailoring can no longer disagree about
+ * whether a term is actually present.
+ *
+ * The boundary is `[a-z0-9]`, not `\w` (which also includes `_`) and not
+ * plain `\b` (which treats `_` as a word character and would still misfire on
+ * e.g. "under_score"-shaped tokens) — this is deliberately the same boundary
+ * `tailor.py` uses, so a multi-word phrase or one containing tech punctuation
+ * ("t-sql", "ci/cd", "power bi") still matches correctly at its edges while a
+ * short acronym cannot hide inside a longer alphanumeric word.
+ * @param {string} normalizedPhrase already lowercased/whitespace-collapsed
+ * @returns {RegExp}
+ */
+const phrasePatternCache = new Map();
+function compiledPhrasePattern(normalizedPhrase) {
+  let re = phrasePatternCache.get(normalizedPhrase);
+  if (re) return re;
+  const escaped = normalizedPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  re = new RegExp(`(?<![a-z0-9])${escaped}(?![a-z0-9])`);
+  phrasePatternCache.set(normalizedPhrase, re);
+  return re;
+}
+
+/**
+ * Case-insensitive, boundary-aware phrase containment (see
+ * `compiledPhrasePattern` for why this is not plain substring matching).
  * @param {unknown} haystack
  * @param {unknown} needle
  * @returns {boolean}
@@ -69,11 +104,12 @@ export function containsPhrase(haystack, needle) {
   const h = normalizeText(haystack);
   const n = normalizeText(needle);
   if (!n) return false;
-  return h.includes(n);
+  return compiledPhrasePattern(n).test(h);
 }
 
 /**
- * Return the subset of phrases that appear in the text (normalized).
+ * Return the subset of phrases that appear in the text (normalized, boundary-
+ * aware — see `compiledPhrasePattern`).
  * @param {unknown} text
  * @param {string[]} phrases
  * @returns {string[]} matched phrases (original casing preserved)
@@ -83,7 +119,7 @@ export function matchedPhrases(text, phrases) {
   if (!h || !Array.isArray(phrases)) return [];
   return phrases.filter((p) => {
     const n = normalizeText(p);
-    return n.length > 0 && h.includes(n);
+    return n.length > 0 && compiledPhrasePattern(n).test(h);
   });
 }
 

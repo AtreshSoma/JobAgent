@@ -25,12 +25,35 @@ describe('dashboard shell structure', () => {
 
   it('declares every filter control the script reads', () => {
     for (const id of [
-      'q', 'fit', 'appStatus', 'postedWithinHours', 'sponsorship', 'employmentType', 'source', 'ats',
+      'q', 'fit', 'appStatus', 'postedWithinHours', 'state', 'city',
+      'sponsorship', 'employmentType', 'source', 'ats',
       'resumeStatus', 'remoteOnly', 'sponsorshipGated', 'undated',
       'includeClosed', 'pageSize',
     ]) {
       expect(html, `missing filter #${id}`).toContain(`id="${id}"`);
     }
+  });
+
+  it('offers location filtering, with state populated from real data', () => {
+    // State is a closed list built from the states that actually have jobs
+    // (stats.byState), so it can never offer one that returns nothing. City
+    // stays free text: real postings spell the same place "Austin, TX",
+    // "Austin, Texas" and "USA - Austin, TX", so no closed list would hold.
+    expect(html).toContain('id="state"');
+    expect(html).toContain('id="city"');
+    expect(app).toContain('function populateStates');
+    expect(app).toContain('stats.byState');
+    // 'US' (national/remote) and 'unknown' are not states and must not be
+    // offered as ones — Remote has its own dedicated entry.
+    expect(app).toContain("code !== 'US' && code !== 'unknown'");
+    expect(html).toContain('value="REMOTE"');
+  });
+
+  it('debounces the city box on input, like the search box', () => {
+    // A bare `change` listener fires only on blur/Enter, which reads as the
+    // filter being broken while you are still typing in it.
+    expect(app).toContain('DEBOUNCED_TEXT_FILTERS');
+    expect(app).toContain("['q', 'city']");
   });
 
   it('asks about closed jobs positively, with every checkbox filter off by default', () => {
@@ -393,6 +416,36 @@ describe('the top pane states things once', () => {
       expect(flags).toContain(key);
     }
     expect(app).toContain("if ((stats.totals[flag.key] ?? 0) === 0) continue;");
+  });
+
+  // REGRESSION: statNode used `stats.totals[key] ?? 0`, which renders a stat
+  // key MISSING from the server's response identically to a real computed
+  // zero. This is exactly how a long-running dashboard server process
+  // (started before a new stat field was added — Node does not hot-reload
+  // edited source) can display an impossible state: "4 posted 24h, 0 posted
+  // 1w" is a contradiction (24h is a strict subset of 1w), and the "0" there
+  // was never actually computed — the field just didn't exist yet in that
+  // process's in-memory code. An honest "—" makes the gap visible instead of
+  // silently masquerading as data.
+  it('renders a stat tile as "—", not a fabricated "0", when the key is missing from the response', () => {
+    const fn = app.slice(app.indexOf('function statNode'), app.indexOf('function renderHealth'));
+    expect(fn).not.toContain('stats.totals[key] ?? 0');
+    expect(fn).toContain("typeof raw === 'number'");
+    expect(fn).toContain("'—'");
+  });
+
+  // REGRESSION: stats/board were only ever refetched in reaction to a user
+  // action (approve/reject/note/a run finishing). A tab left open while a
+  // SEPARATE process changed the database (a `npm run score` in another
+  // terminal, or watch mode) had no way to notice — the two numbers on screen
+  // could be from arbitrarily different moments in time, since nothing ever
+  // re-synced them together. This is quiet by design: only refreshes a
+  // visible, idle tab, so it never fights an in-progress run's own rendering.
+  it('periodically refreshes an idle, visible tab instead of going stale forever', () => {
+    expect(app).toContain('function scheduleBackgroundRefresh');
+    expect(app).toContain("document.visibilityState === 'visible'");
+    expect(app).toContain('!state.lastRunStatus?.running');
+    expect(app).toContain('scheduleBackgroundRefresh();');
   });
 
   it('states nationwide coverage as data, and lets it be inspected', () => {

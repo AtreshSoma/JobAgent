@@ -168,6 +168,24 @@ def _iter_all_paragraphs(document):
 #: stops meaning anything and the page reads as keyword-stuffed.
 _MAX_EMPHASIZED_TERMS = 12
 
+#: Most terms named in the single "Most relevant to this role" line.
+#:
+#: REGRESSION GUARD. This line had no cap at all. Verified against a real,
+#: buzzword-dense JD (a role that legitimately touched every configured
+#: keyword category at once): the generated line named 31 terms in one
+#: sentence — "Most relevant to this role: data engineer, senior data
+#: engineer, azure, microsoft fabric, fabric, adf, synapse, databricks..." —
+#: which reads as a keyword dump, not a highlight, to any human reviewer.
+#:
+#: This is deliberately much smaller than _MAX_EMPHASIZED_TERMS: bolding is
+#: distributed across a whole two-page document and stays absorbable at 12,
+#: but this list sits in ONE sentence, so it needs to read like something a
+#: person would actually write. It costs nothing for ATS keyword coverage —
+#: every term still appears verbatim in the resume's actual content (that is
+#: WHY it was eligible for "present" in the first place); this line is a
+#: human-facing highlight, not the mechanism that gets a term recognized.
+_MAX_FOCUS_LINE_TERMS = 6
+
 
 def _merge_spans(spans: Sequence[tuple]) -> List[tuple]:
     """Merge overlapping/adjacent (start, end) ranges, left to right."""
@@ -1518,17 +1536,60 @@ def _prioritize_existing_content(
     return changes, selected, movable_nodes
 
 
+def _collapse_alias_duplicates(
+    ranked: Sequence[str], evidence_aliases: Dict[str, Any] | None
+) -> List[str]:
+    """Keep only the first (highest-ranked) term from each alias group.
+
+    Verified on a real dense JD: "fabric" and "microsoft fabric" — configured
+    as each other's alias in scoring.json — both matched and both ranked near
+    the top, so a naive top-N selection put them side by side in the same
+    sentence ("...microsoft fabric, fabric, and adf"). That reads as a typo to
+    a human, not a highlight. Since they mean the same thing, only the
+    highest-ranked one needs to be said once.
+    """
+    aliases = evidence_aliases or {}
+    kept: List[str] = []
+    kept_keys: set = set()
+    for term in ranked:
+        key = re.sub(r"\s+", " ", str(term).lower()).strip()
+        if key in kept_keys:
+            continue
+        related = {
+            re.sub(r"\s+", " ", str(a).lower()).strip() for a in (aliases.get(key) or [])
+        }
+        if related & kept_keys:
+            continue
+        kept.append(term)
+        kept_keys.add(key)
+    return kept
+
+
+def _join_naturally(items: Sequence[str]) -> str:
+    """Join like a person would write it: "a", "a and b", "a, b, and c"."""
+    items = list(items)
+    if len(items) <= 1:
+        return "".join(items)
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return f"{', '.join(items[:-1])}, and {items[-1]}"
+
+
 def _insert_focus_line(
     document, present: List[str], patterns: Dict[str, Any] | None
 ) -> tuple[str, bool]:
     """Insert a per-job focus line built only from ``present`` keywords.
+
+    ``present`` is already ranked most-decisive-first and capped by the caller
+    (see ``_MAX_FOCUS_LINE_TERMS``) — this function only renders it, so it
+    never has to decide what to drop.
 
     The line is anchored above the first matching heading in ``_FOCUS_ANCHORS``
     (falling back to the top of the document). Returns ``(text, inserted)``.
     An existing focus line is reused to prevent duplicate content.
     """
     label = "Most relevant to this role"
-    text = humanize(f"{label}: {', '.join(present)}.", patterns or {})
+    text = humanize(f"{label}: {_join_naturally(present)}.", patterns or {})
 
     for paragraph in document.paragraphs:
         if _norm_heading(paragraph.text).startswith(_norm_heading(label) + ":"):
@@ -2040,6 +2101,14 @@ def tailor_resume(
                 ),
             )
         ]
+        # Collapse alias-equivalent terms (e.g. "fabric"/"microsoft fabric")
+        # BEFORE capping, so the limited slots aren't spent twice on the same
+        # skill, then cap AFTER ranking so a long list still surfaces its most
+        # decisive (required-first) terms rather than an arbitrary prefix. The
+        # audit evidence below is built from this same list, so what a
+        # reviewer sees in `changes` always matches what the line actually says.
+        ranked_present = _collapse_alias_duplicates(ranked_present, evidence_aliases)
+        ranked_present = ranked_present[:_MAX_FOCUS_LINE_TERMS]
         summary_line, focus_line_inserted = _insert_focus_line(
             document, ranked_present, patterns
         )

@@ -136,16 +136,31 @@
             aria-label="Posted less than 6 hours ago">6h</button>
           <button type="button" data-action="set-posted" data-value="24" aria-pressed="false"
             aria-label="Posted less than 24 hours ago">24h</button>
-          <!-- 3d/7d are where the jobs actually are: a measured run held 5
-               postings under 24h old and 4,439 under a week. Values here MUST
-               appear in POSTED_WINDOWS (src/dashboard/data.js) or the chip
-               would look active over an unfiltered board. -->
+          <!-- 3d/1w are where the jobs actually are: a measured run held 5
+               postings under 24h old and 4,439 under a week. Keep these in
+               sync with POSTED_WINDOWS (src/dashboard/data.js), which is what
+               the UI OFFERS; the server honors any positive window, so an
+               out-of-sync value here narrows honestly rather than silently
+               showing an unfiltered board. -->
           <button type="button" data-action="set-posted" data-value="72" aria-pressed="false"
             aria-label="Posted less than 3 days ago">3d</button>
           <button type="button" data-action="set-posted" data-value="168" aria-pressed="false"
             aria-label="Posted less than 1 week ago">1w</button>
           <input type="hidden" id="postedWithinHours" value="">
         </div>
+        <!-- Location is a first-order job-search concern (unlike ATS or resume
+             state), so it sits in the primary lane. State is a closed list —
+             populated from the states actually present in the data, so it can
+             never offer a state that returns nothing. City stays free text
+             because there is no closed list of city spellings worth
+             maintaining ("Austin, TX" / "Austin, Texas" / "USA - Austin, TX"
+             all occur in real postings). -->
+        <select id="state" aria-label="Filter by US state">
+          <option value="">Any location</option>
+          <option value="REMOTE">Remote</option>
+        </select>
+        <input id="city" type="search" placeholder="City…" aria-label="Filter by city"
+          autocomplete="off" spellcheck="false">
         <label class="toggle"><input type="checkbox" id="remoteOnly"> Remote only</label>
         <button class="small ghost reset-filter" data-action="reset-filters"
           title="Clear every filter and go back to all open jobs">Reset</button>

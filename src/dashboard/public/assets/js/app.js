@@ -47,7 +47,7 @@ const state = {
 };
 
 const FILTER_IDS = [
-  'q', 'fit', 'appStatus', 'postedWithinHours',
+  'q', 'fit', 'appStatus', 'postedWithinHours', 'state', 'city',
   'sponsorship', 'employmentType', 'source', 'ats', 'resumeStatus',
 ];
 /**
@@ -238,7 +238,7 @@ const TOGGLE_LABELS = {
  */
 const FIELD_LABELS = {
   sponsorship: 'Sponsorship', employmentType: 'Job type', source: 'Source',
-  ats: 'ATS', resumeStatus: 'Resume',
+  ats: 'ATS', resumeStatus: 'Resume', state: 'Location',
 };
 
 /**
@@ -256,6 +256,7 @@ function humanizeHours(value) {
 /** Chip text for filters that are not <select>s (no option label to borrow). */
 const VALUE_LABELS = {
   postedWithinHours: (value) => `Posted < ${humanizeHours(value)} ago`,
+  city: (value) => `City: ${value}`,
 };
 
 /** Human-readable chips for every active filter, each individually clearable. */
@@ -363,14 +364,30 @@ const HEALTH_FACTS = [
 const HEALTH_FLAGS = [
   { key: 'submitUnverified', label: 'unverified submits', tone: 'bad', filter: { appStatus: 'submit_unverified' }, title: 'Auto-submits with no confirmation — only you can resolve these' },
   { key: 'needsSponsorshipCheck', label: 'verify sponsor', tone: 'attn', filter: { sponsorshipGated: true }, title: 'Strong fits parked until you confirm the employer sponsors' },
-  { key: 'undatedDropped', label: 'undated', tone: 'attn', filter: { undated: true }, title: 'Held back only because the source gave no posting date' },
+  { key: 'undatedDropped', label: 'undated', tone: 'attn', filter: { undated: true }, title: 'The source gave no confirmed posting date — held back, or still live but worth a quick check' },
 ];
 
+/**
+ * Render one stat tile, distinguishing "computed and genuinely zero" from
+ * "not present in this response at all".
+ *
+ * REGRESSION GUARD. `stats.totals[key] ?? 0` treats both the same way,
+ * rendering a missing key as a confident "0" — indistinguishable from a real
+ * zero. This is exactly how a long-running dashboard server process (started
+ * before a new stat field was added to the backend, since Node does not
+ * hot-reload edited source) can show an impossible state: "4 posted 24h, 0
+ * posted 1w" is a contradiction (24h is a subset of 1w) that can only happen
+ * if the "0" is not a real computed value but a fallback for a key the
+ * server's in-memory code never set. An honest "—" makes that gap visible
+ * instead of masquerading as data.
+ */
 function statNode({ key, label, tone, filter, title }, stats) {
-  const value = stats.totals[key] ?? 0;
+  const raw = stats.totals[key];
+  const known = typeof raw === 'number' && Number.isFinite(raw);
+  const value = known ? raw : 0;
   const attrs = {
-    class: `stat ${value > 0 ? tone ?? '' : ''} ${filter ? 'clickable' : ''}`.trim().replace(/\s+/g, ' '),
-    title: title ?? '',
+    class: `stat ${known && value > 0 ? tone ?? '' : ''} ${filter ? 'clickable' : ''}`.trim().replace(/\s+/g, ' '),
+    title: known ? (title ?? '') : `${title ?? label} — not reported by the server (it may need a restart to pick up a recent update)`,
   };
   if (filter) {
     attrs['data-action'] = 'metric-filter';
@@ -378,7 +395,7 @@ function statNode({ key, label, tone, filter, title }, stats) {
     attrs.role = 'button';
     attrs.tabindex = '0';
   }
-  return el('span', attrs, el('b', { text: fmt(value) }), el('span', { class: 'l', text: label }));
+  return el('span', attrs, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
 }
 
 function renderHealth(stats) {
@@ -537,6 +554,36 @@ async function loadStats() {
   select.append(el('option', { value: '', text: 'Any source' }));
   for (const src of Object.keys(stats.bySource)) {
     select.append(el('option', { value: src, text: src, selected: src === current }));
+  }
+  populateStates(stats);
+}
+
+/**
+ * Fill the state dropdown from the states that ACTUALLY have jobs, with each
+ * one's count, so the list can never offer a state that returns nothing.
+ *
+ * `byState` is keyed by two-letter code, plus 'US' for national/remote-only
+ * postings that name no state and 'unknown' for locations we could not read.
+ * Neither of those is a state, so neither becomes a state option — 'US' is
+ * already served by the dedicated Remote entry, and offering "unknown" as a
+ * location choice would be meaningless.
+ */
+function populateStates(stats) {
+  const select = $('state');
+  const current = select.value;
+  const entries = Object.entries(stats.byState ?? {})
+    .filter(([code]) => code !== 'US' && code !== 'unknown')
+    .sort((a, b) => (a[1].name ?? a[0]).localeCompare(b[1].name ?? b[0]));
+
+  select.textContent = '';
+  select.append(el('option', { value: '', text: 'Any location' }));
+  select.append(el('option', { value: 'REMOTE', text: 'Remote', selected: current === 'REMOTE' }));
+  for (const [code, info] of entries) {
+    select.append(el('option', {
+      value: code,
+      text: `${info.name ?? code} (${fmt(info.count)})`,
+      selected: code === current,
+    }));
   }
 }
 
@@ -1979,6 +2026,33 @@ function download(path, filename) {
 let pollTimer = null;
 let wasRunning = false;
 
+/**
+ * Quiet background refresh for a tab left open a long time.
+ *
+ * `pollRun` only calls `refreshAll` when a run THIS TAB started transitions
+ * from running to finished — it has no way to notice a `npm run score` (or
+ * `watch`) invoked in a separate terminal, since that runs as a different OS
+ * process with its own memory and never touches this tab's in-memory
+ * `runState`. Without this, a tab can sit open for hours showing counts from
+ * whenever it was last loaded while the database underneath has moved on —
+ * exactly the shape of bug this was built to catch: a "posted 24h" number
+ * that no longer has any relationship to "posted 1w" because they were
+ * fetched at different, arbitrarily separated moments.
+ *
+ * Deliberately quiet: only when the tab is visible (no point refreshing what
+ * nobody is looking at) and only when idle (a run's own progress rendering
+ * already keeps itself current — refreshing over it would fight that).
+ */
+const BACKGROUND_REFRESH_MS = 90_000;
+function scheduleBackgroundRefresh() {
+  setTimeout(async () => {
+    if (document.visibilityState === 'visible' && !state.lastRunStatus?.running) {
+      await refreshAll();
+    }
+    scheduleBackgroundRefresh();
+  }, BACKGROUND_REFRESH_MS);
+}
+
 function prettyResult(result) {
   if (!result) return '';
   if (result.cancelled) return `${result.phase ?? 'run'} cancelled · finished work kept`;
@@ -2551,15 +2625,21 @@ for (const th of document.querySelectorAll('th.sortable')) {
 }
 
 /* Filter wiring */
+// Free-text filters debounce on every keystroke so the board tracks what is
+// typed. A bare `change` listener would only fire on blur/Enter, which reads
+// as the filter being broken while you are still looking at the field.
+const DEBOUNCED_TEXT_FILTERS = ['q', 'city'];
 let searchTimer = null;
-$('q').addEventListener('input', () => {
-  clearTimeout(searchTimer);
-  searchTimer = setTimeout(() => { state.page = 1; onFilterChange(); }, 250);
-});
-// Every filter control except the search box (debounced) and the segmented
-// switch (a click, not a change) reloads the board when it changes.
+for (const id of DEBOUNCED_TEXT_FILTERS) {
+  $(id).addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.page = 1; onFilterChange(); }, 250);
+  });
+}
+// Every other filter control except the segmented switch (a click, not a
+// change) reloads the board when it changes.
 for (const id of [...FILTER_IDS, ...TOGGLE_IDS]) {
-  if (id === 'q' || $(id).type === 'hidden') continue;
+  if (DEBOUNCED_TEXT_FILTERS.includes(id) || $(id).type === 'hidden') continue;
   $(id).addEventListener('change', () => { state.page = 1; onFilterChange(); });
 }
 $('pageSize').addEventListener('change', (event) => {
@@ -2626,4 +2706,5 @@ refreshAll().then(() => {
   if (initial) selectJob(initial);
 });
 pollRun();
+scheduleBackgroundRefresh();
 syncSelectionBar();

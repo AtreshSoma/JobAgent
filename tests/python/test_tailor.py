@@ -114,6 +114,58 @@ def test_focus_line_anchored_above_core_competencies(tmp_path, humanizer_pattern
     assert "snowflake" not in texts[focus_idx].lower()
 
 
+# REGRESSION (2026-08): the focus line had no length cap. Verified on a real,
+# buzzword-dense JD that matched every configured keyword category at once —
+# the generated line named 31 terms in one sentence, which reads as a keyword
+# dump, not a highlight, to a human reviewer.
+def test_focus_line_caps_at_a_readable_length(sample_resume, tmp_path, humanizer_patterns):
+    out_dir = tmp_path / "output"
+    job = {"company": "Acme", "title": "DE"}
+    # 8 terms all genuinely present in `sample_resume`'s text — more than the cap.
+    many_present = ["azure", "databricks", "pyspark", "power bi", "dax", "delta lake", "finance", "data engineer"]
+    result = tailor_resume(
+        sample_resume, out_dir, job,
+        keywords=many_present,
+        patterns=humanizer_patterns,
+        add_summary_line=True,
+    )
+    line = result["summary_line"].lower()
+    named = [k for k in many_present if k in line]
+    assert len(named) <= 6, f"focus line named {len(named)} terms, reads as a keyword dump: {line!r}"
+    # And it reads like a sentence a person would write, not a raw comma dump.
+    assert ", and " in line or line.count(",") == 0
+
+
+# REGRESSION (2026-08): "fabric" and "microsoft fabric" are each other's
+# configured alias, but both could be ranked into the focus line side by side
+# ("...microsoft fabric, fabric, and adf") — reads like a typo, not a highlight.
+def test_focus_line_collapses_alias_duplicates(tmp_path, humanizer_patterns):
+    from docx import Document
+
+    doc = Document()
+    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Built pipelines on Azure Databricks with PySpark and Apache Spark.")
+    master = tmp_path / "MASTER_RESUME.docx"
+    doc.save(str(master))
+
+    out_dir = tmp_path / "output"
+    job = {"company": "Acme", "title": "DE"}
+    result = tailor_resume(
+        master, out_dir, job,
+        keywords=["databricks", "spark", "pyspark"],
+        evidence_aliases={"spark": ["pyspark", "apache spark", "databricks"], "databricks": ["spark"]},
+        patterns=humanizer_patterns,
+        add_summary_line=True,
+    )
+    import re
+    line = result["summary_line"].lower()
+    # "databricks" and "spark" are configured aliases of each other — only the
+    # higher-ranked one should be named, not both. Word-boundary check because
+    # "spark" is a raw substring of "pyspark" (a different, non-aliased term
+    # that legitimately gets to appear on its own).
+    named = {t for t in ("databricks", "spark") if re.search(rf"(?<![a-z0-9]){t}(?![a-z0-9])", line)}
+    assert len(named) <= 1, f"alias duplicates both named: {line!r}"
+
 
 # ── evidence-based tailoring (2026-07 upgrade) ──────────────────────────────
 

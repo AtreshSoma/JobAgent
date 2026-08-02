@@ -7,7 +7,7 @@ import {
   APP_STATUS,
   gradeFromScore, postedConfidence, resumeStatusOf, progressFor,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
-  BOARD_VIEWS, countViews, explainStatus, classifyAttention,
+  BOARD_VIEWS, countViews, explainStatus, classifyAttention, boardPage,
 } from '../../src/dashboard/data.js';
 
 const NOW = new Date('2026-06-04T12:00:00Z');
@@ -579,6 +579,106 @@ describe('section-tab views: counts always equal what the board shows', () => {
     const counts = countViews(rows);
     const s = dashboardStats(db, { now: NOW });
     expect(counts).toEqual(s.views);
+  });
+
+  // REGRESSION: the "tracked" health-fact tile declares its own click-filter
+  // as `{ includeClosed: true }` (app.js HEALTH_FACTS), but boardPage never
+  // recognized that key — only `hideClosed`. It was silently dropped, so
+  // clicking "N tracked" opened the same open-only rows as the default board,
+  // not the tile's own promised total (9 seeded here, 2 of them closed).
+  it('"tracked" tile filter (includeClosed:true) opens every job, not just open ones', () => {
+    const s = dashboardStats(db, { now: NOW });
+    const page = boardPage(db, { now: NOW, includeClosed: true, limit: 100000 });
+    expect(page.total).toBe(s.totals.jobsTracked);
+    expect(page.total).toBe(9); // all 9 seeded jobs, including rej + disc
+  });
+
+  it('includeClosed never resurrects a source explicitly disabled elsewhere (still string-safe)', () => {
+    // Sent over HTTP query params, includeClosed arrives as the string "true".
+    const page = boardPage(db, { now: NOW, includeClosed: 'true', limit: 100000 });
+    expect(page.total).toBe(9);
+  });
+});
+
+describe('ATS filter falls back to source for the direct-adapter platforms', () => {
+  // REGRESSION: `ats_platform` is only ever populated when the generic
+  // careers-page adapter detects an embedded ATS widget on a scraped company
+  // page. Verified against the real database: 0.5% of rows (242 of 45,609).
+  // Every job from the DIRECT Workday/Greenhouse/Lever/Ashby/SmartRecruiters
+  // adapters left it null, even though `source` already says exactly which
+  // ATS it is. The board's own "Any ATS" dropdown lists these five names
+  // (matching the source values exactly) alongside icims/taleo/jobvite/
+  // generic, so the intent was clearly one unified concept — but the filter
+  // only ever checked `ats_platform`, silently returning near-empty results:
+  // "Workday" matched 13 rows in the real database instead of ~15,800.
+  let db;
+  beforeEach(() => {
+    db = openDatabase({ path: ':memory:' });
+    db.upsertJob({ id: 'wd', company: 'A', title: 'DE', url: 'u1', score: 80, tier: 'Apply', source: 'workday' });
+    db.upsertJob({ id: 'gh', company: 'B', title: 'DE', url: 'u2', score: 80, tier: 'Apply', source: 'greenhouse' });
+    // A generic careers-page job where the scraper DID detect the underlying
+    // ATS explicitly — this explicit signal must still win, unchanged.
+    db.upsertJob({
+      id: 'generic-icims', company: 'C', title: 'DE', url: 'u3', score: 80, tier: 'Apply',
+      source: 'careers', ats_platform: 'icims',
+    });
+    // A source that is not itself a specific ATS (query-first aggregators) —
+    // must stay unknown, not silently attributed to some ATS.
+    db.upsertJob({ id: 'agg', company: 'D', title: 'DE', url: 'u4', score: 80, tier: 'Apply', source: 'adzuna' });
+  });
+  afterEach(() => db.close());
+
+  it('matches native-adapter jobs by source when ats_platform is unset', () => {
+    expect(boardPage(db, { ats: 'workday', limit: 100 }).jobs.map((j) => j.id)).toEqual(['wd']);
+    expect(boardPage(db, { ats: 'greenhouse', limit: 100 }).jobs.map((j) => j.id)).toEqual(['gh']);
+  });
+
+  it('still honors an explicit ats_platform value over the source fallback', () => {
+    expect(boardPage(db, { ats: 'icims', limit: 100 }).jobs.map((j) => j.id)).toEqual(['generic-icims']);
+  });
+
+  it('leaves a non-ATS source (query-first aggregator) unattributed, not guessed', () => {
+    for (const ats of ['workday', 'greenhouse', 'lever', 'ashby', 'smartrecruiters']) {
+      expect(boardPage(db, { ats, limit: 100 }).jobs.map((j) => j.id)).not.toContain('agg');
+    }
+  });
+});
+
+describe('"undated" tile matches its own broader click-filter', () => {
+  // REGRESSION: stats.totals.undatedDropped used to count isUndatedDrop()
+  // alone, but the tile's declared click-filter is the SAME `{ undated: true }`
+  // filter the separate "Date unknown" checkbox uses — which also matches any
+  // job with postedConfidence === 'unconfirmed', not only ones actually held
+  // back. Verified live: 2 real jobs (status scored/needs_review, no posted_at
+  // at all) inflated the filter's row count past what the stat reported.
+  let db;
+  beforeEach(() => {
+    db = openDatabase({ path: ':memory:' });
+    db.upsertJob({
+      id: 'held-back', company: 'A', title: 'DE', url: 'u1', score: 20, tier: 'Discard',
+      status: 'discarded', discard_reason: 'unknown posting date',
+    });
+    db.upsertJob({
+      id: 'live-unconfirmed', company: 'B', title: 'DE', url: 'u2', score: 80, tier: 'Apply',
+      status: 'scored', posted_at: null,
+    });
+    db.upsertJob({
+      id: 'dated', company: 'C', title: 'DE', url: 'u3', score: 80, tier: 'Apply',
+      status: 'scored', posted_at: NOW.toISOString(),
+    });
+  });
+  afterEach(() => db.close());
+
+  it('counts both the held-back job AND the live job with no confirmed date', () => {
+    const s = dashboardStats(db, { now: NOW });
+    expect(s.totals.undatedDropped).toBe(2);
+  });
+
+  it('equals what the tile\'s own filter actually opens', () => {
+    const s = dashboardStats(db, { now: NOW });
+    const page = boardPage(db, { now: NOW, undated: true, limit: 100000 });
+    expect(page.total).toBe(s.totals.undatedDropped);
+    expect(page.jobs.map((j) => j.id).sort()).toEqual(['held-back', 'live-unconfirmed']);
   });
 });
 

@@ -58,6 +58,34 @@ describe('skill-alias evidence (matched vs missing contradiction)', () => {
     expect(missing).not.toContain('semantic model');
   });
 
+  // REGRESSION: computeMissing's "important" list only covered azureFabric/
+  // dataEngineering/languages/biSemantic, so a JD asking for Kubernetes,
+  // data quality, or RAG/LLM work never appeared as a gap at all — even for a
+  // candidate whose profile genuinely lacks it, or genuinely has it. Both are
+  // wrong: silently invisible either way. Now folded in alongside the others.
+  it('recognizes the new devopsInfra/dataQuality/genAI categories as evidenced when the profile lists them', () => {
+    const stackedCandidate = {
+      technicalStack: {
+        ...candidate.technicalStack,
+        other: ['RAG Systems', 'LLM Integration', 'LangChain', 'Data Quality Testing', 'Observability'],
+        orchestration: ['Azure DevOps', 'GitHub Actions'],
+      },
+    };
+    const jd = 'RAG pipelines with LLM integration and LangChain. Azure DevOps and GitHub Actions for CI/CD. Strong data quality and observability practices.';
+    const missing = computeMissing(jd.toLowerCase(), stackedCandidate, kw, aliases);
+    expect(missing).not.toContain('rag');
+    expect(missing).not.toContain('llm');
+    expect(missing).not.toContain('langchain');
+    expect(missing).not.toContain('data quality');
+    expect(missing).not.toContain('observability');
+  });
+
+  it('still reports a genuinely unevidenced new-category skill as a gap', () => {
+    const jd = 'Must have hands-on Kubernetes and Terraform experience.';
+    const missing = computeMissing(jd.toLowerCase(), candidate, kw, aliases); // candidate has neither
+    expect(missing).toContain('kubernetes');
+  });
+
   it('still reports genuinely unevidenced JD skills', () => {
     const jd = 'Airflow and dbt orchestration on a data lake.';
     const missing = computeMissing(jd.toLowerCase(), candidate, kw, aliases);

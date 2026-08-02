@@ -103,6 +103,7 @@
       "airflow",
       "dbt",
       "streaming",
+      "stream",
       "batch processing"
     ],
     "biSemantic": [
@@ -112,7 +113,8 @@
       "dax",
       "tabular model",
       "dimensional modeling",
-      "star schema"
+      "star schema",
+      "tableau"
     ],
     "languages": [
       "python",
@@ -126,7 +128,35 @@
       "healthcare",
       "insurance",
       "retail",
-      "banking"
+      "banking",
+      "bank"
+    ],
+    "devopsInfra": [
+      "kubernetes",
+      "k8s",
+      "docker",
+      "terraform",
+      "ci/cd",
+      "github actions",
+      "azure devops",
+      "infrastructure as code"
+    ],
+    "dataQuality": [
+      "data quality",
+      "data lineage",
+      "observability",
+      "data contracts",
+      "great expectations",
+      "data validation"
+    ],
+    "genAI": [
+      "llm",
+      "large language model",
+      "rag",
+      "retrieval augmented generation",
+      "langchain",
+      "langgraph",
+      "vector database"
     ]
   },
   "evidenceAliases": {
@@ -153,6 +183,23 @@
     "dimensional modeling": ["star schema", "kimball", "dimensional modeling"],
     "star schema": ["dimensional modeling", "kimball"],
     "sql": ["t-sql"],
-    "t-sql": ["sql server", "tsql"]
+    "t-sql": ["sql server", "tsql"],
+    "streaming": ["stream", "structured streaming", "kafka", "event hub", "spark streaming"],
+    "stream": ["streaming", "structured streaming"],
+    "banking": ["bank"],
+    "bank": ["banking"],
+    "kubernetes": ["k8s"],
+    "k8s": ["kubernetes"],
+    "ci/cd": ["continuous integration", "continuous deployment", "continuous delivery", "github actions", "azure devops"],
+    "infrastructure as code": ["terraform", "iac"],
+    "llm": ["large language model", "large language models"],
+    "large language model": ["llm"],
+    "rag": ["retrieval augmented generation"],
+    "retrieval augmented generation": ["rag"],
+    "vector database": ["vector db", "vector store"],
+    "gcp": ["google cloud platform", "google cloud"],
+    "aws": ["amazon web services"],
+    "postgres": ["postgresql"],
+    "postgresql": ["postgres"]
   }
 }

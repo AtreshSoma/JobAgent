@@ -499,6 +499,14 @@ button.icon { padding: 4px 7px; }
 .filters select.on {
   border-color: var(--accent); color: var(--accent);
 }
+/* Free-text filters (search + city) get the same treatment: a non-empty one is
+   narrowing the board just as much as a set <select>, so it has to look active
+   rather than silently filtering behind an unremarkable box. */
+.filters input[type=search]:not(:placeholder-shown) {
+  border-color: var(--accent); color: var(--accent);
+}
+/* City needs less room than the main search box but more than a select stub. */
+#city { width: min(132px, 100%); }
 
 /* Segmented switch — for a short, mutually exclusive set of choices where a
    dropdown would hide the options behind a click. Clicking the active segment

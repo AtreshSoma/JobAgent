@@ -98,6 +98,118 @@ describe('board filtering by posting age', () => {
   });
 });
 
+// REGRESSION — SILENT FILTER DROP. The window was applied only when the value
+// appeared in POSTED_WINDOWS, and IGNORED otherwise: an unrecognised value
+// returned the full, unfiltered board while the UI still showed an active
+// "Posted < 1 week ago" chip. Observed in production — a dashboard server
+// started before 168 was added to the allowlist kept serving the old list, so
+// selecting "1w" listed month-old postings under a chip claiming otherwise.
+describe('posting-age window is honored, never silently dropped', () => {
+  const db = fakeDb(JOBS);
+
+  it('honors a window the presentation list does not happen to offer', () => {
+    // 336h (2 weeks) is a perfectly usable window that POSTED_WINDOWS omits.
+    expect(POSTED_WINDOWS).not.toContain(336);
+    const total = boardPage(db, { postedWithinHours: 336, limit: 100 }).total;
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeLessThan(JOBS.length); // it actually filtered
+    // Everything except the 480h job and the undated one.
+    expect(total).toBe(5);
+  });
+
+  it('fails CLOSED on an unusable window rather than showing every row', () => {
+    // An honest empty board beats silently returning the whole corpus under an
+    // active filter chip.
+    for (const bad of ['abc', '0', '-5', 'NaN', 'Infinity']) {
+      expect(boardPage(db, { postedWithinHours: bad, limit: 100 }).total,
+        `postedWithinHours=${bad}`).toBe(0);
+    }
+  });
+
+  it('an empty value still means "no window", showing everything', () => {
+    expect(boardPage(db, { postedWithinHours: '', limit: 100 }).total).toBe(JOBS.length);
+  });
+});
+
+describe('location filters (state / city)', () => {
+  const located = [
+    { ...job('tx-dallas', 5), location: 'Dallas, TX' },
+    { ...job('tx-austin', 5), location: 'Austin, Texas, United States of America' },
+    { ...job('az', 5), location: 'Phoenix, AZ' },
+    { ...job('remote', 5), location: 'Remote, United States' },
+    { ...job('foreign', 5), location: 'Berlin, DE' },
+  ];
+  const db = fakeDb(located);
+  const ids = (filters) => boardPage(db, { ...filters, limit: 100 }).jobs.map((j) => j.id).sort();
+
+  it('matches a state by code and by spelled-out name', () => {
+    expect(ids({ state: 'TX' })).toEqual(['tx-austin', 'tx-dallas']);
+    expect(ids({ state: 'AZ' })).toEqual(['az']);
+  });
+
+  // A bare two-letter code is the one genuinely ambiguous case: "Berlin, DE"
+  // reads as Delaware to usLocationSignal, which reports it with
+  // strength:'abbreviation' precisely so a CALLER can outrank it with a foreign
+  // country name (see the DESIGN NOTES in utils/usGeography.js — the module
+  // stays config-free on purpose and does not do that weighing itself).
+  //
+  // The board does not re-implement that weighing, and deliberately so: the
+  // US-only geography gate in scoring/exclusionFilter.js — which DOES consult
+  // the configured nonUsCountryMarkers — has already discarded these rows long
+  // before the board sees them. Measured against the real database: 43 rows
+  // resolve to a US state only via a bare foreign country code, and ZERO of
+  // them are reachable on the open board, because every one is closed. Both
+  // the state filter and the byState coverage stat exclude closed rows.
+  //
+  // This test pins that LAYERING, so that if the upstream gate is ever
+  // loosened, the board's exposure becomes visible here rather than silently
+  // filing Toronto under California.
+  it('relies on the upstream US-only gate for foreign two-letter codes, not on re-filtering', () => {
+    const gateBypassed = fakeDb([{ ...job('berlin', 5), location: 'Berlin, DE', status: 'scored' }]);
+    // Bare abbreviation with no gate in front of it: the board takes it at face value…
+    expect(boardPage(gateBypassed, { state: 'DE', limit: 100 }).jobs.map((j) => j.id)).toEqual(['berlin']);
+    // …but in the real pipeline that row is discarded, so it never reaches the
+    // default board, which hides closed jobs.
+    const gated = fakeDb([{ ...job('berlin', 5), location: 'Berlin, DE', status: 'discarded' }]);
+    expect(boardPage(gated, { state: 'DE', limit: 100 }).total).toBe(0);
+  });
+
+  it('a spelled-out state name is always conclusive, gate or no gate', () => {
+    const named = fakeDb([{ ...job('de-real', 5), location: 'Wilmington, Delaware, United States' }]);
+    expect(boardPage(named, { state: 'DE', limit: 100 }).jobs.map((j) => j.id)).toEqual(['de-real']);
+  });
+
+  it('offers REMOTE as a location choice', () => {
+    expect(ids({ state: 'REMOTE' })).toEqual(['remote']);
+  });
+
+  it('matches city case-insensitively as a substring of the LOCATION only', () => {
+    expect(ids({ city: 'dallas' })).toEqual(['tx-dallas']);
+    expect(ids({ city: 'Austin' })).toEqual(['tx-austin']);
+  });
+
+  it('does not let a city match bleed into company or title text', () => {
+    const trap = fakeDb([
+      { ...job('right', 5), company: 'Acme', location: 'Phoenix, AZ' },
+      { ...job('wrong', 5), company: 'Phoenix Technologies', location: 'Boston, MA' },
+    ]);
+    expect(boardPage(trap, { city: 'phoenix', limit: 100 }).jobs.map((j) => j.id)).toEqual(['right']);
+  });
+
+  it('combines with the posting-age window', () => {
+    const mixed = fakeDb([
+      { ...job('tx-fresh', 5), location: 'Dallas, TX' },
+      { ...job('tx-old', 480), location: 'Dallas, TX' },
+    ]);
+    expect(boardPage(mixed, { state: 'TX', postedWithinHours: 168, limit: 100 })
+      .jobs.map((j) => j.id)).toEqual(['tx-fresh']);
+  });
+
+  it('an empty state/city means no location filter at all', () => {
+    expect(ids({ state: '', city: '' })).toHaveLength(located.length);
+  });
+});
+
 describe('header counts reconcile with the filter they open', () => {
   it('"posted 1w" equals the rows its chip opens', () => {
     const db = fakeDb(JOBS);

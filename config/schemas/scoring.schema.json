@@ -165,6 +165,27 @@
           "items": {
             "type": "string"
           }
+        },
+        "devopsInfra": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. Folded into dataEngineeringStack's matched pool (see scorer.js) rather than given its own weight — widens which terms can satisfy the existing cap instead of reallocating the score budget."
+        },
+        "dataQuality": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. Folded into dataEngineeringStack's matched pool, same reasoning as devopsInfra."
+        },
+        "genAI": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional. Folded into dataEngineeringStack's matched pool, same reasoning as devopsInfra."
         }
       }
     },

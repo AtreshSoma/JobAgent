@@ -47,6 +47,73 @@ describe('scorer', () => {
     expect(a.total).toBe(b.total);
     expect(a.raw).toBe(b.raw);
   });
+
+  // REGRESSION: matching used to be plain substring containment, which
+  // credited "sql" for JD text that explicitly says "NoSQL" — the opposite
+  // signal. Verified live against the real job corpus before this fix; see
+  // textNormalize.test.js for the matcher-level tests. This confirms the fix
+  // holds through the full scoring pipeline, not just the matcher in isolation.
+  it('does not credit "sql" for a role that explicitly wants NoSQL, not SQL', () => {
+    const job = {
+      source: 'greenhouse', company: 'Acme', title: 'Senior Data Engineer',
+      jdText: 'Senior Data Engineer to build pipelines against NoSQL databases like MongoDB and DynamoDB. Strictly non-relational, schemaless data stores.',
+    };
+    const sponsorship = classifySponsorship(job, sponConfig);
+    const result = scoreJob(job, { scoring, sponsorship, candidate, now: F.NOW });
+    expect(result.matchedKeywords).not.toContain('sql');
+  });
+
+  // REGRESSION: the static vocabulary had no category for CI/CD, Kubernetes,
+  // data-quality tooling, or GenAI/RAG work — all of which the candidate's own
+  // technicalStack already lists, and which measured at 10-34% frequency
+  // across 20k real stored JDs. These are folded into dataEngineeringStack's
+  // existing 12-point/3-match cap (see scorer.js) rather than a new weighted
+  // category, so a job built entirely from modern platform-engineering terms
+  // can now earn the same credit a classic ETL/Spark/Kafka job always could.
+  describe('modern platform-engineering vocabulary (devopsInfra/dataQuality/genAI)', () => {
+    it('credits a job that only mentions modern platform terms, not classic ETL ones', () => {
+      const job = {
+        source: 'greenhouse', company: 'Acme', title: 'Senior Data Engineer',
+        jdText: 'Senior Data Engineer. Kubernetes, Docker, Terraform, CI/CD pipelines with GitHub Actions. Strong data quality and observability practices required.',
+      };
+      const sponsorship = classifySponsorship(job, sponConfig);
+      const result = scoreJob(job, { scoring, sponsorship, candidate, now: F.NOW });
+      expect(result.breakdown.dataEngineeringStack.points).toBe(result.breakdown.dataEngineeringStack.weight);
+      expect(result.matchedKeywords).toEqual(expect.arrayContaining(['kubernetes', 'docker', 'ci/cd']));
+    });
+
+    it('credits GenAI/RAG work the candidate profile already lists', () => {
+      const job = {
+        source: 'greenhouse', company: 'Acme', title: 'Senior Data Engineer',
+        jdText: 'Senior Data Engineer building RAG pipelines with LangChain and vector databases on top of an LLM.',
+      };
+      const sponsorship = classifySponsorship(job, sponConfig);
+      const result = scoreJob(job, { scoring, sponsorship, candidate, now: F.NOW });
+      expect(result.matchedKeywords).toEqual(expect.arrayContaining(['rag', 'langchain', 'llm']));
+    });
+
+    it('credits Tableau under the existing BI category, no new weight bucket', () => {
+      const job = {
+        source: 'greenhouse', company: 'Acme', title: 'Analytics Engineer',
+        jdText: 'Analytics Engineer with strong Tableau dashboarding and semantic modeling experience.',
+      };
+      const sponsorship = classifySponsorship(job, sponConfig);
+      const result = scoreJob(job, { scoring, sponsorship, candidate, now: F.NOW });
+      expect(result.matchedKeywords).toContain('tableau');
+    });
+
+    it('never widens the total achievable score — same weight, same cap, just a wider matching pool', () => {
+      // The point of folding rather than adding a category: nothing here
+      // should let a job exceed what dataEngineeringStack always capped at.
+      const job = {
+        source: 'greenhouse', company: 'Acme', title: 'Senior Data Engineer',
+        jdText: 'Kubernetes Docker Terraform CI/CD GitHub Actions Azure DevOps data quality data lineage observability great expectations LLM RAG LangChain LangGraph vector database ETL ELT Spark Kafka Airflow dbt streaming batch processing',
+      };
+      const sponsorship = classifySponsorship(job, sponConfig);
+      const result = scoreJob(job, { scoring, sponsorship, candidate, now: F.NOW });
+      expect(result.breakdown.dataEngineeringStack.points).toBeLessThanOrEqual(result.breakdown.dataEngineeringStack.weight);
+    });
+  });
 });
 
 describe('explainScore + sponsorship gate', () => {

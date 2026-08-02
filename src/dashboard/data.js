@@ -362,12 +362,15 @@ export function isUndatedDrop(job = {}) {
 }
 
 /**
- * Selectable posting-age windows, in hours — the ONLY values the board filter
- * honors, and therefore the only ones the segmented control may offer.
+ * Posting-age windows the UI OFFERS, in hours.
  *
- * The two must not drift. A chip offering a window this list omits would render
- * as active over a completely unfiltered board, which is the same class of lie
- * as a tab badge that disagrees with the rows it opens.
+ * This is a presentation list, NOT a gate. It used to be both, and that was a
+ * standing trap: the filter applied the window only if the value appeared here,
+ * so a server process running an older copy of this list silently returned the
+ * FULL board under an active "Posted < 1 week ago" chip. The filter now honors
+ * any positive window and fails closed on an unusable one, so the two halves
+ * can no longer disagree in a way that shows unfiltered rows as filtered — see
+ * the note at the `postedWithinHours` filter in `boardPage`.
  *
  * 3h/6h/24h answer "be first to apply". 72h/168h exist because on real data
  * they are where the jobs actually are: one measured run held 5 postings under
@@ -438,6 +441,24 @@ export function countViews(rows = []) {
   return counts;
 }
 
+/**
+ * Discovery sources that ARE a specific ATS platform, one-to-one — the
+ * board's "Any ATS" dropdown lists exactly these names alongside the generic-
+ * scraper-detected ones (icims/taleo/jobvite/generic).
+ *
+ * REGRESSION GUARD. `ats_platform` is populated only when the generic
+ * careers-page adapter detects an embedded ATS widget on a scraped company
+ * page — verified against the real database, it is set on 0.5% of rows (242
+ * of 45,609). Every job from the DIRECT Workday/Greenhouse/Lever/Ashby/
+ * SmartRecruiters adapters leaves it null, because `source` already says
+ * exactly which ATS it is; nothing had ever cross-referenced the two. The
+ * dropdown's own option list (workday/greenhouse/lever/ashby/smartrecruiters)
+ * matches these source names exactly, so filtering by ATS silently returned
+ * near-empty results for the vast majority of the corpus — e.g. "Workday"
+ * matched 13 rows instead of the real ~15,800.
+ */
+const ATS_NATIVE_SOURCES = new Set(['workday', 'greenhouse', 'lever', 'ashby', 'smartrecruiters']);
+
 /** Decorate one db row with all derived board fields. */
 function boardRow(job, approval, now) {
   const matched = jsonList(job.matched_keywords);
@@ -445,6 +466,7 @@ function boardRow(job, approval, now) {
   const appStatus = deriveAppStatus(job, approval);
   const score = typeof job.score === 'number' ? job.score : null;
   const haystack = `${job.location ?? ''} ${job.employment_type ?? ''} ${job.title ?? ''}`.toLowerCase();
+  const locationSignal = usLocationSignal(job.location);
   return {
     id: job.id,
     company: job.company,
@@ -465,6 +487,13 @@ function boardRow(job, approval, now) {
     employmentLabel: EMPLOYMENT_LABELS[job.employment_category] ?? null,
     compensation: job.compensation_text ?? null,
     remote: /\bremote\b/.test(haystack),
+    // Where the role actually is, resolved once here so the board filter, the
+    // coverage stats, and any future column all read the SAME answer rather
+    // than each re-deriving it. `usLocationSignal` already distinguishes a
+    // spelled-out state from a bare two-letter code and refuses to read
+    // "Berlin, DE" as Delaware, so this must not be reimplemented locally.
+    state: locationSignal.state ?? null,
+    stateName: locationSignal.stateName ?? null,
     postedAt: job.posted_at ?? null,
     postedLabel: formatPostedRelative(job.posted_at, now),
     postedLast24h: isWithinLast24Hours(job.posted_at, now),
@@ -476,7 +505,7 @@ function boardRow(job, approval, now) {
     attention: classifyAttention(job, appStatus),
     lastAction: lastActionFor(job, appStatus),
     userDecision: job.user_decision ?? null,
-    atsPlatform: job.ats_platform ?? null,
+    atsPlatform: job.ats_platform ?? (ATS_NATIVE_SOURCES.has(job.source) ? job.source : null),
     resumeStatus: resumeStatusOf(job),
     atsScore: job.ats_score == null || job.ats_score === '' ? null : Number(job.ats_score),
     atsBand: job.ats_band ?? null,
@@ -610,7 +639,16 @@ function computeDashboardStats(db, now) {
     if (status === APP_STATUS.REJECTED) stats.totals.rejected += 1;
     if (status === APP_STATUS.SKIPPED) stats.totals.skipped += 1;
     if (status === APP_STATUS.DATE_UNCONFIRMED) stats.totals.dateUnconfirmed += 1;
-    if (isUndatedDrop(job)) stats.totals.undatedDropped += 1;
+    // REGRESSION GUARD. This used to count isUndatedDrop() alone, but the
+    // tile's own declared click-filter is `{ undated: true }` — the SAME
+    // broader filter the separate "Date unknown" checkbox uses, which also
+    // matches postedConfidence === 'unconfirmed' (see boardPage below). That
+    // catches live scored/needs_review jobs that simply lack a confirmed
+    // date, not just ones actually held back for it. Verified live: 2 such
+    // jobs (status: scored, needs_review) inflated the filter's row count
+    // 2 past what this stat reported — the same "tile promises a number
+    // clicking it doesn't open" bug as everywhere else in this file.
+    if (isUndatedDrop(job) || postedConfidence(job) === 'unconfirmed') stats.totals.undatedDropped += 1;
     if (dayOf(preparedAtOf(job)) === today && Number(job.applied) !== 1) stats.totals.preparedToday += 1;
     if (Number(job.applied) === 1 && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
     if (Number(job.applied) === 1 && job.applied_at
@@ -791,9 +829,17 @@ const SORTS = {
  * @param {string} [filters.source]
  * @param {string} [filters.sponsorship]
  * @param {string} [filters.employmentType] full_time|contract|contract_to_hire|part_time|unknown
- * @param {number|string} [filters.postedWithinHours] only roles posted in the last 3, 6, or 24 hours
+ * @param {number|string} [filters.postedWithinHours] only roles posted within
+ *   the last N hours. Any positive number is honored (POSTED_WINDOWS lists what
+ *   the UI offers, but is NOT a gate — see the note at the filter itself).
+ * @param {string} [filters.state] two-letter US state code, or 'REMOTE'
+ * @param {string} [filters.city] case-insensitive substring of the location only
  * @param {boolean} [filters.last24h] legacy alias for postedWithinHours=24
  * @param {boolean} [filters.hideClosed] hide archived/rejected/discarded (default true)
+ * @param {boolean} [filters.includeClosed] the "tracked" tile's own name for
+ *   the same switch, inverted — `includeClosed: true` means `hideClosed: false`.
+ *   Accepted as an alias so that tile's filter object actually does what its
+ *   own label says (see the REGRESSION note on the `hideClosed` line below).
  * @param {string} [filters.sort=score] score|posted|company|updated
  * @param {number} [filters.limit=200]
  * @param {Date} [filters.now]
@@ -814,7 +860,17 @@ export function listBoardJobs(db, filters = {}) {
  */
 export function boardPage(db, filters = {}) {
   const now = filters.now ?? new Date();
-  const hideClosed = filters.hideClosed !== false && filters.hideClosed !== 'false';
+  // REGRESSION GUARD. The "tracked" stat tile's own declared filter is
+  // `{ includeClosed: true }` (app.js HEALTH_FACTS) — a key this function
+  // never recognized. It was silently dropped, so clicking "45,609 tracked"
+  // opened the same ~1,853 open-only rows as the default board, not the tile's
+  // own promised total: the exact "count doesn't match what clicking it opens"
+  // class of bug this file's other filters were already built to prevent.
+  // `includeClosed: true` takes precedence when present, since it is the more
+  // specific ask; an explicit `hideClosed` still works for every existing caller.
+  const includeClosedTrue = filters.includeClosed === true || filters.includeClosed === 'true';
+  const hideClosed = !includeClosedTrue
+    && filters.hideClosed !== false && filters.hideClosed !== 'false';
 
   let rows = allBoardRows(db, now);
 
@@ -856,15 +912,55 @@ export function boardPage(db, filters = {}) {
   if (filters.undated === true || filters.undated === 'true') {
     rows = rows.filter((r) => r.undatedDrop || r.postedConfidence === 'unconfirmed');
   }
+  // Location. `state` matches the resolved two-letter code (so "TX" never
+  // matches a Texas-shaped substring of a company name), while `city` is a
+  // free-text contains against the location string only — deliberately NOT the
+  // company/title, so searching "Phoenix" cannot surface a Phoenix Technologies
+  // role in Boston. The broad `q` search above still spans all three fields for
+  // people who want that.
+  if (filters.state) {
+    const want = String(filters.state).trim().toUpperCase();
+    rows = want === 'REMOTE'
+      ? rows.filter((r) => r.remote)
+      : rows.filter((r) => r.state === want);
+  }
+  if (filters.city) {
+    const want = String(filters.city).trim().toLowerCase();
+    if (want) rows = rows.filter((r) => String(r.location ?? '').toLowerCase().includes(want));
+  }
   if (filters.remote === true || filters.remote === 'true') rows = rows.filter((r) => r.remote);
   if (filters.last24h === true || filters.last24h === 'true') {
     rows = rows.filter((r) => r.postedLast24h);
   }
+  // REGRESSION GUARD — SILENT FILTER DROP.
+  //
+  // This used to apply the window only when the value appeared in the
+  // POSTED_WINDOWS allowlist, and do NOTHING otherwise. Anything the running
+  // server did not recognise therefore returned the FULL, UNFILTERED board
+  // while the UI still showed an active "Posted < 1 week ago" chip — the
+  // filter looked applied and simply was not.
+  //
+  // Observed in production exactly as designed-for-failure: a dashboard server
+  // process started before `168` was added to the allowlist kept serving the
+  // old list, so selecting "1w" listed month-old postings under a chip that
+  // claimed to be showing the last week. A stale process is ordinary (Node
+  // does not hot-reload edited source, and this server runs for days), so an
+  // allowlist shared between two independently-deployed halves is a standing
+  // trap, not a one-off.
+  //
+  // The allowlist bought nothing: `isWithinLastHours` already validates and
+  // rejects non-positive/non-finite input, and there is nothing unsafe about
+  // an arbitrary hour count. So honor ANY usable positive window, and make an
+  // UNUSABLE one fail closed (match nothing) rather than open (match
+  // everything) — a visibly empty board is an honest error, silently showing
+  // every row under an active filter chip is not. POSTED_WINDOWS remains the
+  // single source of truth for what the UI OFFERS; it is no longer a gate on
+  // what the server will HONOR.
   if (filters.postedWithinHours !== undefined && filters.postedWithinHours !== '') {
     const hours = Number(filters.postedWithinHours);
-    if (POSTED_WINDOWS.includes(hours)) {
-      rows = rows.filter((r) => isWithinLastHours(r.postedAt, hours, now));
-    }
+    rows = Number.isFinite(hours) && hours > 0
+      ? rows.filter((r) => isWithinLastHours(r.postedAt, hours, now))
+      : [];
   }
   // Hide closed jobs by default — but never override an explicit status/view
   // request (e.g. the Blocked/Submitted tabs, or a "rejected" status filter).
