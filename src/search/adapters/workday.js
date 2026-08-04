@@ -36,6 +36,31 @@ export const adapterId = 'workday';
 /** Hard cap on pagination to avoid runaway loops on misconfigured tenants. */
 const MAX_PAGES = 50;
 
+/**
+ * Optional per-term page cap — the one knob that trades COVERAGE for speed.
+ *
+ * Defaults to `MAX_PAGES`, i.e. no behaviour change. It exists because after the
+ * pod gate was retuned, the remaining run time is genuine volume: a fuzzy
+ * `searchText` matches far more than it should (Citi returns 927 hits for "data
+ * engineer", of which ~90 are on-target), and every 20 of them is a request.
+ *
+ * Lowering it is NOT free. Measured cumulative on-target recall against pages
+ * fetched, over the four largest configured tenants:
+ *
+ *   cap  3 pages (60 jobs)   ->  39.8% of on-target jobs recovered
+ *   cap  5 pages (100 jobs)  ->  50.4%
+ *   cap  8 pages (160 jobs)  ->  64.8%
+ *   cap 12 pages (240 jobs)  ->  71.1%
+ *   cap 25 pages (500 jobs)  -> 100%
+ *
+ * Results are only WEAKLY relevance-ordered, and unevenly so: Citi recovers 50%
+ * in three pages while Genpact recovers 5%, its on-target roles spread through
+ * the whole list. So a low cap silently drops real matches, which is why this
+ * defaults to off and is left as a deliberate, documented choice rather than a
+ * default someone would never notice.
+ */
+const DEFAULT_MAX_PAGES_PER_TERM = MAX_PAGES;
+
 /** Optional full-JD enrichment budget per tenant. Summaries remain usable. */
 const DEFAULT_MAX_DETAIL_FETCHES = 20;
 
@@ -78,6 +103,38 @@ function titleTokens(title) {
 function overlaps(a, b) {
   for (const t of a) if (b.has(t)) return true;
   return false;
+}
+
+/** Role-shaped titles worth a full description even when off the exact list. */
+const ROLE_SHAPED_RE = /\b(data|analytics|bi|business intelligence|etl|elt|warehouse|lakehouse|platform)\b[\w\s/&-]*\b(engineer|developer|architect|analyst)\b/i;
+
+/**
+ * How much a job deserves one of the tenant's few full-description fetches.
+ *
+ * A tenant commonly returns 100-200 postings while the budget is a handful, so
+ * WHICH ones get enriched decides whether the budget is useful at all. Ranking:
+ *
+ *   2  the title contains one of the candidate's own target titles
+ *   1  the title is role-shaped ("Senior Data Platform Engineer") but not an
+ *      exact target-title match
+ *   0  everything else
+ *
+ * Ties keep the tenant's original list order (Array#sort is stable), so the
+ * result stays deterministic — the same tenant always enriches the same jobs.
+ *
+ * @param {object} job normalized job
+ * @param {string[]} targetTitles candidate.targetTitles
+ * @returns {0|1|2}
+ */
+function detailPriority(job, targetTitles = []) {
+  const title = String(job?.title ?? '');
+  if (!title) return 0;
+  const lower = title.toLowerCase();
+  for (const want of targetTitles) {
+    const w = String(want ?? '').trim().toLowerCase();
+    if (w && lower.includes(w)) return 2;
+  }
+  return ROLE_SHAPED_RE.test(title) ? 1 : 0;
 }
 
 /**
@@ -171,7 +228,38 @@ const DEFAULT_DETAIL_CONCURRENCY = 6;
  * Max requests in flight against a single Workday POD, across every tenant on
  * it. This is the ceiling the server actually counts against.
  */
-const DEFAULT_HOST_CONCURRENCY = 4;
+const DEFAULT_HOST_CONCURRENCY = 8;
+
+/**
+ * Minimum gap between request STARTS against one pod.
+ *
+ * PERFORMANCE — this was 500ms, and at scale it was the single thing making a
+ * discovery run take ten minutes.
+ *
+ * `minSpacingMs` and `maxConcurrent` are redundant controls, and spacing wins:
+ * the gate serializes starts, so 500ms pinned the pod to 2 requests/second no
+ * matter how high concurrency went. Every tenant on a pod shares that gate
+ * (`hostKeyFor` deliberately maps `nvidia.wd5…` and `citi.wd5…` to
+ * `wd5.myworkdayjobs.com`), and 87 of the configured tenants sit on wd1 alone.
+ * At ~14 requests per tenant that is ~1,218 requests through one 2/s gate — a
+ * ~609-second floor. Measured run: 602s for this source, 96% of the whole run.
+ * The knob was tuned when 14 tenants were configured, where it never bound.
+ *
+ * Measured against wd1 directly (24 distinct tenants, escalating concurrency,
+ * no added spacing, stopping on the first throttle):
+ *
+ *   concurrency  4 -> 3.7 req/s, p50 914ms, p95 2946ms, 0 throttles
+ *   concurrency  8 -> 6.6 req/s, p50 801ms, p95 1843ms, 0 throttles
+ *   concurrency 16 -> 9.6 req/s, p50 849ms, p95 1866ms, 0 throttles
+ *
+ * Latency did not degrade as concurrency rose, so we were nowhere near the
+ * pod's limit. `maxConcurrent` alone is the honest bound — it caps simultaneous
+ * load, which is what the server experiences — and the Retry-After handling and
+ * circuit breaker remain the real safety net, reacting to actual throttling
+ * instead of guessing at it. 8 in flight against infrastructure serving
+ * thousands of enterprises stays conservative.
+ */
+const DEFAULT_HOST_SPACING_MS = 0;
 
 /**
  * @param {object} source jobboards entry: { tenants: object[] }
@@ -199,13 +287,21 @@ export async function run(source = {}, ctx = {}) {
   const maxDetailFetches = Number.isFinite(source.maxDetailFetches)
     ? Math.max(0, source.maxDetailFetches)
     : DEFAULT_MAX_DETAIL_FETCHES;
+  // Never above MAX_PAGES — that stays a hard runaway guard, not a preference.
+  const maxPagesPerTerm = Number.isFinite(source.maxPagesPerTerm)
+    ? Math.min(MAX_PAGES, Math.max(1, Math.trunc(source.maxPagesPerTerm)))
+    : DEFAULT_MAX_PAGES_PER_TERM;
+  // Politeness knobs. The SOURCE wins over the global default, because the
+  // global default cannot know that this source funnels 200+ tenants through a
+  // handful of shared pod gates — `ctx.*` first made the source-level value
+  // unreachable, so tuning it in jobboards.json silently did nothing.
   const hostSpacingMs = source.rateLimitMs === 0
     ? 0
-    : Math.max(0, ctx.workdayHostSpacingMs ?? source.hostSpacingMs ?? 500);
+    : Math.max(0, source.hostSpacingMs ?? ctx.workdayHostSpacingMs ?? DEFAULT_HOST_SPACING_MS);
   // One gate shared by every tenant in this source, so tenants that sit on the
   // same Workday pod share the pod's budget instead of each assuming it owns it.
   const hostGate = ctx.hostGate ?? createHostGate({
-    maxConcurrent: ctx.hostConcurrency ?? source.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
+    maxConcurrent: source.hostConcurrency ?? ctx.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
   });
   const jobs = [];
   const errors = [];
@@ -231,6 +327,8 @@ export async function run(source = {}, ctx = {}) {
         fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs: source.rateLimitMs,
         requestTimeoutMs, pageConcurrency, detailConcurrency, hostSpacingMs,
         maxDetailFetches, workdayDetailCache: ctx.workdayDetailCache, shouldCancel: ctx.shouldCancel,
+        targetTitles: ctx.candidate?.targetTitles ?? [],
+        abortSignal: ctx.abortSignal, maxPagesPerTerm,
       });
       return {
         jobs: found, errors: detailErrors.map((e) => ({ tenant: cfg.tenant, site: cfg.site, ...e })),
@@ -310,7 +408,8 @@ async function fetchTenant(cfg, ctx) {
   const {
     fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs, requestTimeoutMs,
     pageConcurrency, detailConcurrency, hostSpacingMs, maxDetailFetches,
-    workdayDetailCache, shouldCancel,
+    workdayDetailCache, shouldCancel, targetTitles = [], abortSignal,
+    maxPagesPerTerm = MAX_PAGES,
   } = ctx;
   const endpoint = `https://${cfg.host}/wday/cxs/${encodeURIComponent(cfg.tenant)}/${encodeURIComponent(cfg.site)}/jobs`;
   const errors = [];
@@ -327,14 +426,14 @@ async function fetchTenant(cfg, ctx) {
     if (rateLimiter) await rateLimiter.wait(spacingKey, rateLimitMs);
     const body = (offset) => pageBody(cfg, offset, searchText);
     const first = await withRetry(
-      () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(0), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
+      () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(0), requestTimeoutMs, abortSignal), { minSpacingMs: hostSpacingMs, signal: abortSignal }),
       { maxRetries },
     );
     const firstPostings = Array.isArray(first.jobPostings) ? first.jobPostings : [];
     // `total` is reported on the FIRST page only — later pages return 0, so it
     // must be read here and never re-derived mid-walk.
     const total = Number.isFinite(first.total) ? first.total : firstPostings.length;
-    const pageCount = Math.min(MAX_PAGES, Math.max(1, Math.ceil(total / cfg.pageSize)));
+    const pageCount = Math.min(maxPagesPerTerm, Math.max(1, Math.ceil(total / cfg.pageSize)));
 
     // Remaining pages have computable offsets, so fetch them concurrently. The
     // host gate — not a per-offset rate-limit key — is what keeps the fan-out
@@ -345,11 +444,15 @@ async function fetchTenant(cfg, ctx) {
       if (shouldCancel?.()) { cancelled = true; return { postings: [], error: null }; }
       try {
         const data = await withRetry(
-          () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(offset), requestTimeoutMs), { minSpacingMs: hostSpacingMs }),
+          () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(offset), requestTimeoutMs, abortSignal), { minSpacingMs: hostSpacingMs, signal: abortSignal }),
           { maxRetries },
         );
         return { postings: Array.isArray(data.jobPostings) ? data.jobPostings : [], error: null };
       } catch (err) {
+        // A cancel legitimately drops every queued and in-flight request. Those
+        // are not faults, and reporting one RCA entry per dropped request would
+        // bury the real errors under hundreds of "cancelled" lines.
+        if (err?.cancelled) { cancelled = true; return { postings: [], error: null }; }
         return {
           postings: [],
           error: {
@@ -380,6 +483,8 @@ async function fetchTenant(cfg, ctx) {
     try {
       found = await fetchTerm(term);
     } catch (err) {
+      // A cancel is not a phrase failure — record it as stopped and move on.
+      if (err?.cancelled) { cancelled = true; break; }
       // One failing phrase must not cost the tenant the other phrase's results.
       errors.push({
         searchText: term, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0,
@@ -422,14 +527,23 @@ async function fetchTenant(cfg, ctx) {
   // usable job. So a throttled host must not produce one screaming error per
   // posting — it produces ONE note saying how many jobs stayed summary-only.
   if (cfg.fetchDetails) {
+    // Spend the budget on the jobs most likely to matter, not on whichever ones
+    // the tenant happened to list first.
+    //
+    // A tenant commonly returns 100-200 postings and the budget is a handful, so
+    // `.slice(0, budget)` on raw list order gave ~5% coverage chosen at random —
+    // full descriptions for four arbitrary requisitions while genuinely on-target
+    // ones stayed summary-only. Sorting by title relevance first costs nothing
+    // extra (same request count) and makes those few fetches the useful ones.
     const pairs = out
       .map((job, i) => ({ job, posting: postings[i] }))
       .filter(({ job }) => job.rawMetadata?.summaryOnly !== false)
+      .sort((a, b) => detailPriority(b.job, targetTitles) - detailPriority(a.job, targetTitles))
       .slice(0, maxDetailFetches);
     const notes = await mapWithConcurrency(pairs, detailConcurrency, ({ job, posting }) => {
       if (shouldCancel?.()) { cancelled = true; return null; }
       return enrichWithDetail(job, posting, cfg, {
-        fetchImpl, hostGate, maxRetries, requestTimeoutMs, hostSpacingMs,
+        fetchImpl, hostGate, maxRetries, requestTimeoutMs, hostSpacingMs, abortSignal,
       });
     });
     const failed = notes.filter(Boolean);
@@ -485,11 +599,15 @@ function pageBody(cfg, offset, searchText = cfg.searchText) {
   return { limit: cfg.pageSize, offset, searchText: searchText ?? '', appliedFacets: {} };
 }
 
-async function postJson(fetchImpl, url, body, requestTimeoutMs) {
+async function postJson(fetchImpl, url, body, requestTimeoutMs, signal) {
   const res = await fetchWithTimeout(fetchImpl, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
+    // `fetchWithTimeout` composes this with its own timeout controller, so a
+    // cancelled run aborts the request already on the wire instead of waiting
+    // out the full requestTimeoutMs.
+    ...(signal ? { signal } : {}),
   }, requestTimeoutMs);
   if (!res.ok) throw httpError(res, 'Workday', url);
   return res.json();
@@ -513,7 +631,7 @@ async function postJson(fetchImpl, url, body, requestTimeoutMs) {
  * @returns {Promise<object|null>}
  */
 export async function enrichWithDetail(job, posting, cfg, ctx) {
-  const { fetchImpl, hostGate, maxRetries, requestTimeoutMs, hostSpacingMs } = ctx;
+  const { fetchImpl, hostGate, maxRetries, requestTimeoutMs, hostSpacingMs, abortSignal } = ctx;
   const externalPath = String(posting.externalPath ?? '').trim();
   if (!externalPath) {
     job.rawMetadata.summaryOnly = true;
@@ -534,7 +652,7 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
   try {
     const call = () => getJson(fetchImpl, url, requestTimeoutMs);
     const data = await withRetry(
-      () => (hostGate ? hostGate.run(url, call, { minSpacingMs: hostSpacingMs }) : call()),
+      () => (hostGate ? hostGate.run(url, call, { minSpacingMs: hostSpacingMs, signal: abortSignal }) : call()),
       { maxRetries },
     );
     const info = data?.jobPostingInfo ?? {};
@@ -558,6 +676,16 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
     job.rawMetadata.detailFetched = false;
     return null;
   } catch (err) {
+    // A cancelled run drops every queued detail fetch. The job simply keeps its
+    // summary — that is the documented, harmless outcome, not a degradation
+    // worth reporting. Without this, stopping a run produced one "kept a
+    // summary-only description" note per tenant still in flight, which reads as
+    // a wall of failures caused by the user's own Stop click.
+    if (err?.cancelled) {
+      job.rawMetadata.summaryOnly = true;
+      job.rawMetadata.detailSkipped = 'run-cancelled';
+      return null;
+    }
     // Public detail not available (404/403/429/etc.) — keep summary, log clearly.
     job.rawMetadata.summaryOnly = true;
     job.rawMetadata.detailError = err.message;

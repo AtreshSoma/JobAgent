@@ -133,6 +133,11 @@
             "minimum": 1,
             "description": "How many boards/tenants this source fetches in parallel, overriding the global default. Safe to raise for Workday: every tenant is a different host and per-host politeness is enforced separately by the host gate, so with 200+ boards a low value is pure serialization."
           },
+          "maxPagesPerTerm": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Workday: cap list pages fetched per search phrase per tenant (default 50 = no cap). The ONE knob that trades coverage for speed, because a fuzzy searchText matches far more than it should (one tenant returns 927 hits for 'data engineer', ~90 on-target) and every 20 is a request. Measured on-target recall by cap: 3 pages 40%, 5 pages 50%, 8 pages 65%, 12 pages 71%. Ordering is only weakly relevance-based and uneven between tenants, so a low cap silently drops real matches."
+          },
           "maxSearchTerms": {
             "type": "integer",
             "minimum": 0,

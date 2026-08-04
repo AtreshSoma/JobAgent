@@ -484,15 +484,28 @@ coordinate converts a one-off metered lookup into permanent free coverage. Run i
 occasionally — it is the mechanism that makes discovery compound instead of
 resetting whenever a paid provider's quota does.
 
-**Runtime note.** A full sweep of 492 boards takes ~14 minutes and returns
-~72,000 jobs (measured, 0 errors). Workday is ~60% of that wall clock, so if you
-add many more tenants, raise `boardConcurrency` on the `workday-public` source
-before anything else: every tenant is a different host, per-host politeness is
-enforced separately by the host gate, and the total is
-(waves × slowest tenant in the wave) — a low value is serialization, not
-courtesy. Watch mode polls every `WATCH_INTERVAL_MINUTES` (default 20); with a
-board list this size, either raise that above the run time or use `--free-only`
-against a trimmed config.
+**Runtime note.** Workday dominates a full sweep, and the reason is not what it
+looks like. Workday tenants are **not** independent hosts: `hostKeyFor`
+deliberately collapses `nvidia.wd5…` and `citi.wd5…` onto the shared pod
+`wd5.myworkdayjobs.com`, because that is where Workday actually throttles. 87 of
+the configured tenants sit on `wd1` alone, so they all share one gate.
+
+That makes `boardConcurrency` almost inert for this source — raising it does
+nothing while the pod gate is the binding constraint. The knobs that matter are
+`hostConcurrency` and `hostSpacingMs` on the `workday-public` source. A 500ms
+spacing pinned every tenant on a pod to a combined **2 requests/second**, which
+was a ~10-minute floor; removing the spacing and allowing 8 in flight measured
+**5.1x faster with zero throttling** (see `docs/SUPPORT_MATRIX.md` for the probe
+data). If you add many more tenants, tune those two — and if a pod ever starts
+returning 429s, the gate's Retry-After handling and circuit breaker will back
+off on their own.
+
+Watch mode polls every `WATCH_INTERVAL_MINUTES` (default 20); with a large board
+list, either keep that above your run time or use `--free-only` against a
+trimmed config.
+
+Cancelling is immediate (~120ms measured): in-flight requests abort and queued
+work is dropped, while everything already found is kept.
 
 ### Aggregator discovery via Adzuna (optional, free key)
 

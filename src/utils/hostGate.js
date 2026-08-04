@@ -31,6 +31,23 @@
 
 import { sleep } from './rateLimiter.js';
 
+/**
+ * Error thrown when the run was cancelled before a gated call could start.
+ *
+ * Deliberately NOT retryable, and flagged `cancelled` so callers can count it
+ * as "stopped on request" rather than reporting a scary per-request failure for
+ * every one of the hundreds of requests a cancel legitimately drops.
+ */
+export class RunCancelledError extends Error {
+  constructor() {
+    super('cancelled: the run was stopped before this request started');
+    this.name = 'RunCancelledError';
+    this.code = 'RUN_CANCELLED';
+    this.retryable = false;
+    this.cancelled = true;
+  }
+}
+
 /** Error thrown when a host's breaker is open. Deliberately NOT retryable. */
 export class HostCircuitOpenError extends Error {
   /** @param {string} host */
@@ -189,18 +206,27 @@ export function createHostGate({
    * @param {() => Promise<T>} fn
    * @param {object} [runOptions]
    * @param {number} [runOptions.minSpacingMs] per-call minimum between starts
+   * @param {AbortSignal} [runOptions.signal] drop this call if the run is cancelled
    * @returns {Promise<T>}
    * @throws {HostCircuitOpenError} when the host's breaker is open
+   * @throws {RunCancelledError} when `signal` aborts before the call starts
    */
   async function run(url, fn, runOptions = {}) {
     const key = hostKeyFor(url);
+    const signal = runOptions.signal;
+    // A cancelled run must not spend a queued slot. With hundreds of requests
+    // waiting behind one pod's gate, dialling them all anyway is what made
+    // "Stopping…" take as long as it did.
+    if (signal?.aborted) throw new RunCancelledError();
     if (isOpenKey(key)) throw new HostCircuitOpenError(key);
     const s = stateFor(key);
 
     await acquire(s);
     try {
-      // Re-check after queueing: the host may have started throttling while we
-      // waited for a slot, in which case there is no point spending the request.
+      // Re-check after queueing: the run may have been cancelled, or the host may
+      // have started throttling, while we waited for a slot — either way there is
+      // no point spending the request.
+      if (signal?.aborted) throw new RunCancelledError();
       if (isOpenKey(key)) throw new HostCircuitOpenError(key);
 
       const spacing = Math.max(0, Number(runOptions.minSpacingMs ?? minSpacingMs) || 0);

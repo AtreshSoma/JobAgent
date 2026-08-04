@@ -610,3 +610,89 @@ describe('tailored resume review', () => {
     expect(app).toMatch(/found verbatim in the job description/);
   });
 });
+
+/**
+ * The role is a link to the posting.
+ *
+ * Reaching a posting used to take two clicks and a context switch (select the
+ * row, then "Open posting ↗" in the detail rail) even though every board row
+ * already carried its URL — measured: 0 of 2,219 open rows lacked one.
+ */
+describe('job role links to the posting', () => {
+  const cell = app.slice(app.indexOf('function nameCellFor'), app.indexOf('function hostLabel'));
+
+  it('makes the role itself the link, opened safely in a new tab', () => {
+    expect(cell).toContain("href: job.url");
+    expect(cell).toContain("target: '_blank'");
+    // noreferrer as well as noopener: these are third-party job boards.
+    expect(cell).toContain("rel: 'noopener noreferrer'");
+  });
+
+  it('marks aggregator listings instead of silently bypassing the existing warning', () => {
+    // 1,061 of 2,219 open rows (48%) point at LinkedIn/Indeed/Dice rather than
+    // an employer form, and the detail rail already warns about exactly that.
+    // Linking every title with no marker would drop that safeguard on half the
+    // board, so the source is named inline.
+    expect(cell).toContain('isAggregatorUrl(job.url)');
+    expect(cell).toContain("class: 'chip agg'");
+    expect(cell).toContain('hostLabel(job.url)');
+    expect(css).toContain('.chip.agg');
+  });
+
+  it('never renders a dead link when a row has no URL', () => {
+    expect(cell).toContain("class: 'rolelink none'");
+    expect(css).toContain('.rolelink.none');
+    expect(css).toContain('cursor: default');
+  });
+
+  it('elides a long title rather than stretching the column', () => {
+    // Real titles reach 150 characters; the cell had no width constraint, so
+    // those forced the whole table to scroll sideways.
+    expect(app).toContain('TITLE_MAX_CHARS');
+    expect(cell).toContain('TITLE_MAX_CHARS');
+    expect(css).toContain('.namecell');
+    // The untruncated title stays reachable.
+    expect(cell).toContain('title: aggregator');
+  });
+
+  it('leads with the role, since the board is scanned by role', () => {
+    // The role used to be `.muted` — the quietest text in the cell — under a
+    // bold company name.
+    expect(css).toContain('.rolelink');
+    expect(css).toContain('.namemeta');
+    expect(cell.indexOf('rolelink')).toBeLessThan(cell.indexOf('namemeta'));
+  });
+
+  it('gives the link an accessible name that says it opens a new tab', () => {
+    expect(cell).toContain('opens the posting in a new tab');
+  });
+});
+
+describe('a link inside a clickable row behaves like a link', () => {
+  it('never triggers the row action when a real link is clicked', () => {
+    // Rows are themselves clickable (`data-action="select"`). The pre-existing
+    // guard only covered anchors that carried their OWN data-action, so any
+    // link that forgot one would be swallowed by the row entirely.
+    expect(app).toContain("if (event.target.closest?.('a[href]')) return;");
+  });
+
+  it('lets Enter follow a focused link instead of selecting the row', () => {
+    // The rows keydown handler calls preventDefault() on Enter and selects the
+    // row, so a keyboard user could focus the role link and never open it.
+    expect(app).toContain("if (event.key === 'Enter' && event.target.closest('a[href]')) return;");
+  });
+});
+
+describe('status reason is readable, not tooltip-only', () => {
+  it('renders the reason as real text rather than a bare glyph plus title=', () => {
+    // WHY a job is blocked/discarded is the most useful thing in the column and
+    // was reachable only by hovering a mouse over an "ⓘ".
+    const fn = app.slice(app.indexOf('const statusCell'), app.indexOf('tr.append(statusCell)'));
+    expect(fn).toContain("class: 'statusreason'");
+    expect(fn).toContain('text: job.statusReason');
+    expect(fn).not.toContain('ⓘ');
+    // Clamped so a long reason cannot make rows different heights.
+    expect(css).toContain('.statusreason');
+    expect(css).toContain('text-overflow: ellipsis');
+  });
+});

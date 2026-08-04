@@ -44,6 +44,65 @@ quota was spent): **71,827 unique jobs, 20,574 cross-source duplicates removed,
 0 errors, 14.2 minutes**. Of those, 1,062 were posted in the last 24h and 11,824
 within a week. Workday accounts for ~60% of the wall clock.
 
+### Run time and cancellation
+
+Two things dominated a discovery run's wall clock and its responsiveness, both
+fixed by measurement rather than guesswork.
+
+**Pod-gate spacing was the bottleneck, not concurrency.** `hostKeyFor`
+deliberately collapses every Workday tenant onto its shared pod, and the gate
+applied BOTH a concurrency ceiling and a 500ms minimum between request starts.
+Because the gate serializes starts, the spacing won outright: all tenants on a
+pod shared **2 requests/second** regardless of how high concurrency went, which
+made `boardConcurrency` inert. 87 of the configured tenants sit on `wd1` alone,
+at ~14 requests each — a ~609-second floor. A measured run spent **602s in
+Workday out of 629s total (96%)**. The knob was tuned when 14 tenants were
+configured, where it never bound; it did not scale with the board list.
+
+Probed directly against `wd1` (24 distinct tenants, escalating concurrency, no
+added spacing, aborting on the first throttle):
+
+| concurrency | throughput | p50 | p95 | throttles |
+| --- | --- | --- | --- | --- |
+| 4 | 3.7 req/s | 914ms | 2946ms | 0 |
+| 8 | 6.6 req/s | 801ms | 1843ms | 0 |
+| 16 | 9.6 req/s | 849ms | 1866ms | 0 |
+
+Latency did not degrade as concurrency rose, so the gate was ~5x more
+conservative than the pod tolerates. `maxConcurrent` alone is the honest bound —
+it caps simultaneous load, which is what a server experiences — and Retry-After
+handling plus the circuit breaker remain the safety net, reacting to real
+throttling instead of guessing. Settings are now 8 in flight, no added spacing.
+**Measured on the same 30 tenants: 498s → 97s, a 5.1x speedup, 0 errors, same
+job count.** Source-level `hostConcurrency`/`hostSpacingMs` were also previously
+unreachable (the global default was read first), so tuning them did nothing.
+
+**Do not raise these further.** Two later experiments settled it. Narrower
+search phrases were tested as a way to fetch less: they are *worse*, costing
+more requests per on-target job on three of four large tenants (Citi 1.07
+on-target/request with the current two phrases vs 0.57 with eight narrow ones),
+so the existing phrase strategy is already near-optimal. And after several
+heavy load experiments in quick succession, `wd1` began throttling: the same
+30-tenant run that had returned 11,563 jobs with 0 errors on a rested pod
+returned 1,063 jobs with 293 errors and 23 throttle responses. The circuit
+breaker and Retry-After handling absorbed it correctly and the pod answered
+normally again after a pause — but it is direct evidence that these hosts do
+enforce limits, and that 8 in flight with no added spacing is at a sensible
+edge rather than comfortably below one. A single ordinary run measures ~0.3%
+request errors. Further speed has to come from `maxPagesPerTerm` (an explicit
+coverage trade), not from more concurrency.
+
+**Cancelling took ~30 seconds.** Cancel was cooperative polling only
+(`shouldCancel`, checked between operations), so a request already on the wire
+ran to completion or to its `requestTimeoutMs` (30s), and every request already
+queued behind a pod gate was still dialled — hundreds of them. There is now a
+per-run `AbortSignal`: in-flight fetches abort and gate-queued work is dropped
+(`RunCancelledError`). A cancellation is labelled, non-retryable, not counted as
+a host fault, and not reported as a per-request failure — stopping a run is not
+an error, and it used to emit one RCA line per dropped request.
+**Measured stop latency against live network work: 123ms (was ~29,000ms)**, with
+results already found kept.
+
 Discovery-wide guarantees (tested): cross-source dedup by company+title and
 normalized URL (`deduplicator`), incremental skip-unchanged
 (`incrementalDiscovery`), truthful last-24h (`dates`,

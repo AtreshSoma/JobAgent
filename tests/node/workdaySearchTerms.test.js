@@ -224,3 +224,204 @@ describe('run() — merging multiple phrases', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+// PERFORMANCE. With 200+ tenants funnelling through a handful of shared pod
+// gates, these two knobs decide whether a discovery run takes ten minutes or
+// two — and the source-level values were UNREACHABLE, because `ctx.*` (the
+// global default) was read first. Tuning them in jobboards.json did nothing.
+describe('run() — pod politeness knobs are tunable per source', () => {
+  const candidate = { targetTitles: TITLES };
+
+  /** Capture what createHostGate/spacing the adapter actually ends up using. */
+  const gateSpy = () => {
+    const seen = { spacings: [] };
+    return {
+      seen,
+      hostGate: {
+        run: (_url, fn, opts) => { seen.spacings.push(opts?.minSpacingMs); return fn(); },
+        isOpen: () => false,
+      },
+    };
+  };
+
+  it('honors a source-level hostSpacingMs over the global default', async () => {
+    const { seen, hostGate } = gateSpy();
+    await workday.run(
+      { tenants: [TENANT], hostSpacingMs: 0, maxSearchTerms: 1 },
+      {
+        fetchImpl: async () => ({ ok: true, json: async () => ({ total: 0, jobPostings: [] }) }),
+        candidate,
+        hostGate,
+        workdayHostSpacingMs: 500, // the global default must NOT win
+        maxRetries: 0,
+      },
+    );
+    expect(seen.spacings.length).toBeGreaterThan(0);
+    expect(seen.spacings.every((s) => s === 0)).toBe(true);
+  });
+
+  it('rateLimitMs: 0 still forces no spacing at all', async () => {
+    const { seen, hostGate } = gateSpy();
+    await workday.run(
+      { tenants: [TENANT], rateLimitMs: 0, maxSearchTerms: 1 },
+      {
+        fetchImpl: async () => ({ ok: true, json: async () => ({ total: 0, jobPostings: [] }) }),
+        candidate, hostGate, maxRetries: 0,
+      },
+    );
+    expect(seen.spacings.every((s) => s === 0)).toBe(true);
+  });
+});
+
+// The per-tenant full-description budget is a handful of requests against a
+// tenant that commonly returns 100-200 postings. `.slice(0, budget)` on raw list
+// order therefore enriched ~5% of a tenant chosen essentially at random, while
+// genuinely on-target roles stayed summary-only.
+describe('run() — detail budget goes to the most relevant jobs', () => {
+  const candidate = { targetTitles: TITLES };
+
+  const posting = (title, n) => ({
+    title,
+    externalPath: `/job/US/${encodeURIComponent(title)}_R${n}`,
+    locationsText: 'Austin, TX',
+    postedOn: 'Posted 2 Days Ago',
+    bulletFields: [`R${n}`],
+  });
+
+  it('enriches target-title matches ahead of unrelated roles listed first', async () => {
+    // The on-target role is LAST in list order — exactly the case the old
+    // slice() dropped.
+    const rows = [
+      posting('Warehouse Associate', 1),
+      posting('Retail Cashier', 2),
+      posting('Truck Driver', 3),
+      posting('Senior Data Engineer', 4),
+    ];
+    const detailed = [];
+    const fetchImpl = async (url, init) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(init.body);
+        return {
+          ok: true,
+          json: async () => ({ total: body.offset === 0 ? rows.length : 0, jobPostings: body.offset === 0 ? rows : [] }),
+        };
+      }
+      detailed.push(String(url));
+      return { ok: true, json: async () => ({ jobPostingInfo: { jobDescription: '<p>full</p>' } }) };
+    };
+
+    await workday.run(
+      { ...FAST, tenants: [{ ...TENANT, fetchDetails: true }], maxDetailFetches: 1, maxSearchTerms: 1 },
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+
+    expect(detailed).toHaveLength(1);
+    expect(decodeURIComponent(detailed[0])).toContain('Senior Data Engineer');
+  });
+
+  it('prefers a role-shaped title over an unrelated one when neither is an exact match', async () => {
+    const rows = [posting('Retail Cashier', 1), posting('Staff Analytics Architect', 2)];
+    const detailed = [];
+    const fetchImpl = async (url, init) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(init.body);
+        return {
+          ok: true,
+          json: async () => ({ total: body.offset === 0 ? rows.length : 0, jobPostings: body.offset === 0 ? rows : [] }),
+        };
+      }
+      detailed.push(String(url));
+      return { ok: true, json: async () => ({ jobPostingInfo: { jobDescription: '<p>full</p>' } }) };
+    };
+
+    await workday.run(
+      { ...FAST, tenants: [{ ...TENANT, fetchDetails: true }], maxDetailFetches: 1, maxSearchTerms: 1 },
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+
+    expect(detailed).toHaveLength(1);
+    expect(decodeURIComponent(detailed[0])).toContain('Analytics Architect');
+  });
+
+  it('still spends nothing when the budget is zero', async () => {
+    const rows = [posting('Senior Data Engineer', 1)];
+    const detailed = [];
+    const fetchImpl = async (url, init) => {
+      if (init?.method === 'POST') {
+        const body = JSON.parse(init.body);
+        return {
+          ok: true,
+          json: async () => ({ total: body.offset === 0 ? rows.length : 0, jobPostings: body.offset === 0 ? rows : [] }),
+        };
+      }
+      detailed.push(String(url));
+      return { ok: true, json: async () => ({}) };
+    };
+    await workday.run(
+      { ...FAST, tenants: [{ ...TENANT, fetchDetails: true }], maxDetailFetches: 0, maxSearchTerms: 1 },
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+    expect(detailed).toEqual([]);
+  });
+});
+
+// The one knob that trades COVERAGE for speed, so it must default to no change
+// and never silently drop pages. Measured on-target recall by cap: 3 pages 40%,
+// 8 pages 65%, 12 pages 71% — ordering is only weakly relevance-based, so a low
+// cap loses real matches and is left to the operator as a deliberate choice.
+describe('run() — maxPagesPerTerm', () => {
+  const candidate = { targetTitles: TITLES };
+
+  /** A tenant with `total` postings, served 20 at a time. */
+  const pagedTenant = (total) => {
+    const offsets = [];
+    const fetchImpl = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      offsets.push(body.offset);
+      const rows = [];
+      for (let i = body.offset; i < Math.min(body.offset + body.limit, total); i += 1) {
+        rows.push({ title: `Data Engineer ${i}`, externalPath: `/job/US/DE-${i}_R${i}` });
+      }
+      return { ok: true, json: async () => ({ total: body.offset === 0 ? total : 0, jobPostings: rows }) };
+    };
+    return { fetchImpl, offsets };
+  };
+
+  it('walks every page by default — no silent coverage loss', async () => {
+    const { fetchImpl, offsets } = pagedTenant(200);
+    const { jobs } = await workday.run(
+      { ...FAST, tenants: [TENANT], maxSearchTerms: 1 },
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+    expect(offsets).toHaveLength(10); // 200 / 20
+    expect(jobs).toHaveLength(200);
+  });
+
+  it('stops at the configured cap when one is set', async () => {
+    const { fetchImpl, offsets } = pagedTenant(200);
+    const { jobs } = await workday.run(
+      { ...FAST, tenants: [TENANT], maxSearchTerms: 1, maxPagesPerTerm: 3 },
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+    expect(offsets.sort((a, b) => a - b)).toEqual([0, 20, 40]);
+    expect(jobs).toHaveLength(60);
+  });
+
+  it('never exceeds the hard runaway guard, however large the config value', async () => {
+    const { fetchImpl, offsets } = pagedTenant(20_000);
+    await workday.run(
+      { ...FAST, tenants: [TENANT], maxSearchTerms: 1, maxPagesPerTerm: 9999 },
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+    expect(offsets.length).toBeLessThanOrEqual(50);
+  });
+
+  it('applies the cap per PHRASE, not shared across phrases', async () => {
+    const { fetchImpl, offsets } = pagedTenant(200);
+    await workday.run(
+      { ...FAST, tenants: [TENANT], maxPagesPerTerm: 2 }, // 2 derived phrases
+      { fetchImpl, candidate, maxRetries: 0 },
+    );
+    expect(offsets).toHaveLength(4); // 2 pages x 2 phrases
+  });
+});

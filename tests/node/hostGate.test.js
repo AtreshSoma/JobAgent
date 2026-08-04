@@ -8,7 +8,9 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { createHostGate, hostKeyFor, HostCircuitOpenError } from '../../src/utils/hostGate.js';
+import {
+  createHostGate, hostKeyFor, HostCircuitOpenError, RunCancelledError,
+} from '../../src/utils/hostGate.js';
 
 /** An error shaped like the ones httpError() builds. */
 function throttle(status = 429, retryAfterMs = null) {
@@ -153,5 +155,90 @@ describe('createHostGate', () => {
       await expect(gate.run(url, async () => { throw throttle(404); })).rejects.toThrow();
     }
     expect(gate.isOpen(url)).toBe(false);
+  });
+});
+
+// PERFORMANCE + CANCELLATION.
+//
+// Cancelling a discovery run used to take ~30 seconds with the UI stuck on
+// "Stopping…", matching `requestTimeoutMs` almost exactly. Cancel was
+// cooperative polling only (`shouldCancel` checked BETWEEN operations), so a
+// request already on the wire ran to completion or to its timeout, and every
+// request already queued behind a pod's gate was still dialled. With 200+
+// Workday tenants funnelling through a handful of pod gates, that queue is
+// hundreds of requests deep.
+describe('createHostGate cancellation', () => {
+  it('refuses a call outright when the run is already cancelled', async () => {
+    const gate = createHostGate({ maxConcurrent: 4, sleepFn: async () => {} });
+    const controller = new AbortController();
+    controller.abort();
+    let ran = false;
+    await expect(gate.run(
+      'https://acme.wd1.myworkdayjobs.com/x',
+      async () => { ran = true; return 'ok'; },
+      { signal: controller.signal },
+    )).rejects.toThrow(RunCancelledError);
+    expect(ran, 'the request must never be sent').toBe(false);
+  });
+
+  it('drops work still QUEUED behind a busy gate instead of dialling it', async () => {
+    // This is the case that made "Stopping…" slow: the gate had a long queue and
+    // every waiter still got its turn on the wire.
+    const gate = createHostGate({ maxConcurrent: 1, sleepFn: async () => {} });
+    const url = 'https://acme.wd1.myworkdayjobs.com/x';
+    const controller = new AbortController();
+
+    let releaseFirst;
+    const finishFirst = new Promise((resolve) => { releaseFirst = resolve; });
+    let announceStarted;
+    // `await acquire()` yields a microtask even when a slot is free, so we must
+    // wait for the work to be genuinely ON THE WIRE before cancelling —
+    // otherwise this would be testing the already-covered "cancelled before it
+    // started" path instead of the queue-draining one.
+    const firstIsRunning = new Promise((resolve) => { announceStarted = resolve; });
+    let sent = 0;
+
+    // Occupy the only slot and hold it.
+    const first = gate.run(url, async () => {
+      sent += 1;
+      announceStarted();
+      await finishFirst;
+      return 'first';
+    }, { signal: controller.signal });
+    await firstIsRunning;
+
+    // Queue three more behind it, then cancel before the slot frees.
+    const queued = [1, 2, 3].map(() => gate.run(url, async () => {
+      sent += 1;
+      return 'queued';
+    }, { signal: controller.signal }).catch((e) => e));
+
+    controller.abort();
+    releaseFirst();
+
+    await expect(first, 'work already on the wire is allowed to finish').resolves.toBe('first');
+    const results = await Promise.all(queued);
+
+    expect(results.every((r) => r instanceof RunCancelledError)).toBe(true);
+    expect(sent, 'only the already-started request should have been sent').toBe(1);
+  });
+
+  it('a cancellation is labelled, non-retryable, and not a host fault', async () => {
+    // withRetry must not re-attempt it, and it must not count as a throttle that
+    // would trip the breaker or slow down a host that did nothing wrong.
+    const gate = createHostGate({ maxConcurrent: 1, breakerThreshold: 1, sleepFn: async () => {} });
+    const url = 'https://acme.wd1.myworkdayjobs.com/x';
+    const controller = new AbortController();
+    controller.abort();
+    const err = await gate.run(url, async () => 'never', { signal: controller.signal }).catch((e) => e);
+    expect(err.cancelled).toBe(true);
+    expect(err.retryable).toBe(false);
+    expect(err.code).toBe('RUN_CANCELLED');
+    expect(gate.isOpen(url), 'a cancel is not the host throttling us').toBe(false);
+  });
+
+  it('is unaffected when no signal is supplied at all', async () => {
+    const gate = createHostGate({ maxConcurrent: 2, sleepFn: async () => {} });
+    await expect(gate.run('https://x.example.com/a', async () => 'ok')).resolves.toBe('ok');
   });
 });

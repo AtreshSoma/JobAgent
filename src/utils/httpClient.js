@@ -125,6 +125,21 @@ export async function fetchWithTimeout(fetchImpl, url, init = {}, timeoutMs) {
       e.retryable = true;
       throw e;
     }
+    // An abort from the CALLER's signal is a deliberate cancellation, not a
+    // fault. Surfaced as a labelled, non-retryable error carrying `cancelled`
+    // so a stopped run reports "stopped on request" instead of a wall of raw
+    // DOMExceptions — one per request the cancel legitimately dropped.
+    if (err?.name === 'AbortError' && external?.aborted) {
+      const e = new Error('cancelled: the run was stopped');
+      // Keep `name` so the documented "an external abort stays an abort"
+      // contract holds for existing consumers (linkHealth, failureRca), and add
+      // the labelling on top rather than replacing it.
+      e.name = 'AbortError';
+      e.code = 'RUN_CANCELLED';
+      e.retryable = false;
+      e.cancelled = true;
+      throw e;
+    }
     throw err;
   } finally {
     clearTimeout(timer);

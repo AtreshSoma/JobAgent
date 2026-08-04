@@ -201,6 +201,23 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     return promise;
   };
 
+  /**
+   * Aborts the IN-FLIGHT network work of the current run.
+   *
+   * `runState.cancelRequested` alone is cooperative polling: adapters check it
+   * between operations, so a request already on the wire still ran to
+   * completion or to its 30s timeout, and everything already queued behind a
+   * politeness gate still got sent. Cancelling a discovery run therefore took
+   * ~30 seconds with the UI stuck on "Stopping…" — matching `requestTimeoutMs`
+   * almost exactly. This signal makes cancel immediate: in-flight fetches abort
+   * and gate-queued work is dropped rather than dialled.
+   *
+   * Deliberately NOT a field on `runState`, which is serialized wholesale to
+   * /api/run/status — this is a live object, not reportable state.
+   * @type {AbortController|null}
+   */
+  let runAbort = null;
+
   // Doctor is intentionally expensive (Python/browser/filesystem probes).
   // Coalesce concurrent requests and keep a short cache so revisiting Settings
   // does not spawn the same checks repeatedly.
@@ -631,6 +648,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
           found: 0, errors: 0, durationMs: null, cached: false,
         }))
       : [];
+    runAbort = new AbortController();
     Object.assign(runState, {
       running: true, phase, startedAt: new Date().toISOString(),
       finishedAt: null, lastError: null, cancelRequested: false,
@@ -666,6 +684,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
       try {
         const r = await runners[phase]({
           shouldCancel: () => runState.cancelRequested,
+          abortSignal: runAbort.signal,
           searchHooks: { onSource },
         });
         // Per-source failures (a board that timed out, a token that expired)
@@ -1150,11 +1169,16 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         return sendJson(res, 409, { error: 'nothing is running' });
       }
       runState.cancelRequested = true;
+      // Abort in-flight and gate-queued network work too. Without this, cancel
+      // was cooperative polling only: adapters noticed between operations, but a
+      // request already on the wire still had to finish or time out (30s), so
+      // stopping a discovery run took ~30 seconds.
+      runAbort?.abort();
       return sendJson(res, 202, {
         cancelling: true,
         phase: runState.phase,
         note: runState.phase === 'discover'
-          ? 'queued discovery work will stop; an already-started network request finishes safely'
+          ? 'queued discovery work is dropped and in-flight requests are aborted; results already found are kept'
           : 'the current safe step will finish, then queued work will stop',
       });
     }

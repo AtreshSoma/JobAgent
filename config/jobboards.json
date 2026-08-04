@@ -2017,13 +2017,14 @@
         }
       ],
       "rateLimitMs": 4000,
-      "hostSpacingMs": 500,
+      "hostSpacingMs": 0,
       "maxDetailFetches": 8,
       "options": {
         "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) — adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant."
       },
       "maxSearchTerms": 2,
-      "boardConcurrency": 24
+      "boardConcurrency": 24,
+      "hostConcurrency": 8
     },
     {
       "id": "company-careers",
