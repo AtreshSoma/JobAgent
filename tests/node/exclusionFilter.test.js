@@ -31,6 +31,86 @@ describe('exclusionFilter', () => {
     expect(r.category).toBe('role_mismatch');
   });
 
+  /**
+   * Role identity is stated in the TITLE. Matching roleMismatch against the JD
+   * body made senior roles disqualify themselves for describing their own
+   * responsibilities: measured over the stored corpus, 2,502 of 2,748
+   * role_mismatch discards (91%) matched only in the body, "junior" alone
+   * accounting for 1,983 — Senior/Lead Data Engineer postings that are the exact
+   * target profile, silently deleted for offering to mentor juniors.
+   */
+  describe('role mismatch is judged on the title, not the body prose', () => {
+    it.each([
+      'Serve as a mentor to junior team members and promote a culture of curiosity.',
+      'Mentor data engineers: guide junior and mid-level engineers, conduct code reviews.',
+      'Providing guidance and mentoring to junior engineers.',
+      'New grads with strong cross-functional internship/project experience will be considered.',
+      'You will work alongside iOS developers and Android developers on the mobile team.',
+    ])('keeps a senior role whose body says: %s', (line) => {
+      const job = { ...F.azureFabricSenior, jdText: `${F.azureFabricSenior.jdText} ${line}` };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(false);
+    });
+
+    it.each([
+      'Junior Data Engineer',
+      'Data Engineer Intern',
+      'Entry-Level Analytics Engineer',
+      'iOS Developer',
+    ])('still discards on the title: %s', (title) => {
+      const job = { ...F.azureFabricSenior, title };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(true);
+      expect(r.category).toBe('role_mismatch');
+    });
+
+    it('still discards a body-scoped scope statement from roleMismatchBody', () => {
+      const job = { ...F.azureFabricSenior, jdText: `${F.azureFabricSenior.jdText} This is a frontend only role.` };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(true);
+      expect(r.category).toBe('role_mismatch');
+    });
+  });
+
+  /**
+   * Clearance matching was polarity-blind too: a posting saying the clearance is
+   * optional was discarded exactly like one demanding it (48 such rows in the
+   * stored corpus).
+   */
+  describe('security clearance respects how the requirement is phrased', () => {
+    it.each([
+      'Secret or TS/SCI clearance is a nice to have for this role.',
+      'Active TS/SCI clearance preferred.',
+      'Candidates are not required to hold an active clearance at the time of application.',
+      'A secret clearance is a plus but not required.',
+    ])('keeps a role whose clearance is optional: %s', (line) => {
+      const job = { ...F.azureFabricSenior, jdText: `${F.azureFabricSenior.jdText} ${line}` };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(false);
+    });
+
+    it.each([
+      'Must hold an active TS/SCI clearance.',
+      'Security clearance required. Applicants must be cleared on day one.',
+    ])('still discards a hard clearance requirement: %s', (line) => {
+      const job = { ...F.azureFabricSenior, jdText: `${F.azureFabricSenior.jdText} ${line}` };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(true);
+      expect(r.category).toBe('security_clearance');
+    });
+
+    it('one hard clearance mention outranks a softened one elsewhere', () => {
+      const job = {
+        ...F.azureFabricSenior,
+        jdText: `${F.azureFabricSenior.jdText} A public trust clearance is preferred. `
+          + 'Must hold a clearance before starting.',
+      };
+      const r = applyExclusions(job, exclusions, opts);
+      expect(r.excluded).toBe(true);
+      expect(r.category).toBe('security_clearance');
+    });
+  });
+
   it('discards postings older than skipOlderThanDays', () => {
     const tooOld = new Date(F.NOW);
     tooOld.setUTCDate(tooOld.getUTCDate() - exclusions.staleness.skipOlderThanDays - 1);

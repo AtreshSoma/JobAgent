@@ -149,13 +149,18 @@ function detectSeniority(text) {
   return null;
 }
 
+/**
+ * Sponsorship feasibility points. `Denied` scores ZERO — below Unconfirmed,
+ * which still earns partial credit for being merely unknown. An explicit refusal
+ * is worse than silence, so it must never out-score it.
+ */
 function scoreSponsorship(status, weight) {
-  const factor = { Confirmed: 1, Approved: 1, Likely: 0.7, Unconfirmed: 0.35 }[status] ?? 0;
+  const factor = { Confirmed: 1, Approved: 1, Likely: 0.7, Unconfirmed: 0.35, Denied: 0 }[status] ?? 0;
   return { points: round2(weight * factor), weight, matched: [status ?? 'Unconfirmed'] };
 }
 
 function scoreCompanyLikelihood(status, weight) {
-  const factor = { Confirmed: 1, Approved: 1, Likely: 1, Unconfirmed: 0.2 }[status] ?? 0;
+  const factor = { Confirmed: 1, Approved: 1, Likely: 1, Unconfirmed: 0.2, Denied: 0 }[status] ?? 0;
   return { points: round2(weight * factor), weight, matched: [status ?? 'Unconfirmed'] };
 }
 

@@ -17,6 +17,7 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 import { usLocationSignal } from '../utils/usGeography.js';
+import { detectSponsorshipDenial } from '../utils/sponsorshipLanguage.js';
 
 /**
  * @param {object} job normalized job
@@ -33,22 +34,44 @@ import { usLocationSignal } from '../utils/usGeography.js';
  */
 export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } = {}) {
   const text = normalizeText([job.title, job.jdText, job.employmentType, job.location].join(' \n '));
+  // Role identity lives in the TITLE, not in the body prose (see checkRoleMismatch).
+  const roleText = normalizeText([job.title, job.employmentType].join(' \n '));
   const flags = [];
 
-  // 1. Sponsorship denial — always discards.
+  // 1. Sponsorship denial — always discards. Two independent detectors:
+  // the config phrase list (explicit user control) and the polarity reader,
+  // which recognizes the CONSTRUCTION "<negation> … sponsorship" and so catches
+  // the long tail no fixed list can enumerate. Measured over 39,503 stored JDs,
+  // the reader found 773 real refusals the list missed — including
+  // "This role is not eligible for work visa sponsorship", the phrasing that was
+  // instead being scored as Confirmed.
   const denial = matchedPhrases(text, exclusions.sponsorshipDenial ?? []);
   if (denial.length) return discard('sponsorship_denial', denial);
+  const detected = detectSponsorshipDenial(text);
+  if (detected.denied) return discard('sponsorship_denial', detected.evidence.slice(0, 2));
 
-  // 2. Security clearance — discard unless an allowance phrase is present.
-  const clearance = matchedPhrases(text, exclusions.securityClearance ?? []);
-  if (clearance.length) {
-    const allowed = matchedPhrases(text, exclusions.clearanceAllowance ?? []);
-    if (allowed.length === 0) return discard('security_clearance', clearance);
-  }
+  // 2. Security clearance — discard unless the requirement is soft or negated.
+  const clearanceGate = checkClearance(text, exclusions);
+  if (clearanceGate) return clearanceGate;
 
   // 3. Role mismatch.
-  const role = matchedPhrases(text, exclusions.roleMismatch ?? []);
+  //
+  // Scoped to the TITLE, because that is where a role's identity is stated.
+  // REGRESSION GUARD: matching these phrases against the whole JD body made a
+  // senior role disqualify itself for describing its own responsibilities —
+  // "serve as a mentor to JUNIOR team members", "guide JUNIOR and mid-level
+  // engineers", "new grads with strong INTERNSHIP experience". Measured over the
+  // stored corpus, 2,502 of 2,748 role_mismatch discards (91%) matched ONLY in
+  // the body, and they were silently deleted: "junior" alone cost 1,983 jobs,
+  // including Senior/Lead Data Engineer and Data Platform Engineer postings that
+  // are the exact target profile.
+  //
+  // `roleMismatchBody` keeps the handful of phrases that are genuine BODY
+  // statements about scope ("frontend only", "mobile only") scanning the full text.
+  const role = matchedPhrases(roleText, exclusions.roleMismatch ?? []);
   if (role.length) return discard('role_mismatch', role);
+  const roleBody = matchedPhrases(text, exclusions.roleMismatchBody ?? []);
+  if (roleBody.length) return discard('role_mismatch', roleBody);
 
   // 4. Employment mismatch.
   const employment = matchedPhrases(text, exclusions.employmentMismatch ?? []);
@@ -93,6 +116,67 @@ function discard(category, matched) {
     matched,
     flags: [],
   };
+}
+
+/**
+ * Phrases that make a clearance mention NON-disqualifying: the requirement is
+ * optional, or it is explicitly waived.
+ *
+ * REGRESSION GUARD. `securityClearance` was matched as bare presence anywhere in
+ * the JD, so a posting saying the clearance is optional was discarded exactly
+ * like one demanding it. Measured over the stored corpus, 48 discards sat in
+ * such a context — "secret or ts/sci clearance is a NICE TO HAVE for this role",
+ * "candidates are NOT REQUIRED to hold an active clearance at the time of
+ * application". These are the same polarity blindness that mislabelled
+ * sponsorship, and they are checked in the clause AROUND the clearance mention
+ * rather than document-wide, so an unrelated "preferred" elsewhere in a long JD
+ * cannot wave through a hard clearance requirement.
+ */
+const CLEARANCE_SOFTENERS = [
+  /\bnice\s+to\s+have\b/, /\bpreferred\b/, /\bpreferrable\b/, /\ba\s+plus\b/,
+  /\bdesirable\b/, /\bdesired\b/, /\bnot\s+required\b/, /\bnot\s+necessary\b/,
+  /\bno\s+clearance\s+(?:is\s+)?required\b/, /\bwithout\s+a\s+clearance\b/,
+  /\boptional\b/, /\bbonus\b/, /\bideally\b/, /\bwillingness\s+to\s+obtain\b/,
+];
+
+/** Characters that end the clause a clearance softener must live inside. */
+const SENTENCE_END = /[.;!?\n\r•·]/;
+
+/**
+ * Security-clearance gate. Returns a discard decision, or null when the
+ * requirement is absent, config-allowed, or softened.
+ */
+function checkClearance(text, exclusions) {
+  const clearance = matchedPhrases(text, exclusions.securityClearance ?? []);
+  if (!clearance.length) return null;
+
+  // Explicit config allowance still wins outright, document-wide.
+  if (matchedPhrases(text, exclusions.clearanceAllowance ?? []).length) return null;
+
+  // Otherwise every clearance mention must be softened for the job to survive.
+  // One hard mention is enough to discard.
+  for (const phrase of clearance) {
+    const needle = normalizeText(phrase);
+    let from = 0;
+    for (;;) {
+      const idx = text.indexOf(needle, from);
+      if (idx === -1) break;
+      if (!CLEARANCE_SOFTENERS.some((re) => re.test(sentenceAround(text, idx, needle.length)))) {
+        return discard('security_clearance', clearance);
+      }
+      from = idx + 1;
+    }
+  }
+  return null;
+}
+
+/** The sentence containing [index, index+length). */
+function sentenceAround(text, index, length) {
+  let start = index;
+  while (start > 0 && !SENTENCE_END.test(text[start - 1])) start -= 1;
+  let end = index + length;
+  while (end < text.length && !SENTENCE_END.test(text[end])) end += 1;
+  return text.slice(start, end);
 }
 
 function escapeRegex(s) {

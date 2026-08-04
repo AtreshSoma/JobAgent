@@ -81,11 +81,18 @@ export function gateThreshold() {
  * (raw Apply/Priority, sponsorship not Confirmed/Likely/Approved), so the flag
  * is recoverable for every historical row without a schema migration.
  *
- * @param {{tier?: string|null, score?: number|null}} job jobs-table row or board row
+ * A row whose sponsorship is `Denied` is NOT "gated": the gate means "we do not
+ * know yet — go verify", and this drives a "verify sponsorship" call to action.
+ * An employer that has already refused in writing leaves nothing to verify, so
+ * such a row must never be counted as a strong fit awaiting a check.
+ *
+ * @param {{tier?: string|null, score?: number|null, sponsorship?: string|null}} job
+ *   jobs-table row or board row
  * @returns {boolean}
  */
 export function isSponsorshipGated(job = {}) {
   return job.tier === TIERS.QUEUE
+    && job.sponsorship !== 'Denied'
     && typeof job.score === 'number'
     && job.score >= applyThreshold;
 }

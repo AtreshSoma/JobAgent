@@ -42,15 +42,15 @@
     "sponsorship available for cleared candidates",
     "clearance not required"
   ],
+  "_roleMismatchNote": "roleMismatch is matched against the TITLE (plus employmentType) only -- a role's identity is stated in its title. Matching these against the JD body made senior roles disqualify themselves for saying 'mentor junior engineers' (2,502 of 2,748 discards were body-only false positives). Phrases that are genuine BODY statements about scope belong in roleMismatchBody, which still scans the full text.",
   "roleMismatch": [
     "junior",
     "entry level",
     "entry-level",
     "internship",
     "intern position",
-    "frontend only",
-    "front-end only",
-    "mobile only",
+    "intern",
+    "co-op",
     "ios developer",
     "android developer",
     "sap abap",
@@ -64,6 +64,11 @@
     "blockchain developer",
     "blockchain only",
     "smart contract developer"
+  ],
+  "roleMismatchBody": [
+    "frontend only",
+    "front-end only",
+    "mobile only"
   ],
   "employmentMismatch": [],
   "geographyMismatch": [

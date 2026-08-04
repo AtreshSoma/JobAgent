@@ -34,7 +34,7 @@ import {
   listPending, approve, reject, APPROVAL_STATUS,
 } from '../apply/approvalQueue.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
-import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
+import { classifySponsorship, SPONSORSHIP } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
@@ -144,10 +144,6 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     if (i % 250 === 0) await new Promise((r) => setImmediate(r));
     const row = ids ? db.getJob(ids[index]) : eagerRows[index];
     if (!row) continue;
-    if (isProtectedJobRow(row) || !RESCORABLE_STATUSES.has(row.status)) {
-      counters.jobs_skipped_protected += 1;
-      continue;
-    }
 
     const job = {
       id: row.id, source: row.source, company: row.company, title: row.title,
@@ -156,10 +152,54 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
       employmentType: row.employment_type,
     };
 
+    if (isProtectedJobRow(row) || !RESCORABLE_STATUSES.has(row.status)) {
+      // The row's WORKFLOW state is the human's and stays untouched — status,
+      // score, tier, decision, packet all keep their values.
+      //
+      // Its SPONSORSHIP VERDICT is a fact about the employer, not workflow
+      // state, and a wrong one must never be preserved. These are the most
+      // dangerous rows in the corpus: after the polarity fix, 4 rows still read
+      // "Confirmed" — all of them `prepared`/`assist_blocked`, i.e. packets
+      // built and queued to apply to employers whose postings refuse
+      // sponsorship in writing ("does not provide work visa sponsorship").
+      // Refreshing the verdict here means the human sees the refusal before
+      // submitting, without the re-score touching anything they own.
+      const verdict = classifySponsorship(job, config.scoring.sponsorship);
+      // Also backfill when the verdict is unchanged but its evidence was never
+      // recorded — otherwise the badge keeps telling the reader to re-score to
+      // capture evidence that a re-score would skip.
+      if (verdict.status !== row.sponsorship || !row.sponsorship_signals) {
+        db.upsertJob({
+          id: job.id,
+          sponsorship: verdict.status,
+          sponsorship_signals: verdict.signals ?? [],
+        });
+        counters.jobs_sponsorship_corrected = (counters.jobs_sponsorship_corrected ?? 0) + 1;
+      }
+      counters.jobs_skipped_protected += 1;
+      continue;
+    }
+
     // Same chain as discovery: exclusions -> sponsorship -> score -> tier.
     const exclusion = applyExclusions(job, config.exclusions, { now });
     if (exclusion.excluded) {
-      db.upsertJob({ id: job.id, status: 'discarded', discard_reason: exclusion.reason });
+      // The sponsorship verdict is refreshed for EVERY discarded row, whatever
+      // the discard reason. It is a fact about the employer, independent of why
+      // this posting was dropped, and leaving it alone preserved verdicts from
+      // the old polarity-blind logic: 454 rows discarded for geography or
+      // staleness still read "Confirmed" — with no evidence — and resurfaced
+      // that way the moment "Closed jobs" was ticked.
+      const denied = exclusion.category === 'sponsorship_denial';
+      const verdict = denied
+        ? { status: SPONSORSHIP.DENIED, signals: exclusion.matched }
+        : classifySponsorship(job, config.scoring.sponsorship);
+      db.upsertJob({
+        id: job.id,
+        status: 'discarded',
+        discard_reason: exclusion.reason,
+        sponsorship: verdict.status,
+        sponsorship_signals: verdict.signals ?? [],
+      });
       counters.jobs_excluded += 1;
       continue;
     }
@@ -169,6 +209,7 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     db.upsertJob({
       id: job.id,
       score: score.total, tier, sponsorship: sponsorship.status,
+      sponsorship_signals: sponsorship.signals ?? [],
       employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
       matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
       explanation,
@@ -266,6 +307,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
       : {}),
     employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
     score: score.total, tier, sponsorship: sponsorship.status,
+    sponsorship_signals: sponsorship.signals ?? [],
     matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
     explanation: fullExplanation, status: tier === 'Discard' ? 'discarded' : 'scored',
     discard_reason: tier === 'Discard' && caveat ? exclusion.reason : null,

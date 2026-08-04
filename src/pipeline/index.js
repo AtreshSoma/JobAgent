@@ -93,6 +93,10 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       ...(deps.searchCtx ?? {}),
       root: config.root,
       shouldCancel: deps.shouldCancel,
+      // Aborts in-flight and gate-queued network work on cancel. `shouldCancel`
+      // is only checked BETWEEN operations, so without this a request already on
+      // the wire ran to completion or to its timeout — a ~30s "Stopping…".
+      abortSignal: deps.abortSignal,
       workdayDetailCache,
     },
     hooks: deps.searchHooks ?? {},
@@ -237,6 +241,9 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
 
     persistJob(db, job, {
       score: score.total, tier, sponsorship: sponsorship.status,
+      // The evidence behind the sponsorship verdict, so the badge is auditable
+      // rather than an unexplained assertion.
+      sponsorship_signals: sponsorship.signals ?? [],
       matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
       explanation, status: tier === TIERS.DISCARD ? 'discarded' : 'scored',
     }, config.exclusions?.employmentTypes);

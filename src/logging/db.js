@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   score INTEGER,
   tier TEXT,
   sponsorship TEXT,
+  sponsorship_signals TEXT,
   discard_reason TEXT,
   matched_keywords TEXT,
   missing_keywords TEXT,
@@ -121,7 +122,7 @@ CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
 const JOB_SUMMARY_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'posted_at',
   'applicant_count', 'employment_type', 'employment_category', 'compensation_text',
-  'score', 'tier', 'sponsorship',
+  'score', 'tier', 'sponsorship', 'sponsorship_signals',
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
   'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
   'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
@@ -134,7 +135,7 @@ const JOB_SUMMARY_COLUMNS = [
 const JOB_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'jd_text', 'posted_at',
   'applicant_count', 'employment_type', 'employment_category', 'compensation_text',
-  'score', 'tier', 'sponsorship',
+  'score', 'tier', 'sponsorship', 'sponsorship_signals',
   'discard_reason', 'matched_keywords', 'missing_keywords', 'explanation',
   'ats_platform', 'ats_score', 'ats_band', 'status', 'resume_path', 'resume_docx_path', 'resume_pdf_path',
   'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
@@ -189,7 +190,13 @@ function applyMigrations(db) {
   const jobCols = new Set(db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
   for (const col of ['resume_docx_path', 'resume_pdf_path', 'output_folder_path',
     'user_decision', 'decided_at', 'assist_blockers', 'notes', 'submitted_confirmation', 'ats_band',
-    'employment_category', 'compensation_text', 'prepared_at']) {
+    'employment_category', 'compensation_text', 'prepared_at',
+    // Why a row says Confirmed/Denied. The classifier always computed these
+    // signals and the pipeline always threw them away, so the sponsorship badge
+    // asserted a conclusion with no recoverable evidence -- which is exactly why
+    // 6 Humana rows could claim "Confirmed" off sentences that refused
+    // sponsorship outright without anyone being able to see it from the UI.
+    'sponsorship_signals']) {
     if (!jobCols.has(col)) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }

@@ -14,9 +14,13 @@
     "clearanceAllowance"
   ],
   "properties": {
+    "_roleMismatchNote": {
+      "type": "string",
+      "description": "Free-text note explaining the roleMismatch / roleMismatchBody split."
+    },
     "sponsorshipDenial": {
       "type": "array",
-      "description": "Phrases that indicate sponsorship will not be provided. Any match discards the job.",
+      "description": "Phrases that indicate sponsorship will not be provided. Any match discards the job. Matched IN ADDITION to the generic negation-aware detector in utils/sponsorshipLanguage.js, which catches refusal constructions no fixed list can enumerate.",
       "items": { "type": "string" }
     },
     "securityClearance": {
@@ -26,7 +30,12 @@
     },
     "roleMismatch": {
       "type": "array",
-      "description": "Phrases indicating the role does not match the target profile.",
+      "description": "Phrases indicating the role does not match the target profile. Matched against the TITLE (plus employmentType) only, since a role's identity is stated in its title -- matching them against the JD body made senior roles disqualify themselves for saying 'mentor junior engineers'.",
+      "items": { "type": "string" }
+    },
+    "roleMismatchBody": {
+      "type": "array",
+      "description": "Role-mismatch phrases that are genuine statements about scope in the JD body ('frontend only') and so are matched against the FULL text rather than the title.",
       "items": { "type": "string" }
     },
     "employmentMismatch": {

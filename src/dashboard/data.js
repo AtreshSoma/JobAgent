@@ -97,13 +97,19 @@ export { isSponsorshipGated, configureGateThreshold, gateThreshold };
  * "verify sponsorship" action) — hiding those as "medium" made 10k-job sources
  * read as producing zero strong matches.
  *
+ * The gate flag is only a PROXY for "this Queue row really scored Apply" — and
+ * that proxy does not hold for a row whose sponsorship is `Denied`: such a row
+ * was not parked pending verification, it was refused outright. Passing
+ * sponsorship through keeps a refused job out of "Best matches".
+ *
  * @param {string|null} tier
  * @param {number|null} [score] pass the job's score to classify gated rows
+ * @param {string|null} [sponsorship] pass the job's sponsorship status
  * @returns {'strong'|'medium'|'weak'|'no_fit'|'unscored'}
  */
-export function fitBucket(tier, score = null) {
+export function fitBucket(tier, score = null, sponsorship = null) {
   if (tier === 'Priority' || tier === 'Apply') return 'strong';
-  if (tier === 'Queue') return isSponsorshipGated({ tier, score }) ? 'strong' : 'medium';
+  if (tier === 'Queue') return isSponsorshipGated({ tier, score, sponsorship }) ? 'strong' : 'medium';
   if (tier === 'Near miss') return 'weak';
   if (tier === 'Discard') return 'no_fit';
   return 'unscored';
@@ -479,9 +485,12 @@ function boardRow(job, approval, now) {
     score,
     grade: gradeFromScore(score),
     tier: job.tier ?? null,
-    fit: fitBucket(job.tier, score),
+    fit: fitBucket(job.tier, score, job.sponsorship ?? null),
     sponsorshipGated: isSponsorshipGated(job),
     sponsorship: job.sponsorship ?? null,
+    // The prose the verdict was read from, so a human can check the badge
+    // instead of trusting it.
+    sponsorshipSignals: jsonList(job.sponsorship_signals),
     employmentType: job.employment_type ?? null,
     employmentCategory: job.employment_category ?? null,
     employmentLabel: EMPLOYMENT_LABELS[job.employment_category] ?? null,
@@ -607,7 +616,11 @@ function computeDashboardStats(db, now) {
   for (const job of jobs) {
     const approval = approvals.get(job.id) ?? null;
     const status = deriveAppStatus(job, approval);
-    const fit = fitBucket(job.tier, typeof job.score === 'number' ? job.score : null);
+    const fit = fitBucket(
+      job.tier,
+      typeof job.score === 'number' ? job.score : null,
+      job.sponsorship ?? null,
+    );
     const source = job.source || 'unknown';
 
     if (dayOf(job.created_at) === today) stats.totals.discoveredToday += 1;

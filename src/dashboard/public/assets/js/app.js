@@ -693,18 +693,13 @@ function rowFor(job) {
     }),
     el('div', { class: 'faint', text: job.score ?? '—' })));
 
-  // company / role
-  const nameCell = el('td', {});
-  nameCell.append(el('b', { text: job.company || 'Company on posting' }));
-  if (job.remote) nameCell.append(' ', el('span', { class: 'rs', text: 'remote' }));
-  nameCell.append(el('br'), el('span', { class: 'muted', text: job.title }));
-  if (job.location) nameCell.append(el('div', { class: 'faint', text: job.location }));
-  tr.append(nameCell);
+  tr.append(nameCellFor(job));
 
-  // sponsorship
+  // sponsorship — the badge carries its own evidence, so a claim as consequential
+  // as "Confirmed" can be checked on hover instead of taken on trust.
   tr.append(el('td', {}, el('span', {
     class: `chip ${esc(job.sponsorship ?? '')}`,
-    title: job.sponsorshipGated ? 'Strong fit parked by the sponsorship gate — verify the employer sponsors' : '',
+    title: sponsorshipTitle(job),
     text: job.sponsorship ?? '—',
   })));
 
@@ -737,12 +732,108 @@ function rowFor(job) {
   tr.append(el('td', { class: 'muted', text: job.atsPlatform ?? '—' }));
   tr.append(el('td', {}, progressBar(job.progress)));
 
-  const statusCell = el('td', { class: `st-${job.appStatus}` , title: job.statusReason ?? '' });
+  // WHY a job is blocked/discarded/skipped was carried only by a `title=`
+  // tooltip plus a bare ⓘ glyph — invisible on touch, unreliable for screen
+  // readers, and the single most useful thing in the column. It is now real
+  // text, clamped to one line so the row height stays stable.
+  const statusCell = el('td', { class: `st-${job.appStatus}` });
   statusCell.append(statusLabel(job));
-  if (job.statusReason) statusCell.append(' ', el('span', { class: 'faint', text: 'ⓘ' }));
+  if (job.statusReason) {
+    statusCell.append(el('div', {
+      class: 'statusreason', title: job.statusReason, text: job.statusReason,
+    }));
+  }
   tr.append(statusCell);
 
   return tr;
+}
+
+/** Longest title rendered in full before eliding. */
+const TITLE_MAX_CHARS = 72;
+
+/**
+ * The Company / role cell.
+ *
+ * Three deliberate decisions:
+ *
+ *  1. The ROLE is the link and the primary line. Reaching a posting previously
+ *     took two clicks and a context switch (select the row, then "Open posting"
+ *     in the detail rail) even though every row already carries its URL —
+ *     measured: 0 of 2,219 open rows lacked one. The role also leads visually,
+ *     because you scan this board by role; it used to be the quietest text in
+ *     the cell (`.muted`) under a bold company name.
+ *
+ *  2. Aggregator listings are MARKED. Measured on real data, 1,061 of 2,219
+ *     open rows (48%) point at LinkedIn/Indeed/Dice rather than an employer's
+ *     own form, and the app already warns about exactly that in the detail rail
+ *     ("not a reliable application form"). Linking every title without a marker
+ *     would silently bypass that warning on half the board, so the source is
+ *     named inline — you can see what you are about to open.
+ *
+ *  3. Long titles are elided. Real titles reach 150 characters (3.5% exceed 72),
+ *     and the cell has no width constraint, so those stretched the column and
+ *     forced the whole table to scroll sideways. The full text stays available
+ *     as the link's tooltip and in the detail rail.
+ */
+function nameCellFor(job) {
+  const cell = el('td', { class: 'namecell' });
+  const title = String(job.title ?? '').trim() || 'Title not identified';
+  const shown = title.length > TITLE_MAX_CHARS ? `${title.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…` : title;
+
+  if (job.url) {
+    const aggregator = isAggregatorUrl(job.url);
+    const link = el('a', {
+      class: 'rolelink',
+      href: job.url,
+      target: '_blank',
+      rel: 'noopener noreferrer',
+      // `data-action` keeps this inside the one delegated-dispatch convention the
+      // rest of the UI uses; the dispatcher lets real links navigate.
+      'data-action': 'open-posting',
+      title: aggregator
+        ? `${title}\n\nOpens ${hostLabel(job.url)} — an aggregator listing, not the employer's own application form.`
+        : title,
+      'aria-label': `${title} at ${job.company || 'company on posting'} — opens the posting in a new tab`,
+      text: shown,
+    });
+    cell.append(link);
+    if (aggregator) {
+      cell.append(' ', el('span', {
+        class: 'chip agg',
+        title: 'Aggregator listing — follow Apply through to the employer site, then save that direct URL here.',
+        text: hostLabel(job.url),
+      }));
+    }
+  } else {
+    // No URL means nothing to open — say so rather than render a dead link.
+    cell.append(el('span', { class: 'rolelink none', title, text: shown }));
+  }
+
+  const meta = el('div', { class: 'namemeta' });
+  meta.append(el('span', { class: 'co', text: job.company || 'Company on posting' }));
+  if (job.remote) meta.append(' ', el('span', { class: 'rs', text: 'remote' }));
+  if (job.location) meta.append(el('span', { class: 'faint', text: ` · ${job.location}` }));
+  cell.append(meta);
+  return cell;
+}
+
+/**
+ * Brands whose own capitalisation is not just "first letter upper" — naive
+ * title-casing renders these as "Linkedin"/"Ziprecruiter", which reads as a bug.
+ */
+const HOST_BRANDS = {
+  linkedin: 'LinkedIn',
+  ziprecruiter: 'ZipRecruiter',
+  simplyhired: 'SimplyHired',
+};
+
+/** Short, human host label for a posting URL ("LinkedIn", "Indeed"). */
+function hostLabel(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./i, '');
+    const name = host.split('.')[0].toLowerCase();
+    return HOST_BRANDS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
+  } catch { return 'link'; }
 }
 
 function typeChip(job) {
@@ -755,6 +846,30 @@ function typeChip(job) {
     title: `Employment type: ${label}`,
     text: label,
   });
+}
+
+/**
+ * Hover text for the sponsorship badge: the prose the verdict was read from.
+ *
+ * A sponsorship verdict decides whether a job is worth applying to at all, and
+ * it used to be shown as a bare word with nothing behind it. That is how six
+ * Humana rows displayed a green "Confirmed" while their JDs said "This role is
+ * not eligible for work visa sponsorship" — the badge asserted a conclusion no
+ * one could check. Rows scored before the signals column existed simply have no
+ * evidence to show, so they say so rather than implying the badge is verified.
+ */
+function sponsorshipTitle(job) {
+  const parts = [];
+  const signals = job.sponsorshipSignals ?? [];
+  if (signals.length) parts.push(`Read from the posting: "${signals.join('"; "')}"`);
+  else if (job.sponsorship) parts.push('No recorded evidence — re-score this job to capture it.');
+  if (job.sponsorshipGated) {
+    parts.push('Strong fit parked by the sponsorship gate — verify the employer sponsors.');
+  }
+  if (job.sponsorship === 'Denied') {
+    parts.push('The posting explicitly refuses sponsorship.');
+  }
+  return parts.join('\n');
 }
 
 function progressBar(progress) {
@@ -859,7 +974,11 @@ function renderDetail(job) {
     chips.append(el('span', { class: 'chip info', title: 'Skills-match score', text: `score ${job.score}/100` }));
   }
   chips.append(el('span', { class: `chip ${job.fit}`, text: fitLabel(job.fit) }));
-  chips.append(el('span', { class: `chip ${esc(job.sponsorship ?? '')}`, text: `sponsorship: ${job.sponsorship ?? 'unknown'}` }));
+  chips.append(el('span', {
+    class: `chip ${esc(job.sponsorship ?? '')}`,
+    title: sponsorshipTitle(job),
+    text: `sponsorship: ${job.sponsorship ?? 'unknown'}`,
+  }));
   if (job.employmentLabel) chips.append(el('span', { class: 'chip', text: job.employmentLabel }));
   chips.append(el('span', { class: `chip st-${job.appStatus}`, text: statusLabel(job) }));
   if (job.atsScore != null) {
@@ -2483,6 +2602,12 @@ function closeMainMenu() {
 }
 
 document.addEventListener('click', (event) => {
+  // A real link always just navigates. Rows are themselves clickable
+  // (`data-action="select"`), so without this a link inside one would ALSO
+  // select the row — and any future link that forgets its own `data-action`
+  // would be swallowed by the row entirely. Guarding on the element clicked
+  // fixes the whole class, not one instance of it.
+  if (event.target.closest?.('a[href]')) return;
   const target = event.target.closest('[data-action]');
   // Any click closes the header menu except on its own trigger, which toggles.
   // Choosing an item used to LEAVE it open, hanging over the page behind it.
@@ -2511,6 +2636,11 @@ $('rows').addEventListener('keydown', (event) => {
   const row = event.target.closest('tr.job');
   if (!row) return;
   const index = state.visible.indexOf(row.dataset.id);
+
+  // When a link inside the row has focus, Enter belongs to the LINK. Without
+  // this the handler's preventDefault() swallowed it and selected the row
+  // instead — a keyboard user could focus the role link and never open it.
+  if (event.key === 'Enter' && event.target.closest('a[href]')) return;
 
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault();
