@@ -131,6 +131,27 @@ const JOB_SUMMARY_COLUMNS = [
   'created_at', 'updated_at',
 ].join(', ');
 
+/**
+ * The only columns dashboardStats reads — directly, or via the helpers it calls
+ * (deriveAppStatus, fitBucket, isSponsorshipGated, isUndatedDrop,
+ * postedConfidence, preparedAtOf, gradeFromScore, usLocationSignal).
+ *
+ * Stats must aggregate the WHOLE table, so it is the one dashboard read that
+ * cannot be narrowed by rows — but it can be narrowed by columns. The wide
+ * summary projection also carries `explanation`, `matched_keywords`,
+ * `missing_keywords`, `notes` and friends: long per-row TEXT that stats never
+ * looks at, but that SQLite still has to read off disk and V8 still has to
+ * allocate a string for, once per row.
+ *
+ * Adding a column to the stats loop means adding it HERE too — a missing column
+ * arrives as `undefined` and silently changes a count rather than failing.
+ */
+const JOB_STATS_COLUMNS = [
+  'id', 'source', 'location', 'posted_at', 'score', 'tier', 'sponsorship',
+  'discard_reason', 'status', 'application_packet_path', 'prepared_at',
+  'applied', 'applied_at', 'user_decision', 'created_at', 'updated_at',
+].join(', ');
+
 /** Columns allowed for the jobs table (whitelist for safe upserts). */
 const JOB_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'jd_text', 'posted_at',
@@ -167,6 +188,13 @@ export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
   // immediately; with it, SQLite retries for up to 5s before giving up.
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
+  // SQLite's default page cache is 2 MB. This database is hundreds of MB (jd_text
+  // dominates), and the dashboard re-reads the jobs table on every stats build,
+  // so at the default nearly every pass went back to disk. Negative = KiB, so
+  // this is a 64 MB ceiling, not 64000 pages. temp_store=MEMORY keeps the sorter
+  // for `ORDER BY score` out of a temp file.
+  db.exec('PRAGMA cache_size = -65536;');
+  db.exec('PRAGMA temp_store = MEMORY;');
   db.exec(SCHEMA_SQL);
   applyMigrations(db);
   if (path !== ':memory:') {
@@ -274,15 +302,23 @@ export class Database {
   upsertJob(job) {
     if (!job || !job.id) throw new Error('upsertJob requires a job with an id');
     const now = nowIso();
-    const existing = this.getJob(job.id);
 
     const record = { ...job };
-    record.created_at = existing?.created_at ?? job.created_at ?? now;
+    record.created_at = job.created_at ?? now;
     record.updated_at = now;
 
     const cols = JOB_COLUMNS.filter((c) => c in record);
     const placeholders = cols.map((c) => `@${c}`).join(', ');
-    const updates = cols.filter((c) => c !== 'id').map((c) => `${c} = @${c}`).join(', ');
+    // `created_at` is deliberately NOT in the UPDATE list: the first insert owns
+    // it and a re-discovery must never move it. This used to be enforced by
+    // reading the existing row first (`existing?.created_at ?? ...`) and writing
+    // the same value back — a full `SELECT *` per upsert, pulling ~8 KB of
+    // jd_text off disk for one timestamp, on every one of the tens of thousands
+    // of rows a discovery run persists. Omitting the column from the UPDATE is
+    // equivalent and needs no read at all.
+    const updates = cols
+      .filter((c) => c !== 'id' && c !== 'created_at')
+      .map((c) => `${c} = @${c}`).join(', ');
 
     const params = {};
     for (const c of cols) params[c] = toText(record[c]);
@@ -296,6 +332,20 @@ export class Database {
   /** @param {string} id */
   getJob(id) {
     return this.prepareCached('SELECT * FROM jobs WHERE id = ?').get(id) ?? null;
+  }
+
+  /**
+   * Just the columns `isProtectedJobRow` (src/lifecycle.js) inspects, for the
+   * downgrade guard discovery runs apply to every re-seen posting. Same verdict
+   * as passing a full `getJob` row, without reading that row's jd_text.
+   * @param {string} id
+   * @returns {{applied: number|null, application_packet_path: string|null,
+   *            user_decision: string|null, status: string|null}|null}
+   */
+  getJobProtectionFields(id) {
+    return this.prepareCached(
+      'SELECT applied, application_packet_path, user_decision, status FROM jobs WHERE id = ?',
+    ).get(id) ?? null;
   }
 
   /**
@@ -388,6 +438,55 @@ export class Database {
    */
   listJobsSummary() {
     return this.db.prepare(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs ORDER BY score DESC`).all();
+  }
+
+  /**
+   * Every job, but only the columns dashboardStats reads (JOB_STATS_COLUMNS).
+   * Same row count as listJobsSummary — stats counts the whole table — at a
+   * fraction of the bytes read and strings allocated.
+   * @returns {object[]}
+   */
+  listJobsForStats() {
+    return this.prepareCached(`SELECT ${JOB_STATS_COLUMNS} FROM jobs ORDER BY score DESC`).all();
+  }
+
+  /**
+   * Same as listJobsSummary, minus rows that are PROVABLY the derived status
+   * `discarded` — which the default board hides anyway.
+   *
+   * Why this exists: on real data the discard pile dwarfs everything else
+   * (measured: 99,532 of 101,620 rows). The board was reading and decorating
+   * all 101,620 to render a page drawn from the ~2,088 that could actually
+   * appear, costing ~5s of blocked event loop per cache miss — which is what
+   * made every filter click and every row action feel frozen.
+   *
+   * The WHERE clause mirrors `deriveAppStatus` (dashboard/data.js) exactly for
+   * this one subset, and is deliberately CONSERVATIVE: it excludes a row only
+   * when every branch that could out-rank `discarded` is ruled out —
+   *   applied != 1        (else SUBMITTED)
+   *   user_decision NULL  (else ARCHIVED / REJECTED / SHORTLISTED)
+   *   status = 'discarded' (so none of the assist/submit statuses apply, and it
+   *                         is not 'unknown_date_review' -> DATE_UNCONFIRMED)
+   *   no approval_queue row (else REJECTED / APPROVED / NEEDS_REVIEW)
+   * Anything it cannot prove is discarded is KEPT, so callers still see a
+   * superset of what they may display and apply their own predicates on top.
+   * @returns {object[]} jobs-table rows minus jd_text, minus certain discards
+   */
+  listOpenJobsSummary() {
+    // Every comparison here must be NULL-SAFE. `status = 'discarded'` yields
+    // NULL (not false) for a row whose status is NULL, and `NOT (NULL AND ...)`
+    // is NULL, which WHERE treats as no-match — so the plain form silently DROPS
+    // status-less rows from the board instead of keeping them. Caught by a
+    // differential check against the live table; `IS` is SQLite's null-safe
+    // equality, and the `applied` test spells out its own NULL case.
+    return this.prepareCached(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs
+      WHERE NOT (
+        status IS 'discarded'
+        AND (applied IS NULL OR applied <> 1)
+        AND user_decision IS NULL
+        AND NOT EXISTS (SELECT 1 FROM approval_queue aq WHERE aq.job_id = jobs.id)
+      )
+      ORDER BY score DESC`).all();
   }
 
   /**

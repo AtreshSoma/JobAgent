@@ -552,7 +552,12 @@ function persistJob(db, job, fields = {}, markers = {}) {
   // (decision, packet, approval, assist outcome, submission) keeps its status —
   // a stale/duplicate hit must never flip a prepared job back to "discarded".
   // Metadata (JD text, posted date, URL, score fields) still refreshes.
-  if (DISCOVERY_STATUSES.has(patch.status) && isProtectedJobRow(db.getJob?.(job.id))) {
+  // Narrow read where available — the guard only inspects four columns, so it
+  // must not drag the row's jd_text along for every re-seen posting.
+  const protectionRow = () => (typeof db.getJobProtectionFields === 'function'
+    ? db.getJobProtectionFields(job.id)
+    : db.getJob?.(job.id));
+  if (DISCOVERY_STATUSES.has(patch.status) && isProtectedJobRow(protectionRow())) {
     delete patch.status;
     delete patch.discard_reason;
   }

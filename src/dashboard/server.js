@@ -72,6 +72,7 @@ import {
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
   buildDocuments, buildMasterResume, MASTER_RESUME_RELATIVE, MASTER_HISTORY_RELATIVE,
+  setDuringBulkRun,
 } from './data.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import {
@@ -649,6 +650,10 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         }))
       : [];
     runAbort = new AbortController();
+    // discover/score can upsert thousands of rows in quick succession; without
+    // this the dashboard's decoration cache misses on nearly every poll for the
+    // run's full duration (see setDuringBulkRun in data.js).
+    setDuringBulkRun(true);
     Object.assign(runState, {
       running: true, phase, startedAt: new Date().toISOString(),
       finishedAt: null, lastError: null, cancelRequested: false,
@@ -735,6 +740,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         }
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
+        setDuringBulkRun(false);
       }
     })());
     return { started: true, phase, runId };

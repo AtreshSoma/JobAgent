@@ -14,7 +14,9 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { POSTED_WINDOWS, boardPage, dashboardStats } from '../../src/dashboard/data.js';
+import {
+  POSTED_WINDOWS, boardPage, dashboardStats, BOARD_VIEWS, OPEN_ONLY_VIEWS,
+} from '../../src/dashboard/data.js';
 
 const HOUR = 3600_000;
 
@@ -228,5 +230,56 @@ describe('header counts reconcile with the filter they open', () => {
     const withClosed = fakeDb([...JOBS, { ...job('closed', 2), status: 'discarded' }]);
     const stats = dashboardStats(withClosed, { now: new Date() });
     expect(stats.totals.postedLast7d).toBe(boardPage(withClosed, { postedWithinHours: 168, limit: 100 }).total);
+  });
+});
+
+/**
+ * The board serves most requests from a base row set that EXCLUDES rows SQL can
+ * prove are `discarded` (db.listOpenJobsSummary) — on real data that is ~98% of
+ * the table, and reading it to render a page that hides it was what made every
+ * filter click and row action block the server for seconds.
+ *
+ * That shortcut is only sound for a view whose predicate can never match a
+ * closed row. `OPEN_ONLY_VIEWS` asserts which views those are; this test proves
+ * the assertion rather than trusting it, by driving every listed predicate
+ * against the full cartesian product of the fields those predicates read, once
+ * per closed status. If someone adds a view that CAN surface a closed row and
+ * lists it here, this fails instead of the board silently dropping its rows.
+ */
+describe('OPEN_ONLY_VIEWS is honest about which views hide closed rows', () => {
+  const FIT = ['strong', 'medium', 'weak', 'no_fit', 'unscored'];
+  const CLOSED = ['archived', 'rejected', 'discarded'];
+
+  it('no listed view matches any closed row, for any field combination', () => {
+    expect(OPEN_ONLY_VIEWS.size).toBeGreaterThan(0);
+    const offenders = [];
+    for (const key of OPEN_ONLY_VIEWS) {
+      const pred = BOARD_VIEWS[key];
+      expect(typeof pred, `${key} must be a real view`).toBe('function');
+      for (const appStatus of CLOSED) {
+        for (const fit of FIT) {
+          for (const recommend of [true, false]) {
+            for (const postedLast24h of [true, false]) {
+              for (const sponsorshipGated of [true, false]) {
+                const row = {
+                  appStatus, fit, grade: { recommend }, postedLast24h, sponsorshipGated,
+                };
+                if (pred(row)) offenders.push(`${key} matched ${JSON.stringify(row)}`);
+              }
+            }
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  it('every view key is covered, so a new view cannot be forgotten', () => {
+    // If a future view legitimately shows closed rows it must be REMOVED from
+    // OPEN_ONLY_VIEWS (not just left out of the loop above) — this keeps the two
+    // lists from drifting apart unnoticed.
+    for (const key of Object.keys(BOARD_VIEWS)) {
+      expect(OPEN_ONLY_VIEWS.has(key), `view "${key}" is not classified in OPEN_ONLY_VIEWS`).toBe(true);
+    }
   });
 });

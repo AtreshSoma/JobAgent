@@ -318,14 +318,34 @@ const approvalsByJob = latestApprovalsByJob;
  *   - a 30s time bucket — `now`-derived fields (postedLabel, last-24h flags)
  *     refresh on their own even with no writes.
  * Per-Database WeakMap so tests with separate in-memory DBs never collide.
+ *
+ * A bulk discover/score run upserts thousands of rows in quick succession,
+ * so total_changes() moves on almost every request during (and right after)
+ * one — the cache misses nearly every time and pays the full ~1s decoration
+ * on each dashboard poll, which is exactly when the board is under the most
+ * load. `setDuringBulkRun(true)` (called by the server around a discover/score
+ * run) drops the write-count component for that stretch, falling back to the
+ * 30s time bucket alone — bounded staleness instead of a per-write repaint.
  */
+let duringBulkRun = false;
+
+/** Toggle the decoration cache's write-invalidation behavior for the
+ * duration of a bulk discover/score run (see comment above). */
+export function setDuringBulkRun(flag) {
+  duringBulkRun = Boolean(flag);
+}
+
 const _memo = new WeakMap();
 function cached(db, kind, now, compute) {
-  let changes = -1;
-  try { changes = db.db.prepare('SELECT total_changes() AS c').get().c; }
-  catch { return compute(); /* exotic db stub (tests) — skip caching */ }
   const at = typeof now?.getTime === 'function' ? now.getTime() : Date.now();
-  const key = `${changes}:${Math.floor(at / 30_000)}`;
+  const bucket = Math.floor(at / 30_000);
+  let key = `bulk:${bucket}`;
+  if (!duringBulkRun) {
+    let changes = -1;
+    try { changes = db.db.prepare('SELECT total_changes() AS c').get().c; }
+    catch { return compute(); /* exotic db stub (tests) — skip caching */ }
+    key = `${changes}:${bucket}`;
+  }
   let slot = _memo.get(db);
   if (!slot) { slot = {}; _memo.set(db, slot); }
   if (slot[kind]?.key === key) return slot[kind].val;
@@ -339,6 +359,22 @@ function allBoardRows(db, now) {
   return cached(db, 'rows', now, () => {
     const approvals = approvalsByJob(db);
     return listSummaryRows(db).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+  });
+}
+
+/**
+ * Board rows EXCLUDING provably-`discarded` jobs — the set the default board
+ * can actually display. See db.listOpenJobsSummary for why: the discard pile is
+ * ~98% of the table on real data, so decorating it to render a page that hides
+ * it was the dominant cost on every filter click.
+ *
+ * Falls back to the full set when the db has no such method (test stubs).
+ */
+function openBoardRows(db, now) {
+  if (typeof db.listOpenJobsSummary !== 'function') return allBoardRows(db, now);
+  return cached(db, 'openRows', now, () => {
+    const approvals = approvalsByJob(db);
+    return db.listOpenJobsSummary().map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
   });
 }
 
@@ -412,14 +448,26 @@ function preparedAtOf(job) {
  * shown when you click it (fixing the old "Ready to submit: 19" badge over a
  * board of 0 rows).
  */
+/*
+ * Membership sets for the view predicates below.
+ *
+ * These were inline `[...].includes(x)` array literals. Each predicate runs once
+ * per job per stats build, so on real data (~102k rows) that allocated hundreds
+ * of thousands of throwaway arrays per dashboard refresh purely to answer a
+ * fixed membership question. Hoisted to module-level Sets: same answers, no
+ * per-row allocation.
+ */
+const VIEW_TODAY_ACTIONABLE = new Set([
+  APP_STATUS.READY_FOR_SUBMIT, APP_STATUS.SUBMIT_UNVERIFIED,
+  APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED, APP_STATUS.NEEDS_REVIEW,
+]);
+const VIEW_UNTRIAGED = new Set([APP_STATUS.SCORED, APP_STATUS.DISCOVERED]);
+const VIEW_BLOCKED = new Set([APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED]);
+
 export const BOARD_VIEWS = Object.freeze({
   all: (r) => !CLOSED_SET.has(r.appStatus),
-  today: (r) => [
-    APP_STATUS.READY_FOR_SUBMIT, APP_STATUS.SUBMIT_UNVERIFIED,
-    APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED, APP_STATUS.NEEDS_REVIEW,
-  ].includes(r.appStatus)
-    || (r.postedLast24h && r.fit === 'strong'
-      && [APP_STATUS.SCORED, APP_STATUS.DISCOVERED].includes(r.appStatus))
+  today: (r) => VIEW_TODAY_ACTIONABLE.has(r.appStatus)
+    || (r.postedLast24h && r.fit === 'strong' && VIEW_UNTRIAGED.has(r.appStatus))
     || (r.sponsorshipGated && !CLOSED_SET.has(r.appStatus)),
   // "Best matches" = strong, recommended jobs still awaiting your triage. Once
   // you shortlist/prepare them they move to their stage tab, so this list never
@@ -431,16 +479,38 @@ export const BOARD_VIEWS = Object.freeze({
   // "Ready to apply": packet approved (ready to auto-fill) OR already filled and
   // waiting for your manual submit. Both need a human action next.
   ready_apply: (r) => r.appStatus === APP_STATUS.APPROVED || r.appStatus === APP_STATUS.READY_FOR_SUBMIT,
-  blocked: (r) => [APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED].includes(r.appStatus),
+  blocked: (r) => VIEW_BLOCKED.has(r.appStatus),
   submitted: (r) => r.appStatus === APP_STATUS.SUBMITTED,
 });
+
+/**
+ * [key, predicate] pairs for BOARD_VIEWS, computed once.
+ * `Object.entries` inside a per-row loop rebuilt this whole structure for every
+ * job on every stats build; BOARD_VIEWS is frozen, so once is enough.
+ */
+const BOARD_VIEW_ENTRIES = Object.entries(BOARD_VIEWS);
+
+/**
+ * Views whose predicate can NEVER match a closed (archived/rejected/discarded)
+ * row, so a request scoped to one of them may read the cheap open-only base set
+ * (see openBoardRows) instead of the whole table.
+ *
+ * Every view above qualifies today: each either tests `!CLOSED_SET.has(...)`
+ * directly or matches only specific non-closed statuses. That is a property of
+ * the predicates, not a promise about them — so `dashboardFilters` has a test
+ * that drives every listed view against the full cartesian product of the fields
+ * these predicates read, with each closed status in turn, and fails if any
+ * combination matches. Add a view that can surface a closed row and either keep
+ * it out of this set or that test will catch it.
+ */
+export const OPEN_ONLY_VIEWS = new Set(Object.keys(BOARD_VIEWS));
 
 /** Count rows per board view (each equals what clicking that tab shows). */
 export function countViews(rows = []) {
   const counts = {};
   for (const key of Object.keys(BOARD_VIEWS)) counts[key] = 0;
   for (const r of rows) {
-    for (const [key, pred] of Object.entries(BOARD_VIEWS)) {
+    for (const [key, pred] of BOARD_VIEW_ENTRIES) {
       if (pred(r)) counts[key] += 1;
     }
   }
@@ -552,7 +622,11 @@ export function dashboardStats(db, { now = new Date() } = {}) {
 }
 
 function computeDashboardStats(db, now) {
-  const jobs = listSummaryRows(db);
+  // Narrow column projection where available (see db.listJobsForStats); test
+  // stubs that only implement listJobsSummary/listJobs still work.
+  const jobs = typeof db.listJobsForStats === 'function'
+    ? db.listJobsForStats()
+    : listSummaryRows(db);
   const approvals = approvalsByJob(db);
   const today = dayOf(now.toISOString());
 
@@ -622,8 +696,22 @@ function computeDashboardStats(db, now) {
       job.sponsorship ?? null,
     );
     const source = job.source || 'unknown';
+    /*
+     * Values reused several times below, each computed ONCE per row.
+     *
+     * These were recomputed at every use site: `postedLast24h` three times,
+     * `applied`/`isOpen` five and six times, and each of them parses a date or
+     * walks a Set. Multiplied by the whole jobs table (~102k rows on real data)
+     * that repetition was a large part of why a single dashboard refresh
+     * blocked the event loop for seconds. Same expressions, evaluated once.
+     */
+    const isOpen = !CLOSED_SET.has(status);
+    const applied = Number(job.applied) === 1;
+    const postedLast24h = isWithinLast24Hours(job.posted_at, now);
+    const createdDay = dayOf(job.created_at);
+    const gated = isSponsorshipGated(job);
 
-    if (dayOf(job.created_at) === today) stats.totals.discoveredToday += 1;
+    if (createdDay === today) stats.totals.discoveredToday += 1;
     if (isWithinLast24Hours(job.created_at, now)) stats.totals.discoveredLast24h += 1;
     if (job.created_at && (!stats.lastDiscoveryAt || job.created_at > stats.lastDiscoveryAt)) {
       stats.lastDiscoveryAt = job.created_at;
@@ -631,22 +719,22 @@ function computeDashboardStats(db, now) {
     // Posted-in-last-24h counts ACTIONABLE jobs only (not discarded/closed) so
     // the header chip always reconciles with what the board's "last 24h"
     // filter shows — a big raw count over a mostly-hidden board reads as a bug.
-    if (isWithinLast24Hours(job.posted_at, now) && !CLOSED_SET.has(status)) stats.totals.postedLast24h += 1;
+    if (postedLast24h && isOpen) stats.totals.postedLast24h += 1;
     // The week window matters more than it looks: on real data the 24h count
     // is routinely single digits while a week holds hundreds of live roles, so
     // a board that only offers 24h reads as "nothing to apply to today".
     // Counted on the same actionable basis so its chip also reconciles.
-    if (isWithinLastHours(job.posted_at, 168, now) && !CLOSED_SET.has(status)) stats.totals.postedLast7d += 1;
+    if (isOpen && isWithinLastHours(job.posted_at, 168, now)) stats.totals.postedLast7d += 1;
     // Fit tiles count ACTIONABLE jobs only (not archived/rejected/discarded) so
     // clicking a tile shows exactly as many rows as the tile promised — the
     // default board hides closed jobs.
-    if (!CLOSED_SET.has(status)) {
+    if (isOpen) {
       if (fit === 'strong') stats.totals.strongFit += 1;
       if (fit === 'medium') stats.totals.mediumFit += 1;
       if (fit === 'weak') stats.totals.weakFit += 1;
       // Strong-fit roles parked by the sponsorship gate: the next action is to
       // verify the employer's sponsorship posture, not to discard the job.
-      if (isSponsorshipGated(job)) stats.totals.needsSponsorshipCheck += 1;
+      if (gated) stats.totals.needsSponsorshipCheck += 1;
     }
     if (job.user_decision === 'shortlisted') stats.totals.shortlisted += 1;
     if (status === APP_STATUS.REJECTED) stats.totals.rejected += 1;
@@ -662,31 +750,32 @@ function computeDashboardStats(db, now) {
     // 2 past what this stat reported — the same "tile promises a number
     // clicking it doesn't open" bug as everywhere else in this file.
     if (isUndatedDrop(job) || postedConfidence(job) === 'unconfirmed') stats.totals.undatedDropped += 1;
-    if (dayOf(preparedAtOf(job)) === today && Number(job.applied) !== 1) stats.totals.preparedToday += 1;
-    if (Number(job.applied) === 1 && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
-    if (Number(job.applied) === 1 && job.applied_at
+    if (!applied && dayOf(preparedAtOf(job)) === today) stats.totals.preparedToday += 1;
+    if (applied && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
+    if (applied && job.applied_at
         && (now.getTime() - new Date(job.applied_at).getTime()) < 7 * 86_400_000) {
       stats.totals.submittedThisWeek += 1;
     }
     // "New qualified" means the POSTING is genuinely fresh, not merely that
     // an older job happened to enter our database today.
-    if (fit === 'strong' && isWithinLast24Hours(job.posted_at, now)
-        && !CLOSED_SET.has(status)) {
+    if (fit === 'strong' && postedLast24h && isOpen) {
       stats.totals.qualifiedToday += 1;
     }
     if (status === APP_STATUS.NEEDS_REVIEW) stats.totals.pendingReview += 1;
-    if ([APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED].includes(status)) stats.totals.blocked += 1;
+    if (VIEW_BLOCKED.has(status)) stats.totals.blocked += 1;
     if (status === APP_STATUS.READY_FOR_SUBMIT) stats.totals.readyForSubmit += 1;
     if (status === APP_STATUS.SUBMIT_UNVERIFIED) stats.totals.submitUnverified += 1;
-    if (Number(job.applied) === 1) stats.totals.submittedTotal += 1;
+    if (applied) stats.totals.submittedTotal += 1;
 
-    if (!stats.bySource[source]) {
-      stats.bySource[source] = { found: 0, strong: 0, prepared: 0, submitted: 0 };
+    let bySource = stats.bySource[source];
+    if (!bySource) {
+      bySource = { found: 0, strong: 0, prepared: 0, submitted: 0 };
+      stats.bySource[source] = bySource;
     }
-    stats.bySource[source].found += 1;
-    if (fit === 'strong') stats.bySource[source].strong += 1;
-    if (job.application_packet_path) stats.bySource[source].prepared += 1;
-    if (Number(job.applied) === 1) stats.bySource[source].submitted += 1;
+    bySource.found += 1;
+    if (fit === 'strong') bySource.strong += 1;
+    if (job.application_packet_path) bySource.prepared += 1;
+    if (applied) bySource.submitted += 1;
 
     stats.byStatus[status] = (stats.byStatus[status] ?? 0) + 1;
 
@@ -695,38 +784,48 @@ function computeDashboardStats(db, now) {
       appStatus: status,
       fit,
       grade: gradeFromScore(typeof job.score === 'number' ? job.score : null),
-      postedLast24h: isWithinLast24Hours(job.posted_at, now),
-      sponsorshipGated: isSponsorshipGated(job),
+      postedLast24h,
+      sponsorshipGated: gated,
     };
-    for (const [key, pred] of Object.entries(BOARD_VIEWS)) {
+    for (const [key, pred] of BOARD_VIEW_ENTRIES) {
       if (pred(viewRow)) stats.views[key] += 1;
     }
 
     const spon = job.sponsorship ?? 'Unclassified';
-    if (!stats.bySponsorship[spon]) stats.bySponsorship[spon] = { count: 0, strong: 0 };
-    stats.bySponsorship[spon].count += 1;
-    if (fit === 'strong') stats.bySponsorship[spon].strong += 1;
+    let bySpon = stats.bySponsorship[spon];
+    if (!bySpon) {
+      bySpon = { count: 0, strong: 0 };
+      stats.bySponsorship[spon] = bySpon;
+    }
+    bySpon.count += 1;
+    if (fit === 'strong') bySpon.strong += 1;
 
     // Where the jobs actually are. Remote-only and unnamed locations carry no
     // state, and are counted as such rather than guessed at.
-    if (!CLOSED_SET.has(status)) {
+    if (isOpen) {
       const signal = usLocationSignal(job.location);
       const key = signal.state ?? (signal.isUs ? 'US' : 'unknown');
-      if (!stats.byState[key]) {
-        stats.byState[key] = { count: 0, strong: 0, name: signal.stateName ?? (key === 'US' ? 'Nationwide / remote' : 'Not stated') };
+      let byState = stats.byState[key];
+      if (!byState) {
+        byState = { count: 0, strong: 0, name: signal.stateName ?? (key === 'US' ? 'Nationwide / remote' : 'Not stated') };
+        stats.byState[key] = byState;
       }
-      stats.byState[key].count += 1;
-      if (fit === 'strong') stats.byState[key].strong += 1;
+      byState.count += 1;
+      if (fit === 'strong') byState.strong += 1;
     }
 
-    // Daily progress strip.
-    const created = dayOf(job.created_at);
-    if (daily.has(created)) daily.get(created).discovered += 1;
+    // Daily progress strip. `daily` only ever holds the last 7 days, so the
+    // has()/get() pairs are cheap; reuse createdDay from above.
+    const createdBucket = daily.get(createdDay);
+    if (createdBucket) createdBucket.discovered += 1;
     const preparedDay = dayOf(preparedAtOf(job));
-    if (preparedDay && daily.has(preparedDay)) daily.get(preparedDay).prepared += 1;
-    if (Number(job.applied) === 1) {
-      const submitted = dayOf(job.applied_at);
-      if (daily.has(submitted)) daily.get(submitted).submitted += 1;
+    if (preparedDay) {
+      const preparedBucket = daily.get(preparedDay);
+      if (preparedBucket) preparedBucket.prepared += 1;
+    }
+    if (applied) {
+      const submittedBucket = daily.get(dayOf(job.applied_at));
+      if (submittedBucket) submittedBucket.submitted += 1;
     }
   }
 
@@ -885,7 +984,34 @@ export function boardPage(db, filters = {}) {
   const hideClosed = !includeClosedTrue
     && filters.hideClosed !== false && filters.hideClosed !== 'false';
 
-  let rows = allBoardRows(db, now);
+  // Whether the hide-closed pass at the bottom of this function will actually
+  // run. When it will, no closed row can survive into the response, so the
+  // cheap base set (which pre-drops provably-discarded rows in SQL) is exactly
+  // equivalent to the full one — and ~48x smaller on real data. Kept as ONE
+  // expression used in both places so the two can never disagree; if they did,
+  // a request would silently lose rows it was supposed to show.
+  const undatedRequested = filters.undated === true || filters.undated === 'true';
+  const willHideClosed = hideClosed && !filters.appStatus && !filters.view && !undatedRequested;
+
+  /*
+   * Can a closed row reach the response at all? If not, the cheap base set (which
+   * pre-drops provably-discarded rows in SQL) is exactly equivalent to the full
+   * table and ~48x smaller on real data.
+   *
+   * Three independent ways closed rows are ruled out:
+   *   - the hide-closed pass below will run;
+   *   - an explicit appStatus filter names a NON-closed status, so only that
+   *     status survives;
+   *   - a section view is requested whose predicate cannot match a closed row.
+   * Anything else (includeClosed, hideClosed:false, `undated`, or an appStatus
+   * that IS closed — the "tracked"/"Date unknown"/Rejected paths) genuinely needs
+   * the whole table and pays for it.
+   */
+  const appStatusExcludesClosed = Boolean(filters.appStatus) && !CLOSED_SET.has(filters.appStatus);
+  const viewExcludesClosed = Boolean(filters.view) && OPEN_ONLY_VIEWS.has(filters.view);
+  const closedPossible = !willHideClosed && !appStatusExcludesClosed && !viewExcludesClosed;
+
+  let rows = closedPossible ? allBoardRows(db, now) : openBoardRows(db, now);
 
   if (filters.q) {
     const q = String(filters.q).toLowerCase();
@@ -977,12 +1103,15 @@ export function boardPage(db, filters = {}) {
   }
   // Hide closed jobs by default — but never override an explicit status/view
   // request (e.g. the Blocked/Submitted tabs, or a "rejected" status filter).
-  const undatedRequested = filters.undated === true || filters.undated === 'true';
-  if (hideClosed && !filters.appStatus && !filters.view && !undatedRequested) {
+  if (willHideClosed) {
     rows = rows.filter((r) => !CLOSED_SET.has(r.appStatus));
   }
 
-  rows.sort(SORTS[filters.sort] ?? SORTS.score);
+  // `rows` may still be the exact array `allBoardRows` cached (no filter above
+  // reassigned it, e.g. the "tracked" tile's `includeClosed`-only request) —
+  // sort a copy so this doesn't reorder the cached value out from under every
+  // other request sharing it until the next invalidation.
+  rows = rows.slice().sort(SORTS[filters.sort] ?? SORTS.score);
   const limit = Number(filters.limit) > 0 ? Number(filters.limit) : 200;
   const requestedOffset = Number(filters.offset);
   const requestedPage = Number(filters.page);
@@ -1234,7 +1363,12 @@ function blockerReason(row) {
  * }}
  */
 export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
-  const rows = allBoardRows(db, now);
+  // Every section below selects specific NON-closed statuses (or filters closed
+  // rows out explicitly, as sponsorshipVerification and bestMatches do), so no
+  // section can ever contain a closed row — and this can read the cheap
+  // open-only base set rather than decorating the whole discard pile. Guarded by
+  // the sections differential in dashboardData tests.
+  const rows = openBoardRows(db, now);
   const byScore = (a, b) => (b.score ?? -1) - (a.score ?? -1);
   const is = (r, ...statuses) => statuses.includes(r.appStatus);
 
@@ -1341,7 +1475,8 @@ export function buildExportRows(db, { now = new Date(), includeClosed = true } =
     const closed = [APP_STATUS.ARCHIVED, APP_STATUS.DISCARDED];
     rows = rows.filter((r) => !closed.includes(r.appStatus));
   }
-  rows.sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  // Same shared-cached-array hazard as boardPage's sort — copy before sorting.
+  rows = rows.slice().sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
   return rows.map((r) => ({
     company: r.company ?? '',
     title: r.title ?? '',
