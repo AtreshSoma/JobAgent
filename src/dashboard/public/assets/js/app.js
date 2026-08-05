@@ -1036,8 +1036,13 @@ function renderDetail(job) {
   if (job.approvalStatus === 'pending_review') {
     actions.append(el('button', { class: 'small', 'data-action': 'reject-packet', 'data-id': job.id, text: 'Reject packet' }));
   }
-  if (['ready_for_submit', 'blocked', 'approved', 'submit_unverified'].includes(job.appStatus)) {
-    actions.append(el('button', { class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'Mark submitted' }));
+  // Available at every stage except the ones where it's meaningless: already
+  // recorded (submitted) or a closed/dead row (rejected/archived/discarded).
+  // Applying yourself, outside the guided flow, is not gated on having run
+  // Prepare/Approve/Auto-fill first — a job can sit at `discovered` or `scored`
+  // and still have been applied to on the employer's own site.
+  if (!['submitted', 'rejected', 'archived', 'discarded'].includes(job.appStatus)) {
+    actions.append(el('button', { class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself' }));
   }
   panel.append(actions);
   panel.append(el('div', { class: 'linkhealth', id: 'linkHealth', 'aria-live': 'polite' }));
