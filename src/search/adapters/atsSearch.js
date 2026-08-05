@@ -51,6 +51,36 @@
  *     `fetchDetails: false` for anyone who would rather not.
  *   - Failures are per-provider and per-query; nothing here can crash a run.
  *
+ * REJECTED PROVIDERS (measured, not assumed — do not re-add without re-checking):
+ *   himalayas.app/jobs/api   Honors ONLY `offset`. `search`, `q`, `keyword`,
+ *                    `title`, `category`/`categories`, `skills` and
+ *                    `parentCategories` are all accepted and silently ignored:
+ *                    every one of them returned the same 20 rows and the same
+ *                    totalCount of 96,651 (the entire worldwide index), led by
+ *                    "Senior Underwriting Consultant". `limit` is pinned at 20
+ *                    regardless of what is asked for. Covering that index for
+ *                    US data roles would mean ~4,800 sequential requests per
+ *                    run, so it cannot give coverage AND relevance. Its rows do
+ *                    carry a useful employer `expiryDate`, which is the one
+ *                    thing worth revisiting if they ever add a search param.
+ *   remotive.com     robots.txt: `Disallow: /api/*`.
+ *   remoteok.com     robots.txt: blanket `Disallow: /`.
+ *   jobicy.com       robots.txt: blanket disallow plus `/api`.
+ *   LinkedIn         No public, unauthenticated job-search API exists. The only
+ *                    routes are login-gated or bot-protected, so reading it
+ *                    would require exactly the evasion this file refuses. The
+ *                    `linkedin` adapter therefore stays a URL-READER: it parses
+ *                    posting URLs you paste and searches for nothing.
+ *   iCIMS, Jobvite,
+ *   SuccessFactors   Verified against live tenants: all three serve a JS
+ *                    application shell to a plain fetch — Jobvite returns the
+ *                    same 167KB SPA for every path (including a bogus
+ *                    /api/v1/jobs), and none emit schema.org JobPosting JSON-LD
+ *                    server-side. There is no public JSON feed to read. The
+ *                    supported route for these is the `careers` adapter, which
+ *                    takes a per-employer `careersUrl` or `sitemap` and reads
+ *                    published posting pages.
+ *
  * Relevance: both endpoints match query terms with OR semantics, so a bare
  * "data engineer" search returns anything containing "data" OR "engineer"
  * (44,506 US rows on SmartRecruiters, including Portuguese lab technicians).
@@ -64,6 +94,7 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
 import { normalizeText } from '../../utils/textNormalize.js';
+import { usLocationSignal } from '../../utils/usGeography.js';
 
 export const adapterId = 'atsSearch';
 
@@ -211,7 +242,7 @@ export function makeCountryGate(country) {
 }
 
 /** Placeholder "cities" that carry no geography and must not be shown as one. */
-const PLACEHOLDER_LOCATION_RE = /^(telecommute|remote|anywhere|virtual|home based|work from home|n\/?a|various|multiple locations)$/i;
+const PLACEHOLDER_LOCATION_RE = /^(telecommute|remote|anywhere|anywhere in the world|virtual|home based|work from home|n\/?a|various|multiple locations|worldwide|global|global remote|remote worldwide)$/i;
 
 /**
  * Phrase-quote a query so the vendor matches the whole phrase, not each token.
@@ -618,10 +649,188 @@ export function mapSmartRecruitersHit(row, query = '') {
   });
 }
 
+/**
+ * Keep a posting whose free-text location is US-resolvable, or carries no
+ * geography at all.
+ *
+ * For the providers that expose no country parameter (Himalayas indexes the whole
+ * world; The Muse filters only by its own category/location vocabulary), the
+ * country decision has to be made here. It deliberately does NOT do its own
+ * string matching against country names: `usLocationSignal` is this codebase's
+ * single source of truth for reading a location, it already distinguishes a
+ * spelled-out state from a bare two-letter code, and a second, weaker
+ * implementation living here is exactly how two halves of a filter come to
+ * disagree.
+ *
+ * Three outcomes, following the same "absence of evidence is not evidence" rule
+ * as the country and age gates above:
+ *   - no location at all            -> KEEP (the exclusion stage judges it)
+ *   - a placeholder like "Remote" /
+ *     "Worldwide" / "Anywhere"      -> KEEP (borderless, so open to the US)
+ *   - resolves to a real place      -> keep only if that place is in the US
+ *
+ * Multi-location strings are split, and any US part keeps the row: a req open in
+ * "London; Austin, TX" is a US opening.
+ *
+ * @param {boolean} [enabled=true] pass false to disable the gate entirely
+ * @returns {(value: string) => boolean}
+ */
+export function makeUsLocationGate(enabled = true) {
+  if (enabled === false) return () => true;
+  return (value) => {
+    const raw = String(value ?? '').trim();
+    if (!raw) return true;
+    const parts = raw.split(/[;|/]|\band\b/i).map((p) => p.trim()).filter(Boolean);
+    if (parts.length === 0) return true;
+    let sawPlaceable = false;
+    for (const part of parts) {
+      // A geography-free label is not a foreign location — it is no location.
+      if (PLACEHOLDER_LOCATION_RE.test(part)) return true;
+      if (usLocationSignal(part).isUs) return true;
+      sawPlaceable = true;
+    }
+    return !sawPlaceable;
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * Provider: The Muse
+ * ------------------------------------------------------------------ */
+
+/**
+ * Search The Muse's documented public jobs API for one title.
+ *
+ *   GET www.themuse.com/api/public/jobs?page=&category=&location=
+ *
+ * Complements Himalayas rather than duplicating it: The Muse indexes large,
+ * mostly US-based employers (SpaceX, Nike, banks) whose reqs are hosted on ATSes
+ * this codebase has no per-company entry for, and every row ships the full
+ * `contents` HTML plus a real `publication_date`.
+ *
+ * The API has no free-text search parameter — it filters by `category` and
+ * `location` and returns newest-first pages. The title gate is therefore doing
+ * the relevance work here, which is why `category` defaults to the data/analytics
+ * families rather than being left open.
+ *
+ * Like Himalayas, `refs.landing_page` is a themuse.com URL, so rows are tagged
+ * `aggregator: true`. Note the API exposes no direct employer link at all: the
+ * only apply path it offers is `/job/redirect/*`, which the site's robots.txt
+ * disallows, so it is deliberately NOT requested.
+ *
+ * robots.txt (checked when this was written): the only `/api` rule is
+ * `Disallow: /api/users*`; `/api/public/jobs` is not restricted.
+ */
+const THEMUSE_HOST = 'www.themuse.com';
+
+/** Muse categories that map to this candidate's field. */
+const DEFAULT_THEMUSE_CATEGORIES = Object.freeze([
+  'Data and Analytics', 'Data Science', 'Software Engineering', 'IT',
+]);
+
+/** Muse pages to walk per category. 20 rows/page, newest first. */
+const DEFAULT_THEMUSE_MAX_PAGES = 3;
+
+/**
+ * The Muse ignores the query text, so running it once per target title would
+ * re-fetch identical pages N times. It runs on the FIRST query only and covers
+ * its breadth through categories and pages instead; the title gate still applies
+ * the candidate's full title list to every row.
+ */
+async function runTheMuse({ query, source, options, ctx, titleGate }) {
+  if (!isFirstQuery(query, options, ctx)) return [];
+
+  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
+  const ageGate = makeAgeGate(options.maxAgeDays);
+  const locationGate = makeUsLocationGate(options.usOnly);
+  const categories = Array.isArray(options.museCategories) && options.museCategories.length
+    ? options.museCategories
+    : DEFAULT_THEMUSE_CATEGORIES;
+  const maxPages = Number.isFinite(options.museMaxPages)
+    ? Math.max(1, options.museMaxPages)
+    : DEFAULT_THEMUSE_MAX_PAGES;
+
+  const jobs = [];
+  const seen = new Set();
+  for (const category of categories) {
+    for (let page = 1; page <= maxPages; page += 1) {
+      if (ctx.shouldCancel?.()) return jobs;
+      if (rateLimiter) await rateLimiter.wait(`atsSearch:${THEMUSE_HOST}`, source.rateLimitMs);
+      const url = new URL(`https://${THEMUSE_HOST}/api/public/jobs`);
+      url.searchParams.set('page', String(page));
+      url.searchParams.set('category', category);
+      const href = url.href;
+      const call = () => fetchJson(fetchImpl, href, 'The Muse search', requestTimeoutMs);
+      const data = await withRetry(
+        () => (hostGate ? hostGate.run(href, call) : call()),
+        { maxRetries },
+      );
+      const rows = Array.isArray(data?.results) ? data.results : [];
+      if (rows.length === 0) break;
+      for (const row of rows) {
+        if (!titleGate(row?.name)) continue;
+        if (!ageGate(row?.publication_date ?? null)) continue;
+        const locations = museLocations(row);
+        if (!locationGate(locations)) continue;
+        const id = String(row?.id ?? '');
+        // The same req appears under several categories; keep the first.
+        if (id && seen.has(id)) continue;
+        if (id) seen.add(id);
+        jobs.push(mapTheMuseHit(row, { query, locations, category }));
+      }
+    }
+  }
+  return jobs;
+}
+
+/**
+ * True when `query` is the first of the resolved query list.
+ *
+ * A provider whose endpoint takes no search term must not run once per title —
+ * that would issue the same requests N times for one set of results.
+ */
+function isFirstQuery(query, options, ctx) {
+  const queries = resolveQueries(options, ctx);
+  return queries.length === 0 || queries[0] === query;
+}
+
+/** Join a Muse row's locations into one display string. */
+export function museLocations(row) {
+  const list = Array.isArray(row?.locations) ? row.locations : [];
+  return list.map((l) => String(l?.name ?? '').trim()).filter(Boolean).join('; ');
+}
+
+function mapTheMuseHit(row, { query, locations, category }) {
+  const levels = Array.isArray(row?.levels)
+    ? row.levels.map((l) => String(l?.name ?? '').trim()).filter(Boolean)
+    : [];
+  return normalizeJob({
+    source: 'themuse',
+    sourceJobId: String(row?.id ?? ''),
+    company: row?.company?.name ?? '',
+    title: row?.name ?? '',
+    location: locations,
+    url: row?.refs?.landing_page ?? '',
+    jdText: htmlToText(String(row?.contents ?? '')).slice(0, 20000),
+    postedAt: row?.publication_date ?? null,
+    employmentType: String(row?.type ?? ''),
+    rawMetadata: {
+      provider: 'themuse',
+      query,
+      // themuse.com hosts the landing page; the employer's own form is behind a
+      // redirect their robots.txt disallows, so this is an aggregator row.
+      aggregator: true,
+      category,
+      levels,
+      companySlug: row?.company?.short_name ?? null,
+    },
+  });
+}
+
 /** provider id -> runner. */
 const PROVIDERS = {
   workable: runWorkable,
   smartrecruiters: runSmartRecruitersSearch,
+  themuse: runTheMuse,
 };
 
 /** Exported so tests can assert the supported provider set. */

@@ -29,6 +29,7 @@ import * as ashby from './adapters/ashby.js';
 import * as smartrecruiters from './adapters/smartrecruiters.js';
 import * as atsSearch from './adapters/atsSearch.js';
 import * as adzuna from './adapters/adzuna.js';
+import * as rippling from './adapters/rippling.js';
 
 /** adapter id -> module. */
 export const ADAPTERS = {
@@ -46,6 +47,7 @@ export const ADAPTERS = {
   smartrecruiters,
   atsSearch,
   adzuna,
+  rippling,
 };
 
 /** How many independent sources to run concurrently by default. */

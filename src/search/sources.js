@@ -29,6 +29,8 @@ export const DISCOVERY_ADAPTERS = Object.freeze(new Set([
   // enumerating one configured board at a time.
   'atsSearch',
   'adzuna',
+  // Per-company public ATS board API, same posture as greenhouse/lever/ashby.
+  'rippling',
 ]));
 
 /** Adapter ids that only read user-supplied public posting URLs (no search). */
@@ -72,6 +74,11 @@ const SOURCE_STRING_KIND = Object.freeze({
   smartrecruiters: 'discovery',
   atsSearch: 'discovery',
   adzuna: 'discovery',
+  rippling: 'discovery',
+  // atsSearch tags each cross-company provider with its own source string so
+  // the provenance report can tell Workable breadth from Himalayas breadth.
+  himalayas: 'discovery',
+  themuse: 'discovery',
   dice: 'url-reader',
   linkedin: 'url-reader',
   indeed: 'url-reader',

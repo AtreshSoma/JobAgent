@@ -50,8 +50,12 @@ describe('registration', () => {
     expect(sourceKind('atsSearch')).toBe('discovery');
   });
 
-  it('exposes exactly the two verified providers', () => {
-    expect(PROVIDER_IDS).toEqual(['workable', 'smartrecruiters']);
+  // Each provider here was verified against the live endpoint before being
+  // added, including its robots.txt posture — see the per-provider notes in
+  // atsSearch.js. The list is asserted exactly so a new one cannot be added
+  // without a deliberate decision (and a note saying what was checked).
+  it('exposes exactly the verified providers', () => {
+    expect(PROVIDER_IDS).toEqual(['workable', 'smartrecruiters', 'themuse']);
   });
 });
 

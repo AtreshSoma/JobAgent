@@ -351,10 +351,11 @@
       "priority": 2,
       "rateLimitMs": 1500,
       "options": {
-        "note": "QUERY-FIRST DISCOVERY, no API key, no per-run cost. Searches ACROSS every employer hosted by an ATS vendor instead of enumerating one configured board at a time — this is the capability the paid Apify actors provided. Queries default to candidate.targetTitles so the title list lives in exactly one place. Both providers OR-match query terms, so queries are phrase-quoted and every hit must clear a title gate before it is kept. Providers: 'workable' (real pagination, full JD inline, relevance-ranked so dayRange is the only recency lever) and 'smartrecruiters' (already newest-first; newest 100 per query, server ignores offset). Public unauthenticated vendor search endpoints only — no login, CAPTCHA solving, or evasion.",
+        "note": "QUERY-FIRST DISCOVERY, no API key, no per-run cost. Searches ACROSS every employer hosted by an ATS vendor instead of enumerating one configured board at a time — this is the capability the paid Apify actors provided. Queries default to candidate.targetTitles so the title list lives in exactly one place. Both providers OR-match query terms, so queries are phrase-quoted and every hit must clear a title gate before it is kept. Providers: 'workable' (real pagination, full JD inline, relevance-ranked so dayRange is the only recency lever) and 'smartrecruiters' (already newest-first; newest 100 per query, server ignores offset). Public unauthenticated vendor search endpoints only — no login, CAPTCHA solving, or evasion. PROVIDERS: workable + smartrecruiters (ATS-vendor cross-customer search) and themuse (a cross-company job board). Each was verified against the live endpoint AND its robots.txt before being added — see the per-provider notes in src/search/adapters/atsSearch.js. themuse rows carry an aggregator URL (the board hosts the landing page, not the employer), so they are tagged aggregator:true and the dashboard asks you to trace the direct URL before applying. usOnly gates worldwide indexes through utils/usGeography.js (blank and borderless locations are KEPT).",
         "providers": [
           "workable",
-          "smartrecruiters"
+          "smartrecruiters",
+          "themuse"
         ],
         "location": "United States",
         "country": "us",
@@ -364,7 +365,15 @@
         "maxDetailFetches": 25,
         "fetchDetails": true,
         "strictTitleMatch": true,
-        "queryConcurrency": 4
+        "queryConcurrency": 4,
+        "usOnly": true,
+        "museCategories": [
+          "Data and Analytics",
+          "Data Science",
+          "Software Engineering",
+          "IT"
+        ],
+        "museMaxPages": 3
       }
     },
     {
@@ -2236,6 +2245,22 @@
         "PremierItSolutions",
         "SYSRSITServicesLLC"
       ]
+    },
+    {
+      "id": "rippling-boards",
+      "adapter": "rippling",
+      "enabled": true,
+      "priority": 3,
+      "rateLimitMs": 1500,
+      "boards": [
+        "rippling"
+      ],
+      "options": {
+        "note": "DISCOVERY. Rippling ATS public board API (api.rippling.com/platform/api/ats/v1/board/{slug}/jobs) — the same unauthenticated JSON the vendor's own ats.rippling.com board calls to render itself. No key, no cost, no login, no evasion; api.rippling.com serves no robots.txt so no directive is being ignored. `boards` are Rippling board slugs: the {slug} in ats.rippling.com/{slug}. Add any employer you find hosted there. The list response carries NO date and NO description, so the title gate runs against the list first and only plausible matches cost a detail request — verified 730 jobs on one board reduced to a handful. The url returned is the employer's own ats.rippling.com application page, i.e. a DIRECT apply link rather than an aggregator hop. BOARD LIST IS INTENTIONALLY SHORT: every slug here was confirmed to return HTTP 200 with a non-empty job array. Guessed slugs 404, and a 404 per run is exactly the per-source noise the run summary is meant to make meaningful — so add a slug only after checking it: curl -s -o /dev/null -w '%{http_code}' https://api.rippling.com/platform/api/ats/v1/board/<slug>/jobs . You find slugs from a job link you already have (ats.rippling.com/<slug>/jobs/...), not by guessing company names.",
+        "strictTitleMatch": true,
+        "maxDetailFetches": 40,
+        "maxAgeDays": 180
+      }
     }
   ]
 }
