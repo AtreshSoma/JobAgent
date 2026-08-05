@@ -24,11 +24,11 @@
     {
       "id": "apify-scrapers",
       "adapter": "apify",
-      "enabled": true,
+      "enabled": false,
       "priority": 2,
       "rateLimitMs": 2000,
       "options": {
-        "note": "REAL multi-portal discovery via your own Apify account. Set APIFY_TOKEN in .env, set enabled:true, then list one or more actors. Each actor: { actorId: 'username~actor-name', label, source, input: {...actor-specific...}, fieldMap?: {...overrides...} }. Or read a previous run: { datasetId: '...' }. Find actors at https://apify.com/store (search 'jobs').",
+        "note": "DISABLED 2026-08-05 — Apify monthly usage cap hit ($5.25 of $5.00); re-enable after the billing reset on 2026-08-07. REAL multi-portal discovery via your own Apify account. Set APIFY_TOKEN in .env, set enabled:true, then list one or more actors. Each actor: { actorId: 'username~actor-name', label, source, input: {...actor-specific...}, fieldMap?: {...overrides...} }. Or read a previous run: { datasetId: '...' }. Find actors at https://apify.com/store (search 'jobs').",
         "tokenEnv": "APIFY_TOKEN",
         "maxItemsPerActor": 100,
         "maxActorsPerRun": 16,
@@ -232,11 +232,11 @@
     {
       "id": "apify-linkedin",
       "adapter": "apify",
-      "enabled": true,
+      "enabled": false,
       "priority": 2,
       "rateLimitMs": 2000,
       "options": {
-        "note": "Nationwide US discovery via LinkedIn through YOUR OWN Apify account using valig~linkedin-jobs-scraper. PAY-PER-RESULT (~$0.0004/job + ~$0.001/run on the FREE plan). Compliance: official Apify REST API with your token only; no login replay, CAPTCHA solving, or evasion. Searches cover the past month and the candidate's major Data Engineering, Data Platform, Analytics Engineering, BI, Data Warehouse, ETL, and Power BI title families. Deduplication and skill scoring rank overlap. Each search's limit caps results and cost.",
+        "note": "DISABLED 2026-08-05 — Apify monthly usage cap hit ($5.25 of $5.00); re-enable after the billing reset on 2026-08-07. Nationwide US discovery via LinkedIn through YOUR OWN Apify account using valig~linkedin-jobs-scraper. PAY-PER-RESULT (~$0.0004/job + ~$0.001/run on the FREE plan). Compliance: official Apify REST API with your token only; no login replay, CAPTCHA solving, or evasion. Searches cover the past month and the candidate's major Data Engineering, Data Platform, Analytics Engineering, BI, Data Warehouse, ETL, and Power BI title families. Deduplication and skill scoring rank overlap. Each search's limit caps results and cost.",
         "tokenEnv": "APIFY_TOKEN",
         "maxItemsPerActor": 100,
         "maxActorsPerRun": 9,
