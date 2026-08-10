@@ -5,7 +5,10 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { classifyFailure, sanitizeErrorMessage, buildRca, RCA_CATEGORIES } from '../../src/utils/failureRca.js';
+import {
+  classifyFailure, sanitizeErrorMessage, buildRca, RCA_CATEGORIES,
+  inferScope, unitLabelFor,
+} from '../../src/utils/failureRca.js';
 
 describe('classifyFailure', () => {
   const cases = [
@@ -98,5 +101,77 @@ describe('buildRca', () => {
     expect(entry.at).toBe('2026-07-11T12:00:00.000Z');
     expect(entry.impact).toContain('greenhouse');
     expect(entry.guidance).toMatch(/rate/i);
+  });
+});
+
+describe('blast radius: "missing" must mean missing', () => {
+  it('does not claim results are missing when the source delivered jobs', () => {
+    // THE BUG THIS PINS. A live run reported, verbatim:
+    //   workday-public  38,830 found · 1 error · partial
+    //   "Results from workday-public are missing from this run"
+    // Both the FAILED badge and the impact line were false — 38,830 jobs were
+    // sitting on the board. Whether results are missing is not a property of
+    // the error; it is the relationship between the error and what was
+    // delivered, so `kept` decides it.
+    const entry = buildRca({
+      operation: 'discover', source: 'workday-public', error: 'fetch failed',
+      kept: 38830, scope: 'board', unitLabel: 'citi',
+    });
+    expect(entry.outcome).toBe('partial');
+    expect(entry.impact).not.toMatch(/are missing from this run/);
+    expect(entry.impact).toContain('38,830');
+    expect(entry.impact).toContain('kept');
+    // A board-scope loss costs a whole employer — name it, and say so.
+    expect(entry.impact).toContain('citi');
+    expect(entry.impact).toContain('that employer contributed nothing');
+  });
+
+  it('reports a page-scope loss as a subset, not a dead source', () => {
+    const entry = buildRca({
+      operation: 'discover', source: 'adzuna-aggregator',
+      error: 'Adzuna HTTP 503 for https://api.adzuna.com/v1/api/jobs/us/search/2',
+      status: 503, attempt: 3, kept: 691, scope: 'page',
+    });
+    expect(entry.outcome).toBe('partial');
+    expect(entry.impact).toContain('691');
+    expect(entry.impact).toContain('1 page failed');
+    expect(entry.impact).not.toMatch(/are missing from this run/);
+  });
+
+  it('still says missing when the source genuinely returned nothing', () => {
+    const entry = buildRca({
+      operation: 'discover', source: 'dice-public', error: 'HTTP 403', status: 403, kept: 0,
+    });
+    expect(entry.outcome).toBe('failed');
+    expect(entry.impact).toMatch(/returned no jobs|missing entirely/);
+  });
+
+  it('keeps degraded meaning "kept but lower fidelity", never missing', () => {
+    const entry = buildRca({
+      operation: 'discover', source: 'oracle-recruiting',
+      error: 'detail budget reached', degraded: true, kept: 190, count: 95,
+    });
+    expect(entry.outcome).toBe('degraded');
+    expect(entry.impact).toContain('KEPT');
+    expect(entry.impact).not.toMatch(/are missing from this run/);
+  });
+
+  it('does not assert either way when the caller did not report delivery', () => {
+    // Absence of evidence is not evidence of loss.
+    const entry = buildRca({ operation: 'discover', source: 'x', error: 'boom' });
+    expect(entry.outcome).toBe('unknown');
+    expect(entry.kept).toBeNull();
+  });
+
+  it('infers the failing unit from the fields adapters already attach', () => {
+    expect(inferScope({ offset: 100, searchText: 'data engineer' })).toBe('page');
+    expect(inferScope({ tenant: 'citi', site: 'External' })).toBe('board');
+    expect(inferScope({ board: 'acme' })).toBe('board');
+    expect(inferScope({ error: 'generic' })).toBe('source');
+    // An explicit scope always wins over inference.
+    expect(inferScope({ scope: 'source', offset: 1 })).toBe('source');
+    expect(unitLabelFor({ tenant: 'citi' })).toBe('citi');
+    expect(unitLabelFor({ company: 'Acme Corp' })).toBe('Acme Corp');
+    expect(unitLabelFor({})).toBeNull();
   });
 });

@@ -31,6 +31,12 @@ export const DISCOVERY_ADAPTERS = Object.freeze(new Set([
   'adzuna',
   // Per-company public ATS board API, same posture as greenhouse/lever/ashby.
   'rippling',
+  // Oracle Fusion Recruiting Cloud — public candidate-experience REST API.
+  'oracleRecruiting',
+  // Amazon's own public search.json, covering the whole amazon.jobs family.
+  'amazonJobs',
+  // iCIMS public career portals (server-rendered behind in_iframe=1).
+  'icims',
 ]));
 
 /** Adapter ids that only read user-supplied public posting URLs (no search). */
@@ -75,6 +81,9 @@ const SOURCE_STRING_KIND = Object.freeze({
   atsSearch: 'discovery',
   adzuna: 'discovery',
   rippling: 'discovery',
+  oracleRecruiting: 'discovery',
+  amazonJobs: 'discovery',
+  icims: 'discovery',
   // atsSearch tags each cross-company provider with its own source string so
   // the provenance report can tell Workable breadth from Himalayas breadth.
   himalayas: 'discovery',

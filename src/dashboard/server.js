@@ -63,7 +63,7 @@ import { randomUUID } from 'node:crypto';
 import { ensureResumePdf } from '../resume/pdfPreview.js';
 import { checkJobLink } from './linkHealth.js';
 
-import { buildRca, sanitizeErrorMessage } from '../utils/failureRca.js';
+import { buildRca, sanitizeErrorMessage, inferScope } from '../utils/failureRca.js';
 import { isPublicHttpUrl } from '../utils/publicUrl.js';
 import { assertInsideDirectory, isInsideDirectory } from '../utils/pathSafe.js';
 
@@ -135,7 +135,9 @@ export function collapseRca(entries = []) {
   /** @type {Map<string, object>} */
   const merged = new Map();
   for (const e of entries) {
-    const key = `${e.source ?? ''}|${e.operation ?? ''}|${e.category}|${e.status ?? ''}|${e.degraded ? 'd' : 'f'}`;
+    // Scope is part of the identity: "1 page failed" and "1 employer failed"
+    // are different findings and folding them together would misstate the cost.
+    const key = `${e.source ?? ''}|${e.operation ?? ''}|${e.category}|${e.status ?? ''}|${e.degraded ? 'd' : 'f'}|${e.scope ?? ''}`;
     const seen = merged.get(key);
     if (!seen) {
       merged.set(key, { ...e });
@@ -145,6 +147,11 @@ export function collapseRca(entries = []) {
     seen.retryCount = Math.max(seen.retryCount, e.retryCount ?? 0);
     // Keep the first message as the representative sample; the count carries
     // the rest. Recompute the impact so it reflects the folded total.
+    //
+    // `kept` and `scope` MUST be threaded through here. Dropping them made the
+    // recomputed impact fall back to "results are missing" the moment two
+    // identical failures folded — silently undoing the honest wording for
+    // exactly the noisiest cases, which are the ones a user actually reads.
     seen.impact = buildRca({
       operation: seen.operation,
       source: seen.source,
@@ -152,6 +159,8 @@ export function collapseRca(entries = []) {
       status: seen.status ?? undefined,
       degraded: seen.degraded,
       count: seen.count,
+      kept: seen.kept,
+      scope: seen.scope,
     }).impact;
   }
   return [...merged.values()]
@@ -696,9 +705,18 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
         // do NOT fail the run — valid results from healthy sources were kept.
         // They surface as structured RCA entries and mark the run "partial".
         const sourceErrors = Array.isArray(r?.errors) ? r.errors : [];
+        // How many jobs each source actually DELIVERED. Without this the RCA
+        // cannot tell a source that died from one that lost a single page, and
+        // it told the user "results are missing" for a Workday run that had
+        // just returned 38,830 jobs.
+        const keptBySource = new Map(
+          (r?.perSource ?? []).map((s) => [s.source, Number(s.found ?? 0)]),
+        );
         runState.rca = collapseRca(sourceErrors.map((e) => buildRca({
           operation: phase,
           source: e.source ?? e.company ?? null,
+          kept: keptBySource.has(e.source) ? keptBySource.get(e.source) : null,
+          scope: inferScope(e),
           // Adapters carry the HTTP status structurally. Without it the
           // classifier is left guessing from prose, and a 429 whose message
           // happens to contain "fetch failed" gets reported as a network fault.

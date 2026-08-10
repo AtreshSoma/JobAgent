@@ -106,8 +106,21 @@ export async function runPrepareApps({ config, db, logger, deps = {} } = {}) {
   return runPipeline({ config, db, logger, mode: 'PREPARE', deps });
 }
 
-/** DB statuses a re-score may overwrite — rows still owned by the pipeline. */
-const RESCORABLE_STATUSES = new Set([LIFECYCLE.FOUND, LIFECYCLE.SCORED, LIFECYCLE.NEAR_MISS, 'discarded', '', null, undefined]);
+/**
+ * DB statuses a re-score may overwrite — rows still owned by the pipeline.
+ *
+ * `unknown_date_review` is included deliberately. Discovery routes any posting
+ * with no parseable date into that bucket WITHOUT scoring it, so those rows
+ * have no score, no tier, and no explanation. Omitting the status here made the
+ * bucket a permanent dead end: never scored on the way in, and skipped by the
+ * one command that could score them afterwards. 2,509 rows in the live database
+ * had a null posting date and could never become actionable no matter what the
+ * user did. A missing DATE is not a reason to refuse to judge the ROLE.
+ */
+const RESCORABLE_STATUSES = new Set([
+  LIFECYCLE.FOUND, LIFECYCLE.SCORED, LIFECYCLE.NEAR_MISS, 'discarded',
+  'unknown_date_review', '', null, undefined,
+]);
 
 /**
  * RE-SCORE — recompute exclusions, sponsorship, score, tier, and explanation

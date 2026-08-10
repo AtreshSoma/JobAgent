@@ -75,12 +75,39 @@ describe('phraseQuote', () => {
 describe('makeTitleGate', () => {
   const gate = makeTitleGate({ titles: TITLES });
 
-  it('keeps configured target titles and generic data-role tokens', () => {
+  it('keeps titles containing a configured target title', () => {
     expect(gate('Senior Data Engineer')).toBe(true);
-    expect(gate('Staff Data Engineer')).toBe(true);
     expect(gate('Analytics Engineer II')).toBe(true);
     expect(gate('Power BI Developer')).toBe(true);
-    expect(gate('Business Intelligence Developer')).toBe(true);
+    expect(gate('Remote Senior Data Engineer (Contract)')).toBe(true);
+  });
+
+  it('claims nothing beyond its title list when given no profile', () => {
+    // This path used to also accept anything matching a hardcoded role regex
+    // (data|analytics|bi|etl|... + engineer|developer|architect|analyst), which
+    // baked one profession's vocabulary into the adapter layer. Inference now
+    // lives in the profile-driven path below, which derives that vocabulary from
+    // config/candidate.json — so a caller that supplies only a title list gets
+    // exactly what it asked for and no guesses.
+    expect(gate('Staff Data Engineer')).toBe(false);
+    expect(gate('Business Intelligence Developer')).toBe(false);
+  });
+
+  it('infers sibling titles once a candidate profile is supplied', () => {
+    // The real production path: every adapter threads ctx.candidate, so the
+    // level variants the literal gate above misses are recovered here.
+    const profiled = makeTitleGate({ titles: TITLES, candidate: { targetTitles: TITLES } });
+    expect(profiled('Staff Data Engineer')).toBe(true);
+    expect(profiled('Business Intelligence Developer')).toBe(true);
+    expect(profiled('Registered Nurse')).toBe(false);
+  });
+
+  it('keeps everything rather than nothing when given no criteria at all', () => {
+    // A gate with no profile AND no titles has nothing to judge on. Rejecting
+    // every posting would discard an entire board over a missing config value,
+    // and a run that finds nothing looks identical to one with nothing to find.
+    const ungated = makeTitleGate({ titles: [], strict: true });
+    expect(ungated('Anything At All')).toBe(true);
   });
 
   it('rejects the near-miss noise both vendors return for OR-matched queries', () => {

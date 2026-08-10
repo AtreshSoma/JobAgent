@@ -48,6 +48,28 @@ const FOUND_PATH = join(ROOT, 'data', 'found_jobs.json');
 const VALIDATE_CONCURRENCY = 8;
 const VALIDATE_TIMEOUT_MS = 20_000;
 
+/**
+ * Human-readable identity for a harvested coordinate.
+ *
+ * Not every ATS is identified by a board slug. Workday needs host + site,
+ * Oracle needs host + siteNumber, and an iCIMS portal host IS the employer —
+ * those three carry no `slug` at all. Reading `coord.slug` unconditionally
+ * therefore threw `Cannot read properties of undefined (reading 'slice')` and
+ * killed the harvest at the print step, AFTER the network validation had
+ * already run. The failure was specific to iCIMS, Oracle and Rippling, which is
+ * exactly why those three platforms still had one board each in the config
+ * while 132 live candidates sat undiscovered in the database.
+ *
+ * @param {object} coord harvested coordinate
+ * @returns {string} always a string, so formatting can never throw
+ */
+function coordLabel(coord = {}) {
+  if (coord.ats === 'workday') return `${coord.host} / ${coord.site}`;
+  if (coord.ats === 'oracleRecruiting') return `${coord.host} / ${coord.siteNumber}`;
+  if (coord.ats === 'icims') return String(coord.host ?? '');
+  return String(coord.slug ?? coord.host ?? '(unnamed)');
+}
+
 function parseArgs(argv) {
   const args = { apply: false, validate: true, limit: 50, minJobs: 1 };
   for (const a of argv.slice(2)) {
@@ -150,6 +172,47 @@ const VALIDATORS = {
     );
     return Number(d.total ?? (d.jobPostings ?? []).length);
   },
+  async icims({ host }) {
+    // `in_iframe=1` is what makes iCIMS serve the rendered listing; without it
+    // the response is an empty iframe wrapper and every portal looks dead.
+    const res = await fetchWithTimeout(
+      fetch,
+      `https://${host}/jobs/search?ss=1&in_iframe=1`,
+      { headers: discoveryHeaders({ Accept: 'text/html' }) },
+      VALIDATE_TIMEOUT_MS,
+    );
+    if (!res.ok) {
+      const e = new Error(`HTTP ${res.status}`);
+      e.status = res.status;
+      throw e;
+    }
+    const html = await res.text();
+    return (html.match(/\/jobs\/\d+\/[^"']*?\/job/g) ?? []).length;
+  },
+  async oracleRecruiting({ host, siteNumber }) {
+    // `expand=requisitionList` is mandatory — without it this returns 200 with
+    // no jobs key and every harvested tenant would look dead.
+    const d = await getJson(
+      `https://${host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions`
+      + `?onlyData=true&expand=requisitionList&finder=findReqs;siteNumber=${encodeURIComponent(siteNumber)},limit=1`,
+    );
+    const envelope = d?.items?.[0] ?? {};
+    return Number(envelope.TotalJobsCount ?? (envelope.requisitionList ?? []).length);
+  },
+  /**
+   * Rippling boards had NO validator at all, so every harvested one failed with
+   * "no validator", was counted as dead, and was silently dropped before the
+   * merge step — 33 candidates in one pass. Combined with the label crash above,
+   * that is the whole reason this platform sat at a single configured board.
+   *
+   * Same public board endpoint the adapter itself reads.
+   */
+  async rippling({ slug }) {
+    const d = await getJson(
+      `https://api.rippling.com/platform/api/ats/v1/board/${encodeURIComponent(slug)}/jobs`,
+    );
+    return Array.isArray(d) ? d.length : 0;
+  },
   // Workable boards are harvested for the record but have no company-first
   // adapter to receive them; the cross-company atsSearch provider already
   // covers every Workable account, so validating one would prove nothing.
@@ -159,7 +222,13 @@ const VALIDATORS = {
 async function validate(entries) {
   return mapWithConcurrency(entries, VALIDATE_CONCURRENCY, async (entry) => {
     const validator = VALIDATORS[entry.coord.ats];
-    if (!validator) return { ...entry, live: false, postings: 0, error: 'no validator' };
+    // `unvalidated`, not merely `live: false`. A platform with no validator was
+    // reported inside the same "dead or empty" total as a board that was really
+    // probed and really had nothing — so adding an adapter without also adding a
+    // validator here made its boards vanish with no way to tell from the output.
+    if (!validator) {
+      return { ...entry, live: false, unvalidated: true, postings: 0, error: 'no validator' };
+    }
     try {
       const postings = await validator(entry.coord);
       return { ...entry, live: postings > 0, postings, error: null };
@@ -221,7 +290,15 @@ async function main() {
     console.log(`\n  Validating ${capped.length} boards against their public APIs...`);
     verified = await validate(capped);
     const live = verified.filter((e) => e.live).length;
-    console.log(`  ${live} live / ${verified.length - live} dead or empty`);
+    const unvalidated = verified.filter((e) => e.unvalidated);
+    console.log(`  ${live} live / ${verified.length - live - unvalidated.length} dead or empty`);
+    if (unvalidated.length) {
+      const byAts = new Map();
+      for (const e of unvalidated) byAts.set(e.coord.ats, (byAts.get(e.coord.ats) ?? 0) + 1);
+      const detail = [...byAts].map(([ats, n]) => `${ats} (${n})`).join(', ');
+      console.log(`  ${unvalidated.length} NOT CHECKED — no validator for: ${detail}.`);
+      console.log('    These are dropped, not added. Add a validator in VALIDATORS to harvest them.');
+    }
   } else {
     console.log('\n  --no-validate: skipping liveness checks');
   }
@@ -234,9 +311,7 @@ async function main() {
 
   console.log('\n  Boards to add (most postings first):');
   for (const e of live.slice(0, 30)) {
-    const label = e.coord.ats === 'workday'
-      ? `${e.coord.host} / ${e.coord.site}`
-      : e.coord.slug;
+    const label = coordLabel(e.coord);
     const company = [...e.companies][0] ?? '';
     console.log(
       `    ${String(e.postings ?? '?').padStart(5)} postings  ${e.coord.ats.padEnd(15)} `

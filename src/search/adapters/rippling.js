@@ -35,6 +35,7 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
+import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
 export const adapterId = 'rippling';
 
@@ -85,8 +86,10 @@ export async function run(source = {}, ctx = {}) {
   const titleGate = makeTitleGate({
     titles: options.titles ?? ctx.candidate?.targetTitles ?? [],
     strict: options.strictTitleMatch !== false,
+    candidate: ctx.candidate ?? null,
   });
   const ageGate = makeAgeGate(options.maxAgeDays);
+  const vocab = ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null;
 
   const jobs = [];
   const errors = [];
@@ -116,6 +119,10 @@ export async function run(source = {}, ctx = {}) {
 
     // Gate on the list's own title before spending a request on the detail.
     const candidates = rows.filter((row) => titleGate(row?.name));
+    // Best-first: certain matches are enriched before speculative ones.
+    if (vocab) {
+      candidates.sort((a, b) => titleFitPriority(b?.name, vocab) - titleFitPriority(a?.name, vocab));
+    }
     const budgeted = maxDetailFetches > 0 ? candidates.slice(0, maxDetailFetches) : [];
     const dropped = candidates.length - budgeted.length;
 

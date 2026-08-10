@@ -174,3 +174,132 @@ describe('exclusionFilter', () => {
     });
   });
 });
+
+describe('US-only gate: offshore postings reaching the dashboard', () => {
+  const config = loadConfig({ loadEnv: false, env: {} });
+  const check = (location) => applyExclusions(
+    { title: 'Data Engineer', jdText: 'Build data pipelines.', location, postedAt: new Date().toISOString() },
+    config.exclusions,
+  );
+
+  it('discards the Workday country-prefix formats that were slipping through', () => {
+    // These are real location strings observed on the dashboard with
+    // `geography.usOnly: true` already enabled. Two independent bugs let them
+    // through: the leading ISO country code read as a US state abbreviation
+    // ("IN" -> Indiana), and accented city names never matching ASCII markers.
+    for (const location of [
+      'PHL - TAGUIG CITY',
+      'IN-KA-BANGALORE Home Office PW II',
+      'IN-TS-HYDERABAD',
+      'PH-00-Taguig',
+      'BRA - São Paulo',
+      'MEX - Mexico City',
+      'GBR - London',
+    ]) {
+      const r = check(location);
+      expect(r.excluded, location).toBe(true);
+      expect(r.category, location).toBe('geography_mismatch');
+    }
+  });
+
+  it('matches accented place names written in ASCII in the marker list', () => {
+    expect(check('Zürich, Switzerland').excluded).toBe(true);
+    expect(check('Bogotá, Colombia').excluded).toBe(true);
+    expect(check('São Paulo, Brazil').excluded).toBe(true);
+  });
+
+  it('still keeps US locations that share a name or code with a foreign one', () => {
+    // The reason the gate is positional rather than a bigger marker list: these
+    // must all survive. Dropping a real US job is the worse error.
+    for (const location of [
+      'Indianapolis, IN', 'IN-Indianapolis', 'CA-San Jose', 'Ontario, CA',
+      'Dublin, OH', 'Vienna, VA', 'Athens, GA', 'Cambridge, MA',
+      'USA-TX-Austin', 'US-CA-San Francisco', 'New York, NY, United States',
+      'Washington, DC', 'Portland, OR', 'New Mexico',
+    ]) {
+      expect(check(location).excluded, location).toBe(false);
+    }
+  });
+
+  it('still defers on an unknown location instead of hard-discarding it', () => {
+    expect(check('').excluded).toBe(false);
+    expect(check('Remote').excluded).toBe(false);
+  });
+});
+
+describe('multi-location placeholders must not hide an offshore role', () => {
+  const config2 = loadConfig({ loadEnv: false, env: {} });
+  const check = (job) => applyExclusions(
+    { title: 'Data Engineer', jdText: 'Build pipelines.', postedAt: new Date().toISOString(), ...job },
+    config2.exclusions,
+  );
+
+  it('treats an explicit country field as decisive', () => {
+    // REGRESSION. A Manulife requisition in Quezon City / Lapu Lapu City reached
+    // the board with `usOnly: true` because Workday's LIST endpoint collapses a
+    // multi-location req to the literal string "2 Locations". There was no city
+    // to match and no country to match, so no marker list could ever have
+    // caught it. The per-job detail states `country: "Philippines"` outright,
+    // and ground truth must outrank string matching.
+    const r = check({ location: '2 Locations', rawMetadata: { country: 'Philippines' } });
+    expect(r.excluded).toBe(true);
+    expect(r.category).toBe('geography_mismatch');
+    expect(r.reason).toMatch(/Philippines/);
+  });
+
+  it('keeps a job whose stated country IS the United States', () => {
+    for (const country of ['United States', 'USA', 'United States of America']) {
+      expect(check({ location: '3 Locations', rawMetadata: { country } }).excluded, country).toBe(false);
+    }
+  });
+
+  it('discards once the real places are resolved, and keeps US ones', () => {
+    expect(check({ location: 'Quezon City; Lapu Lapu City' }).excluded).toBe(true);
+    expect(check({ location: 'Boston, MA; Austin, TX' }).excluded).toBe(false);
+  });
+
+  it('still defers when the location is genuinely unknown and no country is stated', () => {
+    // An aggregate placeholder with no country resolved yet is UNKNOWN, not
+    // foreign — hard-discarding it would lose real US multi-site roles.
+    expect(check({ location: '2 Locations' }).excluded).toBe(false);
+    expect(check({ location: '' }).excluded).toBe(false);
+  });
+});
+
+describe('ISO country codes from structured ATS fields', () => {
+  const cfg3 = loadConfig({ loadEnv: false, env: {} });
+  const g = (location, country) => applyExclusions(
+    { title: 'Data Engineer', jdText: 'x', location, rawMetadata: { country } },
+    cfg3.exclusions,
+  );
+
+  it('reads a two-letter code as the COUNTRY, not a US state', () => {
+    // Verified live against SmartRecruiters: a New York posting is
+    // `country: "us"` with the state in `region`; Toronto is `"ca"`, Hyderabad
+    // `"in"`, Munich `"de"`. So "ca" means Canada. Treating it as California —
+    // by reading the code back out of "Toronto, CA" — is circular and let every
+    // Canadian posting through.
+    expect(g('Toronto, Ontario', 'ca').excluded).toBe(true);
+    expect(g('Hyderabad', 'in').excluded).toBe(true);
+    expect(g('Munich', 'de').excluded).toBe(true);
+    expect(g('Staines', 'gb').excluded).toBe(true);
+  });
+
+  it('keeps US postings however the country is spelled', () => {
+    for (const c of ['us', 'US', 'United States', 'USA']) {
+      expect(g('New York, NEW YORK', c).excluded, c).toBe(false);
+    }
+  });
+
+  it('keeps a job when a spelled-out US state contradicts the country code', () => {
+    // Bad data, not a foreign role — a spelled-out state or an explicit
+    // national marker is strong enough to override; a bare abbreviation is not.
+    expect(g('San Francisco, California', 'ca').excluded).toBe(false);
+    expect(g('Austin, Texas, United States', 'ca').excluded).toBe(false);
+  });
+
+  it('does not fire when no country is stated', () => {
+    expect(g('Palo Alto', undefined).excluded).toBe(false);
+    expect(g('2 Locations', null).excluded).toBe(false);
+  });
+});

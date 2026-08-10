@@ -194,7 +194,7 @@ describe('run()', () => {
       expect(jobs).toHaveLength(1);
     });
 
-    it('falls back to the generic role-token gate when there is no candidate profile', async () => {
+    it('gates on the configured queries when there is no candidate profile', async () => {
       const fetchImpl = vi.fn(async () => ({
         ok: true, json: async () => ({ results: [OFF_TARGET, ON_TARGET] }),
       }));

@@ -43,6 +43,12 @@ data/*.db-wal
 # Timestamped backups written by scripts/repairJobUrls.mjs --apply (contains
 # the same personal application data as the live DB, so it must never commit)
 data/*.db.*.bak
+# ...and SQLite's sidecars for those backups. `data/*.db-shm` above only covers
+# the LIVE database; a backup's sidecars are named `<name>.bak-shm`/`-wal`,
+# matched by neither rule, so six files holding the same personal application
+# data sat staged-able in `git status` waiting for a `git add -A`.
+data/*.bak-shm
+data/*.bak-wal
 data/found_jobs.json
 data/scored_jobs.json
 data/queued_jobs.json
@@ -54,6 +60,9 @@ data/packets/
 data/application-state/
 resumes/output/*
 !resumes/output/.gitkeep
+# Timestamped copies the tailoring step writes before touching the master.
+# Generated artifacts, not sources — the master itself stays tracked.
+resumes/base/history/
 applications/output/*
 !applications/output/.gitkeep
 logs/*

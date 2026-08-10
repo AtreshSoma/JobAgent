@@ -327,10 +327,14 @@ const JOB_URL_HOST_HINTS = [
   'greenhouse.io', 'lever.co', 'myworkdayjobs.com', 'icims.com',
   'smartrecruiters.com', 'jobvite.com', 'ashbyhq.com',
 ];
+// Deliberately excludes bare '/career'/'/careers/' — too generic, it matches
+// marketing/landing pages (e.g. ".../pages/careers/topics/careers.html") that
+// carry no posting. Every real hint here names something specific to an
+// individual job page.
 const JOB_URL_PATH_HINTS = [
-  '/job/', '/jobs/', '/career', '/careers/', '/position', '/opening',
+  '/job/', '/jobs/', '/position', '/opening',
   '/vacancy', '/vacancies', '/req', 'gh_jid', 'jobid', 'requisition', '/apply',
-  '/postings/', '/posting/',
+  '/postings/', '/posting/', 'job_details', 'job-details', 'jobdetail',
 ];
 
 /**
@@ -364,6 +368,16 @@ export function extractJobLinks(html, baseUrl, maxLinks = DEFAULT_MAX_LINKS) {
   if (!html) return [];
   const out = [];
   const seen = new Set();
+  // A listing page commonly links back to ITSELF with different search/filter
+  // query params (pagination, sort, facets). Same path + different query is
+  // never a distinct job posting, so it is excluded regardless of query string
+  // — without this, a search-results page's own filter links get scraped as
+  // if each one were a separate job.
+  let basePath = null;
+  try {
+    const b = new URL(baseUrl);
+    basePath = `${b.origin}${b.pathname.replace(/\/+$/, '')}`;
+  } catch { /* leave null; nothing to compare against */ }
   const re = /<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>/gi;
   let m;
   while ((m = re.exec(html)) !== null) {
@@ -378,6 +392,10 @@ export function extractJobLinks(html, baseUrl, maxLinks = DEFAULT_MAX_LINKS) {
     if (!isJobLikeUrl(abs)) continue;
     const norm = abs.split('#')[0];
     if (seen.has(norm)) continue;
+    if (basePath) {
+      const candidatePath = `${new URL(norm).origin}${new URL(norm).pathname.replace(/\/+$/, '')}`;
+      if (candidatePath === basePath) continue;
+    }
     seen.add(norm);
     out.push(norm);
     if (out.length >= maxLinks) break;

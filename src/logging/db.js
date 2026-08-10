@@ -66,7 +66,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   notes TEXT,
   submitted_confirmation TEXT,
   created_at TEXT,
-  updated_at TEXT
+  updated_at TEXT,
+  summary_only INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS run_log (
@@ -85,6 +86,14 @@ CREATE TABLE IF NOT EXISTS run_log (
   jobs_submitted INTEGER,
   jobs_discarded INTEGER,
   jobs_unknown_date_review INTEGER,
+  jobs_new INTEGER,
+  jobs_unread INTEGER,
+  jobs_duplicate INTEGER,
+  jobs_discarded_stale INTEGER,
+  jobs_discarded_excluded INTEGER,
+  jobs_discarded_low_score INTEGER,
+  jobs_suppressed_applied INTEGER,
+  jobs_suppressed_url_owned INTEGER,
   errors TEXT
 );
 
@@ -116,6 +125,7 @@ CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_applied ON jobs(applied);
 CREATE INDEX IF NOT EXISTS idx_events_job ON application_events(job_id);
 CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
+
 `;
 
 /** All jobs-table columns except jd_text (see listJobsSummary). */
@@ -163,6 +173,7 @@ const JOB_COLUMNS = [
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at',
+  'summary_only',
 ];
 
 /**
@@ -210,7 +221,13 @@ export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
 function applyMigrations(db) {
   const runLogCols = new Set(db.prepare('PRAGMA table_info(run_log)').all().map((c) => c.name));
   for (const col of ['jobs_assisted', 'jobs_submitted', 'jobs_unknown_date_review',
-    'jobs_skipped_unchanged', 'jobs_cancelled']) {
+    'jobs_skipped_unchanged', 'jobs_cancelled',
+    // A run used to report one undifferentiated `jobs_discarded`, and no count
+    // of what was actually NEW -- so a run that found thousands of new postings
+    // and one that found none produced near-identical numbers. These split the
+    // causes apart and record novelty.
+    'jobs_new', 'jobs_unread', 'jobs_duplicate', 'jobs_discarded_stale', 'jobs_discarded_excluded',
+    'jobs_discarded_low_score', 'jobs_suppressed_applied', 'jobs_suppressed_url_owned']) {
     if (!runLogCols.has(col)) {
       db.exec(`ALTER TABLE run_log ADD COLUMN ${col} INTEGER`);
     }
@@ -229,6 +246,35 @@ function applyMigrations(db) {
       db.exec(`ALTER TABLE jobs ADD COLUMN ${col} TEXT`);
     }
   }
+  // Whether the description was ever actually FETCHED. Without this the
+  // system cannot distinguish "judged and rejected" from "never read", and
+  // 31,409 rows scored on <200 characters were reported as poor fits.
+  if (!jobCols.has('summary_only')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN summary_only INTEGER');
+  }
+  // PERFORMANCE INDEXES — created here, not in SCHEMA_SQL, because they name
+  // columns that MIGRATIONS add (user_decision, prepared_at). Declared with the
+  // table they would reference a column that does not exist yet on a fresh
+  // database, and CREATE TABLE would fail outright with "no such column".
+  //
+  // These two are the difference between a dashboard that responds instantly
+  // and one that appears hung. Measured on 112,709 rows / a 383 MB jobs table:
+  //   board open-rows predicate   15.3 s -> 39 ms   (covering, no row reads)
+  //   stats tiles (all rows)      25.7 s -> 663 ms  (index-only scan)
+  // jd_text is stored INLINE, so any full table scan drags every stored job
+  // description through memory; these let SQLite answer from the index instead.
+  // Keep idx_jobs_stats in sync with JOB_STATS_COLUMNS — a column in the query
+  // but missing from the index silently reverts the plan to a full scan.
+  const perfIndexes = [
+    `CREATE INDEX IF NOT EXISTS idx_jobs_board_open
+       ON jobs(status, applied, user_decision, score, id)`,
+    `CREATE INDEX IF NOT EXISTS idx_jobs_stats
+       ON jobs(score, id, source, location, posted_at, tier, sponsorship, status,
+               applied, applied_at, user_decision, created_at, updated_at,
+               prepared_at, discard_reason, application_packet_path)`,
+  ];
+  for (const sql of perfIndexes) db.exec(sql);
+
   if (!jobCols.has('assist_filled_count')) {
     db.exec('ALTER TABLE jobs ADD COLUMN assist_filled_count INTEGER');
   }
@@ -479,14 +525,52 @@ export class Database {
     // status-less rows from the board instead of keeping them. Caught by a
     // differential check against the live table; `IS` is SQLite's null-safe
     // equality, and the `applied` test spells out its own NULL case.
-    return this.prepareCached(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs
+    // TWO PHASES, because asking for the predicate and the 40 columns at once
+    // defeats the index that makes the predicate cheap.
+    //
+    // Selecting the wide column list forces SQLite to visit a row page for
+    // every candidate, so it abandons the covering index and scans the table
+    // via idx_jobs_score instead — reading all 383 MB of `jobs`, including
+    // every inline jd_text the query never asked for. Measured: 21.1 seconds.
+    //
+    // Phase 1 asks ONLY for ids, which the covering index answers without
+    // touching a single row (51 ms over 112,709 rows). Phase 2 then fetches
+    // the wide columns for just the ~2,500 ids that survived — a few thousand
+    // primary-key seeks rather than a whole-table read. Same rows, same order,
+    // 1.6 s cold and 185 ms warm.
+    const ids = this.prepareCached(`SELECT id FROM jobs
       WHERE NOT (
         status IS 'discarded'
         AND (applied IS NULL OR applied <> 1)
         AND user_decision IS NULL
         AND NOT EXISTS (SELECT 1 FROM approval_queue aq WHERE aq.job_id = jobs.id)
-      )
-      ORDER BY score DESC`).all();
+      )`).all().map((r) => r.id);
+    if (!ids.length) return [];
+    return this.rowsByIds(ids)
+      // Phase 2 returns rows in whatever order the chunks came back, so the
+      // documented score-descending contract is restored here. Sorting a few
+      // thousand already-loaded rows is microseconds; making SQLite do it was
+      // what pulled the whole table through the score index in the first place.
+      .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  }
+
+  /**
+   * Fetch full summary rows for a set of ids, chunked to stay well inside
+   * SQLite's bound-parameter ceiling.
+   * @param {string[]} ids
+   * @returns {object[]}
+   */
+  rowsByIds(ids = []) {
+    const CHUNK = 800;
+    const out = [];
+    for (let i = 0; i < ids.length; i += CHUNK) {
+      const slice = ids.slice(i, i + CHUNK);
+      const holes = slice.map(() => '?').join(',');
+      out.push(...this.prepareCached(
+        `SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs WHERE id IN (${holes})`,
+      ).all(...slice));
+    }
+    return out;
   }
 
   /**
@@ -546,6 +630,41 @@ export class Database {
   /** @param {string} runId */
   getRunLog(runId) {
     return this.db.prepare('SELECT * FROM run_log WHERE run_id = ?').get(runId) ?? null;
+  }
+
+  /**
+   * Close run_log rows that a previous process opened and never ended.
+   *
+   * `endRun` closes a row on the happy path only, so a crash, a Ctrl-C or a
+   * killed terminal leaves `ended_at` NULL forever. Such a row is
+   * indistinguishable from a run that is still going, which quietly corrupts any
+   * "when did we last complete a run" question asked of this table.
+   *
+   * `ended_at` is set to `started_at` rather than to now: the true end time is
+   * unrecoverable (events carry no run_id), and stamping the current time would
+   * invent a multi-day duration for a run that died in seconds. A zero-length
+   * window plus the note below says "we do not know" without fabricating one.
+   *
+   * @param {object} [options]
+   * @param {number} [options.olderThanMs] only reap rows older than this
+   *   (default 6h — far beyond any real run, so a genuinely concurrent run is
+   *   never closed out from under itself)
+   * @param {Date} [options.now]
+   * @returns {number} rows closed
+   */
+  reapAbandonedRuns({ olderThanMs = 6 * 60 * 60 * 1000, now = new Date() } = {}) {
+    const cutoff = new Date(now.getTime() - olderThanMs).toISOString();
+    const stale = this.db.prepare(
+      'SELECT run_id, started_at FROM run_log WHERE ended_at IS NULL AND started_at < ?',
+    ).all(cutoff);
+    const note = 'run did not report an end (process exited before endRun); '
+      + 'closed by a later run, so its duration is unknown';
+    for (const row of stale) {
+      this.db.prepare(
+        'UPDATE run_log SET ended_at = @ended_at, errors = @errors WHERE run_id = @run_id',
+      ).run({ run_id: row.run_id, ended_at: row.started_at, errors: note });
+    }
+    return stale.length;
   }
 
   /** @param {Record<string, any>} event */

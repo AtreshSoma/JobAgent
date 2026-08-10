@@ -16,7 +16,7 @@
 
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
-import { usLocationSignal } from '../utils/usGeography.js';
+import { usLocationSignal, leadingForeignCountry } from '../utils/usGeography.js';
 import { detectSponsorshipDenial } from '../utils/sponsorshipLanguage.js';
 
 /**
@@ -183,10 +183,26 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Fold accents so a marker list written in ASCII still matches the real string.
+ *
+ * Employer location fields carry native spelling — "São Paulo", "Zürich",
+ * "Bogotá", "Malmö". A marker list cannot reasonably be maintained in both
+ * forms, and without folding, every accented city silently failed to match and
+ * the posting survived a filter that was configured to reject it.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function foldAccents(text) {
+  return String(text ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+}
+
 /** Whole-word (token) match of `term` within already-normalized `text`. */
 function wordMatch(text, term) {
   if (!term) return false;
-  return new RegExp(`(^|[^a-z0-9])${escapeRegex(term)}([^a-z0-9]|$)`).test(text);
+  return new RegExp(`(^|[^a-z0-9])${escapeRegex(foldAccents(term))}([^a-z0-9]|$)`)
+    .test(foldAccents(text));
 }
 
 /**
@@ -205,10 +221,60 @@ function wordMatch(text, term) {
  * @param {object} [geo] exclusions.geography config
  *   { usOnly, usLocationMarkers, nonUsLocationMarkers, nonUsCountryMarkers }
  */
+/** Country names/codes that mean the United States when stated explicitly. */
+
+
+
+const US_COUNTRY_NAMES = new Set([
+  'united states', 'united states of america', 'usa', 'us', 'u s a', 'u s',
+]);
+
 function checkUsOnly(job, geo = {}) {
   if (!geo || geo.usOnly !== true) return null;
+
+  // AN EXPLICIT COUNTRY FIELD IS DECISIVE and is checked before anything else.
+  //
+  // Some ATS APIs state the country outright (Workday's per-job detail returns
+  // `country: "Philippines"`). That is ground truth, and it settles the
+  // question that string-matching a location string can only ever guess at —
+  // no marker list, however long, can enumerate every city on earth. The case
+  // that forced this: a Manulife requisition whose stored location was the
+  // literal placeholder "2 Locations", so there was no city to match, no
+  // country to match, and the role reached the board despite `usOnly: true`.
+  const rawCountry = String(job.rawMetadata?.country ?? job.country ?? '').trim();
+  const stated = rawCountry.toLowerCase();
+  if (stated) {
+    if (US_COUNTRY_NAMES.has(stated)) return null;
+    // The field is ISO-3166 alpha-2 and providers honour it. Verified live
+    // against SmartRecruiters: a New York posting is `country: "us"` with the
+    // state in `region`, while Toronto is `country: "ca"` and Hyderabad is
+    // `"in"`. So a two-letter code that happens to look like a USPS state code
+    // still means the COUNTRY, and "ca" is Canada.
+    //
+    // The one guard worth keeping is a genuine contradiction: a location that
+    // spells out a US state ("California") or says "United States" outright,
+    // against a non-US country code, is bad data rather than a foreign role, so
+    // the job is kept for a human to judge. A bare abbreviation is NOT such a
+    // signal — reading "CA" out of "Toronto, CA" and calling it California is
+    // circular, and doing so let every Canadian posting through.
+    const contradiction = usLocationSignal(job.location);
+    if (contradiction.isUs && contradiction.strength !== 'abbreviation') return null;
+    return discard('geography_mismatch', [`country is ${rawCountry}, not US`]);
+  }
+
   const loc = normalizeText(job.location);
   if (!loc) return null; // unknown location -> defer, do not hard-discard
+
+  // A leading ISO country prefix is checked FIRST and is conclusive, because it
+  // is the one case where the state-abbreviation reader is actively wrong
+  // rather than merely uncertain: "IN-KA-BANGALORE" registers as Indiana, and
+  // the abbreviation branch below would then demand a foreign country NAME to
+  // overrule it — which a city like Bangalore never supplies. Every offshore
+  // Workday posting in that format therefore passed the gate.
+  const prefix = leadingForeignCountry(job.location);
+  if (prefix) {
+    return discard('geography_mismatch', [`location not in US: ${job.location} (${prefix.country})`]);
+  }
 
   const signal = usLocationSignal(job.location);
   // A spelled-out state or a national marker is conclusive.

@@ -28,6 +28,7 @@ import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
+import { buildProfileVocabulary, classifyTitleFit } from '../scoring/profileFit.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
@@ -77,10 +78,49 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   // Provider-specific ids can change across sources/runs. Refresh the same id,
   // but do not create another actionable row for a URL already owned by a
   // different live/protected record.
-  const activeUrlOwners = new Map(
-    (db.getActiveJobUrls?.() ?? [])
-      .map((row) => [urlKeyFor(row), row.id])
-      .filter(([key]) => key),
+  //
+  // ONLY URLs owned by EXACTLY ONE active row are usable as an identity signal.
+  //
+  // REGRESSION GUARD. This was a plain Map built from every active row, so the
+  // last writer won and a URL shared by many rows still "belonged" to one of
+  // them — which silently suppressed all the others on every subsequent run.
+  // Not hypothetical: in this database 25 URL keys are shared by more than one
+  // active row, and `deloitteus.avature.net/careers/InviteToApply?jobId=353918`
+  // is a single URL serving 26 DISTINCT jobs. A URL that maps to many jobs has
+  // proven itself not to be a per-posting identifier — it is a careers-page or
+  // apply-shim link — so using it to decide "already seen" throws away real
+  // postings. Ambiguous URLs are therefore dropped from the map entirely and
+  // reported, rather than being trusted and losing jobs without a trace.
+  const urlOwnerCounts = new Map();
+  for (const row of db.getActiveJobUrls?.() ?? []) {
+    const key = urlKeyFor(row);
+    if (!key) continue;
+    if (!urlOwnerCounts.has(key)) urlOwnerCounts.set(key, []);
+    urlOwnerCounts.get(key).push(row.id);
+  }
+  const activeUrlOwners = new Map();
+  const ambiguousUrlKeys = [];
+  for (const [key, ids] of urlOwnerCounts) {
+    if (ids.length === 1) activeUrlOwners.set(key, ids[0]);
+    else ambiguousUrlKeys.push({ key, owners: ids.length });
+  }
+  if (ambiguousUrlKeys.length) {
+    logger.event(EVENT_TYPES.SEARCH_START, {
+      message: `${ambiguousUrlKeys.length} URL(s) are shared by multiple active jobs and will not be `
+        + 'used to suppress re-discovery (they are not per-posting links)',
+      meta: { ambiguousUrlKeys: ambiguousUrlKeys.slice(0, 20) },
+    });
+  }
+  // How many jobs each suppression rule actually removed — without this the
+  // caller cannot tell "found nothing new" from "silently dropped everything".
+  const suppressed = { applied: 0, urlOwned: 0 };
+  // Snapshot of what the database knew BEFORE this run, so `jobs_new` below is
+  // a genuine before/after comparison rather than a guess. Ids only — the rows
+  // themselves are large and only membership is needed.
+  const knownIdsBefore = new Set(
+    typeof db.listJobIds === 'function'
+      ? db.listJobIds()
+      : (db.listJobs?.({}) ?? []).map((r) => r.id),
   );
   const workdayDetailCache = db.getReusableWorkdayDetail
     ? (jobId) => db.getReusableWorkdayDetail(jobId)
@@ -104,9 +144,10 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     // are re-discovered so DRY_RUN -> PREPARE -> LIVE_ASSIST can build on them.
     // Honors runtime.excludeAlreadyApplied (default true).
     existsInDb: (job) => {
-      if (appliedIds?.has(job.id)) return true;
+      if (appliedIds?.has(job.id)) { suppressed.applied += 1; return true; }
       const owner = activeUrlOwners.get(urlKeyFor(job));
-      return Boolean(owner && owner !== job.id);
+      if (owner && owner !== job.id) { suppressed.urlOwned += 1; return true; }
+      return false;
     },
   });
   logger.event(EVENT_TYPES.SEARCH_END, {
@@ -134,7 +175,17 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     });
   }
 
+  // Built once per run — the vocabulary is pure and derived from the profile.
+  const profileVocab = config.candidate ? buildProfileVocabulary(config.candidate) : null;
   const counters = { ...emptyCounters(), jobs_found: jobs.length };
+  // What was ACTUALLY new this run. `jobs_found` is every posting every source
+  // returned, which on a mature corpus is dominated by rows we already had, so
+  // it cannot answer "did the run find anything?". `knownIdsBefore` is captured
+  // before any write below, so this stays a true before/after comparison.
+  counters.jobs_new = jobs.reduce((n, j) => n + (knownIdsBefore.has(j.id) ? 0 : 1), 0);
+  counters.jobs_duplicate = duplicates.length;
+  counters.jobs_suppressed_applied = suppressed.applied;
+  counters.jobs_suppressed_url_owned = suppressed.urlOwned;
   if (searchCancelled) counters.jobs_cancelled += 1;
   const scoredJobs = [];
   // Full-visibility audit trail of every discovered job and what happened to it.
@@ -161,6 +212,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
   // reason and are tagged so the dashboard can count them.
   for (const { job, reason } of freshness.dropped) {
     counters.jobs_discarded += 1;
+    counters.jobs_discarded_stale += 1;
     const undated = reason === UNDATED_REASON;
     if (undated) counters.jobs_unknown_date_review += 1;
     const discardReason = undated ? reason : `stale: ${reason}`;
@@ -211,6 +263,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     const exclusion = applyExclusions(job, config.exclusions, { now });
     if (exclusion.excluded) {
       counters.jobs_discarded += 1;
+      counters.jobs_discarded_excluded += 1;
       persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason }, config.exclusions?.employmentTypes);
       logger.event(EVENT_TYPES.EXCLUSION_MATCHED, {
         jobId: job.id, message: exclusion.reason, meta: { category: exclusion.category },
@@ -225,7 +278,13 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     // 2. Sponsorship + 3. Score + 4. Tier.
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
     const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
-    const { tier, explanation, sponsorshipGated } = explainScore(score, config.scoring);
+    // A posting whose TITLE gave no signal reached scoring only because the
+    // gate now defers instead of rejecting. That recovers real roles, but such
+    // a posting must clear a higher bar than one whose title already matched —
+    // otherwise the recall gain arrives as several hundred extra speculative
+    // near-misses on the board.
+    const titleVerdict = profileVocab ? classifyTitleFit(job.title, profileVocab).verdict : null;
+    const { tier, explanation, sponsorshipGated } = explainScore(score, config.scoring, { titleVerdict });
     counters.jobs_scored += 1;
     const queuedTier = isQueuedTier(tier, config.scoring);
     let lifecycle = lifecycleForTier(tier, config.scoring);
@@ -252,8 +311,38 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       meta: { score: score.total, tier, sponsorship: sponsorship.status, sponsorshipGated, posted: formatPostedRelative(job.postedAt, now) },
     });
 
+    // A posting whose description was never fetched cannot be judged on fit.
+    //
+    // The arithmetic makes this unavoidable rather than unlucky: with no
+    // description there are no stack/domain/keyword hits available, so the
+    // reachable maximum is ~44/100 against a 50 floor — EVERY summary-only row
+    // is a guaranteed Discard no matter how perfect the role. Measured on this
+    // corpus, 31,409 rows were scored on under 200 characters and exactly 2
+    // ever reached the board, among them "Microsoft Fabric Data Engineer" and
+    // "Senior BI Engineer - PowerBI and Microsoft Fabric". Reporting those as
+    // "below score threshold" states a fit conclusion the system never earned.
+    // They are recorded as unread instead, so `npm run enrich` can fetch the
+    // descriptions and score them for real.
+    const neverRead = job.rawMetadata?.summaryOnly === true;
+    if (tier === TIERS.DISCARD && neverRead && titleVerdict !== 'reject') {
+      counters.jobs_unread += 1;
+      persistJob(db, job, {
+        status: 'needs_description',
+        discard_reason: 'not judged: the description was never fetched (summary only)',
+        score: score.total,
+        tier: null,
+      }, config.exclusions?.employmentTypes);
+      discovered.push(discoveredRow(job, discovery, {
+        keptForScoring: false,
+        discardReason: 'description not fetched',
+        lifecycle: LIFECYCLE.HARD_DISCARDED,
+      }));
+      continue;
+    }
+
     if (tier === TIERS.DISCARD) {
       counters.jobs_discarded += 1;
+      counters.jobs_discarded_low_score += 1;
       const dRow = discoveredRow(job, discovery, {
         keptForScoring: true, score: score.total, tier, sponsorship: sponsorship.status,
         matchedKeywords: score.matchedKeywords, missingKeywords: score.missingKeywords,
@@ -573,6 +662,9 @@ function persistJob(db, job, fields = {}, markers = {}) {
     applicant_count: job.applicantCount,
     employment_type: job.employmentType,
     employment_category: classifyEmployment(job, markers).category,
+    // 1 when the description was never fetched, so downstream can tell
+    // "judged and rejected" apart from "never read".
+    summary_only: job.rawMetadata?.summaryOnly === true ? 1 : 0,
     ...(job.rawMetadata?.compensation
       ? { compensation_text: String(job.rawMetadata.compensation).trim() }
       : {}),

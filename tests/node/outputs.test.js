@@ -21,6 +21,29 @@ describe('outputs', () => {
       // Cancellation + incremental discovery outcomes are counted too, so a
       // cancelled or skip-unchanged run is never misread as "found nothing".
       jobs_cancelled: 0, jobs_skipped_unchanged: 0,
+      // NOVELTY. `jobs_found` counts every posting every source returned, which
+      // on a mature corpus is ~76k of mostly-known rows -- it cannot answer
+      // "did this run find me anything?". Without `jobs_new` a run that
+      // discovered thousands of new roles was indistinguishable from one that
+      // discovered none, which is what made discovery look broken while it was
+      // working correctly.
+      jobs_new: 0,
+      // Removed before scoring because another record already represented them.
+      // Previously collapsed to a bare length in the report, which made
+      // over-collapsing dedup impossible to diagnose.
+      jobs_duplicate: 0,
+      // `jobs_discarded` conflates three unrelated causes. Each also gets its
+      // own counter so a run ruined by a geography rule is distinguishable from
+      // one that merely surfaced stale postings.
+      jobs_discarded_stale: 0, jobs_discarded_excluded: 0, jobs_discarded_low_score: 0,
+      // Jobs suppressed by the already-seen rules, split by which rule fired.
+      jobs_suppressed_applied: 0, jobs_suppressed_url_owned: 0,
+      // Scored below the bar ONLY because the description was never fetched.
+      // With no description the reachable maximum is ~44/100 against a 50
+      // floor, so such a row is a guaranteed Discard however well it fits —
+      // calling that "below score threshold" states a fit conclusion the
+      // system never earned. Recoverable via `npm run enrich`.
+      jobs_unread: 0,
     });
   });
 

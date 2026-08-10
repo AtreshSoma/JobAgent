@@ -928,6 +928,13 @@ const SORTS = {
   posted: (a, b) => String(b.postedAt ?? '').localeCompare(String(a.postedAt ?? '')),
   company: (a, b) => String(a.company ?? '').localeCompare(String(b.company ?? '')),
   updated: (a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')),
+  // WHEN WE FIRST SAW IT, which is not the same question as when it was posted.
+  // Without this there was no way to answer "what did the last run actually
+  // find?": new rows were interleaved by score across ~100k others, so a run
+  // that added thousands of postings looked identical to one that added none.
+  // `createdAt` is set on insert and deliberately never updated on
+  // re-discovery, so it is a true first-seen timestamp.
+  discovered: (a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')),
 };
 
 /**

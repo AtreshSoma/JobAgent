@@ -10,6 +10,8 @@ import * as careers from '../../src/search/adapters/careersPage.js';
 import * as generic from '../../src/search/adapters/genericPublicPage.js';
 import * as manualUrls from '../../src/search/adapters/manualUrls.js';
 import * as apify from '../../src/search/adapters/apify.js';
+import * as oracleRecruiting from '../../src/search/adapters/oracleRecruiting.js';
+import * as amazonJobs from '../../src/search/adapters/amazonJobs.js';
 import { runSearch } from '../../src/search/index.js';
 import { adapterKind, sourceKind, isDiscoveryAdapter } from '../../src/search/sources.js';
 import { extractReadableContent } from '../../src/search/normalize.js';
@@ -393,13 +395,13 @@ describe('apify adapter', () => {
   });
 
   it('reads items from an existing datasetId via GET', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(actorRun([{ jobTitle: 'Lead Data Engineer', companyName: 'Globex', jobUrl: 'http://g' }]));
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([{ jobTitle: 'Lead Data Engineer', companyName: 'Globex', jobUrl: 'http://g/jobs/7' }]));
     const source = { options: { actors: [{ datasetId: 'ds-1', source: 'indeed' }] } };
     const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
     const [calledUrl, init] = fetchImpl.mock.calls[0];
     expect(String(calledUrl)).toContain('/datasets/ds-1/items');
     expect(init?.method ?? 'GET').toBe('GET');
-    expect(jobs[0]).toMatchObject({ title: 'Lead Data Engineer', company: 'Globex', url: 'http://g' });
+    expect(jobs[0]).toMatchObject({ title: 'Lead Data Engineer', company: 'Globex', url: 'http://g/jobs/7' });
   });
 
   it('captures HTTP errors per-actor without throwing', async () => {
@@ -411,16 +413,54 @@ describe('apify adapter', () => {
     expect(errors[0].error).toMatch(/Apify HTTP 402/);
   });
 
+  it('drops a bare-host apply URL instead of storing an unusable link', async () => {
+    // Actors emit the aggregator's own host when a row has no link field. Stored
+    // as an apply URL it cannot be applied to, and every row carrying it shares
+    // one dedup key — so a whole batch collapses into a single job.
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([
+      { title: 'Data Engineer', companyName: 'Acme', url: 'https://indeed.com' },
+      { title: 'BI Developer', companyName: 'Acme', url: 'https://indeed.com/viewjob?jk=9' },
+    ]));
+    const source = { options: { actors: [{ actorId: 'user~actor' }] } };
+    const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
+    expect(jobs.find((j) => j.title === 'Data Engineer').url).toBe('');
+    expect(jobs.find((j) => j.title === 'BI Developer').url).toBe('https://indeed.com/viewjob?jk=9');
+  });
+
+  it('expands a forEachTargetTitle actor across the candidate profile', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([]));
+    const source = { options: { actors: [{ actorId: 'user~actor', label: 'li', forEachTargetTitle: true }] } };
+    await apify.run(source, {
+      fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0, checkUsage: false,
+      candidate: { targetTitles: ['Data Engineer', 'BI Developer'] },
+    });
+    // One billed run per target title, each carrying its own query.
+    const bodies = fetchImpl.mock.calls.map(([, init]) => JSON.parse(init.body).title);
+    expect(bodies.sort()).toEqual(['BI Developer', 'Data Engineer']);
+  });
+
+  it('reports target titles that no pinned actor ever searches for', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(actorRun([]));
+    const source = { options: { actors: [{ actorId: 'user~actor', input: { title: 'Data Engineer' } }] } };
+    const { errors } = await apify.run(source, {
+      fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0, checkUsage: false,
+      candidate: { targetTitles: ['Data Engineer', 'ETL Developer'] },
+    });
+    const note = errors.find((e) => e.degraded);
+    expect(note.error).toMatch(/ETL Developer/);
+    expect(note.error).not.toMatch(/Data Engineer,/);
+  });
+
   it('applies per-actor fieldMap overrides and skips unusable rows', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(actorRun([
-      { role: 'Staff Data Engineer', org: 'Initech', href: 'http://i', body: 'SQL dbt' },
+      { role: 'Staff Data Engineer', org: 'Initech', href: 'http://i/careers/42', body: 'SQL dbt' },
       { nothing: 'useful' },
     ]));
     const source = { options: { actors: [{ actorId: 'user~actor',
       fieldMap: { title: 'role', company: 'org', url: 'href', jdText: 'body' } }] } };
     const { jobs } = await apify.run(source, { fetchImpl, env: { APIFY_TOKEN: 'tok' }, maxRetries: 0 });
     expect(jobs).toHaveLength(1);
-    expect(jobs[0]).toMatchObject({ title: 'Staff Data Engineer', company: 'Initech', url: 'http://i' });
+    expect(jobs[0]).toMatchObject({ title: 'Staff Data Engineer', company: 'Initech', url: 'http://i/careers/42' });
   });
 
   it('coerces nested object/array fields (Indeed-shape employer/location/jobTypes)', async () => {
@@ -895,5 +935,187 @@ describe('discovery signal tagging (Greenhouse & Lever via runSearch)', () => {
     const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
     expect(jobs).toHaveLength(1);
     expect(jobs[0].rawMetadata.discovery.match).toBe('no_match');
+  });
+});
+
+describe('oracleRecruiting adapter', () => {
+  // The list envelope this API actually returns: jobs are nested one level
+  // deeper than they look, under items[0].requisitionList.
+  const orcPage = (rows, total) => jsonResponse({
+    // The OUTER envelope lies about pagination on purpose — it describes the
+    // single search-result object, not the jobs. A regression that reads these
+    // instead of the inner TotalJobsCount stops after one page.
+    count: 1, hasMore: false, limit: 200, offset: 0,
+    items: [{ TotalJobsCount: total, requisitionList: rows }],
+  });
+  const row = (id, title) => ({
+    Id: id, Title: title, PrimaryLocation: 'New York, NY, United States',
+    PostedDate: '2026-08-01', ShortDescriptionStr: '<p>teaser</p>',
+    secondaryLocations: [{ Name: 'Jersey City, NJ' }],
+  });
+
+  it('reads jobs from items[0].requisitionList and builds a direct apply URL', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(orcPage([row('123', 'Senior Data Engineer')], 1));
+    const { jobs, errors } = await oracleRecruiting.run(
+      { tenants: [{ host: 'acme.fa.us2.oraclecloud.com', siteNumber: 'CX_1001', company: 'Acme', fetchDetails: false }] },
+      { fetchImpl, candidate: { targetTitles: ['Data Engineer'] } },
+    );
+    expect(errors).toEqual([]);
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].title).toBe('Senior Data Engineer');
+    expect(jobs[0].company).toBe('Acme');
+    // The employer's own ORC application page, not an aggregator hop.
+    expect(jobs[0].url).toBe(
+      'https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/123',
+    );
+    expect(jobs[0].location).toBe('New York, NY, United States; Jersey City, NJ');
+    expect(jobs[0].postedAt).toBe('2026-08-01');
+  });
+
+  it('paginates off items[0].TotalJobsCount, not the envelope hasMore', async () => {
+    // hasMore:false on every page. Trusting it would return 2 of 5 jobs.
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(orcPage([row('1', 'Data Engineer'), row('2', 'Data Engineer')], 5))
+      .mockResolvedValueOnce(orcPage([row('3', 'Data Engineer'), row('4', 'Data Engineer')], 5))
+      .mockResolvedValueOnce(orcPage([row('5', 'Data Engineer')], 5));
+    const { jobs } = await oracleRecruiting.run(
+      {
+        tenants: [{
+          host: 'h.fa.us2.oraclecloud.com', siteNumber: 'CX_1', pageSize: 2, fetchDetails: false,
+        }],
+        options: { keywords: [''] },
+      },
+      { fetchImpl },
+    );
+    expect(jobs).toHaveLength(5);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('puts limit/offset inside the finder string and requires expand=requisitionList', () => {
+    const cfg = oracleRecruiting.validateTenant({ host: 'h.example.com', siteNumber: 'CX_7' });
+    const url = oracleRecruiting.listUrl(cfg, 400, 'data engineer');
+    // Dropping this expand returns HTTP 200 with no jobs key at all.
+    expect(url).toContain('expand=requisitionList');
+    expect(url).toContain('finder=findReqs;siteNumber=CX_7,limit=200,offset=400');
+    expect(url).toContain('keyword=data%20engineer');
+    // NOT sibling query params — the API ignores those.
+    expect(url).not.toMatch(/[?&]limit=/);
+    expect(url).not.toMatch(/[?&]offset=/);
+  });
+
+  it('clamps pageSize to the server-side cap of 200', () => {
+    const cfg = oracleRecruiting.validateTenant({ host: 'h', siteNumber: 'CX_1', pageSize: 500 });
+    expect(cfg.pageSize).toBe(200);
+  });
+
+  it('rejects a tenant missing siteNumber rather than guessing one', async () => {
+    const fetchImpl = vi.fn();
+    const { jobs, errors } = await oracleRecruiting.run(
+      { tenants: [{ host: 'h.fa.us2.oraclecloud.com' }] },
+      { fetchImpl },
+    );
+    expect(jobs).toEqual([]);
+    expect(errors[0].error).toMatch(/requires host and siteNumber/);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('dedupes a requisition returned by more than one keyword', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(orcPage([row('same', 'Data Engineer')], 1));
+    const { jobs } = await oracleRecruiting.run(
+      {
+        tenants: [{ host: 'h.fa.us2.oraclecloud.com', siteNumber: 'CX_1', fetchDetails: false }],
+        options: { keywords: ['data engineer', 'bi developer'] },
+      },
+      { fetchImpl },
+    );
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(jobs).toHaveLength(1);
+  });
+
+  it('applyDetail puts requisition text ahead of corporate boilerplate', () => {
+    const job = { jdText: 'teaser', rawMetadata: { summaryOnly: true } };
+    oracleRecruiting.applyDetail(job, {
+      ExternalDescriptionStr: '<p>Role body</p>',
+      CorporateDescriptionStr: '<p>About the company</p>',
+      ExternalPostedStartDate: '2026-08-01T10:00:00+00:00',
+    });
+    expect(job.jdText.indexOf('Role body')).toBeLessThan(job.jdText.indexOf('About the company'));
+    expect(job.rawMetadata.summaryOnly).toBe(false);
+    // The detail's full timestamp supersedes the list's date-only value.
+    expect(job.postedAt).toBe('2026-08-01T10:00:00+00:00');
+  });
+
+  it('is registered as a real discovery adapter', () => {
+    expect(isDiscoveryAdapter('oracleRecruiting')).toBe(true);
+    expect(sourceKind('oracleRecruiting')).toBe('discovery');
+  });
+});
+
+describe('amazonJobs adapter', () => {
+  const page = (jobs, hits) => jsonResponse({ hits, jobs });
+  const row = (id, title, extra = {}) => ({
+    id: `uuid-${id}`, id_icims: id, title,
+    location: 'US, VA, Herndon', normalized_location: 'Herndon, Virginia, USA',
+    posted_date: 'August  5, 2026', description: '<p>Build pipelines</p>',
+    company_name: 'Amazon Web Services, Inc.',
+    job_path: `/en/jobs/${id}/${title.toLowerCase().replace(/\s+/g, '-')}`,
+    ...extra,
+  });
+
+  it('maps a search row, preferring the public numeric id and job_path URL', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(page([row('10493150', 'Data Engineer')], 1));
+    const { jobs, errors } = await amazonJobs.run(
+      { options: { queries: ['data engineer'] } },
+      { fetchImpl, candidate: { targetTitles: ['Data Engineer'] } },
+    );
+    expect(errors).toEqual([]);
+    expect(jobs).toHaveLength(1);
+    // id_icims, not the uuid — it is what the public URL shows.
+    expect(jobs[0].sourceJobId).toBe('10493150');
+    expect(jobs[0].url).toBe('https://www.amazon.jobs/en/jobs/10493150/data-engineer');
+    // The row's own employer, not a hardcoded "Amazon".
+    expect(jobs[0].company).toBe('Amazon Web Services, Inc.');
+    expect(jobs[0].location).toBe('Herndon, Virginia, USA');
+  });
+
+  it('parses the irregular double-spaced posted_date rather than dropping the job', () => {
+    // "August  5, 2026" has two spaces. Left uncollapsed this is NaN, the job
+    // arrives undated, and the freshness stage drops undated jobs by default —
+    // so this quirk decides whether the posting exists at all.
+    // Anchored to UTC so the result does not depend on the machine's timezone —
+    // parsed locally, this same input lands on a different DATE near a month
+    // boundary in CI than on a laptop.
+    expect(amazonJobs.parsePostedDate('August  5, 2026')).toBe('2026-08-05T00:00:00.000Z');
+    expect(amazonJobs.parsePostedDate('August 5, 2026')).toBe('2026-08-05T00:00:00.000Z');
+    // Never invents a date.
+    expect(amazonJobs.parsePostedDate('not a date')).toBeNull();
+    expect(amazonJobs.parsePostedDate('')).toBeNull();
+  });
+
+  it('paginates on hits and dedupes a job returned by two queries', async () => {
+    const fetchImpl = vi.fn()
+      // query 1, page 1 of 2
+      .mockResolvedValueOnce(page([row('1', 'Data Engineer')], 2))
+      .mockResolvedValueOnce(page([row('2', 'Data Engineer')], 2))
+      // query 2 returns one already-seen job
+      .mockResolvedValueOnce(page([row('1', 'Data Engineer')], 1));
+    const { jobs } = await amazonJobs.run(
+      { options: { queries: ['data engineer', 'bi developer'], pageSize: 1 } },
+      { fetchImpl, candidate: { targetTitles: ['Data Engineer'] } },
+    );
+    expect(jobs).toHaveLength(2);
+  });
+
+  it('reports clearly when there are no phrases to search rather than silently finding nothing', async () => {
+    const fetchImpl = vi.fn();
+    const { jobs, errors } = await amazonJobs.run({}, { fetchImpl, candidate: { targetTitles: [] } });
+    expect(jobs).toEqual([]);
+    expect(errors[0].note).toMatch(/no search phrases/i);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('is registered as a real discovery adapter', () => {
+    expect(isDiscoveryAdapter('amazonJobs')).toBe(true);
+    expect(sourceKind('amazonJobs')).toBe('discovery');
   });
 });

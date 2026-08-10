@@ -2,17 +2,44 @@
  * SmartRecruiters connector — uses the OFFICIAL public Posting API.
  *   https://api.smartrecruiters.com/v1/companies/{company}/postings
  *
- * No login, no scraping, no evasion. Reads published posting JSON only. The
- * list endpoint omits the full description; we keep discovery to one request
- * per company page and synthesize a compact jdText from the available fields
- * (title, function, industry, type, location). Scoring still works because the
- * title/discovery filters carry most signal; the human reviews the real posting.
+ * No login, no scraping, no evasion. Reads published posting JSON only.
+ *
+ * WHY THIS ADAPTER FETCHES DETAILS
+ * --------------------------------
+ * The list endpoint omits the full description. This adapter used to stop
+ * there, synthesizing a compact jdText from the metadata that IS present
+ * (title, function, industry, type, location) and claiming "scoring still works
+ * because the title/discovery filters carry most signal". Measured on this
+ * database, that claim was false in both directions:
+ *
+ *   37,576 postings stored, 37,274 of them under 200 characters, of which
+ *   37,567 were DISCARDED and 9 ever scored.
+ *
+ * The arithmetic makes that inevitable rather than unlucky: with no description
+ * there are no stack, domain or keyword hits to find, so the reachable maximum
+ * is ~44/100 against a 50 floor. Every summary-only posting is a guaranteed
+ * discard no matter how well it fits. 11,131 of them were filed as "below score
+ * threshold" — a fit conclusion the system never earned, because nothing had
+ * read them.
+ *
+ * Two things fix it, and both are borrowed from the Workday adapter, which hit
+ * the same wall and solved it already:
+ *
+ *   1. GATE ON THE TITLE FIRST. Every posting from all 119 companies used to be
+ *      mapped unconditionally — the only enabled adapter with no title gate at
+ *      all. That is what made this source 32% of the corpus for 9 scored rows.
+ *   2. SPEND A DETAIL BUDGET, BEST-FIRST, AND BE HONEST ABOUT THE REST. What is
+ *      fetched gets a real description; what is not keeps `summaryOnly = true`
+ *      so the pipeline files it as `needs_description` instead of pretending it
+ *      was judged, and `npm run enrich` can recover it later.
  */
 
 import { normalizeJob } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { makeTitleGate, smartRecruitersJdText } from './atsSearch.js';
+import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
 export const adapterId = 'smartrecruiters';
 
@@ -37,6 +64,23 @@ const DEFAULT_MAX_POSTINGS_PER_COMPANY = 1000;
 /** Default number of companies to fetch in parallel when ctx omits a ceiling. */
 const DEFAULT_BOARD_CONCURRENCY = 8;
 
+/**
+ * Per-company ceiling on full-description fetches.
+ *
+ * Sized against what the title gate actually leaves behind: across 119
+ * companies the gate keeps a small tail per board, so 40 covers most boards
+ * outright while capping a pathological one. Postings past the budget are kept
+ * as `summaryOnly` rather than dropped — they are still real openings, and the
+ * enrich pass can read them later.
+ */
+const DEFAULT_MAX_DETAIL_FETCHES = 40;
+
+/** Default parallelism for per-posting detail reads within one company. */
+const DEFAULT_DETAIL_CONCURRENCY = 4;
+
+/** Longest description we store, matching the other adapters. */
+const MAX_JD_CHARS = 20_000;
+
 /** Every SmartRecruiters company shares this host — key politeness on it. */
 const SMARTRECRUITERS_HOST = 'api.smartrecruiters.com';
 
@@ -54,9 +98,25 @@ export async function run(source = {}, ctx = {}) {
   const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const companies = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
+  const options = source.options ?? {};
   const maxPostings = Number.isFinite(source.maxPostingsPerCompany)
     ? Math.max(0, source.maxPostingsPerCompany)
     : DEFAULT_MAX_POSTINGS_PER_COMPANY;
+  const maxDetailFetches = Number.isFinite(options.maxDetailFetches)
+    ? Math.max(0, options.maxDetailFetches)
+    : DEFAULT_MAX_DETAIL_FETCHES;
+  const detailConcurrency = ctx.detailConcurrency ?? DEFAULT_DETAIL_CONCURRENCY;
+
+  // The gate answers "is this CLEARLY NOT for me?" — it rejects only titles that
+  // positively name another profession, so an unfamiliar title is kept and
+  // decided on its description. `strictTitleMatch: false` disables it entirely.
+  const titleGate = makeTitleGate({
+    titles: ctx.candidate?.targetTitles ?? [],
+    strict: options.strictTitleMatch !== false,
+    candidate: ctx.candidate ?? null,
+  });
+  const vocab = ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null;
+
   const jobs = [];
   const errors = [];
   let cancelled = false;
@@ -87,23 +147,123 @@ export async function run(source = {}, ctx = {}) {
         const total = Number(data.totalFound);
         if (Number.isFinite(total) && offset >= total) break;
       }
-      return { jobs: collected.map((p) => mapPosting(p, company)), error: null };
+      const kept = await enrichCompany(collected, company, {
+        titleGate, vocab, maxDetailFetches, detailConcurrency,
+        fetchImpl, rateLimiter, hostGate, maxRetries, requestTimeoutMs, source, ctx,
+      });
+      return { ...kept, error: null };
     } catch (err) {
+      // Keep whatever pages already succeeded — a failure on page 4 must not
+      // discard pages 1-3. They stay summary-level: the listing is trustworthy
+      // even when the run that would have enriched it died.
       return {
-        // Keep whatever pages already succeeded — a failure on page 4 must not
-        // discard pages 1-3.
-        jobs: collected.map((p) => mapPosting(p, company)),
+        jobs: collected.filter((p) => titleGate(p?.name)).map((p) => mapPosting(p, company)),
         error: { company, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
       };
     }
   });
 
+  let unread = 0;
+  let failed = 0;
+  const statuses = new Set();
   for (const r of perCompany) {
     if (!r) continue;
     jobs.push(...r.jobs);
     if (r.error) errors.push(r.error);
+    if (Array.isArray(r.errors)) errors.push(...r.errors);
+    unread += r.unread ?? 0;
+    failed += r.failed ?? 0;
+    for (const s of r.statuses ?? []) if (s) statuses.add(s);
+  }
+
+  // ONE note for the whole source. Saying nothing would let a run that read 4%
+  // of what it found report as fully covered; saying it per company would say
+  // the same thing 123 times.
+  if (failed > 0) {
+    errors.push({
+      degraded: true,
+      count: failed,
+      error: `${failed} description fetch(es) failed`
+        + `${statuses.size ? ` (HTTP ${[...statuses].join('/')})` : ''}; those postings were kept `
+        + 'as summary-only and can be recovered with `npm run enrich`.',
+    });
+  }
+  if (unread > 0) {
+    errors.push({
+      degraded: true,
+      count: unread,
+      error: `${unread} title match(es) were kept WITHOUT a description: the per-company detail `
+        + `budget (maxDetailFetches=${maxDetailFetches}) was reached. They are stored as `
+        + 'needs_description, not judged — run `npm run enrich` to read and score them.',
+    });
   }
   return { jobs, errors, cancelled };
+}
+
+/**
+ * Gate one company's postings on title, then spend the detail budget best-first.
+ *
+ * Nothing is DROPPED for want of budget — a posting past the ceiling keeps
+ * `summaryOnly = true` and reaches the pipeline as `needs_description`. Dropping
+ * it would hide a real opening; mislabeling it as scored would assert a
+ * judgement no one made.
+ *
+ * @returns {Promise<{ jobs: object[], errors: object[] }>}
+ */
+async function enrichCompany(postings, company, cfg) {
+  const {
+    titleGate, vocab, maxDetailFetches, detailConcurrency,
+    fetchImpl, rateLimiter, hostGate, maxRetries, requestTimeoutMs, source, ctx,
+  } = cfg;
+
+  const gated = postings.filter((p) => titleGate(p?.name));
+  const jobs = gated.map((p) => mapPosting(p, company));
+  const errors = [];
+  if (maxDetailFetches === 0 || jobs.length === 0) return { jobs, errors };
+
+  // Best-first: an exact target-title match is enriched before a speculative
+  // one, so a small budget buys the descriptions most likely to matter.
+  const ordered = vocab
+    ? [...jobs].sort((a, b) => titleFitPriority(b.title, vocab) - titleFitPriority(a.title, vocab))
+    : jobs;
+  const budgeted = ordered.slice(0, maxDetailFetches);
+  const unread = ordered.length - budgeted.length;
+
+  const failures = [];
+  await mapWithConcurrency(budgeted, detailConcurrency, async (job) => {
+    if (ctx.shouldCancel?.()) return null;
+    const detailsUrl = job.rawMetadata?.detailsUrl;
+    if (!detailsUrl) return null;
+    // The host already asked us to slow down — a nice-to-have description is not
+    // worth spending a retry budget against a server that is refusing us.
+    if (hostGate?.isOpen?.(detailsUrl)) {
+      job.rawMetadata.detailSkipped = 'host-throttled';
+      return null;
+    }
+    try {
+      if (rateLimiter) await rateLimiter.wait(`smartrecruiters:${SMARTRECRUITERS_HOST}`, source.rateLimitMs);
+      const call = () => fetchJson(fetchImpl, detailsUrl, requestTimeoutMs);
+      const data = await withRetry(
+        () => (hostGate ? hostGate.run(detailsUrl, call) : call()),
+        { maxRetries },
+      );
+      const text = smartRecruitersJdText(data);
+      if (text) {
+        job.jdText = text.slice(0, MAX_JD_CHARS);
+        job.rawMetadata.summaryOnly = false;
+        job.rawMetadata.detailFetched = true;
+      }
+    } catch (err) {
+      job.rawMetadata.detailError = err.message;
+      failures.push({ status: err.status ?? null });
+    }
+    return null;
+  });
+
+  // Counts are returned, not turned into notes here. One note per company would
+  // mean up to one per configured board on every run — 123 near-identical rows
+  // that bury whatever actually went wrong. The caller folds them into one.
+  return { jobs, errors, unread, failed: failures.length, statuses: failures.map((f) => f.status) };
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
@@ -115,8 +275,15 @@ async function fetchJson(fetchImpl, url, requestTimeoutMs) {
 /** Map one SmartRecruiters posting (list shape) to the normalized form. */
 export function mapPosting(p, company) {
   const loc = p.location ?? {};
+  const postingId = String(p.id ?? '').trim();
+  const identifier = String(p.company?.identifier ?? company ?? '').trim();
   const locationLabel = [loc.city, loc.region, loc.country?.toUpperCase()]
     .filter(Boolean).join(', ');
+  // SmartRecruiters states the country as an ISO-3166 alpha-2 code on every
+  // posting. That is ground truth, and the US-only gate treats an explicit
+  // country as decisive — far more reliable than trying to recognize a city
+  // name, which is how offshore roles slipped through a filter that was on.
+  const countryCode = String(loc.country ?? '').trim().toLowerCase();
   const jdBits = [
     p.name,
     p.typeOfEmployment?.label,
@@ -131,10 +298,28 @@ export function mapPosting(p, company) {
     company: p.company?.name ?? company,
     title: p.name ?? '',
     location: loc.remote ? (locationLabel ? `Remote — ${locationLabel}` : 'Remote') : locationLabel,
-    url: `https://jobs.smartrecruiters.com/${encodeURIComponent(p.company?.identifier ?? company)}/${encodeURIComponent(p.id ?? '')}`,
+    // Without a posting id there is no per-posting page. Falling back to the
+    // company URL would hand every such row the SAME link, which the dedup
+    // stage reads as one job and collapses — losing all but one of them.
+    url: postingId
+      ? `https://jobs.smartrecruiters.com/${encodeURIComponent(identifier)}/${encodeURIComponent(postingId)}`
+      : '',
     jdText: jdBits.join('. '),
     postedAt: p.releasedDate ?? null,
     employmentType: p.typeOfEmployment?.label ?? '',
-    rawMetadata: { company, refNumber: p.refNumber ?? null, experienceLevel: p.experienceLevel?.label ?? null },
+    rawMetadata: {
+      company,
+      refNumber: p.refNumber ?? null,
+      experienceLevel: p.experienceLevel?.label ?? null,
+      ...(countryCode ? { country: countryCode } : {}),
+      // jdText above is SYNTHESIZED from list metadata, not the employer's
+      // description. Saying so is what routes the row to `needs_description`
+      // instead of letting a ~150-character teaser be scored as if it were the
+      // real posting and then discarded as a poor fit.
+      summaryOnly: true,
+      ...(postingId && identifier
+        ? { detailsUrl: `https://${SMARTRECRUITERS_HOST}/v1/companies/${encodeURIComponent(identifier)}/postings/${encodeURIComponent(postingId)}` }
+        : {}),
+    },
   });
 }

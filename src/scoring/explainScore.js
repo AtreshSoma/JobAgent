@@ -24,13 +24,13 @@ export const TIERS = Object.freeze({
  * @param {boolean} [options.userApproved=false] explicit per-job user approval
  * @returns {{ tier: string, sponsorshipGated: boolean, explanation: string }}
  */
-export function explainScore(scoreResult, scoring, { userApproved = false } = {}) {
+export function explainScore(scoreResult, scoring, { userApproved = false, titleVerdict = null } = {}) {
   const { total, sponsorship } = scoreResult;
   const tiers = scoring.tiers;
   const allow = new Set(scoring.sponsorshipGate?.allowApplyWhen ?? ['Confirmed', 'Likely', 'Approved']);
   const sponsorshipOk = userApproved || allow.has(sponsorship);
 
-  let tier = rawTier(total, tiers);
+  let tier = rawTier(total, tiers, titleVerdict);
   let sponsorshipGated = false;
 
   if ((tier === TIERS.PRIORITY || tier === TIERS.APPLY) && !sponsorshipOk) {
@@ -97,12 +97,31 @@ export function isSponsorshipGated(job = {}) {
     && job.score >= applyThreshold;
 }
 
-/** Raw tier purely from score thresholds. */
-export function rawTier(total, tiers) {
+/**
+ * Raw tier purely from score thresholds.
+ *
+ * `titleVerdict` raises the bar for a posting that reached scoring only because
+ * its TITLE was unrecognized rather than recognized (see
+ * `src/scoring/profileFit.js`). Discovery no longer rejects an unfamiliar
+ * title — that recovered 147 genuinely strong roles the old gate threw away —
+ * but keeping every such posting at the same near-miss bar put ~830 extra rows
+ * on the board, most of them 50-59 speculative matches. Requiring a deferred
+ * title to clear the QUEUE threshold instead keeps the full recall gain on
+ * strong roles (99.9% of everything scoring 60+) while roughly halving the
+ * extra board volume: content evidence has to be stronger when the title
+ * offered none.
+ *
+ * @param {number} total
+ * @param {object} tiers config/scoring.json tiers
+ * @param {'accept'|'defer'|'reject'|null} [titleVerdict]
+ */
+export function rawTier(total, tiers, titleVerdict = null) {
   if (total >= tiers.priority) return TIERS.PRIORITY;
   if (total >= tiers.apply) return TIERS.APPLY;
   if (total >= tiers.queue) return TIERS.QUEUE;
-  if (total >= tiers.nearMiss) return TIERS.NEAR_MISS;
+  // Only the near-miss band is gated on title evidence. Anything at or above
+  // the queue threshold has already proven itself on content alone.
+  if (total >= tiers.nearMiss && titleVerdict !== 'defer') return TIERS.NEAR_MISS;
   return TIERS.DISCARD;
 }
 

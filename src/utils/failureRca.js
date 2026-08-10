@@ -171,6 +171,7 @@ export function buildRca({
   operation, error, source = null, runId = null, attempt = 0,
   status = undefined, category = undefined, impact = null,
   partialResultsValid = false, degraded = false, count = 1, now = new Date(),
+  kept = null, scope = null, unitLabel = null,
 } = {}) {
   const cls = classifyFailure(error, { status, category });
   const message = sanitizeErrorMessage(error?.message ?? error);
@@ -181,6 +182,14 @@ export function buildRca({
   // handler recorded on the error. Reporting a hard-coded 0 hid the fact that a
   // throttled host was being hammered several times per job.
   const retryCount = Number(attempt || error?.attempts || 0);
+  // `Number(null)` is 0, not NaN — so a plain Number.isFinite() check would
+  // turn "the caller told us nothing" into "the source delivered zero jobs",
+  // which is precisely the false "results are missing" claim this is meant to
+  // stop. Absence of evidence must stay absent.
+  const keptCount = kept === null || kept === undefined || !Number.isFinite(Number(kept))
+    ? null
+    : Number(kept);
+  const outcome = classifyOutcome({ degraded, kept: keptCount });
   return {
     runId,
     source,
@@ -192,19 +201,107 @@ export function buildRca({
     retryCount: Number.isFinite(retryCount) ? retryCount : 0,
     retryable: cls.retryable,
     guidance: cls.guidance,
-    impact: impact ?? defaultImpact({ source, operation, degraded, count }),
+    impact: impact ?? defaultImpact({
+      source, operation, degraded, count, kept: keptCount, scope, unitLabel,
+    }),
     degraded,
+    // How many jobs this source DID deliver despite the error, and what unit
+    // the failure actually cost. Together these are the blast radius.
+    kept: keptCount,
+    scope: scope ?? null,
+    unitLabel: unitLabel ?? null,
+    outcome,
     count: Number.isFinite(Number(count)) && Number(count) > 0 ? Number(count) : 1,
     partialResultsValid,
   };
 }
 
+/**
+ * What actually happened to this source's results.
+ *
+ * REGRESSION GUARD. This used to be the binary `degraded ? 'degraded' :
+ * 'failed'`, which produced the single most misleading thing the dashboard
+ * said: a Workday run that returned 38,830 jobs and an Adzuna run that returned
+ * 691 were both labelled "failed", under the heading "Results are missing from
+ * this run". Both statements were false, and they sent the reader hunting for
+ * jobs that were sitting on the board. Whether results are missing is not a
+ * property of the error — it is the relationship between the error and what the
+ * source DELIVERED, so `kept` decides it.
+ *
+ * @param {{degraded: boolean, kept: number|null}} args
+ * @returns {'degraded'|'failed'|'partial'|'unknown'}
+ */
+export function classifyOutcome({ degraded = false, kept = null } = {}) {
+  if (degraded) return 'degraded';
+  if (kept === null) return 'unknown'; // caller did not say; do not assert either way
+  return kept > 0 ? 'partial' : 'failed';
+}
+
+/**
+ * Infer what unit a failure cost, from the fields the adapter attached.
+ *
+ * Adapters already record WHERE a failure happened — a page offset, a Workday
+ * tenant, a board slug — but that detail was thrown away before it reached the
+ * user, so "1 error" read the same whether it cost 50 jobs from one page or an
+ * entire employer. An explicit `scope` wins; this only fills the gap.
+ *
+ * @param {object} err raw adapter error entry
+ * @returns {'page'|'board'|'source'}
+ */
+export function inferScope(err = {}) {
+  if (err.scope) return err.scope;
+  if (err.query !== undefined) return 'query';
+  if (err.offset !== undefined || err.page !== undefined) return 'page';
+  if (err.tenant || err.board || err.company || err.site || err.siteNumber) return 'board';
+  return 'source';
+}
+
+const SCOPE_NOUN = {
+  page: 'page', query: 'search query', board: 'board/employer', source: 'source',
+};
+
+/**
+ * Name the specific thing that failed, when the adapter recorded it.
+ *
+ * A Workday tenant that dies takes an entire employer's postings with it, and
+ * "1 error" conveys none of that. The adapters already carry the identity
+ * (`tenant`, `board`, `company`); this is what surfaces it.
+ *
+ * @param {object} err raw adapter error entry
+ * @returns {string|null}
+ */
+export function unitLabelFor(err = {}) {
+  const label = err.tenant ?? err.board ?? err.company ?? err.query ?? err.site ?? err.siteNumber ?? null;
+  if (!label) return null;
+  const text = String(label).trim();
+  return text ? text.slice(0, 60) : null;
+}
+
 /** Impact text that matches what actually happened to the results. */
-function defaultImpact({ source, operation, degraded, count }) {
+function defaultImpact({
+  source, operation, degraded, count, kept = null, scope = null, unitLabel = null,
+}) {
   if (!source) return `The ${operation} run did not complete.`;
   const n = Number(count) > 1 ? `${count} results from` : 'Results from';
   if (degraded) {
     return `${n} "${source}" were KEPT but are lower-fidelity (summary-only description, no full job text); nothing was lost and other sources are unaffected.`;
+  }
+  // Nothing came back — the only case where "missing" is the whole truth.
+  if (kept === 0) {
+    return `"${source}" returned no jobs this run; its results are missing entirely. Other sources are unaffected.`;
+  }
+  if (kept > 0) {
+    const jobs = kept.toLocaleString('en-US');
+    const unit = SCOPE_NOUN[scope] ?? 'request';
+    const named = unitLabel && Number(count) === 1 ? ` (${unitLabel})` : '';
+    const failures = Number(count) > 1 ? `${count} ${unit}s` : `1 ${unit}${named}`;
+    // A board-scope failure costs an entire employer, which is a materially
+    // different loss from one page of one query — so say which it was.
+    const cost = scope === 'board'
+      ? 'so that employer contributed nothing'
+      : 'so a subset of its jobs is missing';
+    return `"${source}" still returned ${jobs} job(s), which were kept. ${failures} failed, `
+      + `${cost} — not the whole source. Other sources are unaffected.`;
   }
   return `${n} "${source}" are missing from this run; other sources are unaffected.`;
 }

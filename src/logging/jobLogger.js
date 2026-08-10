@@ -131,6 +131,9 @@ export class JobLogger {
 
   /** Open a run_log row. @param {string} mode */
   startRun(mode) {
+    // A previous run that was killed left its row open forever. Close those
+    // first, so "the newest row with no ended_at" always means THIS run.
+    this.db.reapAbandonedRuns?.();
     this.db.insertRunLog({
       run_id: this.runId,
       mode,

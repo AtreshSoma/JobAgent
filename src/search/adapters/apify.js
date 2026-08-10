@@ -86,6 +86,78 @@ export async function fetchUsage(fetchImpl, token, timeoutMs = 15_000) {
   }
 }
 
+/**
+ * Expand actor entries that are declared once and run per target title.
+ *
+ * WHY. Every actor entry carries a literal `input.title` ("Senior Data
+ * Engineer"). That made the Apify sources the only place in discovery whose
+ * queries do NOT come from config/candidate.json: adding a title to
+ * `targetTitles` changed what Adzuna, atsSearch, Workday and Amazon searched
+ * for, and left Apify querying a frozen list — silently, because a query that
+ * was never issued produces no error.
+ *
+ * The fix is opt-in rather than automatic, because running an actor SPENDS
+ * REAL MONEY. Auto-expanding 17 target titles across the configured actors
+ * would have multiplied a run's bill without anyone asking for it. So an entry
+ * declares `forEachTargetTitle: true` and is expanded here; everything else is
+ * passed through untouched, and `maxActorsPerRun` still caps the total.
+ *
+ * @param {Array<object>} actors configured actor entries
+ * @param {string[]} targetTitles candidate.targetTitles
+ * @returns {Array<object>} expanded entries
+ */
+export function expandActors(actors = [], targetTitles = []) {
+  const titles = (Array.isArray(targetTitles) ? targetTitles : [])
+    .map((t) => String(t ?? '').trim())
+    .filter(Boolean);
+  const out = [];
+  for (const actor of actors) {
+    if (actor?.forEachTargetTitle !== true) { out.push(actor); continue; }
+    // Declared per-title but the profile has none: emitting the template as-is
+    // would run a scrape with an empty query. Skip it instead.
+    for (const title of titles) {
+      out.push({
+        ...actor,
+        forEachTargetTitle: undefined,
+        label: `${actor.label ?? actor.actorId ?? 'apify'}-${slugify(title)}`,
+        input: { ...(actor.input ?? {}), title },
+      });
+    }
+  }
+  return out;
+}
+
+/** "Senior Data Engineer" -> "senior-data-engineer". */
+function slugify(s) {
+  return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * Target titles that no configured actor searches for.
+ *
+ * A pinned actor list drifts from the profile the moment a title is added, and
+ * the drift is invisible: nothing fails, the run just never asks. This turns
+ * that silence into one reportable note naming exactly which titles are unasked.
+ *
+ * @param {Array<object>} actors resolved actor entries
+ * @param {string[]} targetTitles candidate.targetTitles
+ * @returns {string[]} uncovered titles
+ */
+export function uncoveredTitles(actors = [], targetTitles = []) {
+  const asked = new Set();
+  for (const actor of actors) {
+    const t = String(actor?.input?.title ?? '').trim().toLowerCase();
+    if (t) asked.add(t);
+  }
+  if (asked.size === 0) return [];
+  return (Array.isArray(targetTitles) ? targetTitles : [])
+    .map((t) => String(t ?? '').trim())
+    .filter(Boolean)
+    // Covered when some actor's query CONTAINS the title: the staffing-agency
+    // entries ("Data Engineer Kforce") legitimately cover "Data Engineer".
+    .filter((title) => ![...asked].some((q) => q.includes(title.toLowerCase())));
+}
+
 /** The message shown when the account has no credit left this cycle. */
 export function quotaMessage({ usedUsd, limitUsd, resetsAt }) {
   const reset = resetsAt ? new Date(resetsAt) : null;
@@ -143,7 +215,11 @@ export function isRetryableBilledRun(err) {
 export async function run(source = {}, ctx = {}) {
   const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, env } = ctx;
   const options = source.options ?? {};
-  const configuredActors = Array.isArray(options.actors) ? options.actors : [];
+  const targetTitles = ctx.candidate?.targetTitles ?? [];
+  const configuredActors = expandActors(
+    Array.isArray(options.actors) ? options.actors : [],
+    targetTitles,
+  );
   const maxActorsPerRun = Number.isFinite(options.maxActorsPerRun)
     ? Math.max(0, options.maxActorsPerRun)
     : configuredActors.length;
@@ -224,6 +300,21 @@ export async function run(source = {}, ctx = {}) {
     if (!r) continue;
     jobs.push(...r.jobs);
     if (r.error) errors.push(r.error);
+  }
+
+  // Say which target titles this source never asked about. Not an error — the
+  // run worked — but without it the gap between the profile and the pinned
+  // actor list stays invisible until someone re-reads the config by hand.
+  const uncovered = uncoveredTitles(actors, targetTitles);
+  if (uncovered.length > 0) {
+    errors.push({
+      degraded: true,
+      count: uncovered.length,
+      error: `${uncovered.length} target title(s) have no Apify actor and were never searched: `
+        + `${uncovered.join(', ')}. Apify actor queries are pinned in config/jobboards.json and do `
+        + 'not follow config/candidate.json. Add an actor for them, or set '
+        + '`forEachTargetTitle: true` on one to expand it across every target title.',
+    });
   }
 
   const result = { jobs, errors, cancelled };
@@ -377,12 +468,32 @@ export function resolveApplyUrl(item, fm = {}) {
   for (const key of [...directKeys, ...aggregatorKeys]) {
     if (!key) continue;
     const v = coerce(item[key]);
-    if (v && /^https?:\/\//i.test(v) && !candidates.includes(v)) candidates.push(v);
+    // A bare host ("https://indeed.com") is not a posting. Actors emit one when
+    // a row's link field is missing, and stored as an apply URL it is worse than
+    // no URL at all: it cannot be applied to, and every row carrying it shares
+    // one dedup key, so a whole batch collapses into a single job.
+    if (v && /^https?:\/\//i.test(v) && hasPath(v) && !candidates.includes(v)) candidates.push(v);
   }
 
   // Prefer the first link that is NOT an aggregator host (i.e. the company site).
   const direct = candidates.find((u) => !isAggregatorHost(u));
   return direct || candidates[0] || '';
+}
+
+/**
+ * True when a URL identifies something more specific than a host — i.e. it has
+ * a path or a query. `https://indeed.com` and `https://indeed.com/` do not.
+ *
+ * @param {string} u
+ * @returns {boolean}
+ */
+export function hasPath(u) {
+  try {
+    const parsed = new URL(u);
+    return parsed.pathname.replace(/\/+$/, '') !== '' || parsed.search !== '';
+  } catch {
+    return false;
+  }
 }
 
 /** True when a URL's host belongs to a job aggregator (gated apply page). */

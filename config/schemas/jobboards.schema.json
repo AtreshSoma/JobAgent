@@ -95,7 +95,10 @@
               "smartrecruiters",
               "atsSearch",
               "adzuna",
-              "rippling"
+              "rippling",
+              "oracleRecruiting",
+              "amazonJobs",
+              "icims"
             ]
           },
           "enabled": {
@@ -174,17 +177,40 @@
           "boards": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "anyOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "required": ["host"],
+                  "properties": {
+                    "host": { "type": "string", "minLength": 1 },
+                    "company": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                }
+              ]
+            },
+            "description": "Board slugs (Greenhouse/Lever/Ashby/SmartRecruiters/Rippling), or for icims a portal host string / { host, company } object."
           },
           "tenants": {
             "type": "array",
+            "description": "Per-tenant coordinates. Two shapes are accepted, one per adapter that uses this key: Workday needs { host, tenant, site }; oracleRecruiting needs { host, siteNumber }. Each shape is validated strictly on its own terms, so a Workday entry missing `site` is still an error.",
             "items": {
               "type": "object",
-              "required": [
-                "host",
-                "tenant",
-                "site"
+              "anyOf": [
+                {
+                  "required": [
+                    "host",
+                    "tenant",
+                    "site"
+                  ]
+                },
+                {
+                  "required": [
+                    "host",
+                    "siteNumber"
+                  ]
+                }
               ],
               "properties": {
                 "host": {
@@ -199,12 +225,37 @@
                   "type": "string",
                   "minLength": 1
                 },
+                "siteNumber": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "oracleRecruiting: the Candidate Experience site number, e.g. 'CX_1001'. Read it from the tenant's own careers page HTML (sitenumber=\"CX_...\") — the API does NOT validate it and silently falls back to the tenant's default site, so a 200 is not proof the number is right."
+                },
+                "company": {
+                  "type": "string",
+                  "description": "Human-readable employer name for the tracker. Falls back to the tenant/host slug."
+                },
+                "name": {
+                  "type": "string"
+                },
                 "locale": {
                   "type": "string"
                 },
                 "pageSize": {
                   "type": "integer",
                   "minimum": 1
+                },
+                "fetchDetails": {
+                  "type": "boolean",
+                  "description": "Set false to skip the per-job detail request. The posting keeps its summary/teaser description."
+                },
+                "maxPagesPerTerm": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "keywords": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "oracleRecruiting: pin this tenant's server-side keyword searches, overriding the phrases derived from candidate.targetTitles. An empty array means 'enumerate everything'."
                 },
                 "searchText": {
                   "type": "string",

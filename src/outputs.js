@@ -22,11 +22,33 @@ import { writeFileAtomic } from './utils/fsSafe.js';
 export function emptyCounters() {
   return {
     jobs_found: 0,
+    // Postings whose id was NOT already in the database before this run. This
+    // is the number that answers "did the run find anything?" — `jobs_found`
+    // counts everything every source returned, which on a mature corpus is
+    // ~76k of overwhelmingly already-known rows, so a run that genuinely found
+    // 2,800 new postings and one that found none read almost identically.
+    jobs_new: 0,
     jobs_scored: 0,
     jobs_skipped_unchanged: 0,
     jobs_cancelled: 0,
     jobs_queued: 0,
+    // Total discards. Kept for compatibility, but it conflates three unrelated
+    // causes, so each now also has its own counter below — otherwise a user
+    // cannot tell a run ruined by a geography rule from one that simply
+    // surfaced old postings.
     jobs_discarded: 0,
+    jobs_discarded_stale: 0,
+    jobs_discarded_excluded: 0,
+    jobs_discarded_low_score: 0,
+    // Removed before scoring because another record already represented them.
+    // Previously reduced to a bare length in the report and invisible in the
+    // counters, which made over-collapsing dedup undiagnosable.
+    jobs_duplicate: 0,
+    jobs_suppressed_applied: 0,
+    jobs_suppressed_url_owned: 0,
+    // Scored below the bar ONLY because the description was never fetched.
+    // Not a fit judgement — these are recoverable by `npm run enrich`.
+    jobs_unread: 0,
     jobs_unknown_date_review: 0,
     jobs_prepared: 0,
     jobs_assisted: 0,

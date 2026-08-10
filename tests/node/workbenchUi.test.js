@@ -567,8 +567,19 @@ describe('run state and recovery', () => {
 
   it('groups the big counts a discovery run produces', () => {
     // "Found 14461" is materially harder to read than "Found 14,461".
-    expect(app).toContain('`Found ${fmt(counters.jobs_found)}');
+    expect(app).toContain('fmt(counters.jobs_found)');
     expect(app).not.toMatch(/\$\{counters\.jobs_found \?\? 0\}/);
+  });
+
+  it('leads the discovery summary with what was NEW, not the total seen', () => {
+    // The total is dominated by already-known rows on a mature corpus, so
+    // leading with it made a successful run read as "nothing happened".
+    const summary = app.slice(app.indexOf("result.phase === 'discover'"));
+    const newIdx = summary.indexOf('new');
+    const seenIdx = summary.indexOf('seen');
+    expect(summary).toContain('counters.jobs_new');
+    expect(newIdx).toBeGreaterThan(-1);
+    expect(newIdx).toBeLessThan(seenIdx);
   });
 
   it('draws the connection dot once', () => {

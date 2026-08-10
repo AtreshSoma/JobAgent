@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { loadConfig } from '../../src/config/loadConfig.js';
 import { applyExclusions } from '../../src/scoring/exclusionFilter.js';
 import {
-  US_STATES, US_STATE_COUNT, matchUsState, usLocationSignal,
+  US_STATES, US_STATE_COUNT, matchUsState, usLocationSignal, leadingForeignCountry,
 } from '../../src/utils/usGeography.js';
 
 const config = loadConfig({ loadEnv: false, env: {} });
@@ -164,5 +164,41 @@ describe('every configured search asks for the whole country', () => {
       }
     }
     expect(offenders, `sub-national searches: ${offenders.join(' | ')}`).toEqual([]);
+  });
+});
+
+describe('leadingForeignCountry — ISO country prefix in ATS location strings', () => {
+  it('reads a three-letter country prefix, which no US state code can collide with', () => {
+    expect(leadingForeignCountry('PHL - TAGUIG CITY')).toMatchObject({ code: 'PHL', country: 'Philippines' });
+    expect(leadingForeignCountry('GBR - London')).toMatchObject({ country: 'United Kingdom' });
+    expect(leadingForeignCountry('BRA - São Paulo')).toMatchObject({ country: 'Brazil' });
+  });
+
+  it('reads a two-letter country prefix ONLY in country-region-city shape', () => {
+    // REGRESSION: "IN" here is India, but it is also the USPS code for Indiana.
+    // Misreading it gave the posting a US signal, and the US-only gate then
+    // required a foreign COUNTRY NAME to overrule that signal — which a city
+    // like Bangalore never supplies. Every offshore posting in this Workday
+    // format therefore passed a filter configured to reject it.
+    expect(leadingForeignCountry('IN-KA-BANGALORE Home Office')).toMatchObject({ country: 'India' });
+    expect(leadingForeignCountry('IN-TS-HYDERABAD')).toMatchObject({ country: 'India' });
+    // Region token may be numeric when the employer leaves it unset.
+    expect(leadingForeignCountry('PH-00-Taguig')).toMatchObject({ country: 'Philippines' });
+  });
+
+  it('never reads a US state code as a country', () => {
+    // Two letters WITHOUT a region token stays American: dropping a real US job
+    // is the worse error, so the ambiguous shape resolves toward keeping it.
+    expect(leadingForeignCountry('CA-San Jose')).toBeNull();
+    expect(leadingForeignCountry('IN-Indianapolis')).toBeNull();
+    // An explicit US/USA prefix is never foreign, even in country-region shape.
+    expect(leadingForeignCountry('USA-TX-Austin')).toBeNull();
+    expect(leadingForeignCountry('US-CA-San Francisco')).toBeNull();
+  });
+
+  it('returns null for ordinary location strings', () => {
+    for (const s of ['New York, NY, United States', 'Plano, Texas', 'Remote', '', null]) {
+      expect(leadingForeignCountry(s), String(s)).toBeNull();
+    }
   });
 });

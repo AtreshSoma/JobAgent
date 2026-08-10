@@ -30,6 +30,7 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
 import { createHostGate } from '../../utils/hostGate.js';
+import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
 export const adapterId = 'workday';
 
@@ -126,9 +127,16 @@ const ROLE_SHAPED_RE = /\b(data|analytics|bi|business intelligence|etl|elt|wareh
  * @param {string[]} targetTitles candidate.targetTitles
  * @returns {0|1|2}
  */
-function detailPriority(job, targetTitles = []) {
+function detailPriority(job, targetTitles = [], vocab = null) {
   const title = String(job?.title ?? '');
   if (!title) return 0;
+  // Profile-driven when a profile is available. The old substring-and-regex
+  // ranking recognized far less than the profile actually implies — it scored
+  // "Databricks Senior Architect" and "Senior Engineer, Business Intelligence"
+  // at 0, i.e. last in line for the budget, so on this corpus 2,541 Workday
+  // postings whose titles clearly fit were never read at all and were then
+  // reported as poor fits on the strength of a location string.
+  if (vocab) return titleFitPriority(title, vocab);
   const lower = title.toLowerCase();
   for (const want of targetTitles) {
     const w = String(want ?? '').trim().toLowerCase();
@@ -328,6 +336,7 @@ export async function run(source = {}, ctx = {}) {
         requestTimeoutMs, pageConcurrency, detailConcurrency, hostSpacingMs,
         maxDetailFetches, workdayDetailCache: ctx.workdayDetailCache, shouldCancel: ctx.shouldCancel,
         targetTitles: ctx.candidate?.targetTitles ?? [],
+        profileVocab: ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null,
         abortSignal: ctx.abortSignal, maxPagesPerTerm,
       });
       return {
@@ -408,7 +417,7 @@ async function fetchTenant(cfg, ctx) {
   const {
     fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs, requestTimeoutMs,
     pageConcurrency, detailConcurrency, hostSpacingMs, maxDetailFetches,
-    workdayDetailCache, shouldCancel, targetTitles = [], abortSignal,
+    workdayDetailCache, shouldCancel, targetTitles = [], profileVocab = null, abortSignal,
     maxPagesPerTerm = MAX_PAGES,
   } = ctx;
   const endpoint = `https://${cfg.host}/wday/cxs/${encodeURIComponent(cfg.tenant)}/${encodeURIComponent(cfg.site)}/jobs`;
@@ -538,7 +547,8 @@ async function fetchTenant(cfg, ctx) {
     const pairs = out
       .map((job, i) => ({ job, posting: postings[i] }))
       .filter(({ job }) => job.rawMetadata?.summaryOnly !== false)
-      .sort((a, b) => detailPriority(b.job, targetTitles) - detailPriority(a.job, targetTitles))
+      .sort((a, b) => detailPriority(b.job, targetTitles, profileVocab)
+        - detailPriority(a.job, targetTitles, profileVocab))
       .slice(0, maxDetailFetches);
     const notes = await mapWithConcurrency(pairs, detailConcurrency, ({ job, posting }) => {
       if (shouldCancel?.()) { cancelled = true; return null; }
@@ -669,6 +679,20 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
         delete job.rawMetadata.postedAtApprox;
       }
       if (info.jobReqId) job.rawMetadata.jobReqId = String(info.jobReqId);
+
+      // RESOLVE THE REAL LOCATION. The CXS LIST endpoint collapses a
+      // multi-location requisition to the placeholder "2 Locations", and that
+      // string was being stored as the job's location — so a Manulife role in
+      // Quezon City and Lapu Lapu City reached the board with no city, no
+      // country, and nothing for the US-only filter to judge. The detail
+      // endpoint carries the actual places AND an explicit `country`, which is
+      // authoritative in a way that string-matching a location never is.
+      const places = [info.location, ...(Array.isArray(info.additionalLocations) ? info.additionalLocations : [])]
+        .map((p) => String(p ?? '').replace(/,\s*$/, '').trim())
+        .filter(Boolean);
+      if (places.length) job.location = places.join('; ');
+      const country = info.country?.descriptor ?? info.country;
+      if (country && typeof country === 'string') job.rawMetadata.country = country.trim();
       return null;
     }
     // Reached the endpoint but found no description field — stay summary-level.
@@ -766,7 +790,12 @@ export function mapJob(p, cfg, { now = new Date() } = {}) {
   const base = `https://${cfg.host}${cfg.locale ? `/${cfg.locale}` : ''}/${cfg.site}`;
   const url = jobUrl(base, externalPath);
   const bullets = Array.isArray(p.bulletFields) ? p.bulletFields.filter(Boolean) : [];
-  const location = p.locationsText ?? p.location ?? '';
+  // "2 Locations" / "3 Locations" is Workday's AGGREGATE label, not a place.
+  // Storing it verbatim gave the geography filter a string it could never
+  // judge, so offshore multi-location reqs passed a US-only gate untouched.
+  const rawLocation = String(p.locationsText ?? p.location ?? '');
+  const isAggregate = /^\s*\d+\s+locations?\s*$/i.test(rawLocation);
+  const location = isAggregate ? '' : rawLocation;
   const jdText = htmlToText([p.title, location, ...bullets].filter(Boolean).join('. '));
 
   // An exact date if the tenant sends one; otherwise derive it from the
@@ -790,6 +819,10 @@ export function mapJob(p, cfg, { now = new Date() } = {}) {
       site: cfg.site,
       externalPath,
       summaryOnly: true,
+      // The real places live on the detail endpoint; until it is fetched this
+      // job has NO usable location rather than a fake one. Recording the
+      // original label keeps the drop auditable.
+      ...(isAggregate ? { locationAggregate: rawLocation } : {}),
       // Be honest about where the date came from: derived from "Posted N Days
       // Ago" is day-accurate, not timestamp-accurate.
       ...(approx ? { postedAtApprox: true, postedOnLabel: String(p.postedOn) } : {}),

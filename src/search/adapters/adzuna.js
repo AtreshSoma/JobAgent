@@ -98,12 +98,18 @@ export async function run(source = {}, ctx = {}) {
   // file header) — a bare "Data Engineer" query pulls in unrelated roles that
   // merely mention one somewhere in the body. Gate on title the same way
   // atsSearch does, using the same candidate.targetTitles as the query source.
-  const titleGate = makeTitleGate({
-    titles: ctx.candidate?.targetTitles ?? [],
-    strict: options.strictTitleMatch !== false,
-  });
-
   const queries = resolveQueries(options, ctx);
+
+  const titleGate = makeTitleGate({
+    // With no profile, gate on the QUERIES. They are the only statement of
+    // intent available, and `what_phrase` matching the whole body means an
+    // ungated run keeps things like "Accounts Payable Administrator" that merely
+    // mention a query term. Falling back to an empty title list would disable
+    // the gate entirely and admit exactly that noise.
+    titles: ctx.candidate?.targetTitles ?? queries,
+    strict: options.strictTitleMatch !== false,
+    candidate: ctx.candidate ?? null,
+  });
   if (queries.length === 0) {
     errors.push({
       error: 'Adzuna is enabled but has no queries. Add `options.queries`, or set '
@@ -116,8 +122,12 @@ export async function run(source = {}, ctx = {}) {
   const results = await mapWithConcurrency(queries, concurrency, async (query) => {
     if (ctx.shouldCancel?.()) { cancelled = true; return null; }
     const found = [];
+    // Tracked so a failure can say WHICH page died. Everything paged in before
+    // it is returned regardless, so the report must not imply the query was
+    // lost wholesale.
+    let page = 0;
     try {
-      for (let page = 1; page <= maxPages; page += 1) {
+      for (page = 1; page <= maxPages; page += 1) {
         if (ctx.shouldCancel?.()) { cancelled = true; break; }
         if (rateLimiter) await rateLimiter.wait(`adzuna:${API_HOST}`, source.rateLimitMs);
 
@@ -145,7 +155,17 @@ export async function run(source = {}, ctx = {}) {
       return {
         jobs: found,
         error: {
-          query, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0,
+          query,
+          error: err.message,
+          status: err.status ?? null,
+          attempts: err.attempts ?? 0,
+          // The failure cost the REST of this query's pages, not the source and
+          // not the pages already gathered — `found` above is still returned.
+          // Saying so structurally is what stops the dashboard reporting
+          // "results from adzuna are missing" over a run that kept 691 jobs.
+          scope: 'query',
+          page,
+          keptFromQuery: found.length,
         },
       };
     }

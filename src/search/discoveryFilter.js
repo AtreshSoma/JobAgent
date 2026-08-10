@@ -18,6 +18,7 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 // Canonical implementation lives with the scorer; re-exported for callers.
 import { candidateStackTerms } from '../scoring/scorer.js';
+import { buildProfileVocabulary, classifyTitleFit } from '../scoring/profileFit.js';
 
 export { candidateStackTerms };
 
@@ -53,9 +54,20 @@ export function classifyDiscovery(job = {}, { candidate = {}, scoring = {} } = {
     const n = normalizeText(t);
     return n.length > 0 && titleText.includes(n);
   });
-  // Generic role token fallback so "Staff Data Engineer" still reads as a title hit
-  // even if it is not literally in targetTitles.
-  const roleTokenHit = /\bdata engineer(ing)?\b|\banalytics engineer\b|\bplatform engineer\b/.test(titleText);
+  // Fallback so "Staff Data Engineer" still reads as a title hit even when it is
+  // not literally in targetTitles.
+  //
+  // This used to be a hardcoded regex (`data engineer|analytics engineer|
+  // platform engineer`). It was the last place in discovery that decided
+  // relevance from a literal role list rather than from the profile, so editing
+  // config/candidate.json changed every other stage and silently left this one
+  // behind — and it could disagree with the title gate that had already let the
+  // posting through. `classifyTitleFit` answers the same question from the
+  // candidate's own titles, stack and domains, so the two now agree by
+  // construction. Only `accept` counts: `defer` means "the title said nothing",
+  // which is not a title signal.
+  const vocab = profileVocabulary(candidate);
+  const roleTokenHit = vocab ? classifyTitleFit(job.title, vocab).verdict === 'accept' : false;
   const hasTitleSignal = titleHits.length > 0 || roleTokenHit;
   if (titleHits.length) {
     signals.push(`title:${titleHits.join('|')}`);
@@ -107,6 +119,28 @@ export function classifyDiscovery(job = {}, { candidate = {}, scoring = {} } = {
   }
 
   return { match, signals, reasons };
+}
+
+/**
+ * Profile vocabulary for a candidate, built once per candidate object.
+ *
+ * `classifyDiscovery` is called once per discovered job — tens of thousands per
+ * run — while the vocabulary depends only on the profile. A WeakMap keyed on the
+ * candidate object keeps this to one build per run without a cache to invalidate:
+ * load a new config and you get a new object, and the old entry is collectable.
+ *
+ * @param {object} candidate
+ * @returns {object|null} vocabulary, or null when there is no profile
+ */
+const VOCAB_CACHE = new WeakMap();
+function profileVocabulary(candidate) {
+  if (!candidate || typeof candidate !== 'object') return null;
+  let vocab = VOCAB_CACHE.get(candidate);
+  if (!vocab) {
+    vocab = buildProfileVocabulary(candidate);
+    VOCAB_CACHE.set(candidate, vocab);
+  }
+  return vocab;
 }
 
 /** Gather a deduped keyword list from scoring.keywords.* arrays. */

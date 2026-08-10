@@ -79,7 +79,7 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   breakdown.domainFit = keywordCategory(text, kw.domains, weights.domainFit, 1, matchedAll);
 
   // Seniority fit.
-  breakdown.seniorityFit = scoreSeniority(text, candidate.seniority, weights.seniorityFit);
+  breakdown.seniorityFit = scoreSeniority(job, text, candidate.seniority, weights.seniorityFit);
 
   // Sponsorship feasibility.
   breakdown.sponsorshipFeasibility = scoreSponsorship(sponsorship?.status, weights.sponsorshipFeasibility);
@@ -129,15 +129,77 @@ function keywordCategory(text, keywords = [], weight = 0, fullAt = 1, sink) {
   return { points: round2(weight * coverage), weight, matched };
 }
 
-function scoreSeniority(text, candidateSeniority, weight) {
+/**
+ * Seniority AND scope fit.
+ *
+ * Two corrections live here, both of which used to push the profile's best
+ * matches DOWN the ranking:
+ *
+ * 1. LEVEL IS READ FROM THE TITLE, not the whole document. `detectSeniority`
+ *    ran over title+JD, where `/\b(lead|manager)\b/` matches the ordinary verb:
+ *    a posting saying "you will LEAD the design of our lakehouse" was scored as
+ *    a Lead-level role, one rung above a senior candidate, and docked to 0.6 of
+ *    the weight. Rich leadership language in a description — exactly what a
+ *    senior engineer wants to see — cost 3.2 of 8 points. The body is still
+ *    consulted, but only when the title states no level at all.
+ *
+ * 2. THE PENALTY IS ASYMMETRIC. Being one rung ABOVE the candidate's stated
+ *    level is the normal next step and is treated as a full fit; being BELOW is
+ *    the real mismatch. Symmetric distance punished "Lead Data Engineer" for a
+ *    senior candidate exactly as hard as "Junior Data Engineer", which is
+ *    backwards for someone moving toward technical leadership.
+ *
+ * Scope evidence (owning a platform, setting technical direction, mentoring)
+ * tops the category up, so responsibility counts even when the title is
+ * unremarkable. It can only ADD, never subtract.
+ */
+function scoreSeniority(job, text, candidateSeniority, weight) {
   if (!candidateSeniority) return { points: 0, weight, matched: [] };
   const want = SENIORITY_RANK[candidateSeniority] ?? 3;
-  // Detect seniority signal in the JD/title.
-  const detected = detectSeniority(text);
-  if (detected === null) return { points: round2(weight * 0.6), weight, matched: ['seniority unstated'] };
-  const diff = Math.abs(detected - want);
-  const factor = diff === 0 ? 1 : diff === 1 ? 0.6 : 0.2;
-  return { points: round2(weight * factor), weight, matched: [`seniority delta ${diff}`] };
+  const matched = [];
+
+  // Title first — that is where a level is actually declared. Lowercased,
+  // because `detectSeniority` matches lowercase patterns with no `i` flag and a
+  // raw "Junior Data Engineer" would otherwise detect nothing, fall through to
+  // the body, and pick up the VERB "lead" — scoring a junior role as a step up.
+  let detected = detectSeniority(String(job?.title ?? '').toLowerCase());
+  if (detected === null) detected = detectSeniority(text);
+
+  let factor;
+  if (detected === null) {
+    factor = 0.6;
+    matched.push('seniority unstated');
+  } else if (detected >= want) {
+    // At or above level. One rung up is a lateral/step-up move, not a misfit;
+    // far above (a VP role for a senior IC) still tapers.
+    const up = detected - want;
+    factor = up <= 1 ? 1 : up === 2 ? 0.75 : 0.4;
+    matched.push(up === 0 ? 'seniority match' : `seniority +${up} (step up)`);
+  } else {
+    const down = want - detected;
+    factor = down === 1 ? 0.5 : 0.15;
+    matched.push(`seniority -${down} (below level)`);
+  }
+
+  // Scope top-up: platform ownership and technical leadership are part of what
+  // this profile is looking for and were previously worth nothing at all.
+  const scope = scopeBonus(text);
+  if (scope.bonus > 0) matched.push(...scope.matched);
+  const points = Math.min(weight, weight * factor + weight * scope.bonus);
+  return { points: round2(points), weight, matched };
+}
+
+/** Ownership/leadership evidence, worth up to 25% of the seniority weight. */
+function scopeBonus(text) {
+  const matched = [];
+  let bonus = 0;
+  if (/\b(own|owns|ownership of|accountable for|responsible for)\b[\w\s,]{0,40}\b(platform|architecture|pipeline|warehouse|lakehouse|roadmap|strategy|data estate)\b/.test(text)) {
+    matched.push('platform ownership'); bonus += 0.15;
+  }
+  if (/\b(mentor|mentoring|coach|technical direction|lead a team|lead the team|guide engineers|set standards|define best practices)\b/.test(text)) {
+    matched.push('technical leadership'); bonus += 0.10;
+  }
+  return { bonus: Math.min(0.25, bonus), matched };
 }
 
 function detectSeniority(text) {

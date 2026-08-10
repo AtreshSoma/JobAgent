@@ -117,9 +117,13 @@ describe('smartrecruiters adapter', () => {
       return { ok: true, json: async () => ({ totalFound: total, content }) };
     };
 
+    // These cover the LISTING loop. `maxDetailFetches: 0` holds per-posting
+    // description fetches out of scope so the assertions stay about paging.
+    const listOnly = { options: { maxDetailFetches: 0 } };
+
     it('pages until every posting on a large board is read', async () => {
       const { jobs, errors } = await smartrecruiters.run(
-        { boards: ['Big'] }, { fetchImpl: pagedBoard(442), maxRetries: 0 },
+        { boards: ['Big'], ...listOnly }, { fetchImpl: pagedBoard(442), maxRetries: 0 },
       );
       expect(errors).toEqual([]);
       expect(jobs).toHaveLength(442);
@@ -131,7 +135,7 @@ describe('smartrecruiters adapter', () => {
         offsets.push(Number(new URL(url).searchParams.get('offset')));
         return pagedBoard(250)(url);
       };
-      await smartrecruiters.run({ boards: ['Big'] }, { fetchImpl, maxRetries: 0 });
+      await smartrecruiters.run({ boards: ['Big'], ...listOnly }, { fetchImpl, maxRetries: 0 });
       expect(offsets).toEqual([0, 100, 200]);
     });
 
@@ -148,7 +152,9 @@ describe('smartrecruiters adapter', () => {
         ok: true,
         json: async () => ({ totalFound: 9999, content: [{ id: '1', name: 'Only one' }] }),
       });
-      const { jobs } = await smartrecruiters.run({ boards: ['Odd'] }, { fetchImpl, maxRetries: 0 });
+      const { jobs } = await smartrecruiters.run(
+        { boards: ['Odd'], ...listOnly }, { fetchImpl, maxRetries: 0 },
+      );
       expect(jobs).toHaveLength(1);
     });
 
@@ -160,7 +166,7 @@ describe('smartrecruiters adapter', () => {
         return pagedBoard(500)(url);
       };
       const { jobs, errors } = await smartrecruiters.run(
-        { boards: ['Big'] }, { fetchImpl, maxRetries: 0 },
+        { boards: ['Big'], ...listOnly }, { fetchImpl, maxRetries: 0 },
       );
       expect(jobs).toHaveLength(200);
       expect(errors).toHaveLength(1);
@@ -169,11 +175,96 @@ describe('smartrecruiters adapter', () => {
     it('stops promptly when the run is cancelled', async () => {
       const fetchImpl = async (url) => pagedBoard(500)(url);
       const { jobs, cancelled } = await smartrecruiters.run(
-        { boards: ['Big'] }, { fetchImpl, maxRetries: 0, shouldCancel: () => true },
+        { boards: ['Big'], ...listOnly }, { fetchImpl, maxRetries: 0, shouldCancel: () => true },
       );
       expect(cancelled).toBe(true);
       expect(jobs).toEqual([]);
     });
+  });
+
+  describe('descriptions (regression: 37,274 postings scored on a synthesized teaser)', () => {
+    const CANDIDATE = { targetTitles: ['Data Engineer', 'BI Developer'], technicalStack: ['Power BI'] };
+
+    /** A board of `n` postings, plus a jobAd document for each. */
+    const boardWithDetails = (names) => async (url) => {
+      const detail = /\/postings\/(p\d+)$/.exec(String(url));
+      if (detail) {
+        return {
+          ok: true,
+          json: async () => ({
+            jobAd: { sections: { jobDescription: { text: `<p>Full description for ${detail[1]} with dbt and Airflow.</p>` } } },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          totalFound: names.length,
+          content: names.map((name, i) => ({
+            id: `p${i}`, name, company: { identifier: 'Big', name: 'Big Co' },
+          })),
+        }),
+      };
+    };
+
+    it('fetches the real description and clears summaryOnly', async () => {
+      const { jobs } = await smartrecruiters.run(
+        { boards: ['Big'], options: { maxDetailFetches: 5 } },
+        { fetchImpl: boardWithDetails(['Senior Data Engineer']), maxRetries: 0, candidate: CANDIDATE },
+      );
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0].jdText).toMatch(/dbt and Airflow/);
+      expect(jobs[0].rawMetadata.summaryOnly).toBe(false);
+    });
+
+    it('marks an unread posting summaryOnly instead of scoring a teaser', async () => {
+      // The budget covers one of two. The other must NOT be presented as judged:
+      // 11,131 rows were filed "below score threshold" when nothing had read them.
+      const { jobs, errors } = await smartrecruiters.run(
+        { boards: ['Big'], options: { maxDetailFetches: 1 } },
+        {
+          fetchImpl: boardWithDetails(['Data Engineer', 'BI Developer']),
+          maxRetries: 0,
+          candidate: CANDIDATE,
+        },
+      );
+      expect(jobs.filter((j) => j.rawMetadata.summaryOnly === false)).toHaveLength(1);
+      expect(jobs.filter((j) => j.rawMetadata.summaryOnly === true)).toHaveLength(1);
+      // And the shortfall is reported rather than passing as full coverage.
+      expect(errors.find((e) => e.degraded).error).toMatch(/needs_description/);
+    });
+
+    it('rejects a title that names another profession', async () => {
+      const { jobs } = await smartrecruiters.run(
+        { boards: ['Big'], options: { maxDetailFetches: 5 } },
+        {
+          fetchImpl: boardWithDetails(['Registered Nurse', 'Data Engineer']),
+          maxRetries: 0,
+          candidate: CANDIDATE,
+        },
+      );
+      expect(jobs.map((j) => j.title)).toEqual(['Data Engineer']);
+    });
+
+    it('gives a posting with no id an empty url, never the company page', async () => {
+      // A shared fallback URL collapses every such row into one job at dedup.
+      const fetchImpl = async () => ({
+        ok: true,
+        json: async () => ({
+          totalFound: 2,
+          content: [
+            { name: 'Data Engineer', company: { identifier: 'Big' } },
+            { name: 'BI Developer', company: { identifier: 'Big' } },
+          ],
+        }),
+      });
+      const { jobs } = await smartrecruiters.run(
+        { boards: ['Big'], options: { maxDetailFetches: 0 } },
+        { fetchImpl, maxRetries: 0, candidate: CANDIDATE },
+      );
+      expect(jobs.map((j) => j.url)).toEqual(['', '']);
+    });
+
   });
 });
 

@@ -37,11 +37,44 @@ export function normalizeJob(raw = {}) {
   return job;
 }
 
-/** Build a deterministic job id from source + dedup key. */
+/**
+ * Build a deterministic job id from source + dedup key.
+ *
+ * The id is the SQLite PRIMARY KEY, and `upsertJob` does ON CONFLICT DO UPDATE,
+ * so two postings sharing an id do not both exist — the second silently
+ * OVERWRITES the first. The id must therefore stay unique per posting.
+ *
+ * REGRESSION GUARD ON THE LENGTH CAP. This used to be a bare `.slice(0, 200)`.
+ * `dedupKey` puts `sourceJobId` LAST, so it is exactly the discriminator that a
+ * naive truncation cuts off: two different requisitions at a company with a
+ * long name and a long shared title truncate to the same 200 chars and become
+ * one row. 52 rows in the live database already sit exactly at that boundary,
+ * so this was live, not theoretical. When the key is too long the tail is now
+ * replaced by a short hash of the FULL key, which keeps ids bounded, stable
+ * across runs, and still distinct.
+ */
 export function makeJobId(job) {
   const key = dedupKey({ company: job.company, title: job.title, sourceJobId: job.sourceJobId });
   const src = str(job.source) || 'src';
-  return `${src}:${key}`.slice(0, 200);
+  const full = `${src}:${key}`;
+  if (full.length <= 200) return full;
+  const digest = fnv1a32(full);
+  return `${full.slice(0, 200 - 9)}#${digest}`;
+}
+
+/**
+ * Small, dependency-free 32-bit hash. Only needs to be deterministic and
+ * well-spread for id disambiguation — not cryptographic.
+ * @param {string} text
+ * @returns {string} 8-char hex
+ */
+function fnv1a32(text) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
 }
 
 function str(v) {
@@ -156,8 +189,23 @@ function jobFromJsonLd(node, { url, source }) {
     employmentType: Array.isArray(node.employmentType)
       ? node.employmentType.join(', ')
       : (node.employmentType ?? ''),
-    rawMetadata: { jsonLd: true, validThrough: node.validThrough ?? null },
+    rawMetadata: {
+      jsonLd: true,
+      validThrough: node.validThrough ?? null,
+      // schema.org states the country explicitly. Carrying it through makes the
+      // US-only gate decide on ground truth instead of trying to recognize a
+      // city name — the failure mode that let offshore roles past a filter that
+      // was switched on. Applies to every JSON-LD source (iCIMS, careers pages).
+      ...(countryOf(address) ? { country: countryOf(address) } : {}),
+    },
   });
+}
+
+/** The country named by a schema.org PostalAddress, if any. */
+function countryOf(address) {
+  if (!address || typeof address !== 'object') return '';
+  const c = address.addressCountry;
+  return str(typeof c === 'object' ? (c?.name ?? c?.identifier ?? '') : c);
 }
 
 function formatAddress(address) {

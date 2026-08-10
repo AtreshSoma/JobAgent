@@ -612,7 +612,7 @@ async function loadBoard() {
   const seq = ++boardSeq;
   const body = $('rows');
   if (!body.children.length) {
-    body.append(el('tr', {}, el('td', { colspan: '10' },
+    body.append(el('tr', {}, el('td', { colspan: '11' },
       el('div', { class: 'skeleton' }), el('div', { class: 'skeleton' }))));
   }
 
@@ -622,7 +622,7 @@ async function loadBoard() {
   } catch (err) {
     if (seq !== boardSeq) return;
     body.textContent = '';
-    body.append(el('tr', {}, el('td', { colspan: '10', class: 'empty', text: err.message })));
+    body.append(el('tr', {}, el('td', { colspan: '11', class: 'empty', text: err.message })));
     $('pager').textContent = '';
     return;
   }
@@ -646,7 +646,7 @@ function renderRows(jobs) {
 
   if (!jobs.length) {
     const tracked = state.stats?.totals?.jobsTracked ?? 0;
-    const cell = el('td', { colspan: '10' });
+    const cell = el('td', { colspan: '11' });
     const box = el('div', { class: 'empty' });
     box.append(el('div', { class: 'big', text: tracked === 0 ? 'No jobs yet' : 'Nothing matches these filters' }));
     if (tracked === 0) {
@@ -712,6 +712,13 @@ function rowFor(job) {
     job.postedLabel);
   if (job.postedLast24h) postedCell.append(' ', el('span', { class: 'chip good', text: 'new' }));
   tr.append(postedCell);
+
+  // found — when THIS agent first discovered the job, which is a different
+  // question from when the employer posted it. A months-old posting can be a
+  // brand-new find (a board was only just added), and that is exactly the row
+  // a user checking "what did the last run turn up?" wants to see.
+  tr.append(el('td', { class: 'nowrap', title: job.createdAt ?? '' },
+    relTime(job.createdAt) || '—'));
 
   // resume — one click straight to the tailored document
   const resumeCell = el('td', { class: 'nowrap' });
@@ -2198,7 +2205,16 @@ function prettyResult(result) {
   // is materially harder to read at a glance than "Found 14,461".
   if (result.phase === 'prepare-selected') return `Prepared ${fmt(counters.jobs_prepared)} packet(s)`;
   if (result.phase === 'prepare') return `Prepared ${fmt(counters.jobs_prepared)} · scored ${fmt(counters.jobs_scored)}`;
-  if (result.phase === 'discover') return `Found ${fmt(counters.jobs_found)} · scored ${fmt(counters.jobs_scored)}`;
+  // NEW leads, because it is the only figure that answers "did this run find
+  // me anything?". `jobs_found` is every posting every source returned — on a
+  // mature corpus ~76,000, overwhelmingly already known — so leading with it
+  // made a run that discovered 2,800 genuinely new roles read identically to
+  // one that discovered none, which is exactly why discovery was reported as
+  // "not finding new jobs" while it was in fact working.
+  if (result.phase === 'discover') {
+    const isNew = Number(counters.jobs_new ?? 0);
+    return `${fmt(isNew)} new · ${fmt(counters.jobs_found)} seen · scored ${fmt(counters.jobs_scored)}`;
+  }
   if (result.phase === 'score') return `Re-scored ${fmt(counters.jobs_rescored ?? counters.jobs_scored)}`;
   return `${result.phase ?? 'run'} done`;
 }
@@ -2279,7 +2295,26 @@ function renderRunDetails(status) {
       head.append(el('span', { class: 'who' }, el('b', { text: entry.source ?? entry.operation ?? 'run' })));
       head.append(el('span', { class: 'num', text: cause }));
       if (entry.count > 1) head.append(el('span', { class: 'num', text: `×${entry.count}` }));
-      head.append(el('span', { class: 'state failed', text: entry.degraded ? 'degraded' : 'failed' }));
+      // Label by what actually happened to the results, not by the mere
+      // presence of an error. A source that returned 38,830 jobs and lost one
+      // page is "partial"; only a source that delivered nothing is "failed".
+      // Calling both "failed" was the single most misleading thing this panel
+      // said, because it sat directly above the (equally wrong) claim that the
+      // source's results were missing from the run.
+      const outcome = entry.outcome
+        ?? (entry.degraded ? 'degraded' : (Number(entry.kept) > 0 ? 'partial' : 'failed'));
+      // Reuse the run-row state palette: `partial`/`skipped` are amber,
+      // `failed` is red. Inventing a `warn` class here would have rendered
+      // unstyled, which is how a "partial" badge ends up looking like plain text.
+      const OUTCOME_CLASS = {
+        degraded: 'partial', partial: 'partial', failed: 'failed', unknown: 'failed',
+      };
+      head.append(el('span', {
+        class: `state ${OUTCOME_CLASS[outcome] ?? 'failed'}`,
+        text: outcome === 'partial' && Number(entry.kept) > 0
+          ? `partial · ${fmt(entry.kept)} kept`
+          : outcome,
+      }));
       block.append(head);
       if (entry.message) block.append(el('div', { class: 'run-why', text: entry.message }));
       if (entry.guidance) block.append(el('div', { class: 'run-fix', text: entry.guidance }));
@@ -2350,8 +2385,12 @@ function applyRunGate(status) {
   } else if (status?.lastResult && !dismissed) {
     box.dataset.state = status.partial || (status.rca ?? []).length ? 'warn' : 'ok';
     $('runStatus').textContent = prettyResult(status.lastResult);
+    // "failed" overstates it: a source that hit one bad page still delivered
+    // the rest, and this line sits right above the per-source breakdown that
+    // now says so. Naming the count of affected sources is the useful part.
     $('runMeta').textContent = status.partial
-      ? 'some sources failed — partial results kept' : '';
+      ? `${(status.rca ?? []).length || 'some'} source(s) had problems — results from healthy sources were kept`
+      : '';
     line.hidden = true;
   } else {
     box.dataset.state = 'idle';

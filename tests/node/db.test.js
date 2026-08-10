@@ -122,4 +122,34 @@ describe('db (node:sqlite, in-memory)', () => {
   it('throws when upserting without an id', () => {
     expect(() => db.upsertJob({ company: 'x' })).toThrow(/requires a job with an id/);
   });
+
+  describe('reapAbandonedRuns', () => {
+    // A run killed mid-flight never reaches endRun, so its row keeps ended_at
+    // NULL forever and is indistinguishable from a run still in progress.
+    const started = (iso) => ({ run_id: `r-${iso}`, mode: 'DRY_RUN', started_at: iso });
+
+    it('closes runs left open by a dead process', () => {
+      db.insertRunLog(started('2026-08-01T00:00:00.000Z'));
+      const closed = db.reapAbandonedRuns({ now: new Date('2026-08-10T00:00:00.000Z') });
+      expect(closed).toBe(1);
+      const row = db.getRunLog('r-2026-08-01T00:00:00.000Z');
+      // Duration is unknown, not zero-to-now: stamping the current time would
+      // invent a nine-day run for a process that died in seconds.
+      expect(row.ended_at).toBe('2026-08-01T00:00:00.000Z');
+      expect(row.errors).toMatch(/did not report an end/);
+    });
+
+    it('leaves a recent open run alone so a concurrent run is not closed', () => {
+      db.insertRunLog(started('2026-08-09T23:30:00.000Z'));
+      const closed = db.reapAbandonedRuns({ now: new Date('2026-08-10T00:00:00.000Z') });
+      expect(closed).toBe(0);
+      expect(db.getRunLog('r-2026-08-09T23:30:00.000Z').ended_at).toBeNull();
+    });
+
+    it('never touches a run that already ended', () => {
+      db.insertRunLog({ ...started('2026-08-01T00:00:00.000Z'), ended_at: '2026-08-01T00:05:00.000Z' });
+      expect(db.reapAbandonedRuns({ now: new Date('2026-08-10T00:00:00.000Z') })).toBe(0);
+      expect(db.getRunLog('r-2026-08-01T00:00:00.000Z').errors).toBeNull();
+    });
+  });
 });

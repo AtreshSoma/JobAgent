@@ -30,6 +30,9 @@ import * as smartrecruiters from './adapters/smartrecruiters.js';
 import * as atsSearch from './adapters/atsSearch.js';
 import * as adzuna from './adapters/adzuna.js';
 import * as rippling from './adapters/rippling.js';
+import * as oracleRecruiting from './adapters/oracleRecruiting.js';
+import * as amazonJobs from './adapters/amazonJobs.js';
+import * as icims from './adapters/icims.js';
 
 /** adapter id -> module. */
 export const ADAPTERS = {
@@ -48,6 +51,9 @@ export const ADAPTERS = {
   atsSearch,
   adzuna,
   rippling,
+  oracleRecruiting,
+  amazonJobs,
+  icims,
 };
 
 /** How many independent sources to run concurrently by default. */

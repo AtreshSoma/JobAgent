@@ -43,7 +43,8 @@
     "db:maintenance": "node scripts/dbMaintenance.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:py": "python -m pytest"
+    "test:py": "python -m pytest",
+    "enrich": "node scripts/enrichDescriptions.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",

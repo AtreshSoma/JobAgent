@@ -200,3 +200,111 @@ export function usLocationSignal(location) {
 
 /** Total number of distinct US jurisdictions this module recognizes. */
 export const US_STATE_COUNT = STATE_CODES.size;
+
+/**
+ * ISO-3166 country codes that appear as a LEADING prefix in ATS location
+ * strings. Alpha-3 first (unambiguous — no US state code is three letters),
+ * then alpha-2 codes that collide with a USPS state code and therefore need the
+ * positional rule in `leadingForeignCountry` to be read correctly.
+ *
+ * Only codes actually observed in, or plausible for, employer location fields
+ * are listed; this is a disambiguation aid, not a complete ISO table.
+ */
+const FOREIGN_ALPHA3 = Object.freeze({
+  phl: 'Philippines', ind: 'India', bra: 'Brazil', mex: 'Mexico', can: 'Canada',
+  gbr: 'United Kingdom', deu: 'Germany', fra: 'France', esp: 'Spain', prt: 'Portugal',
+  nld: 'Netherlands', bel: 'Belgium', ita: 'Italy', che: 'Switzerland', aut: 'Austria',
+  swe: 'Sweden', dnk: 'Denmark', nor: 'Norway', fin: 'Finland', pol: 'Poland',
+  cze: 'Czechia', hun: 'Hungary', rou: 'Romania', ukr: 'Ukraine', grc: 'Greece',
+  tur: 'Turkey', irl: 'Ireland', arg: 'Argentina', chl: 'Chile', col: 'Colombia',
+  cri: 'Costa Rica', ury: 'Uruguay', aus: 'Australia', nzl: 'New Zealand',
+  sgp: 'Singapore', jpn: 'Japan', chn: 'China', hkg: 'Hong Kong', twn: 'Taiwan',
+  kor: 'South Korea', vnm: 'Vietnam', tha: 'Thailand', idn: 'Indonesia',
+  mys: 'Malaysia', isr: 'Israel', egy: 'Egypt', ken: 'Kenya', nga: 'Nigeria',
+  zaf: 'South Africa', are: 'United Arab Emirates', sau: 'Saudi Arabia', pak: 'Pakistan',
+  lka: 'Sri Lanka', bgd: 'Bangladesh', npl: 'Nepal',
+  bgr: 'Bulgaria', hrv: 'Croatia', svk: 'Slovakia', svn: 'Slovenia', ltu: 'Lithuania',
+  lva: 'Latvia', est: 'Estonia', srb: 'Serbia', isl: 'Iceland', lux: 'Luxembourg',
+  mlt: 'Malta', cyp: 'Cyprus', rus: 'Russia', ukr2: 'Ukraine', blr: 'Belarus',
+  kaz: 'Kazakhstan', geo: 'Georgia (country)', arm: 'Armenia', aze: 'Azerbaijan',
+  mar: 'Morocco', tun: 'Tunisia', gha: 'Ghana', per: 'Peru', ecu: 'Ecuador',
+  gtm: 'Guatemala', dom: 'Dominican Republic', pan: 'Panama', slv: 'El Salvador',
+  hnd: 'Honduras', bol: 'Bolivia', pry: 'Paraguay', ven: 'Venezuela',
+  jor: 'Jordan', lbn: 'Lebanon', qat: 'Qatar', kwt: 'Kuwait', bhr: 'Bahrain',
+  omn: 'Oman', mmr: 'Myanmar', khm: 'Cambodia', lao: 'Laos', mng: 'Mongolia',
+});
+
+const FOREIGN_ALPHA2 = Object.freeze({
+  ph: 'Philippines', in: 'India', br: 'Brazil', mx: 'Mexico', ca: 'Canada',
+  gb: 'United Kingdom', de: 'Germany', fr: 'France', es: 'Spain', pt: 'Portugal',
+  nl: 'Netherlands', be: 'Belgium', it: 'Italy', ch: 'Switzerland', at: 'Austria',
+  se: 'Sweden', dk: 'Denmark', no: 'Norway', fi: 'Finland', pl: 'Poland',
+  cz: 'Czechia', hu: 'Hungary', ro: 'Romania', ua: 'Ukraine', gr: 'Greece',
+  tr: 'Turkey', ie: 'Ireland', ar: 'Argentina', cl: 'Chile', co: 'Colombia',
+  cr: 'Costa Rica', uy: 'Uruguay', au: 'Australia', nz: 'New Zealand',
+  sg: 'Singapore', jp: 'Japan', cn: 'China', hk: 'Hong Kong', tw: 'Taiwan',
+  kr: 'South Korea', vn: 'Vietnam', th: 'Thailand', id: 'Indonesia',
+  my: 'Malaysia', il: 'Israel', eg: 'Egypt', ke: 'Kenya', ng: 'Nigeria',
+  za: 'South Africa', ae: 'United Arab Emirates', sa: 'Saudi Arabia', pk: 'Pakistan',
+  lk: 'Sri Lanka', bd: 'Bangladesh', np: 'Nepal',
+  bg: 'Bulgaria', hr: 'Croatia', sk: 'Slovakia', si: 'Slovenia', lt: 'Lithuania',
+  lv: 'Latvia', ee: 'Estonia', rs: 'Serbia', is: 'Iceland', lu: 'Luxembourg',
+  mt: 'Malta', cy: 'Cyprus', ru: 'Russia', by: 'Belarus', kz: 'Kazakhstan',
+  am: 'Armenia', az: 'Azerbaijan', ma: 'Morocco', tn: 'Tunisia', gh: 'Ghana',
+  pe: 'Peru', ec: 'Ecuador', gt: 'Guatemala', do: 'Dominican Republic',
+  pa: 'Panama', sv: 'El Salvador', hn: 'Honduras', bo: 'Bolivia', py: 'Paraguay',
+  ve: 'Venezuela', jo: 'Jordan', lb: 'Lebanon', qa: 'Qatar', kw: 'Kuwait',
+  bh: 'Bahrain', om: 'Oman', mm: 'Myanmar', kh: 'Cambodia', la: 'Laos', mn: 'Mongolia',
+});
+
+/** Leading tokens that mean the United States in the same prefix position. */
+const US_PREFIX_CODES = new Set(['us', 'usa', 'ust']);
+
+/**
+ * Read a COUNTRY code used as a leading prefix in an ATS location string.
+ *
+ * WHY THIS EXISTS. Workday and several other systems format locations as
+ * `{ISO country}-{region}-{CITY}` — "IN-KA-BANGALORE" is India/Karnataka, and
+ * "PHL - TAGUIG CITY" is the Philippines. Read as a bare abbreviation, the
+ * leading `IN` matches the USPS code for INDIANA, so the job registered a US
+ * signal and the US-only gate then required a foreign COUNTRY name to overrule
+ * it. "Bangalore" is a city, not a country, so no such name was present and
+ * every one of these postings passed the filter. That is why offshore roles
+ * were reaching the dashboard despite `usOnly: true`.
+ *
+ * The fix is positional, which is what makes it safe. A code is read as a
+ * country ONLY when it leads the string and is followed by a separator:
+ *   - three letters   -> unambiguous, no USPS state code is three letters
+ *   - two letters     -> only when a REGION token follows ("IN-KA-..."), the
+ *                        country-region-city shape. A bare "CA-San Jose" stays
+ *                        Californian, because dropping a real US job is the
+ *                        worse error.
+ * A leading US/USA prefix returns null, so "USA-TX-Austin" is never foreign.
+ *
+ * @param {string} location raw location string
+ * @returns {{ code: string, country: string, evidence: string }|null}
+ */
+export function leadingForeignCountry(location) {
+  const raw = String(location ?? '').trim();
+  if (!raw) return null;
+
+  // `PHL - TAGUIG CITY`, `IN-KA-BANGALORE`, `BRA – São Paulo`.
+  const m = /^([A-Za-z]{2,3})\s*[-–—]\s*(.+)$/.exec(raw);
+  if (!m) return null;
+  const code = m[1].toLowerCase();
+  if (US_PREFIX_CODES.has(code)) return null;
+
+  if (code.length === 3) {
+    const country = FOREIGN_ALPHA3[code];
+    return country ? { code: code.toUpperCase(), country, evidence: m[1] } : null;
+  }
+
+  // Two letters: require the country-region-city shape so an ambiguous
+  // state-code prefix is not misread as a country. The region token may be
+  // numeric — Workday emits "PH-00-Taguig" where the region is unset — so
+  // letters-only here would let exactly those postings through.
+  const rest = m[2];
+  if (!/^([A-Za-z0-9]{1,3})\s*[-–—]\s*\S/.test(rest)) return null;
+  const country = FOREIGN_ALPHA2[code];
+  return country ? { code: code.toUpperCase(), country, evidence: m[1] } : null;
+}

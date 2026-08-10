@@ -20,108 +20,23 @@
  * testable.
  */
 
-/** Locale path segments to skip when locating a Workday site name. */
-const LOCALE_RE = /^[a-z]{2}(-[A-Za-z]{2})?$/;
-
-/**
- * Path segments that are never a company slug. Without this, URLs like
- * `jobs.lever.co/search` would be harvested as a company named "search".
- */
-const NON_SLUG_SEGMENTS = new Set([
-  'search', 'jobs', 'job', 'careers', 'career', 'embed', 'api', 'static',
-  'assets', 'about', 'login', 'signin', 'apply', 'company', 'companies',
-  'view', 'privacy', 'terms', 'sitemap', 'index',
-]);
+import { extractCoordinate } from './platforms.js';
 
 /**
  * Extract the ATS coordinate a single job URL reveals.
+ *
+ * The recognition rules themselves live in `platforms.js`, which is the single
+ * registry shared by the harvester, detection, and reporting. This function is
+ * the harvester's stable entry point onto it — previously the two carried
+ * duplicate copies of the same host patterns, which is exactly how one of them
+ * ends up a platform behind the other.
  *
  * @param {string} url a job posting URL
  * @returns {object|null} `{ ats, ...coordinates }`, or null when the URL names
  *   no board we can enumerate
  */
 export function extractAtsCoordinate(url) {
-  let parsed;
-  try {
-    parsed = new URL(String(url ?? '').trim());
-  } catch {
-    return null;
-  }
-  if (!/^https?:$/.test(parsed.protocol)) return null;
-
-  const host = parsed.hostname.toLowerCase();
-  const segments = parsed.pathname.split('/').filter(Boolean);
-
-  // Greenhouse: boards.greenhouse.io/<slug>, job-boards.greenhouse.io/<slug>,
-  // and the embed form boards.greenhouse.io/embed/job_app?for=<slug>.
-  if (/(^|\.)greenhouse\.io$/.test(host)) {
-    const embedFor = parsed.searchParams.get('for');
-    if (embedFor) return slugCoordinate('greenhouse', embedFor);
-    return slugCoordinate('greenhouse', segments[0]);
-  }
-
-  // Lever: jobs.lever.co/<slug>/<posting-id>
-  if (/(^|\.)lever\.co$/.test(host)) return slugCoordinate('lever', segments[0]);
-
-  // Ashby: jobs.ashbyhq.com/<slug>/<posting-id>
-  if (/(^|\.)ashbyhq\.com$/.test(host)) return slugCoordinate('ashby', segments[0]);
-
-  // SmartRecruiters: jobs.smartrecruiters.com/<CompanyIdentifier>/<posting-id>
-  if (/(^|\.)smartrecruiters\.com$/.test(host)) {
-    // The API host carries the identifier one level deeper:
-    // api.smartrecruiters.com/v1/companies/<id>/postings/<id>
-    if (host.startsWith('api.')) {
-      const i = segments.indexOf('companies');
-      return i === -1 ? null : slugCoordinate('smartrecruiters', segments[i + 1]);
-    }
-    return slugCoordinate('smartrecruiters', segments[0]);
-  }
-
-  // Workable public board: apply.workable.com/<account>/j/<id>
-  if (/(^|\.)workable\.com$/.test(host) && host.startsWith('apply.')) {
-    return slugCoordinate('workable', segments[0]);
-  }
-
-  // Workday: <tenant>.wdNN.myworkdayjobs.com/[<locale>/]<site>/job/<...>
-  if (/\.myworkdayjobs\.com$/.test(host)) return workdayCoordinate(host, segments);
-
-  return null;
-}
-
-/** Build a `{ ats, slug }` coordinate, rejecting non-slug path segments. */
-function slugCoordinate(ats, raw) {
-  const slug = String(raw ?? '').trim();
-  if (!slug || NON_SLUG_SEGMENTS.has(slug.toLowerCase())) return null;
-  // A slug is a single path segment; anything with a dot is a filename.
-  if (slug.includes('.')) return null;
-  return { ats, slug };
-}
-
-/**
- * Derive `{ host, tenant, site }` from a Workday posting URL.
- *
- * The site name is the segment immediately before `/job/`, which is the only
- * position Workday guarantees. Falling back to "last segment" would harvest the
- * job title as a site name, so a URL with no `/job/` marker is skipped rather
- * than guessed at.
- */
-function workdayCoordinate(host, segments) {
-  const tenant = host.split('.')[0];
-  if (!tenant) return null;
-
-  const jobIndex = segments.indexOf('job');
-  let site = null;
-  if (jobIndex > 0) {
-    site = segments[jobIndex - 1];
-  } else if (segments.length === 1 && !LOCALE_RE.test(segments[0])) {
-    // Bare board URL: <host>/<site>
-    site = segments[0];
-  } else if (segments.length === 2 && LOCALE_RE.test(segments[0])) {
-    site = segments[1];
-  }
-
-  if (!site || LOCALE_RE.test(site) || NON_SLUG_SEGMENTS.has(site.toLowerCase())) return null;
-  return { ats: 'workday', host, tenant, site };
+  return extractCoordinate(url);
 }
 
 /** Stable identity for a coordinate, used for dedup and config comparison. */
@@ -130,6 +45,11 @@ export function coordinateKey(coord) {
   if (coord.ats === 'workday') {
     return `workday|${coord.host}|${coord.tenant}|${coord.site}`;
   }
+  if (coord.ats === 'oracleRecruiting') {
+    return `oracleRecruiting|${coord.host}|${coord.siteNumber}`;
+  }
+  // One iCIMS portal host is one employer, so the host alone is the identity.
+  if (coord.ats === 'icims') return `icims|${coord.host}`;
   // Board slugs are compared case-insensitively; SmartRecruiters identifiers are
   // mixed-case ("McDonaldsCorporation") but always unique when lowercased.
   return `${coord.ats}|${String(coord.slug).toLowerCase()}`;
@@ -177,9 +97,30 @@ export function configuredCoordinateKeys(jobboards = {}) {
       }
       continue;
     }
-    if (!['greenhouse', 'lever', 'ashby', 'smartrecruiters'].includes(adapter)) continue;
-    for (const slug of source.boards ?? []) {
-      keys.add(coordinateKey({ ats: adapter, slug }));
+    if (adapter === 'oracleRecruiting') {
+      for (const t of source.tenants ?? []) {
+        if (!t?.host || !t?.siteNumber) continue;
+        keys.add(coordinateKey({ ats: 'oracleRecruiting', host: t.host, siteNumber: t.siteNumber }));
+      }
+      continue;
+    }
+    if (adapter === 'icims') {
+      // Portals are configured either as a bare host string or { host, company }.
+      for (const b of source.boards ?? []) {
+        const host = typeof b === 'string' ? b : b?.host;
+        if (host) keys.add(coordinateKey({ ats: 'icims', host }));
+      }
+      continue;
+    }
+    // Slug-keyed boards. `rippling` belongs here and was missing: its harvested
+    // boards were written to the config but never recognized as already covered,
+    // so every later harvest re-proposed all of them and --apply appended a
+    // second copy of each. mergeCoordinates dedupes only against THIS set, so an
+    // omission here is a silent duplicate-writer, not a no-op.
+    if (!['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'rippling'].includes(adapter)) continue;
+    for (const board of source.boards ?? []) {
+      const slug = typeof board === 'string' ? board : board?.slug;
+      if (slug) keys.add(coordinateKey({ ats: adapter, slug }));
     }
   }
   // Careers-page entries can also pin an ATS coordinate.
@@ -226,7 +167,23 @@ export function mergeCoordinates(jobboards, coords = []) {
     const source = sourceFor(coord.ats);
     if (!source) { skipped += 1; continue; }
 
-    if (coord.ats === 'workday') {
+    if (coord.ats === 'icims') {
+      source.boards = source.boards ?? [];
+      source.boards.push(
+        coord.company ? { host: coord.host, company: coord.company } : coord.host,
+      );
+    } else if (coord.ats === 'oracleRecruiting') {
+      source.tenants = source.tenants ?? [];
+      source.tenants.push({
+        host: coord.host,
+        siteNumber: coord.siteNumber,
+        company: coord.company ?? coord.host.split('.')[0],
+        // No `keywords` on purpose — omitting the key is what makes the adapter
+        // derive its phrases from candidate.targetTitles, so a harvested tenant
+        // tracks the profile instead of freezing to whatever role was current
+        // the day it was harvested.
+      });
+    } else if (coord.ats === 'workday') {
       source.tenants = source.tenants ?? [];
       source.tenants.push({
         host: coord.host,
