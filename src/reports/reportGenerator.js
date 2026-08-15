@@ -207,6 +207,13 @@ export function renderHtml(summary) {
   table { border-collapse: collapse; margin-top: 0.5rem; }
   th, td { border: 1px solid #ccc; padding: 4px 10px; text-align: left; font-size: 0.9rem; }
   th { background: #f3f3f3; }
+  /* #68717f is the dashboard's quietest ink, contrast-checked at 4.93:1 on
+     white — quiet enough to be a signature, dark enough to actually read. */
+  .signature {
+    margin-top: 3rem; padding-top: 1rem; border-top: 1px solid #e6ebf2;
+    font-size: 0.78rem; color: #68717f;
+  }
+  .signature b { font-weight: 640; color: #566274; }
 </style>
 </head>
 <body>
@@ -225,6 +232,11 @@ ${htmlTable(['Reason', 'Count'], discardRows)}
 ${htmlTable(['Keyword', 'Count'], keywordRows)}
 <h2>Top jobs</h2>
 ${htmlTable(['Score', 'Tier', 'Company', 'Title', 'Sponsorship', 'URL'], topRows)}
+<!-- The report is an artefact of this tool, so it signs itself the same way the
+     dashboard does. Note this is the REPORT, not a resume: a tailored resume
+     goes to an employer and carries the candidate's name alone — a tool's
+     watermark has no business on it. -->
+<footer class="signature">Designed by <b>Atresh</b> · JobAgent</footer>
 </body>
 </html>`;
 }

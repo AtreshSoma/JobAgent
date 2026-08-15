@@ -42,6 +42,8 @@ const state = {
   detailJob: null,
   /** Last /api/run/status payload, so the details panel needs no extra fetch. */
   lastRunStatus: null,
+  /** Per-tab counts under the ACTIVE filters; null when no filter is set. */
+  filteredViewCounts: null,
   /** finishedAt of a result the user dismissed; a newer run reappears. */
   runDismissedAt: null,
 };
@@ -88,9 +90,18 @@ function syncSegments() {
   }
 }
 
-/** Which sort direction each board sort actually applies, for aria-sort. */
+/**
+ * Which sort direction each board sort actually applies, for aria-sort.
+ *
+ * This doubles as the allow-list boot validates a saved sort against, so a sort
+ * missing here is silently discarded on reload. `discovered` (the "Found"
+ * column) was absent while the server supported it, which made it the only
+ * column whose sort did not survive a refresh — and it is the one the
+ * run-result flow sends you to, to see what a run actually turned up.
+ */
 const SORT_DIRECTION = {
-  score: 'descending', posted: 'descending', company: 'ascending', updated: 'descending',
+  score: 'descending', posted: 'descending', company: 'ascending',
+  updated: 'descending', discovered: 'descending',
 };
 
 const TABS = [
@@ -115,11 +126,19 @@ function esc(value) {
 }
 
 /** Build an element with attributes + children, avoiding innerHTML for data. */
+/** Tags that only exist in the SVG namespace — `createElement` yields an inert
+ *  HTMLUnknownElement for these, which renders as nothing at all. */
+const SVG_TAGS = new Set(['svg', 'polyline', 'circle', 'path', 'line', 'g', 'rect', 'text']);
+
 function el(tag, attrs = {}, ...children) {
-  const node = document.createElement(tag);
+  const svg = SVG_TAGS.has(tag);
+  const node = svg
+    ? document.createElementNS('http://www.w3.org/2000/svg', tag)
+    : document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v === null || v === undefined || v === false) continue;
-    if (k === 'class') node.className = v;
+    // `className` on an SVG element is a read-only SVGAnimatedString.
+    if (k === 'class') { if (svg) node.setAttribute('class', v); else node.className = v; }
     else if (k === 'text') node.textContent = v;
     else if (k === 'html') node.innerHTML = v;
     else if (k.startsWith('data-') || k.startsWith('aria-')) node.setAttribute(k, v);
@@ -218,6 +237,10 @@ function filterParams({ forCount = false } = {}) {
   if (!forCount) {
     p.set('limit', String(state.pageSize));
     p.set('page', String(state.page));
+    // Only worth computing when a filter is narrowing the board — with no
+    // filters the tab counts in /api/stats are already exactly right, and this
+    // would be eight predicate passes over the corpus for the same answer.
+    if (hasActiveFilters()) p.set('withViewCounts', 'true');
   }
   return p;
 }
@@ -264,6 +287,16 @@ function renderActiveFilters() {
   const host = $('activeFilters');
   host.textContent = '';
   const chips = [];
+  // The tab is a scope like any other, and now that filters stack on top of it
+  // the chip row is the one place that shows the WHOLE scope in one line.
+  // Without it, "12 results" inside Needs review looks like 12 results overall.
+  if (state.activeTab !== 'all') {
+    const tab = TABS.find(([key]) => key === state.activeTab);
+    if (tab) {
+      host.append(el('span', { class: 'pill pill-scope' }, `In: ${tab[1]}`,
+        el('button', { 'data-action': 'clear-tab', 'aria-label': `Leave the ${tab[1]} tab`, text: '✕' })));
+    }
+  }
   const labelFor = (id) => {
     const node = $(id);
     const option = node.selectedOptions?.[0];
@@ -280,6 +313,8 @@ function renderActiveFilters() {
   for (const [id, label] of Object.entries(TOGGLE_LABELS)) {
     if ($(id).checked) chips.push([id, label]);
   }
+
+  syncFilterSheetCount();
 
   for (const [id, label] of chips) {
     host.append(el('span', { class: 'pill' }, label,
@@ -389,11 +424,20 @@ function statNode({ key, label, tone, filter, title }, stats) {
     class: `stat ${known && value > 0 ? tone ?? '' : ''} ${filter ? 'clickable' : ''}`.trim().replace(/\s+/g, ' '),
     title: known ? (title ?? '') : `${title ?? label} — not reported by the server (it may need a restart to pick up a recent update)`,
   };
+  // A REAL button when it does something, a plain span when it does not.
+  // These were spans carrying role="button" + tabindex, which meant Enter and
+  // Space had to be hand-wired in a global keydown listener — behaviour every
+  // browser already gives a <button> for free, and which silently breaks the
+  // moment that listener is refactored. The flex strip does not care which
+  // element it lays out.
   if (filter) {
-    attrs['data-action'] = 'metric-filter';
-    attrs['data-filter'] = JSON.stringify(filter);
-    attrs.role = 'button';
-    attrs.tabindex = '0';
+    return el('button', {
+      ...attrs,
+      type: 'button',
+      'data-action': 'metric-filter',
+      'data-filter': JSON.stringify(filter),
+      'aria-label': `${fmt(value)} ${label} — filter the board to these`,
+    }, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
   }
   return el('span', attrs, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
 }
@@ -427,40 +471,124 @@ function renderHealth(stats) {
 }
 
 function renderTabs() {
-  const views = state.stats?.views ?? {};
+  // When filters are active the board response carries counts computed against
+  // those same filters, so a badge never promises rows the tab would not show.
+  const filtered = state.filteredViewCounts;
+  const views = filtered ?? state.stats?.views ?? {};
   const host = $('tabs');
+  const keptFocus = host.contains(document.activeElement);
   host.textContent = '';
   for (const [key, label, urgent] of TABS) {
     const count = views[key] ?? 0;
     const selected = state.activeTab === key;
     host.append(el('button', {
-      class: `tab${urgent && count > 0 ? ' urgent' : ''}`,
+      class: `tab${urgent && count > 0 ? ' urgent' : ''}${filtered ? ' scoped' : ''}`,
       role: 'tab',
+      id: `tab-${key}`,
       'aria-selected': String(selected),
+      // The tabs announced themselves as tabs while controlling nothing, so a
+      // screen reader had no way to know what changed when one was activated.
+      'aria-controls': 'boardwrap',
+      // Roving tabindex: a tablist is ONE tab stop and the arrow keys move
+      // within it. Eight separate stops between the header and the board is
+      // exactly what the skip link exists to avoid.
+      tabindex: selected ? '0' : '-1',
       'data-action': 'set-tab',
       'data-tab': key,
+      title: filtered
+        ? `${fmt(count)} of these match the filters you have set`
+        : `${fmt(count)} job(s)`,
     }, label, el('span', { class: 'badge', text: fmt(count) })));
   }
+  // Name the panel after whichever tab is currently showing in it.
+  $('boardwrap').setAttribute('aria-labelledby', `tab-${state.activeTab}`);
+
+  // These buttons are destroyed and rebuilt on every render — including the
+  // background refresh a moment after a tab is activated. If focus was inside
+  // the tablist it would land on <body>, stranding a keyboard user mid-row and
+  // breaking arrow-key navigation after exactly one press.
+  if (keptFocus) $(`tab-${state.activeTab}`)?.focus();
 }
+
+/**
+ * How many rows a breakdown shows before it offers the rest.
+ *
+ * Measured: the location breakdown listed 56 rows and the source breakdown 16,
+ * which made the analytics section 3,041px — 28% of a 10,738px page — to show
+ * numbers whose whole job is "which few dominate?". A long tail of one-job
+ * states answers nothing that the top eight do not.
+ */
+const BREAKDOWN_ROWS = 8;
+
+/**
+ * Fill a breakdown table with at most `BREAKDOWN_ROWS` rows, plus a control
+ * that reveals the rest in place.
+ *
+ * The tail is BUILT but hidden rather than dropped, so expanding costs no
+ * request and the numbers can never disagree with the summary above them.
+ *
+ * @param {HTMLElement} body tbody to fill
+ * @param {any[]} entries every row, already sorted
+ * @param {(entry:any, index:number) => HTMLElement} rowFn builds one <tr>
+ * @param {number} colspan width of the "show all" row
+ */
+function fillBreakdown(body, entries, rowFn, colspan) {
+  body.textContent = '';
+  entries.forEach((entry, i) => {
+    const tr = rowFn(entry, i);
+    if (i >= BREAKDOWN_ROWS) tr.classList.add('tail');
+    body.append(tr);
+  });
+  const hidden = entries.length - BREAKDOWN_ROWS;
+  if (hidden <= 0) return;
+  const cell = el('td', { colspan: String(colspan) });
+  cell.append(el('button', {
+    type: 'button', class: 'small ghost breakdown-more',
+    'data-action': 'toggle-breakdown',
+    'aria-expanded': 'false',
+    text: `Show all ${fmt(entries.length)} ▾`,
+  }));
+  body.append(el('tr', { class: 'more-row' }, cell));
+}
+
+/**
+ * Confidence is an ORDERED scale, so it is listed in scale order.
+ *
+ * It was sorted by count, which produced Unconfirmed(118k), Unclassified(9.1k),
+ * Denied(2.4k), Likely(2.2k), Confirmed(155) — the scale shuffled into a
+ * ranking, so "is this getting better or worse" could not be read off it at
+ * all. Sorting an ordinal scale by frequency destroys the only thing it means.
+ */
+const SPONSORSHIP_SCALE = ['Confirmed', 'Likely', 'Unconfirmed', 'Denied', 'Unclassified'];
 
 function renderAnalytics(stats) {
   const srcEntries = Object.entries(stats.bySource).sort((a, b) => b[1].found - a[1].found);
   const srcMax = Math.max(0, ...srcEntries.map(([, v]) => v.found));
   const srcRows = $('srcRows');
-  srcRows.textContent = '';
+
+  // The lead states the diagnostic the table is there to support: how much of
+  // the corpus rides on a handful of boards. Concentration is what you act on —
+  // if the top three are 80% of everything, three outages are a dead pipeline.
+  const foundTotal = srcEntries.reduce((sum, [, v]) => sum + v.found, 0);
+  const topThree = srcEntries.slice(0, 3).reduce((sum, [, v]) => sum + v.found, 0);
+  $('sourceLead').textContent = srcEntries.length
+    ? `${srcEntries.length} sources · top 3 produce ${foundTotal ? Math.round((topThree / foundTotal) * 100) : 0}% of everything found`
+    : 'Nothing found yet.';
+
   if (!srcEntries.length) {
-    srcRows.append(el('tr', {}, el('td', { colspan: '5', class: 'muted', text: 'No jobs yet — run “Find new jobs”.' })));
-  }
-  for (const [src, v] of srcEntries) {
-    srcRows.append(el('tr', {},
+    srcRows.textContent = '';
+    srcRows.append(el('tr', {}, el('td', { colspan: '3', class: 'muted', text: 'No jobs yet — run “Find new jobs”.' })));
+  } else {
+    fillBreakdown(srcRows, srcEntries, ([src, v]) => el('tr', {},
       el('td', {}, el('button', {
-        class: 'small ghost', 'data-action': 'metric-filter',
+        class: 'small ghost cell-link', 'data-action': 'metric-filter',
         'data-filter': JSON.stringify({ source: src }), text: src,
       })),
-      el('td', { class: 'r' }, fmt(v.found), ' ', bar(v.found, srcMax)),
-      el('td', { class: 'r', text: fmt(v.strong) }),
-      el('td', { class: 'r', text: fmt(v.prepared) }),
-      el('td', { class: 'r', text: fmt(v.submitted) })));
+      el('td', { class: 'r' }, el('span', { class: 'num-with-bar' },
+        el('span', { class: 'n', text: fmt(v.found) }), bar(v.found, srcMax))),
+      // Volume next to yield, which is the comparison the old five-column table
+      // buried: one source can supply a third of the corpus and one strong fit.
+      el('td', { class: 'r' }, el('b', { class: v.strong > 0 ? 'yield-on' : 'yield-off', text: fmt(v.strong) }))), 3);
   }
 
   // Nationwide coverage, made inspectable: which states the board actually
@@ -471,65 +599,235 @@ function renderAnalytics(stats) {
   const stateEntries = Object.entries(stats.byState ?? {})
     .sort((a, b) => b[1].count - a[1].count);
   const stateMax = Math.max(0, ...stateEntries.map(([, v]) => v.count));
+  const coverage = stats.coverage;
+  $('stateLead').textContent = coverage?.statesPossible
+    ? `${coverage.statesCovered} of ${coverage.statesPossible} US states and territories represented`
+    : `${stateEntries.length} location(s)`;
+
   if (!stateEntries.length) {
     stateRows.append(el('tr', {}, el('td', { colspan: '3', class: 'muted', text: 'No jobs yet.' })));
-  }
-  for (const [code, v] of stateEntries.slice(0, 60)) {
-    const label = code === 'US' || code === 'unknown' ? v.name : `${v.name} (${code})`;
-    stateRows.append(el('tr', {},
-      el('td', { title: label, text: label }),
-      el('td', { class: 'r' }, fmt(v.count), ' ', bar(v.count, stateMax)),
-      el('td', { class: 'r', text: fmt(v.strong) })));
-  }
-  const coverage = stats.coverage;
-  if (coverage?.statesPossible) {
-    stateRows.append(el('tr', {}, el('td', {
-      colspan: '3',
-      class: 'faint',
-      text: `${coverage.statesCovered} of ${coverage.statesPossible} US states and territories represented.`,
-    })));
+  } else {
+    fillBreakdown(stateRows, stateEntries, ([code, v]) => {
+      const label = code === 'US' || code === 'unknown' ? v.name : `${v.name} (${code})`;
+      return el('tr', {},
+        el('td', { class: 'ellipsis', title: label, text: label }),
+        el('td', { class: 'r' }, el('span', { class: 'num-with-bar' },
+          el('span', { class: 'n', text: fmt(v.count) }), bar(v.count, stateMax))),
+        el('td', { class: 'r' }, el('b', { class: v.strong > 0 ? 'yield-on' : 'yield-off', text: fmt(v.strong) })));
+    }, 3);
   }
 
+  const spon = stats.bySponsorship ?? {};
   const sponRows = $('sponRows');
   sponRows.textContent = '';
-  for (const [k, v] of Object.entries(stats.bySponsorship ?? {}).sort((a, b) => b[1].count - a[1].count)) {
+  const sponMax = Math.max(0, ...Object.values(spon).map((v) => v.count));
+  const viable = (spon.Confirmed?.count ?? 0) + (spon.Likely?.count ?? 0);
+  const unknown = (spon.Unconfirmed?.count ?? 0) + (spon.Unclassified?.count ?? 0);
+  $('sponsorLead').textContent = `${fmt(viable)} confirmed or likely · ${fmt(unknown)} still unknown`;
+  for (const key of SPONSORSHIP_SCALE) {
+    const v = spon[key];
+    if (!v) continue;
     sponRows.append(el('tr', {},
-      el('td', {}, el('span', { class: `chip ${esc(k)}`, text: k })),
-      el('td', { class: 'r', text: fmt(v.count) }),
-      el('td', { class: 'r', text: fmt(v.strong) })));
+      el('td', {}, el('span', { class: `chip ${esc(key)}`, text: key })),
+      el('td', { class: 'r' }, el('span', { class: 'num-with-bar' },
+        el('span', { class: 'n', text: fmt(v.count) }), bar(v.count, sponMax))),
+      el('td', { class: 'r' }, el('b', { class: v.strong > 0 ? 'yield-on' : 'yield-off', text: fmt(v.strong) }))));
   }
 
-  const dayMax = Math.max(0, ...(stats.daily ?? []).map((d) => d.discovered));
-  const dailyRows = $('dailyRows');
-  dailyRows.textContent = '';
-  for (const d of stats.daily ?? []) {
-    dailyRows.append(el('tr', {},
-      el('td', { class: 'muted', text: d.day.slice(5) }),
-      el('td', { class: 'r' }, fmt(d.discovered), ' ', bar(d.discovered, dayMax)),
-      el('td', { class: 'r', text: fmt(d.prepared) }),
-      el('td', { class: 'r', text: fmt(d.submitted) })));
-  }
+  renderDailyTrend(stats.daily ?? []);
+  renderNextActions(stats.nextActions ?? []);
+}
 
-  const actions = $('nextActions');
-  actions.textContent = '';
-  actions.append(el('h2', { text: 'Next actions' }));
-  const list = stats.nextActions ?? [];
-  if (!list.length) {
-    actions.append(el('div', { class: 'muted', text: 'All caught up — nothing waiting on you.' }));
+/* ─────────────────────── next actions ───────────────────────
+ * This was six identical blue sentences in a bulleted list.
+ *
+ * Three things were wrong with that, and they compound:
+ *
+ *  1. It RESTATED the tabs. "179 prepared packet(s) await your approval" is the
+ *     Needs review tab; "20 blocked" is Needs you; "224 strong-fit… no decision"
+ *     is Best matches; "249 … sponsorship check" is the verify-sponsor chip.
+ *     Four of six items repeated a number sitting 200px away, in a third visual
+ *     language — the exact thing the nine-tile metric strip was deleted for.
+ *  2. The COUNT — the only scannable thing in each line — was buried mid-
+ *     sentence in link-coloured prose, so nothing could be skimmed.
+ *  3. The order of this list is a real priority ranking, and rendering every
+ *     item identically threw that away.
+ *
+ * So: the top-ranked action is PROMOTED (its count set as a figure, its verb as
+ * the headline, its guidance kept underneath, and an explicit button), the rest
+ * become one scannable line each with counts right-aligned in a fixed column,
+ * and notices about the tool rather than the jobs are separated out entirely.
+ * Verb-first phrasing is what keeps this panel answering a different question
+ * from the tabs: they say where the work IS, this says what to DO first.
+ */
+function actionButton(action, className) {
+  const attrs = { class: className, type: 'button' };
+  if (action.filter) {
+    attrs['data-action'] = 'metric-filter';
+    attrs['data-filter'] = JSON.stringify(action.filter);
   } else {
-    const ul = el('ul', { class: 'plan' });
-    for (const action of list) {
-      const li = el('li');
-      if (action.filter) {
-        li.append(el('button', {
-          class: 'small ghost', 'data-action': 'metric-filter',
-          'data-filter': JSON.stringify(action.filter), text: action.text,
-        }));
-      } else li.textContent = action.text;
-      ul.append(li);
-    }
-    actions.append(ul);
+    // A system notice has no board filter; its action is to run discovery.
+    attrs['data-action'] = 'run';
+    attrs['data-phase'] = 'discover';
   }
+  // The composed sentence is the accessible name, so a screen reader still gets
+  // the full guidance rather than "179, Approve prepared packets".
+  attrs['aria-label'] = action.text;
+  return el('button', attrs);
+}
+
+function renderNextActions(list) {
+  const host = $('nextActions');
+  host.textContent = '';
+  host.append(el('h2', { text: 'Next' }));
+
+  const jobs = list.filter((a) => a.kind !== 'system');
+  const notices = list.filter((a) => a.kind === 'system');
+
+  if (!jobs.length && !notices.length) {
+    host.append(el('div', { class: 'muted', text: 'All caught up — nothing waiting on you.' }));
+    return;
+  }
+
+  const [first, ...rest] = jobs;
+  if (first) {
+    const primary = actionButton(first, 'na-primary');
+    primary.append(el('span', { class: 'na-count', text: fmt(first.count) }));
+    const body = el('span', { class: 'na-body' });
+    body.append(el('b', { text: first.verb }));
+    body.append(el('span', { class: 'na-detail', text: first.detail }));
+    primary.append(body);
+    primary.append(el('span', { class: 'na-go', 'aria-hidden': 'true', text: '→' }));
+    host.append(primary);
+  }
+
+  if (rest.length) {
+    const ul = el('ul', { class: 'na-list' });
+    for (const action of rest) {
+      const button = actionButton(action, 'na-row');
+      button.append(el('span', { class: 'na-n', text: fmt(action.count) }));
+      button.append(el('span', { class: 'na-verb', text: action.verb }));
+      button.append(el('span', { class: 'na-go', 'aria-hidden': 'true', text: '→' }));
+      button.title = action.detail;
+      ul.append(el('li', {}, button));
+    }
+    host.append(ul);
+  }
+
+  // Not a queue of jobs — a fact about the tool. Kept visually apart so it does
+  // not read as "the fifth most important job to work on".
+  for (const notice of notices) {
+    const note = el('div', { class: 'na-note' });
+    note.append(el('span', { class: 'na-note-text', text: notice.detail }));
+    const run = actionButton(notice, 'small');
+    run.append(notice.verb);
+    note.append(run);
+    host.append(note);
+  }
+}
+
+/* ─────────────────── daily trend: small multiples ───────────────────
+ * This was a four-column table, which is the wrong form twice over: the data's
+ * job is CHANGE OVER TIME (a table makes you read seven numbers and hold the
+ * shape in your head), and the three measures differ by three orders of
+ * magnitude — a run finds thousands, prepares a handful, submits one or two.
+ *
+ * Plotting them together would need two y-axes, which is the single worst thing
+ * a chart can do. Small multiples are the honest answer: one facet per measure,
+ * each with its OWN scale, sharing the x axis. Each facet is a single series, so
+ * identity comes from its title rather than from colour — no categorical
+ * palette, no legend, and nothing for a colour-blind reader to tell apart.
+ *
+ * The numbers stay readable as a table for assistive tech and for anyone who
+ * wants the exact figures.
+ */
+const TREND_FACETS = [
+  { key: 'discovered', label: 'Found' },
+  { key: 'prepared', label: 'Prepared' },
+  { key: 'submitted', label: 'Submitted' },
+];
+
+/** One 7-point sparkline. Returns an <svg>, or null when there is nothing to draw. */
+function sparkline(values, { width = 168, height = 30, pad = 4 } = {}) {
+  if (values.length < 2) return null;
+  const max = Math.max(...values);
+  const span = max > 0 ? max : 1;
+  const stepX = (width - pad * 2) / (values.length - 1);
+  const y = (v) => height - pad - (v / span) * (height - pad * 2);
+  const pts = values.map((v, i) => [pad + i * stepX, y(v)]);
+
+  const svg = el('svg', {
+    class: 'spark', viewBox: `0 0 ${width} ${height}`,
+    preserveAspectRatio: 'none', 'aria-hidden': 'true', focusable: 'false',
+  });
+  // A flat run of zeros is a real answer ("nothing happened"), so it draws a
+  // baseline rather than disappearing.
+  svg.append(el('polyline', {
+    class: 'spark-line',
+    points: pts.map(([x, yy]) => `${x.toFixed(1)},${yy.toFixed(1)}`).join(' '),
+  }));
+  // End marker carries a surface-coloured ring so it stays legible where the
+  // line doubles back under it.
+  const [lx, ly] = pts[pts.length - 1];
+  svg.append(el('circle', { class: 'spark-end', cx: lx.toFixed(1), cy: ly.toFixed(1), r: '3.5' }));
+  return svg;
+}
+
+function renderDailyTrend(daily) {
+  const host = $('dailyTrend');
+  host.textContent = '';
+  if (!daily.length) {
+    $('activityLead').textContent = 'No activity recorded yet.';
+    host.append(el('div', { class: 'muted', text: 'No activity recorded yet.' }));
+    return;
+  }
+  const days = daily.map((d) => d.day.slice(5));
+
+  // The card's own question is "is the pipeline moving?", and the three facets
+  // answer "by how much". How MANY of the last seven days saw anything at all
+  // is the part neither facet shows: seven quiet days and one huge one average
+  // out to a healthy-looking week.
+  const activeDays = daily.filter((d) => (Number(d.discovered) || 0) > 0).length;
+  $('activityLead').textContent = activeDays === daily.length
+    ? `Discovery found something on all ${daily.length} of the last ${daily.length} days`
+    : `Discovery found something on ${activeDays} of the last ${daily.length} days`;
+
+  for (const facet of TREND_FACETS) {
+    const values = daily.map((d) => Number(d[facet.key]) || 0);
+    const latest = values[values.length - 1];
+    const total = values.reduce((a, b) => a + b, 0);
+
+    const row = el('div', { class: 'trend' });
+    const head = el('div', { class: 'trend-head' });
+    head.append(el('span', { class: 'trend-label', text: facet.label }));
+    // The card promises "last 7 days", so the WEEK is the headline. Leading
+    // with the latest day instead put a bold "0" at the top of every facet
+    // first thing each morning — technically true and completely useless, with
+    // the number that answers the question demoted to a footnote beside it.
+    head.append(el('b', { class: 'trend-now', text: fmt(total) }));
+    row.append(head);
+    const chart = sparkline(values);
+    if (chart) row.append(chart);
+    row.append(el('span', { class: 'trend-sum', text: `${fmt(latest)} today` }));
+    host.append(row);
+  }
+
+  // The exact figures, for a screen reader and for anyone who wants to read
+  // rather than eyeball. `sr-only` rather than removed: a chart without its
+  // numbers available is a chart that excludes people.
+  const table = el('table', { class: 'sr-only' });
+  table.append(el('caption', { text: 'Daily activity for the last 7 days' }));
+  const head = el('tr', {}, el('th', { scope: 'col', text: 'Day' }));
+  for (const facet of TREND_FACETS) head.append(el('th', { scope: 'col', text: facet.label }));
+  table.append(el('thead', {}, head));
+  const body = el('tbody', {});
+  daily.forEach((d, i) => {
+    const tr = el('tr', {}, el('th', { scope: 'row', text: days[i] }));
+    for (const facet of TREND_FACETS) tr.append(el('td', { text: fmt(Number(d[facet.key]) || 0) }));
+    body.append(tr);
+  });
+  table.append(body);
+  host.append(table);
 }
 
 function bar(value, max) {
@@ -593,13 +891,21 @@ async function loadSections() {
   const host = $('blockRows');
   host.textContent = '';
   const rows = sections.blockedByReason ?? [];
+  const total = rows.reduce((sum, r) => sum + (Number(r.count) || 0), 0);
+  $('blockLead').textContent = rows.length
+    ? `${fmt(total)} job(s) stopped, across ${rows.length} distinct cause(s)`
+    : 'Nothing is failing right now.';
   if (!rows.length) {
     host.append(el('tr', {}, el('td', { colspan: '2', class: 'muted', text: 'Nothing blocked' })));
     return;
   }
   for (const entry of rows) {
     host.append(el('tr', {},
-      el('td', { title: entry.reason, text: entry.reason }),
+      // These reasons come from live automation failures, so some are raw
+      // driver messages ("field Start date year*: locator.fill: Error: Cannot
+      // type text into input[type=nu…"). Unclamped, one of them set the height
+      // of the whole card. Full text stays on hover and in the row itself.
+      el('td', { class: 'clamp-2', title: entry.reason, text: entry.reason }),
       el('td', { class: 'r', text: fmt(entry.count) })));
   }
 }
@@ -608,25 +914,44 @@ async function loadSections() {
 
 let boardSeq = 0;
 
+/**
+ * How many columns a full-width message row must span.
+ *
+ * Counted from the header rather than written as a literal. Three separate
+ * `colspan: '11'` literals had to be found and changed by hand every time a
+ * column was added or removed, and a missed one silently narrows the empty
+ * state to part of the table.
+ */
+const boardColSpan = () => String(document.querySelectorAll('#board thead th').length);
+
 async function loadBoard() {
   const seq = ++boardSeq;
   const body = $('rows');
   if (!body.children.length) {
-    body.append(el('tr', {}, el('td', { colspan: '11' },
+    body.append(el('tr', {}, el('td', { colspan: boardColSpan() },
       el('div', { class: 'skeleton' }), el('div', { class: 'skeleton' }))));
   }
+  // Skeletons only appear on an EMPTY board, so every subsequent query showed
+  // the previous result set, unchanged and unmarked, until it returned.
+  // Measured: opening the "tracked" fact reads all 132,531 rows and takes ~7s,
+  // during which the board silently displayed the wrong 100 jobs. Dimming the
+  // stale rows and disabling their controls says "this is being replaced"
+  // without the layout jump of throwing them away.
+  $('boardwrap').dataset.loading = 'true';
 
   let page;
   try {
     page = await api(`/api/jobs?${filterParams()}`);
   } catch (err) {
     if (seq !== boardSeq) return;
+    $('boardwrap').dataset.loading = 'false';
     body.textContent = '';
-    body.append(el('tr', {}, el('td', { colspan: '11', class: 'empty', text: err.message })));
+    body.append(el('tr', {}, el('td', { colspan: boardColSpan(), class: 'empty', text: err.message })));
     $('pager').textContent = '';
     return;
   }
   if (seq !== boardSeq) return; // a newer request already won
+  $('boardwrap').dataset.loading = 'false';
 
   // The server may clamp the page (e.g. filters narrowed while on page 7).
   if (page.page && page.page !== state.page) state.page = page.page;
@@ -634,8 +959,13 @@ async function loadBoard() {
   state.visible = page.jobs.map((j) => j.id);
   for (const job of page.jobs) state.known.set(job.id, job);
 
+  // Absent when no filter is active — the unfiltered stats counts are then the
+  // right ones, so clearing this is what restores them.
+  state.filteredViewCounts = page.viewCounts ?? null;
+
   renderRows(page.jobs);
   renderPager(page);
+  renderTabs();
   syncSelectAll();
   renderActiveFilters();
 }
@@ -646,7 +976,7 @@ function renderRows(jobs) {
 
   if (!jobs.length) {
     const tracked = state.stats?.totals?.jobsTracked ?? 0;
-    const cell = el('td', { colspan: '11' });
+    const cell = el('td', { colspan: boardColSpan() });
     const box = el('div', { class: 'empty' });
     box.append(el('div', { class: 'big', text: tracked === 0 ? 'No jobs yet' : 'Nothing matches these filters' }));
     if (tracked === 0) {
@@ -666,11 +996,16 @@ function renderRows(jobs) {
 
 function rowFor(job) {
   const selected = job.id === state.selectedId;
+  // `aria-selected` is only meaningful on a row inside a grid/treegrid. This is
+  // a plain table, so it was invalid ARIA on all 100 rows — and it described
+  // the wrong thing anyway: the highlighted row is the one whose detail is
+  // open, not one of a multi-select (that is the checkbox). `aria-current` is
+  // valid anywhere and says exactly that.
   const tr = el('tr', {
     class: 'job',
     'data-id': job.id,
     'data-action': 'select',
-    'aria-selected': String(selected),
+    ...(selected ? { 'aria-current': 'true' } : {}),
     tabindex: '0',
     role: 'row',
   });
@@ -683,32 +1018,43 @@ function rowFor(job) {
   check.checked = state.selected.has(job.id);
   tr.append(el('td', { class: 'check' }, check));
 
-  // grade + score
+  // grade + score. The letter alone carries no meaning to a screen reader —
+  // "A" is a letter, not a verdict — and the label explaining it ("Excellent
+  // fit") lived only in a tooltip.
   const grade = job.grade;
   tr.append(el('td', {},
     el('span', {
       class: `grade ${grade ? grade.letter : 'none'}`,
+      role: 'img',
+      'aria-label': grade ? `grade ${grade.letter}, ${grade.label}, score ${job.score}` : 'not scored yet',
       title: grade ? `${grade.label} · score ${job.score}` : 'Not scored yet',
       text: grade ? grade.letter : '—',
     }),
-    el('div', { class: 'faint', text: job.score ?? '—' })));
+    el('div', { class: 'faint', 'aria-hidden': 'true', text: job.score ?? '—' })));
 
   tr.append(nameCellFor(job));
 
   // sponsorship — the badge carries its own evidence, so a claim as consequential
   // as "Confirmed" can be checked on hover instead of taken on trust.
-  tr.append(el('td', {}, el('span', {
+  tr.append(el('td', { 'data-label': 'Sponsor' }, el('span', {
     class: `chip ${esc(job.sponsorship ?? '')}`,
     title: sponsorshipTitle(job),
     text: job.sponsorship ?? '—',
   })));
 
-  // employment type
-  tr.append(el('td', {}, typeChip(job)));
-
   // posted
-  const postedCell = el('td', { class: 'nowrap' },
-    el('span', { class: `dot ${job.postedConfidence}`, title: `Posting date ${job.postedConfidence}` }),
+  // The dot is a coloured 7px circle with no text: a `title` on an empty span is
+  // announced inconsistently at best, so the confidence of a posting date —
+  // which decides whether the date can be trusted at all — reached neither a
+  // screen reader nor a touch user. `role="img"` + a label makes it a real
+  // graphic with a real name.
+  const postedCell = el('td', { class: 'nowrap', 'data-label': 'Posted' },
+    el('span', {
+      class: `dot ${job.postedConfidence}`,
+      role: 'img',
+      'aria-label': `posting date ${job.postedConfidence}`,
+      title: `Posting date ${job.postedConfidence}`,
+    }),
     job.postedLabel);
   if (job.postedLast24h) postedCell.append(' ', el('span', { class: 'chip good', text: 'new' }));
   tr.append(postedCell);
@@ -717,34 +1063,40 @@ function rowFor(job) {
   // question from when the employer posted it. A months-old posting can be a
   // brand-new find (a board was only just added), and that is exactly the row
   // a user checking "what did the last run turn up?" wants to see.
-  tr.append(el('td', { class: 'nowrap', title: job.createdAt ?? '' },
+  tr.append(el('td', { class: 'nowrap', 'data-label': 'Found', title: job.createdAt ?? '' },
     relTime(job.createdAt) || '—'));
 
-  // resume — one click straight to the tailored document
-  const resumeCell = el('td', { class: 'nowrap' });
-  resumeCell.append(el('span', {
-    class: `rs ${job.resumeStatus}`,
-    text: job.resumeStatus === 'tailored' ? 'tailored' : job.resumeStatus === 'prepared' ? 'packet' : '—',
-  }));
-  if (job.resumeDocxPath || job.resumePdfPath) {
-    resumeCell.append(' ', el('button', {
-      class: 'small ghost', 'data-action': 'preview-resume', 'data-id': job.id,
+  // resume — one click straight to the tailored document.
+  //
+  // The state chip and a separate 👁 button used to sit side by side, needing
+  // 112px in a 96px column, so the button was clipped away by the cell's own
+  // overflow. They said the same thing anyway: the chip names the state, the
+  // button opened the document that state refers to. One control now does
+  // both — narrower, and a 60px click target instead of a 22px one.
+  const label = job.resumeStatus === 'tailored' ? 'tailored'
+    : job.resumeStatus === 'prepared' ? 'packet' : '—';
+  const hasDoc = Boolean(job.resumeDocxPath || job.resumePdfPath);
+  tr.append(el('td', { class: 'nowrap', 'data-label': 'Resume' }, hasDoc
+    ? el('button', {
+      class: `rs ${job.resumeStatus} rs-open`, 'data-action': 'preview-resume', 'data-id': job.id,
       title: 'Preview the tailored resume',
       'aria-label': `Preview tailored resume for ${job.company ?? ''} ${job.title ?? ''}`.trim(),
-      text: '👁',
-    }));
-  }
-  tr.append(resumeCell);
-
-  tr.append(el('td', { class: 'muted', text: job.atsPlatform ?? '—' }));
-  tr.append(el('td', {}, progressBar(job.progress)));
+      text: label,
+    })
+    : el('span', { class: `rs ${job.resumeStatus}`, text: label })));
 
   // WHY a job is blocked/discarded/skipped was carried only by a `title=`
   // tooltip plus a bare ⓘ glyph — invisible on touch, unreliable for screen
   // readers, and the single most useful thing in the column. It is now real
   // text, clamped to one line so the row height stays stable.
-  const statusCell = el('td', { class: `st-${job.appStatus}` });
+  //
+  // Progress lives here too. As its own column it was an unlabelled 80px bar
+  // that only made sense once you had read the status beside it, so the two
+  // were always read together while being laid out apart.
+  const statusCell = el('td', { class: `st-${job.appStatus}`, 'data-label': 'Status' });
   statusCell.append(statusLabel(job));
+  const bar = progressBar(job.progress);
+  if (bar) statusCell.append(bar);
   if (job.statusReason) {
     statusCell.append(el('div', {
       class: 'statusreason', title: job.statusReason, text: job.statusReason,
@@ -752,6 +1104,10 @@ function rowFor(job) {
   }
   tr.append(statusCell);
 
+  // The card layout sets `display: block/flex` on these cells, which drops
+  // their implicit `cell` role in every engine. Stating it keeps the board a
+  // table for assistive tech at every width.
+  for (const cell of tr.children) cell.setAttribute('role', 'cell');
   return tr;
 }
 
@@ -784,6 +1140,7 @@ const TITLE_MAX_CHARS = 72;
  */
 function nameCellFor(job) {
   const cell = el('td', { class: 'namecell' });
+  let aggChip = null;
   const title = String(job.title ?? '').trim() || 'Title not identified';
   const shown = title.length > TITLE_MAX_CHARS ? `${title.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…` : title;
 
@@ -805,11 +1162,15 @@ function nameCellFor(job) {
     });
     cell.append(link);
     if (aggregator) {
-      cell.append(' ', el('span', {
+      // Sits on the META line, not on a line of its own under the role. It
+      // qualifies where the link GOES, which is the same kind of fact as the
+      // company and location it now sits beside — and a standalone line per
+      // aggregator row cost a third of the row height on 48% of the board.
+      aggChip = el('span', {
         class: 'chip agg',
         title: 'Aggregator listing — follow Apply through to the employer site, then save that direct URL here.',
         text: hostLabel(job.url),
-      }));
+      });
     }
   } else {
     // No URL means nothing to open — say so rather than render a dead link.
@@ -820,8 +1181,45 @@ function nameCellFor(job) {
   meta.append(el('span', { class: 'co', text: job.company || 'Company on posting' }));
   if (job.remote) meta.append(' ', el('span', { class: 'rs', text: 'remote' }));
   if (job.location) meta.append(el('span', { class: 'faint', text: ` · ${job.location}` }));
+  // WHERE YOU WILL APPLY — one slot, because the two facts are alternatives,
+  // not additions. An aggregator listing has no employer ATS to name, and a
+  // row that goes straight to Workday is not an aggregator. Naming whichever
+  // one applies replaces a whole 92px column that read "—" on most rows.
+  if (aggChip) meta.append(' ', aggChip);
+  else if (job.atsPlatform) {
+    meta.append(' ', el('span', {
+      class: 'chip ats-flag',
+      title: `Applications for this job are handled by ${job.atsPlatform}`,
+      text: job.atsPlatform,
+    }));
+  }
+  // Employment type, but only when it is worth a reader's attention. It had a
+  // column of its own that said "Full-time" on almost every row — 85px of width
+  // spent restating the default. Contract/part-time genuinely changes whether a
+  // job is worth applying to, so THAT is what gets shown, next to the company
+  // it qualifies rather than in a column of its own.
+  const exception = typeException(job);
+  if (exception) meta.append(' ', exception);
   cell.append(meta);
   return cell;
+}
+
+/** Employment types worth calling out; full-time and unknown are the silent default. */
+const NOTABLE_TYPES = { contract: 'contract', contract_to_hire: 'contract→hire', part_time: 'part-time' };
+
+/**
+ * A chip for a non-standard employment type, or null when there is nothing to
+ * say. Returning null is the point: the old `typeChip` always rendered
+ * something, including a bare "—" for the 'unknown' case.
+ */
+function typeException(job) {
+  const label = NOTABLE_TYPES[job.employmentCategory];
+  if (!label) return null;
+  return el('span', {
+    class: 'chip bad type-flag',
+    title: `Employment type: ${job.employmentLabel ?? job.employmentCategory}`,
+    text: label,
+  });
 }
 
 /**
@@ -841,18 +1239,6 @@ function hostLabel(url) {
     const name = host.split('.')[0].toLowerCase();
     return HOST_BRANDS[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
   } catch { return 'link'; }
-}
-
-function typeChip(job) {
-  const cat = job.employmentCategory ?? 'unknown';
-  if (cat === 'unknown') return el('span', { class: 'chip', title: 'Employment type unknown', text: '—' });
-  const label = job.employmentLabel ?? cat;
-  const contract = ['contract', 'contract_to_hire', 'part_time'].includes(cat);
-  return el('span', {
-    class: `chip ${contract ? 'bad' : 'good'}`,
-    title: `Employment type: ${label}`,
-    text: label,
-  });
 }
 
 /**
@@ -877,6 +1263,44 @@ function sponsorshipTitle(job) {
     parts.push('The posting explicitly refuses sponsorship.');
   }
   return parts.join('\n');
+}
+
+/**
+ * The sponsorship verdict AND the words it was read from, as real text.
+ *
+ * This was a `title=` tooltip and nothing else — reachable only by hovering a
+ * mouse over a chip, so on a touch screen or with a screen reader the most
+ * consequential claim on the board ("does this employer sponsor?") had no
+ * evidence attached at all. That is exactly the shape of the failure this
+ * tooltip was added for: six rows once showed a green "Confirmed" while their
+ * postings said the role was not eligible for sponsorship, and only a hover
+ * could reveal it. A verdict a user is expected to act on has to show its work
+ * where the user is looking.
+ */
+function sponsorshipEvidence(job) {
+  const wrap = el('div', {});
+  const verdict = job.sponsorship ?? 'unknown';
+  wrap.append(el('div', { class: 'chiprow' },
+    el('span', { class: `chip ${esc(job.sponsorship ?? '')}`, text: verdict }),
+    job.sponsorshipGated
+      ? el('span', { class: 'chip warn', text: 'parked until you verify' })
+      : ''));
+
+  const signals = job.sponsorshipSignals ?? [];
+  if (signals.length) {
+    wrap.append(el('div', { class: 'muted evidence-label', text: 'Read from the posting:' }));
+    const list = el('ul', { class: 'plan evidence-quotes' });
+    for (const signal of signals) list.append(el('li', {}, el('q', { text: signal })));
+    wrap.append(list);
+  } else if (job.sponsorship) {
+    wrap.append(el('div', { class: 'muted', text: 'No recorded evidence — re-score this job to capture it.' }));
+  }
+  if (job.sponsorship === 'Denied') {
+    wrap.append(el('div', { class: 'attention' },
+      el('span', { class: 'mark', text: '!' }),
+      el('div', { text: 'The posting explicitly refuses sponsorship.' })));
+  }
+  return wrap;
 }
 
 function progressBar(progress) {
@@ -926,6 +1350,29 @@ function renderPager(page) {
   if (state.selected.size) {
     host.append(el('span', { class: 'muted', text: `${state.selected.size} selected across pages` }));
   }
+  announceBoard(page);
+}
+
+/**
+ * Say out loud what the board now holds.
+ *
+ * Debounced, and silent when the count has not moved: every keystroke in the
+ * search box reloads the board, and a live region that repeats "1,204 jobs"
+ * five times while you type is worse than one that says nothing.
+ */
+let announceTimer = null;
+let lastAnnounced = null;
+function announceBoard(page) {
+  const tab = TABS.find(([key]) => key === state.activeTab);
+  const scope = state.activeTab === 'all' ? '' : ` in ${tab ? tab[1] : state.activeTab}`;
+  const filters = hasActiveFilters() ? ', filtered' : '';
+  const message = page.total === 0
+    ? `No jobs match${scope ? ` ${scope.trim()}` : ''}${filters}.`
+    : `${fmt(page.total)} job${page.total === 1 ? '' : 's'}${scope}${filters}.`;
+  if (message === lastAnnounced) return;
+  lastAnnounced = message;
+  clearTimeout(announceTimer);
+  announceTimer = setTimeout(() => { $('boardAnnounce').textContent = message; }, 500);
 }
 
 /* ──────────────────────── detail rail ──────────────────────── */
@@ -933,7 +1380,11 @@ function renderPager(page) {
 async function selectJob(id, { focusRow = false } = {}) {
   state.selectedId = id;
   for (const tr of $('rows').querySelectorAll('tr.job')) {
-    tr.setAttribute('aria-selected', String(tr.dataset.id === id));
+    // Present-or-absent, not "true"/"false": aria-current="false" is a valid
+    // value meaning "not current", but it still marks the row as participating,
+    // and 99 rows announcing their non-currency is noise.
+    if (tr.dataset.id === id) tr.setAttribute('aria-current', 'true');
+    else tr.removeAttribute('aria-current');
   }
   if (focusRow) {
     $('rows').querySelector(`tr.job[data-id="${cssEscape(id)}"]`)?.focus();
@@ -1064,6 +1515,10 @@ function renderDetail(job) {
     }
     panel.append(box);
   }
+
+  // sponsorship evidence
+  panel.append(el('h3', { text: 'Sponsorship' }));
+  panel.append(sponsorshipEvidence(job));
 
   // fit explanation
   panel.append(el('h3', { text: `Why this ${job.fit === 'strong' ? 'is' : job.fit === 'no_fit' ? 'is not' : 'may be'} a fit` }));
@@ -1774,15 +2229,64 @@ async function batchApprove() {
   } catch (err) { toast(err.message, 'bad'); }
 }
 
+/**
+ * Bulk shortlist / reject / archive, with a way back.
+ *
+ * Rejecting forty jobs is one click and, until now, had no recovery path at
+ * all: the previous decision was overwritten and the selection was cleared in
+ * the same breath, so a mis-click cost a manual pass through forty rows. Each
+ * job's OWN prior decision is captured first — a single "clear" would not undo
+ * this, because the selection routinely mixes already-shortlisted rows with
+ * untouched ones, and clearing would silently discard the shortlist too.
+ */
 async function batchDecide(decision) {
   const ids = [...state.selected];
   if (!ids.length) return;
+  // Read the prior state BEFORE the write, from the rows already in memory.
+  const before = new Map(ids.map((id) => [id, state.known.get(id)?.userDecision ?? 'clear']));
   try {
     const result = await postJson('/api/decide-batch', { jobIds: ids, decision });
-    toast(`Marked ${result.updated.length} as ${decision}`, 'good');
     clearSelection();
     scheduleRefresh(0);
+    const done = new Set(result.updated);
+    offerUndo(`Marked ${result.updated.length} as ${decision}`,
+      new Map([...before].filter(([id]) => done.has(id))));
   } catch (err) { toast(err.message, 'bad'); }
+}
+
+/**
+ * A toast that carries an Undo button for `wasDecision` (job id -> prior value).
+ *
+ * Restoring is grouped by prior value so N jobs cost one request per DISTINCT
+ * previous decision — typically one or two — rather than one per job.
+ */
+function offerUndo(message, wasDecision) {
+  if (!wasDecision.size) { toast(message, 'good'); return; }
+  const groups = new Map();
+  for (const [id, was] of wasDecision) {
+    if (!groups.has(was)) groups.set(was, []);
+    groups.get(was).push(id);
+  }
+  const node = el('div', { class: 'toast good undo-toast' }, el('span', { text: message }));
+  const button = el('button', { class: 'small', type: 'button', text: '↩ Undo' });
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      for (const [was, list] of groups) {
+        await postJson('/api/decide-batch', { jobIds: list, decision: was });
+      }
+      node.remove();
+      toast(`Restored ${wasDecision.size} job(s)`, 'good');
+      scheduleRefresh(0);
+    } catch (err) {
+      button.disabled = false;
+      toast(`Could not undo: ${err.message}`, 'bad');
+    }
+  });
+  node.append(button);
+  $('toasts').append(node);
+  // Longer than an ordinary toast: an undo you cannot reach is not an undo.
+  setTimeout(() => node.remove(), 12000);
 }
 
 async function showCompare() {
@@ -2457,9 +2961,48 @@ const ACTIONS = {
     target.setAttribute('aria-expanded', String(open));
   },
   'toggle-theme': () => {
-    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    // The attribute is ABSENT until a theme is chosen, so it cannot be read as
+    // "the current theme" — doing so made the first click compute
+    // `undefined === 'light' ? … : 'light'` and set light on an already-light
+    // page, i.e. the toggle did nothing the first time you pressed it. Ask the
+    // stylesheet's own source of truth instead.
+    const explicit = document.documentElement.dataset.theme;
+    const current = explicit
+      || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+    const next = current === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
     savePreference('theme', next);
+  },
+  'open-keys': () => openDialog($('dlgKeys')),
+  'toggle-analytics': (target) => {
+    const open = $('analytics').hidden;
+    $('analytics').hidden = !open;
+    target.setAttribute('aria-expanded', String(open));
+    target.querySelector('.caret').textContent = open ? '▾' : '▸';
+    savePreference('analyticsOpen', open ? '1' : '0');
+  },
+  'toggle-breakdown': (target) => {
+    // Reveals the tail that `fillBreakdown` built and hid. The rows already
+    // exist, so this costs no request and cannot disagree with the summary.
+    const body = target.closest('tbody');
+    const open = target.getAttribute('aria-expanded') !== 'true';
+    body.classList.toggle('show-tail', open);
+    target.setAttribute('aria-expanded', String(open));
+    target.textContent = open
+      ? 'Show fewer ▴'
+      : `Show all ${fmt(body.querySelectorAll('tr').length - 1)} ▾`;
+  },
+  'toggle-view-menu': (target) => {
+    const open = $('viewMenu').dataset.open !== 'true';
+    $('viewMenu').dataset.open = String(open);
+    target.setAttribute('aria-expanded', String(open));
+  },
+  'set-density': (target) => applyViewPrefs({ density: target.dataset.density }),
+  'toggle-column': (target) => {
+    const set = hiddenColumns();
+    const key = target.dataset.column;
+    if (set.has(key)) set.delete(key); else set.add(key);
+    applyViewPrefs({ hidden: set });
   },
   'open-learn': () => window.open('/learn/', '_blank', 'noopener'),
   'open-reports': openReports,
@@ -2480,13 +3023,22 @@ const ACTIONS = {
   'export-tracker': () => download('/api/export/tracker.csv', 'job_tracker.csv'),
 
   'set-tab': (target) => {
+    // Filters SURVIVE a tab change. They used to be wiped here for the same
+    // reason a filter used to wipe the tab — to keep each badge equal to what
+    // clicking it opens. The badges are now counted under the active filters,
+    // so the two can coexist and "strong fits, across each stage" is one click
+    // per stage instead of rebuilding the filter every time.
     state.activeTab = target.dataset.tab;
-    // The tab view is the whole scope, so manual filters are cleared to keep
-    // the badge count and the visible rows in agreement.
-    for (const id of [...FILTER_IDS, ...TOGGLE_IDS]) clearFilter(id);
     state.page = 1;
     renderTabs();
     refreshAll();
+  },
+  'toggle-filter-sheet': () => setFilterSheet($('filterbar').dataset.collapsed === 'true'),
+  'clear-tab': () => {
+    state.activeTab = 'all';
+    state.page = 1;
+    renderTabs();
+    loadBoard();
   },
   'metric-filter': (target) => {
     try { applyFilterObject(JSON.parse(target.dataset.filter)); }
@@ -2638,11 +3190,21 @@ async function confirmSubmitted() {
 }
 
 /** Close the header menu. */
+/**
+ * Close any open popup menu.
+ *
+ * Both popups close together on an outside click. The View menu is the
+ * exception the caller makes: its own items (density, column ticks) must NOT
+ * dismiss it, because changing two columns should not cost two trips back to
+ * the button.
+ */
 function closeMainMenu() {
-  const pop = $('mainMenu');
-  if (pop.dataset.open !== 'true') return;
-  pop.dataset.open = 'false';
-  document.querySelector('[data-action="toggle-menu"]')?.setAttribute('aria-expanded', 'false');
+  for (const [popId, triggerAction] of [['mainMenu', 'toggle-menu'], ['viewMenu', 'toggle-view-menu']]) {
+    const pop = $(popId);
+    if (!pop || pop.dataset.open !== 'true') continue;
+    pop.dataset.open = 'false';
+    document.querySelector(`[data-action="${triggerAction}"]`)?.setAttribute('aria-expanded', 'false');
+  }
 }
 
 document.addEventListener('click', (event) => {
@@ -2653,9 +3215,12 @@ document.addEventListener('click', (event) => {
   // fixes the whole class, not one instance of it.
   if (event.target.closest?.('a[href]')) return;
   const target = event.target.closest('[data-action]');
-  // Any click closes the header menu except on its own trigger, which toggles.
-  // Choosing an item used to LEAVE it open, hanging over the page behind it.
-  if (target?.dataset.action !== 'toggle-menu') closeMainMenu();
+  // Any click closes an open menu except on its own trigger (which toggles) or
+  // on a View-menu item — ticking two columns should not cost two round trips
+  // back to the button. Choosing a header-menu item used to LEAVE it open,
+  // hanging over the page behind it.
+  const KEEP_MENU_OPEN = ['toggle-menu', 'toggle-view-menu', 'set-density', 'toggle-column'];
+  if (!KEEP_MENU_OPEN.includes(target?.dataset.action)) closeMainMenu();
   if (!$('runDetails').hidden && !$('runbox').contains(event.target)) setRunDetails(false);
   if (!target) return;
   const action = ACTIONS[target.dataset.action];
@@ -2710,6 +3275,30 @@ $('rows').addEventListener('keydown', (event) => {
 });
 
 /**
+ * Arrow-key movement inside the tablist, as the tab pattern requires.
+ *
+ * With a roving tabindex the arrow keys are the ONLY way to reach the other
+ * tabs from the keyboard, so this is not a nicety — without it seven of the
+ * eight tabs become unreachable. Left/Right wrap; Home/End jump to the ends.
+ */
+$('tabs').addEventListener('keydown', (event) => {
+  const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+  if (!keys.includes(event.key)) return;
+  const tabs = [...$('tabs').querySelectorAll('[role="tab"]')];
+  const from = tabs.indexOf(event.target.closest('[role="tab"]'));
+  if (from === -1) return;
+  event.preventDefault();
+  const to = event.key === 'Home' ? 0
+    : event.key === 'End' ? tabs.length - 1
+      : (from + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+  // Focus moves first so the tab that is about to be re-rendered is not the one
+  // we are trying to land on; activation follows, as this tablist is
+  // selection-follows-focus (each tab is a cheap board query).
+  tabs[to].focus();
+  tabs[to].click();
+});
+
+/**
  * The metric tiles are spans with role="button" (they must not nest inside the
  * flex strip as real buttons), so Enter/Space has to be wired up by hand —
  * without this they were focusable but impossible to activate by keyboard.
@@ -2723,10 +3312,17 @@ document.addEventListener('keydown', (event) => {
 });
 
 document.addEventListener('keydown', (event) => {
+  const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName);
   // "/" focuses search, as in most triage tools.
-  if (event.key === '/' && !/^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) {
+  if (event.key === '/' && !typing) {
     event.preventDefault();
     $('q').focus();
+  }
+  // "?" opens the shortcut sheet — the conventional key, so the feature does
+  // not itself need discovering.
+  if (event.key === '?' && !typing) {
+    event.preventDefault();
+    openDialog($('dlgKeys'));
   }
   if (event.key !== 'Escape') return;
   closeMainMenu();
@@ -2823,13 +3419,98 @@ $('pageSize').addEventListener('change', (event) => {
   loadBoard();
 });
 
+/**
+ * A filter now narrows WITHIN the current tab instead of leaving it.
+ *
+ * Touching any filter used to force the tab back to "All jobs". That was done
+ * to keep each badge equal to what clicking it opens — but it also meant the
+ * most natural move on this board ("of the 179 needing review, which are strong
+ * fits?") silently threw you into all 19,212 rows. The server always supported
+ * the combination; only the UI refused it.
+ *
+ * The badge promise is kept instead of dodged: when a filter is active the
+ * board request also returns per-tab counts computed against that same filter,
+ * so every badge still says exactly how many rows clicking it would show.
+ */
 function onFilterChange() {
-  // Touching a filter leaves the tab scope, so the badge and the board agree.
-  if (state.activeTab !== 'all') {
-    state.activeTab = 'all';
-    renderTabs();
-  }
   loadBoard();
+}
+
+/* ─────────────────── view preferences: density + columns ───────────────────
+ * Both are VIEW settings, so they persist like sort and page size and never
+ * like a filter: coming back to a board that is silently narrowed is
+ * disorienting, coming back to the shape you chose is the tool remembering you.
+ */
+
+/**
+ * Columns the reader may hide. Grade, company/role and status are not offered:
+ * a board with no fit, no role and no state is not a denser board, it is an
+ * empty one. `nth` is the 1-based column position the CSS rules key on.
+ */
+const OPTIONAL_COLUMNS = [
+  { key: 'sponsor', nth: 4, label: 'Sponsor' },
+  { key: 'posted', nth: 5, label: 'Posted' },
+  { key: 'found', nth: 6, label: 'Found' },
+  { key: 'resume', nth: 7, label: 'Resume' },
+];
+
+function hiddenColumns() {
+  try { return new Set(JSON.parse(readPreference('hiddenColumns') ?? '[]')); }
+  catch { return new Set(); }
+}
+
+/** Reflect density + hidden columns onto the board, and remember both. */
+function applyViewPrefs({ density, hidden } = {}) {
+  const d = density ?? readPreference('density') ?? 'comfortable';
+  document.documentElement.dataset.density = d;
+  savePreference('density', d);
+  for (const button of document.querySelectorAll('[data-action="set-density"]')) {
+    button.setAttribute('aria-checked', String(button.dataset.density === d));
+  }
+
+  const set = hidden ?? hiddenColumns();
+  savePreference('hiddenColumns', JSON.stringify([...set]));
+  // One attribute on the table drives every rule; the alternative — toggling a
+  // class on ~800 cells after each render — is both slower and easy to miss on
+  // a re-render.
+  $('board').dataset.hide = [...set].join(' ');
+
+  const host = $('columnToggles');
+  host.textContent = '';
+  for (const column of OPTIONAL_COLUMNS) {
+    const on = !set.has(column.key);
+    host.append(el('button', {
+      type: 'button', role: 'menuitemcheckbox', 'aria-checked': String(on),
+      'data-action': 'toggle-column', 'data-column': column.key,
+    }, el('span', { class: 'tick', 'aria-hidden': 'true', text: on ? '✓' : '' }), column.label));
+  }
+}
+
+/** True when any filter is set, i.e. the tab alone no longer describes the board. */
+function hasActiveFilters() {
+  return [...FILTER_IDS, ...TOGGLE_IDS].some((id) => filterValue(id));
+}
+
+/**
+ * Phone-only: fold every control except search behind one button.
+ *
+ * The CSS does the hiding (`.filterbar[data-collapsed]`), so this only tracks
+ * the flag and keeps the button honest about how many filters are set — a
+ * collapsed bar with three active filters must say three, or it is the same
+ * hidden-state problem the old popover had.
+ */
+function setFilterSheet(open) {
+  $('filterbar').dataset.collapsed = String(!open);
+  $('btnFilterSheet').setAttribute('aria-expanded', String(open));
+}
+
+/** Keep the phone toggle's count in step with what is actually filtering. */
+function syncFilterSheetCount() {
+  const n = [...FILTER_IDS, ...TOGGLE_IDS].filter((id) => filterValue(id)).length;
+  const button = $('btnFilterSheet');
+  button.textContent = '';
+  button.append('Filters');
+  if (n) button.append(el('span', { class: 'n', text: String(n) }));
 }
 
 /* Dialog submit-on-Enter */
@@ -2842,6 +3523,22 @@ $('masterFile').addEventListener('change', (event) => {
 });
 
 /* ───────────────────────────── boot ───────────────────────────── */
+
+/**
+ * Publish the topbar's live height so sticky things can sit below it.
+ *
+ * The topbar is sticky and opaque, and it wraps to two rows around 1280px and
+ * three on a phone. Anything else that sticks has to know how tall it currently
+ * is — a constant is wrong at two of those three widths, which is how the
+ * column headers ended up parked underneath it.
+ */
+const topbarEl = document.querySelector('.topbar');
+function syncTopbarHeight() {
+  const h = Math.round(topbarEl.getBoundingClientRect().height);
+  if (h > 0) document.documentElement.style.setProperty('--topbar-h', `${h}px`);
+}
+new ResizeObserver(syncTopbarHeight).observe(topbarEl);
+syncTopbarHeight();
 
 const savedTheme = readPreference('theme');
 if (savedTheme === 'light' || savedTheme === 'dark') {
@@ -2871,8 +3568,21 @@ if (savedSort && Object.hasOwn(SORT_DIRECTION, savedSort)
 const savedPageSize = readPreference('pageSize');
 if (savedPageSize && [...$('pageSize').options].some((o) => o.value === savedPageSize)) {
   $('pageSize').value = savedPageSize;
+} else if (window.innerWidth <= 860) {
+  // First run on a narrow screen. A row is a table row on a desktop and a
+  // ~137px card on a phone, so the same 100 rows are ~7,000px there and
+  // ~15,000px here — eighteen screens of scrolling to reach the end of one
+  // page. This only sets the STARTING point when nothing has been chosen; a
+  // saved preference always wins.
+  $('pageSize').value = '50';
 }
 state.pageSize = Number($('pageSize').value) || 100;
+if (readPreference('analyticsOpen') === '1') {
+  $('analytics').hidden = false;
+  $('btnAnalytics').setAttribute('aria-expanded', 'true');
+  $('btnAnalytics').querySelector('.caret').textContent = '▾';
+}
+applyViewPrefs();
 renderTabs();
 syncSortIndicator();
 refreshAll().then(() => {

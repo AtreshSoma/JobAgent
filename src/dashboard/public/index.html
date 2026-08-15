@@ -1,5 +1,11 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<!-- No `data-theme` here on purpose. Hardcoding it meant a light-mode machine
+     was served the dark palette until the user found the toggle. The attribute
+     now appears only when the user has actually CHOSEN a theme; until then the
+     stylesheet follows prefers-color-scheme. Resolving it in CSS rather than in
+     boot JS also means there is no dark-to-light flash — and the page's CSP is
+     `script-src 'self'`, so an inline theme script is not available anyway. -->
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -7,6 +13,11 @@
 <link rel="stylesheet" href="/assets/css/app.css">
 </head>
 <body>
+
+<!-- Without this, reaching the board by keyboard means tabbing past the whole
+     header, eight tabs, a health strip and thirteen filter controls — on every
+     page load. -->
+<a class="skip-link" href="#boardwrap">Skip to the job board</a>
 
 <div id="offline" role="alert">
   ⚠ Lost connection to the dashboard server — it may have stopped.
@@ -65,6 +76,7 @@
         <hr>
         <button role="menuitem" data-action="open-health">🩺 System health…</button>
         <a role="menuitem" class="btn" href="/learn/" target="_blank" rel="noopener">🎓 Interview Prep</a>
+        <button role="menuitem" data-action="open-keys">⌨ Keyboard shortcuts</button>
         <button role="menuitem" data-action="toggle-theme">🌗 Toggle light / dark</button>
       </div>
     </span>
@@ -87,11 +99,16 @@
 </div>
 
 <main class="layout">
-  <section aria-label="Job board">
-    <div class="filterbar" aria-label="Job filters">
+  <section aria-labelledby="boardHeading">
+    <h2 id="boardHeading" class="sr-only">Job board</h2>
+    <div class="filterbar" id="filterbar" aria-label="Job filters" data-collapsed="true">
       <div class="filters">
         <input type="search" id="q" class="grow" placeholder="Search company, role, or location…"
           aria-label="Search company, role, or location">
+        <!-- Phones only (see .filter-toggle in the stylesheet). Search stays
+             visible; everything else folds behind this. -->
+        <button type="button" class="small ghost filter-toggle" id="btnFilterSheet"
+          data-action="toggle-filter-sheet" aria-expanded="false" aria-controls="filterbar">Filters</button>
         <select id="fit" aria-label="Filter by fit">
           <option value="">Any fit</option>
           <option value="strong">Strong fit</option>
@@ -171,7 +188,9 @@
            active state behind a count badge, and needed open/close/clear/done
            plumbing to work at all. Inline, they are quieter AND simpler: each
            select names its own field in its placeholder, so no labels are
-           needed and nothing has to be opened to see what is on. -->
+           needed and nothing has to be opened to see what is on.
+           (Phones are the exception — see .filterbar[data-collapsed] — because
+           there the whole card is eight rows tall before the first job.) -->
       <div class="filters filters-more" aria-label="More filters">
         <select id="sponsorship" aria-label="Filter by sponsorship likelihood">
           <option value="">Any sponsorship</option>
@@ -218,30 +237,59 @@
 
     <div class="activefilters" id="activeFilters"></div>
 
-    <div class="boardwrap">
-      <table id="board">
+    <!-- Filtering is the core loop of this page and it happened in total silence
+         for anyone not looking at the pager: typing in the search box swaps the
+         table contents with no announcement, so "142 results" becoming "12" was
+         invisible. Polite so it waits for a pause in speech rather than cutting
+         across the typing that caused it. -->
+    <p id="boardAnnounce" class="sr-only" role="status" aria-live="polite"></p>
+
+    <!-- role="tabpanel" completes the tablist above: the tabs said they were
+         tabs but controlled nothing a screen reader could follow.
+         `role="table"` and the rowgroup/cell roles below are NOT redundant —
+         the narrow-viewport card layout sets `display: block/flex` on these
+         elements, which strips their implicit table semantics in every engine.
+         Stating them keeps the board a table on a phone. -->
+    <div class="boardwrap" id="boardwrap" role="tabpanel" tabindex="-1">
+      <table id="board" role="table">
         <caption class="sr-only">Discovered jobs with fit, sponsorship, resume, and application status</caption>
-        <thead>
-          <tr>
-            <th class="check"><input type="checkbox" id="selAll" aria-label="Select all rows on this page"></th>
-            <th class="sortable" data-sort="score" scope="col" tabindex="0" title="Sort by fit score, best first">Grade</th>
-            <th class="sortable" data-sort="company" scope="col" tabindex="0" title="Sort by company name, A–Z">Company / role</th>
-            <th scope="col">Sponsor</th>
-            <th scope="col">Type</th>
-            <th class="sortable" data-sort="posted" scope="col" tabindex="0" title="Sort by posting date, newest first. Click 'Found' to sort by when this agent first discovered the job instead.">Posted</th>
-            <th class="sortable" data-sort="discovered" scope="col" tabindex="0" title="Sort by when this agent first found the job — use this to see what the latest run actually turned up">Found</th>
-            <th scope="col">Resume</th>
-            <th scope="col">ATS</th>
-            <th scope="col">Progress</th>
-            <th scope="col">Status</th>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th class="check" role="columnheader"><input type="checkbox" id="selAll" aria-label="Select all rows on this page"></th>
+            <th class="sortable" role="columnheader" data-sort="score" scope="col" tabindex="0" title="Sort by fit score, best first">Grade</th>
+            <th class="sortable" role="columnheader" data-sort="company" scope="col" tabindex="0" title="Sort by company name, A–Z">Company / role</th>
+            <th scope="col" role="columnheader">Sponsor</th>
+            <th class="sortable" role="columnheader" data-sort="posted" scope="col" tabindex="0" title="Sort by posting date, newest first. Click 'Found' to sort by when this agent first discovered the job instead.">Posted</th>
+            <th class="sortable" role="columnheader" data-sort="discovered" scope="col" tabindex="0" title="Sort by when this agent first found the job — use this to see what the latest run actually turned up">Found</th>
+            <th scope="col" role="columnheader">Resume</th>
+            <!-- ATS moved into the role cell's meta line, and Progress merged
+                 into Status. Both cost a fixed column that pushed Status off
+                 the right edge on a 1280px laptop — the one column that says
+                 whether a job needs you. -->
+            <th scope="col" role="columnheader">Status</th>
           </tr>
         </thead>
-        <tbody id="rows"></tbody>
+        <tbody id="rows" role="rowgroup"></tbody>
       </table>
     </div>
 
     <div class="pagerbar">
       <div class="pager" id="pager"></div>
+      <!-- View preferences live with pagination, not with the filters: they
+           change how much of a result set you see and how it is drawn, never
+           WHICH jobs match. Same reasoning that put "Rows" here. -->
+      <span class="menu viewmenu">
+        <button type="button" class="small ghost" data-action="toggle-view-menu"
+          aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">⚙ View</button>
+        <div class="menu-pop" id="viewMenu" role="menu">
+          <div class="menu-label" role="presentation">Density</div>
+          <button type="button" role="menuitemradio" aria-checked="true" data-action="set-density" data-density="comfortable">Comfortable</button>
+          <button type="button" role="menuitemradio" aria-checked="false" data-action="set-density" data-density="compact">Compact</button>
+          <hr>
+          <div class="menu-label" role="presentation">Columns</div>
+          <div id="columnToggles"></div>
+        </div>
+      </span>
       <label class="pagesize" for="pageSize"><span>Rows</span>
         <select id="pageSize" aria-label="Rows per page">
           <option value="50">50</option>
@@ -252,42 +300,110 @@
       </label>
     </div>
 
-    <div class="analytics">
-      <div class="card">
-        <h3>Source performance</h3>
-        <div class="scrollx"><table class="minitable">
-          <thead><tr><th>Source</th><th class="r">Found</th><th class="r">Strong</th><th class="r">Prepared</th><th class="r">Submitted</th></tr></thead>
+    <!-- These read the WHOLE corpus, deliberately: they answer "is discovery
+         healthy", which a filtered slice cannot. But sitting directly under a
+         filtered board they looked like they belonged to it — with a board
+         filtered to zero rows, "workday 52,733" reads as a contradiction. The
+         heading says whose numbers these are.
+
+         It is also the <h2> that was missing: the page went H1 -> H3 here, and
+         the only other H2 (Next actions) is rendered later in the DOM, so the
+         heading outline skipped a level and then went backwards. -->
+    <!-- Collapsed by default. Measured, this section was 3,041px — 28% of a
+         10,738px page — and it sits BELOW the entire board, so every pixel of
+         it is pixels you scroll past to reach the signature. It is diagnostics:
+         you open it when you want to ask "is discovery healthy", not on the way
+         to triaging a job. Collapsed it costs one row; the state is remembered.
+
+         A disclosure, not a popover: it expands IN PLACE and pushes the page
+         down rather than covering anything. -->
+    <h2 class="analytics-head">
+      <button type="button" id="btnAnalytics" class="analytics-toggle"
+        data-action="toggle-analytics" aria-expanded="false" aria-controls="analytics">
+        <span class="caret" aria-hidden="true">▸</span>
+        Discovery health
+        <span class="faint">— whole corpus, not affected by the filters above</span>
+      </button>
+    </h2>
+    <div class="analytics" id="analytics" hidden>
+      <!-- Reading order is deliberate: is the pipeline MOVING (full width, the
+           headline), then where the jobs COME FROM and where they ARE, then
+           whether they are APPLICABLE and what is FAILING. Five cards that each
+           answer one question, each stating its answer before its detail.
+
+           Two columns, never three: at 1600px an auto-fit grid gave three
+           narrow cards plus an orphan on a second row, and a 5-column table in
+           a 250px card truncated its own headers ("STRONG F…"). -->
+      <section class="card wide" aria-labelledby="cardActivity">
+        <div class="card-head">
+          <h3 id="cardActivity">Pipeline activity</h3>
+          <p class="card-lead" id="activityLead"></p>
+        </div>
+        <div id="dailyTrend" class="trend-row"></div>
+      </section>
+
+      <section class="card" aria-labelledby="cardSources">
+        <div class="card-head">
+          <h3 id="cardSources">Where jobs come from</h3>
+          <!-- Prepared/Submitted used to be columns here. They measure how much
+               YOU worked, not how the source performed, and they were empty for
+               9 of 16 sources — two columns of zeroes crowding out the one
+               comparison that matters: volume against strong-fit yield. -->
+          <p class="card-lead" id="sourceLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Source</th>
+            <th scope="col" class="r">Found</th>
+            <th scope="col" class="r">Strong</th>
+          </tr></thead>
           <tbody id="srcRows"></tbody>
-        </table></div>
-      </div>
-      <div class="card">
-        <h3>Where the jobs are</h3>
-        <div class="scrollx"><table class="minitable">
-          <thead><tr><th>State</th><th class="r">Jobs</th><th class="r">Strong fit</th></tr></thead>
+        </table>
+      </section>
+
+      <section class="card" aria-labelledby="cardStates">
+        <div class="card-head">
+          <h3 id="cardStates">Where the jobs are</h3>
+          <p class="card-lead" id="stateLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Location</th>
+            <th scope="col" class="r">Jobs</th>
+            <th scope="col" class="r">Strong</th>
+          </tr></thead>
           <tbody id="stateRows"></tbody>
-        </table></div>
-      </div>
-      <div class="card">
-        <h3>Sponsorship feasibility</h3>
-        <div class="scrollx"><table class="minitable">
-          <thead><tr><th>Confidence</th><th class="r">Jobs</th><th class="r">Strong fit</th></tr></thead>
+        </table>
+      </section>
+
+      <section class="card" aria-labelledby="cardSponsor">
+        <div class="card-head">
+          <h3 id="cardSponsor">Can you apply?</h3>
+          <p class="card-lead" id="sponsorLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Confidence</th>
+            <th scope="col" class="r">Jobs</th>
+            <th scope="col" class="r">Strong</th>
+          </tr></thead>
           <tbody id="sponRows"></tbody>
-        </table></div>
-      </div>
-      <div class="card">
-        <h3>Needs your attention</h3>
-        <div class="scrollx"><table class="minitable">
-          <thead><tr><th>Reason</th><th class="r">Jobs</th></tr></thead>
+        </table>
+      </section>
+
+      <section class="card" aria-labelledby="cardBlocked">
+        <div class="card-head">
+          <h3 id="cardBlocked">What is failing</h3>
+          <p class="card-lead" id="blockLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Reason</th>
+            <th scope="col" class="r">Jobs</th>
+          </tr></thead>
           <tbody id="blockRows"></tbody>
-        </table></div>
-      </div>
-      <div class="card">
-        <h3>Daily progress (last 7 days)</h3>
-        <div class="scrollx"><table class="minitable">
-          <thead><tr><th>Day</th><th class="r">Found</th><th class="r">Prepared</th><th class="r">Submitted</th></tr></thead>
-          <tbody id="dailyRows"></tbody>
-        </table></div>
-      </div>
+        </table>
+      </section>
     </div>
   </section>
 
@@ -316,6 +432,19 @@
   <button class="small" id="cmpBtn" data-action="compare" disabled>Compare</button>
   <button class="small ghost" data-action="clear-selection">Clear</button>
 </div>
+
+<!-- Attribution belongs in a footer, at the end of the document, after the work
+     it refers to — not floated over the board where it would compete with the
+     data for attention on every screen. It reuses the brand mark and the
+     quietest ink in the palette, so it reads as a signature rather than a
+     banner, and it is the last thing in the tab order rather than a detour on
+     the way to the jobs. -->
+<footer class="signature">
+  <span class="sig-mark" aria-hidden="true"></span>
+  <span class="sig-text">Designed by <b>Atresh</b></span>
+  <span class="sig-sep" aria-hidden="true"></span>
+  <span class="sig-meta">JobAgent · runs locally on 127.0.0.1</span>
+</footer>
 
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
 
@@ -441,6 +570,32 @@
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
   <div class="dlg-body" id="healthBody"></div>
+</dialog>
+
+<!-- Every shortcut below already worked; none of them were discoverable, which
+     makes them shortcuts only for the person who wrote them. `?` is the
+     conventional key for this, so it needs no advertising of its own. -->
+
+<dialog id="dlgKeys" class="narrow" aria-labelledby="dlgKeysTitle">
+  <div class="dlg-head">
+    <h2 id="dlgKeysTitle">Keyboard shortcuts</h2>
+    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <dl class="keys">
+      <dt><kbd>/</kbd></dt><dd>Jump to search</dd>
+      <dt><kbd>?</kbd></dt><dd>Show this list</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close a dialog or menu; clear the search box</dd>
+      <dt class="keys-sec" aria-hidden="true"></dt><dd class="keys-sec">On the job board</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move between jobs</dd>
+      <dt><kbd>Enter</kbd></dt><dd>Open the selected job in the detail rail</dd>
+      <dt><kbd>Space</kbd></dt><dd>Open the selected job</dd>
+      <dt><kbd>X</kbd></dt><dd>Tick or untick the row for a bulk action</dd>
+      <dt class="keys-sec" aria-hidden="true"></dt><dd class="keys-sec">On the stage tabs</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Move between stages (wraps around)</dd>
+      <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>First or last stage</dd>
+    </dl>
+  </div>
 </dialog>
 
 <dialog id="dlgConfirm" class="narrow" aria-labelledby="dlgConfirmTitle">

@@ -18,10 +18,16 @@
   --line: #253040;
   --line-soft: #1b232e;
 
-  /* text */
+  /* text
+     `--text-faint` is not decoration: it paints table headers, stat labels, the
+     score under each grade, and `.statusreason` — the line saying WHY a job is
+     blocked. Measured on the real board, the old #647285 gave 3.71:1 on
+     --surface, below the 4.5:1 WCAG AA needs for text this size. Raised to
+     5.02:1 while staying clearly quieter than --text-dim (7.51:1), so the
+     three-step hierarchy still reads as a hierarchy. */
   --text: #e8eef6;
   --text-dim: #9aa8ba;
-  --text-faint: #647285;
+  --text-faint: #78889c;
 
   /* accents */
   --accent: #4d9fff;
@@ -69,7 +75,9 @@
   --line-soft: #e6ebf2;
   --text: #131a24;
   --text-dim: #566274;
-  --text-faint: #7d8899;
+  /* Light failed harder than dark: #7d8899 was 3.59:1 on --surface and only
+     3.34:1 on --bg. 4.93:1 / 4.60:1 — AA on both surfaces it actually sits on. */
+  --text-faint: #68717f;
   --accent: #1668d6;
   --accent-hover: #0f57ba;
   --accent-ink: #ffffff;
@@ -84,6 +92,42 @@
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
   --shadow: 0 8px 24px rgba(16, 24, 40, .12);
   --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
+}
+
+/* Same palette, applied when the OS asks for light and the user has expressed
+   no preference of their own. It is a copy of the block above because CSS
+   cannot union a plain selector with a media-conditioned one in a single rule.
+   The copy is not left to vigilance: `themeTokens.test.js` parses this file and
+   fails if the two blocks ever drift apart. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --bg: #f5f7fa;
+    --surface: #ffffff;
+    --surface-2: #f0f3f7;
+    --surface-3: #e6ebf2;
+    --line: #d3dbe6;
+    --line-soft: #e6ebf2;
+    --text: #131a24;
+    --text-dim: #566274;
+    /* Light failed harder than dark: #7d8899 was 3.59:1 on --surface and only
+       3.34:1 on --bg. 4.93:1 / 4.60:1 — AA on both surfaces it actually sits on. */
+    --text-faint: #68717f;
+    --accent: #1668d6;
+    --accent-hover: #0f57ba;
+    --accent-ink: #ffffff;
+    --accent-soft: rgba(22, 104, 214, .1);
+    --good: #0f8f5c;
+    --good-soft: rgba(15, 143, 92, .1);
+    --warn: #9a6300;
+    --warn-soft: rgba(154, 99, 0, .12);
+    --bad: #c8332e;
+    --bad-soft: rgba(200, 51, 46, .1);
+    --chip: #e6ebf2;
+    --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
+    --shadow: 0 8px 24px rgba(16, 24, 40, .12);
+    --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
+  }
 }
 
 * { box-sizing: border-box; }
@@ -130,6 +174,17 @@ a { color: var(--accent); }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 .nowrap { white-space: nowrap; }
+
+/* Off-screen until focused, then a real, visible control. Hiding it with
+   `display: none` would take it out of the tab order and defeat the point. */
+.skip-link {
+  position: fixed; top: 8px; left: 8px; z-index: 100;
+  transform: translateY(-200%);
+  background: var(--accent); color: var(--accent-ink);
+  padding: 8px 14px; border-radius: var(--r-sm); font-weight: 620;
+  text-decoration: none; box-shadow: var(--shadow);
+}
+.skip-link:focus { transform: translateY(0); }
 
 /* ─────────────────────────── buttons ─────────────────────────── */
 button, .btn {
@@ -209,7 +264,7 @@ button.icon { padding: 4px 7px; }
    reflows, and the per-source detail is one click away. */
 .runbox {
   position: relative; display: flex; align-items: center; gap: var(--s2);
-  min-width: 0; max-width: 46vw;
+  min-width: 0; max-width: min(56vw, 760px);
   padding: 4px 4px 4px 10px; border-radius: var(--r-full);
   border: 1px solid transparent; font-size: 12px;
 }
@@ -228,8 +283,15 @@ button.icon { padding: 4px 7px; }
 .runbox[data-state="warn"] .run-icon::before { content: '!'; color: var(--warn); font-weight: 700; }
 .runbox[data-state="error"] .run-icon::before { content: '⚠'; color: var(--bad); }
 
-/* Two lines of hierarchy in one row: what is happening, then the detail. */
-.run-main { display: flex; align-items: baseline; gap: 7px; min-width: 0; }
+/* Two lines of hierarchy, on two LINES.
+   Sharing one row meant the run's headline result and the note about degraded
+   sources competed for the same horizontal space — measured at 1440px, both
+   were truncated, so a finished run reported "4,973 new · 76,471 seen · scor…"
+   and the reason for the warning colour was unreadable. Stacking costs ~14px of
+   header height (the sticky offset is measured, so it follows) and lets each
+   line use the pill's full width. An empty second line collapses to nothing, so
+   a clean run is still one line tall. */
+.run-main { display: flex; flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
 #runStatus {
   font-weight: 620; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -323,6 +385,20 @@ button.icon { padding: 4px 7px; }
 .menu-pop button { text-align: left; justify-content: flex-start; border-color: transparent; background: transparent; }
 .menu-pop button:hover { background: var(--surface-2); border-color: transparent; }
 .menu-pop hr { border: 0; border-top: 1px solid var(--line-soft); margin: 4px 2px; }
+.menu-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .55px;
+  color: var(--text-faint); font-weight: 650; padding: 5px 9px 2px;
+}
+/* The View menu opens UPWARD: it sits at the bottom of the board, so a
+   downward menu would open off the end of the page. */
+.viewmenu .menu-pop { top: auto; bottom: calc(100% + 6px); min-width: 190px; }
+.menu-pop [role="menuitemradio"][aria-checked="true"],
+.menu-pop [role="menuitemcheckbox"][aria-checked="true"] { color: var(--accent); }
+.menu-pop [role="menuitemradio"][aria-checked="true"]::before { content: '● '; }
+.menu-pop [role="menuitemradio"][aria-checked="false"]::before { content: '○ '; color: var(--text-faint); }
+.menu-pop .tick { display: inline-block; width: 12px; color: var(--accent); }
+.menu-empty { padding: 6px 9px; font-size: 12.5px; color: var(--text-faint); }
+
 
 /* ─────────────────── pipeline band ───────────────────
    One band carrying both halves of "where do things stand":
@@ -348,12 +424,15 @@ button.icon { padding: 4px 7px; }
   display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
   font-size: 12px; color: var(--text-faint);
 }
+/* Applies to both the <span> facts and the <button> ones, so the strip reads as
+   one row regardless of which element carries a given number. */
 .stat {
   display: inline-flex; align-items: baseline; gap: 5px;
   border: 0; background: none; padding: 0;
-  font-size: 12px; color: var(--text-faint); cursor: default;
-  white-space: nowrap;
+  font: inherit; font-size: 12px; color: var(--text-faint); cursor: default;
+  white-space: nowrap; border-radius: var(--r-xs);
 }
+button.stat:hover { background: none; border-color: transparent; }
 /* Hairline separators instead of nine boxes: the numbers stay scannable and
    the chrome disappears. */
 .health .stat + .stat::before {
@@ -405,10 +484,33 @@ button.icon { padding: 4px 7px; }
 }
 @media (max-width: 1240px) { .layout { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) {
-  .topbar { flex-wrap: wrap; padding: var(--s2) var(--s3); }
+  .topbar { flex-wrap: wrap; padding: var(--s2) var(--s3); gap: var(--s2); }
   .topbar .spacer { display: none; }
   .actions-group { width: 100%; justify-content: flex-start; }
   .pipeline, .layout { padding-left: var(--s3); padding-right: var(--s3); }
+
+  /* Reclaiming the 924px that stood between the top of a phone screen and the
+     first job. Every rule here removes chrome, not information: the safety
+     chip repeats what the More menu says, the tabs scroll instead of stacking
+     four rows deep, and the health strip keeps its numbers on one scrollable
+     line rather than four wrapped ones. */
+  .safety-chip { display: none; }
+  .brand { font-size: 14px; }
+
+  /* One scrollable row instead of four wrapped ones. */
+  .tabs, .health {
+    flex-wrap: nowrap; overflow-x: auto; width: 100%;
+    scrollbar-width: none; padding-bottom: 2px;
+  }
+  .tabs::-webkit-scrollbar, .health::-webkit-scrollbar { display: none; }
+  .tabs .tab, .health .stat { flex: none; }
+  .pipeline { gap: 4px; padding: 6px var(--s3); }
+
+  /* The run pill was capped at 46vw, which on a phone rendered the result as
+     "4… 8 s… Details ✕" — every number it exists to report, elided. Given the
+     whole width it reports the run instead. */
+  .runbox { max-width: 100%; width: 100%; order: 5; }
+  .run-details { width: calc(100vw - 24px); }
 }
 /* NOTE: the narrow-viewport filter overrides live at the END of the filter
    section, not here. Equal-specificity rules are decided by source order, so
@@ -534,10 +636,30 @@ button.icon { padding: 4px 7px; }
 
 .reset-filter { margin-left: auto; }
 
+/* Phone-only control. Declared BEFORE the narrow-viewport block on purpose:
+   equal-specificity rules are decided by source order, so a `display: none`
+   sitting after the media query would win at every width and the button would
+   never appear — the same trap the note above `.filters` describes. */
+.filter-toggle { display: none; }
+
 @media (max-width: 860px) {
   .filters .grow { width: 100%; }
   .reset-filter { margin-left: 0; }
   .filters-sep { display: none; }
+
+  /* Everything below the search box collapses behind one control. Eight rows of
+     filter chrome above the first job is not a filter bar, it is a wall — and
+     the chip row underneath still names whatever is active, so nothing set can
+     hide in here. */
+  .filterbar { padding: 7px; }
+  .filterbar[data-collapsed="true"] .filters > :not(.grow):not(.filter-toggle),
+  .filterbar[data-collapsed="true"] .filters-more { display: none; }
+  /* Search keeps the first line to itself; the toggle sits on the next. */
+  .filter-toggle { display: inline-flex; }
+  .filter-toggle .n {
+    background: var(--accent); color: var(--accent-ink);
+    border-radius: var(--r-full); padding: 0 6px; font-size: 11px; margin-left: 4px;
+  }
 }
 
 .activefilters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 var(--s3); }
@@ -546,6 +668,12 @@ button.icon { padding: 4px 7px; }
   background: var(--accent-soft); color: var(--accent);
   border: 1px solid transparent; border-radius: var(--r-full); padding: 2px 6px 2px 10px;
 }
+/* The tab scope reads as the container the filters sit inside, so it is a
+   different colour from them rather than one more equal chip in the row. */
+.pill-scope {
+  background: var(--surface-3); color: var(--text);
+  border-color: var(--line); font-weight: 600;
+}
 .pill button {
   all: unset; cursor: pointer; line-height: 1; padding: 0 3px;
   border-radius: var(--r-full); font-size: 14px; color: inherit; opacity: .8;
@@ -553,19 +681,120 @@ button.icon { padding: 4px 7px; }
 .pill button:hover { opacity: 1; }
 
 /* ─────────────────── board ─────────────────── */
+/* `overflow: auto` here made THIS element the scroll container that the sticky
+   column headers resolved against — so as the page scrolled, the whole board
+   (headers included) simply left the viewport and you scrolled 6,900px of rows
+   with no idea which column was which. The header was written to be sticky and
+   never once stuck.
+   Now that the table fits (see column allocation above), the wrapper does not
+   need to be a scroll container at all, and the headers can stick to the page.
+   Narrow viewports keep the horizontal scroller. */
 .boardwrap {
   background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--r-md); overflow: auto; box-shadow: var(--shadow-sm);
+  border-radius: var(--r-md); box-shadow: var(--shadow-sm);
+}
+@media (max-width: 900px) { .boardwrap { overflow-x: auto; } }
+
+/* A query in flight over rows that are now stale. Delayed, so the common fast
+   query (~0.4s) never flickers — only a genuinely slow one announces itself. */
+.boardwrap[data-loading="true"] tbody {
+  opacity: .45;
+  pointer-events: none;
+  transition: opacity .15s linear .35s;
+}
+.boardwrap[data-loading="true"] { position: relative; }
+.boardwrap[data-loading="true"]::after {
+  content: ''; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%; background-repeat: no-repeat;
+  animation: boardsweep 1.1s ease-in-out .35s infinite;
+}
+@keyframes boardsweep {
+  0% { background-position: -40% 0; }
+  100% { background-position: 140% 0; }
 }
 table { width: 100%; border-collapse: collapse; }
 th, td {
   text-align: left; padding: 9px 11px;
   border-bottom: 1px solid var(--line-soft); vertical-align: middle;
 }
+
+/* ── column allocation ──
+   Measured on the real board before this existed: auto layout gave
+   Company/role 118px and Status 282px at a 1440px viewport. The column you
+   actually read the board by was the third NARROWEST, so roles wrapped to four
+   lines; row heights ran 69–288px (median 142) and barely six rows fit a
+   screen. Auto layout sizes to content, and a status string is simply longer
+   than the words "Company / role" — it has no idea which column matters.
+
+   Fixed layout lets us say so. The role gets a third of the table; everything
+   else gets what its content needs and no more.
+
+   Eight columns, not eleven. Type, ATS and Progress each held a fixed column
+   whose content was "Full-time", "—", or an unlabelled bar; together they cost
+   ~257px that pushed Status off the right edge of a 1280px laptop. They now
+   live inside the cells they qualify.
+
+   `min-width` is a floor, not a fixed grid: below it the board scrolls
+   sideways, which is honest, and narrow viewports get cards instead.
+
+   Each fixed width below was then checked against the widest content it
+   actually holds, because a fixed column that is one pixel short does not
+   wrap — it truncates, and "Unconfirmed" silently became "Unconfirm…" on the
+   sponsorship verdict. */
+#board { table-layout: fixed; min-width: 700px; }
+#board th:nth-child(1) { width: 44px; }   /* select — checkbox + its UA margin */
+#board th:nth-child(2) { width: 58px; }   /* grade                             */
+#board th:nth-child(3) { width: 34%; }    /* company/role — the one that matters */
+#board th:nth-child(4) { width: 114px; }  /* sponsor — fits "Unconfirmed"      */
+#board th:nth-child(5) { width: 116px; }  /* posted — fits "Today" + new badge */
+#board th:nth-child(6) { width: 76px; }   /* found                             */
+#board th:nth-child(7) { width: 106px; }  /* resume — fits the "tailored ↗" control */
+#board th:nth-child(8) { width: 20%; }    /* status                            */
+#board td.check { padding-left: 9px; padding-right: 4px; }
+
+/* Fixed layout will happily let content spill past its column. */
+#board td { overflow: hidden; text-overflow: ellipsis; }
+
+/* ── density ──
+   Comfortable is the default and what every measurement in this file assumes.
+   Compact trades the breathing room for roughly a third more rows per screen,
+   which is what a long triage session actually wants. Only padding and line
+   height change: no font drops below 11px and no target below 24px, so the
+   contrast and hit-area work still holds in both. */
+:root[data-density="compact"] #board td,
+:root[data-density="compact"] #board th { padding-top: 4px; padding-bottom: 4px; }
+:root[data-density="compact"] .namemeta { margin-top: 0; }
+:root[data-density="compact"] .rolelink { -webkit-line-clamp: 1; }
+:root[data-density="compact"] .statusreason { margin-top: 0; }
+:root[data-density="compact"] .bar { margin-top: 2px; }
+
+/* ── optional columns ──
+   Driven by one `data-hide` attribute on the table rather than a class on every
+   cell, so a re-render cannot lose the setting. Grade, role and status are not
+   hideable: a board without them is not denser, it is empty. */
+#board[data-hide~="sponsor"] th:nth-child(4), #board[data-hide~="sponsor"] td:nth-child(4),
+#board[data-hide~="posted"]  th:nth-child(5), #board[data-hide~="posted"]  td:nth-child(5),
+#board[data-hide~="found"]   th:nth-child(6), #board[data-hide~="found"]   td:nth-child(6),
+#board[data-hide~="resume"]  th:nth-child(7), #board[data-hide~="resume"]  td:nth-child(7) {
+  display: none;
+}
+
+/* The board's width is the viewport MINUS the rail, so a generous rail is paid
+   for entirely by the table. At 1280 a 420px rail left the board 798px and the
+   role column collapsed to 87px. The rail needs less room than the board does. */
+@media (max-width: 1500px) { :root { --rail: 360px; } }
+@media (max-width: 1340px) { :root { --rail: 312px; } }
+
+/* `top: 0` parked the header UNDER the sticky topbar (which is opaque and sits
+   at z-index 20). `--topbar-h` is measured live, because the topbar wraps to
+   two and three rows as the viewport narrows and any constant would be wrong
+   at two of those three widths. */
 thead th {
   color: var(--text-faint); font-size: 10.5px; text-transform: uppercase;
   letter-spacing: .55px; background: var(--surface);
-  position: sticky; top: 0; z-index: 2; white-space: nowrap;
+  position: sticky; top: var(--topbar-h, 51px); z-index: 2; white-space: nowrap;
+  box-shadow: inset 0 -1px 0 var(--line);
 }
 thead th.sortable { cursor: pointer; user-select: none; }
 thead th.sortable:hover { color: var(--text); }
@@ -573,14 +802,39 @@ thead th[aria-sort] { color: var(--accent); }
 tbody tr:last-child td { border-bottom: none; }
 tr.job { transition: background .1s; cursor: pointer; }
 tr.job:hover { background: var(--surface-2); }
-tr.job[aria-selected="true"] {
+tr.job[aria-current="true"] {
   background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent);
 }
 tr.job:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 td.check { width: 34px; }
 
-.pagerbar { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+/* Sticky, because the thing it controls is 6,957px tall.
+   100 rows at comfortable density is ~7,000px, and the pager sat at the bottom
+   of all of it: changing page, checking "1–100 of 19,317", or reaching the
+   density control was a 7,000px round trip each way. Sticking it to the
+   viewport bottom costs ~50px and removes that journey entirely. It settles
+   into place normally once the end of the board comes into view. */
+.pagerbar {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  position: sticky; bottom: 0; z-index: 3;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line-soft);
+  margin-top: -1px;
+}
+/* The bulk-action bar is fixed over this same corner. When rows are selected
+   that bar is the subject, so the pager stands down rather than fighting it. */
+body:has(#selbar[data-open="true"]) .pagerbar {
+  position: static;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* The topbar is sticky and opaque, so scrolling the board "to the top" would
+   otherwise tuck the first rows underneath it. */
+.boardwrap { scroll-margin-top: calc(var(--topbar-h, 51px) + var(--s2)); }
 .pagerbar .pager { flex: 1 1 auto; min-width: 0; }
 .pager {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
@@ -621,27 +875,42 @@ td.check { width: 34px; }
 /* Aggregator source marker. Warn-toned, not error-toned: an aggregator listing
    is openable and useful, it just is not the employer's own application form. */
 .chip.agg { color: var(--warn); background: var(--warn-soft); font-size: 10.5px; }
+/* The other half of the "where you apply" slot: a real employer ATS. Quiet —
+   it is reassurance, where the aggregator chip is a caution. */
+.chip.ats-flag { color: var(--text-faint); background: transparent; border: 1px solid var(--line); font-size: 10.5px; padding: 0 6px; }
 
 /* ── Company / role cell ──
    The ROLE leads and is the link: this board is scanned by role, and reaching a
    posting used to take two clicks through the detail rail even though every row
    already carried its URL. The company/location moves to a secondary line. */
-.namecell { max-width: 420px; }
+/* Width now comes from the column, not from here. */
+.namecell { min-width: 0; }
+/* Clamped to two lines so one 150-character title cannot set the height of the
+   row next to it. The full text stays in the link's tooltip and the detail
+   rail. `anywhere` broke words mid-syllable even when a break was avoidable —
+   `break-word` only breaks a word that genuinely cannot fit. */
 .rolelink {
-  display: inline-block; max-width: 100%; color: var(--text);
-  font-weight: 600; text-decoration: none; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; max-width: 100%; color: var(--text);
+  font-weight: 600; text-decoration: none; overflow-wrap: break-word;
 }
 .rolelink:hover, .rolelink:focus-visible { color: var(--accent); text-decoration: underline; }
 /* No URL to open — render as plain text so it never looks clickable. */
 .rolelink.none { color: var(--text-dim); font-weight: 500; cursor: default; }
-.namemeta { margin-top: 2px; font-size: 12px; color: var(--text-dim); }
+/* One line, ellipsized. Company, location, aggregator and job-type all live
+   here, so it must never be the thing that grows a row. */
+.namemeta {
+  margin-top: 2px; font-size: 12px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .namemeta .co { font-weight: 500; }
+.namemeta .type-flag { font-size: 10.5px; }
 
 /* WHY a job is blocked/discarded, as real text rather than a tooltip only a
    mouse could reach. Clamped to one line so row heights stay uniform. */
 .statusreason {
   margin-top: 2px; font-size: 11.5px; color: var(--text-faint);
-  max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
 .grade {
@@ -655,6 +924,56 @@ td.check { width: 34px; }
 .grade.none { background: var(--chip); color: var(--text-faint); font-size: 11px; }
 .grade.big { width: 50px; height: 50px; border-radius: 12px; font-size: 23px; }
 
+/* ── hit areas ──
+   Measured: 128 controls were under the 24x24 CSS pixels WCAG 2.5.8 asks for,
+   and every selection checkbox was 13x13 — a third of the required area, on
+   the control you use most when triaging in bulk. The fix has to grow the
+   TARGET without growing the mark, or the board loses the density it just
+   gained, so the native box is replaced with one that draws small and hits
+   large. A wrapping <label> would have been simpler but the row is itself
+   clickable and the two clicks would fight. */
+#board td.check input[type=checkbox], #selAll, .toggle input[type=checkbox] {
+  -webkit-appearance: none; appearance: none;
+  width: 24px; height: 24px; margin: 0; padding: 0;
+  border: 0; background: none; cursor: pointer;
+  display: grid; place-content: center; flex: none;
+}
+/* The filter pills already give their checkbox a 34px label to be clicked
+   through, so this is about matching the board's mark, not about the target. */
+.toggle input[type=checkbox] { width: 20px; height: 20px; margin-left: -3px; }
+#board td.check input[type=checkbox]::before, #selAll::before, .toggle input[type=checkbox]::before {
+  content: ''; width: 15px; height: 15px; border-radius: 4px;
+  border: 1.5px solid var(--text-faint); background: var(--surface-2);
+  transition: background .1s, border-color .1s;
+}
+#board td.check input[type=checkbox]:hover::before, #selAll:hover::before,
+.toggle:hover input[type=checkbox]::before { border-color: var(--accent); }
+#board td.check input[type=checkbox]:checked::before, #selAll:checked::before,
+.toggle input[type=checkbox]:checked::before {
+  background: var(--accent); border-color: var(--accent);
+  /* The tick is drawn rather than shipped as an asset, so it inherits the
+     theme's ink colour and needs no network request under the strict CSP. */
+  background-image: linear-gradient(45deg, transparent 44%, var(--accent-ink) 44%, var(--accent-ink) 56%, transparent 56%),
+                    linear-gradient(-45deg, transparent 56%, var(--accent-ink) 56%, var(--accent-ink) 68%, transparent 68%);
+  background-size: 9px 2px, 5px 2px;
+  background-position: 4.5px 8px, 2.5px 7.4px;
+  background-repeat: no-repeat;
+}
+#board td.check input[type=checkbox]:focus-visible::before, #selAll:focus-visible::before,
+.toggle input[type=checkbox]:focus-visible::before {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+
+/* Health facts are activatable (they apply a filter), so they are targets too. */
+.stat { min-height: 24px; }
+.stat.clickable { padding: 2px 2px; border-radius: var(--r-xs); }
+/* The run pill's Details / Cancel / dismiss controls. The dismiss ✕ is an icon
+   button, so its width comes from one glyph plus padding — 23px, one short. */
+.runbox .run-btn { min-height: 24px; }
+.runbox .run-btn.icon { min-width: 24px; justify-content: center; }
+/* A filter chip's remove button was a 3px-padded glyph. */
+.pill button { min-width: 22px; min-height: 22px; display: inline-flex; align-items: center; justify-content: center; }
+
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
 .dot.confirmed { background: var(--good); }
 .dot.unconfirmed { background: var(--warn); }
@@ -663,6 +982,16 @@ td.check { width: 34px; }
 .rs.tailored { color: var(--good); background: var(--good-soft); }
 .rs.prepared { color: var(--accent); background: var(--accent-soft); }
 .rs.none { color: var(--text-faint); }
+/* The chip IS the preview control when there is a document behind it. Sized to
+   a real target rather than the 22px icon button it replaces. */
+button.rs-open {
+  border: 1px solid transparent; min-height: 24px; padding: 2px 10px;
+  font: inherit; font-size: 11px; cursor: pointer;
+}
+button.rs-open::after { content: ' ↗'; opacity: .55; }
+button.rs-open:hover { border-color: currentColor; background: var(--chip); }
+button.rs-open.tailored:hover { background: var(--good-soft); }
+button.rs-open.prepared:hover { background: var(--accent-soft); }
 
 .st-submitted { color: var(--good); }
 .st-blocked, .st-rejected, .st-failed, .st-submit_unverified { color: var(--bad); }
@@ -670,7 +999,9 @@ td.check { width: 34px; }
 .st-approved, .st-shortlisted { color: var(--accent); }
 .st-discovered, .st-scored, .st-archived, .st-discarded { color: var(--text-dim); }
 
-.bar { height: 5px; background: var(--chip); border-radius: 3px; overflow: hidden; min-width: 62px; }
+/* Now sits under the status label it was always read alongside, so it spans
+   the cell instead of holding a column open at a fixed 62px. */
+.bar { height: 4px; background: var(--chip); border-radius: 3px; overflow: hidden; margin-top: 4px; }
 .bar > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--good)); }
 .bar.off > i { background: var(--bad); }
 
@@ -680,8 +1011,81 @@ td.check { width: 34px; }
 }
 .mini > i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--accent); opacity: .75; }
 
+/* ─────────────────── narrow viewports ───────────────────
+   Measured before this existed, on a 390x844 phone: 924px of header, tabs,
+   health strip and filters stood between the top of the page and the first job
+   row — a full screen of scrolling before any content — and the board itself
+   needed 700px inside a 364px column, so every row also scrolled sideways. Two
+   scroll gestures in two axes to read one job.
+
+   The table becomes CARDS rather than growing a second renderer: one row
+   builder, one set of data-actions, one keyboard path. Only the presentation
+   changes. */
+@media (max-width: 860px) {
+  /* Column headers have nothing to head once rows are cards; each cell names
+     itself instead, from the data-label the row builder already sets. */
+  #board thead { display: none; }
+  #board, #board tbody, #board tr, #board td { display: block; }
+  #board { min-width: 0; }
+  .boardwrap { overflow-x: visible; }
+
+  /* `#board tr` above is an id selector and outranks a bare `tr.job`, so the
+     row stayed `display: block` and every cell took a line of its own. Matched
+     specificity, or none of this applies. */
+  #board tr.job {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 4px 9px; padding: 10px 12px;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  /* `min-width: 0` is load-bearing. A flex item defaults to `min-width: auto`
+     and so refuses to shrink below its content's min-content width — one
+     unwrapped blocker message ("The last fill failed: could not start
+     browser…") made its cell 1,387px and the whole board scrolled sideways
+     again, even though every row reported the right width. */
+  #board tr.job > td {
+    border: 0; padding: 0; overflow: visible; min-width: 0; max-width: 100%;
+  }
+
+  /* Line one: pick, grade, and the role — everything you triage on. */
+  #board td.check { flex: 0 0 auto; padding: 0; }
+  #board td:nth-child(2) { flex: 0 0 auto; display: flex; align-items: baseline; gap: 6px; }
+  #board td:nth-child(2) .faint { font-size: 11px; }
+  .namecell { flex: 1 1 60%; min-width: 0; }
+  .namecell .rolelink { -webkit-line-clamp: 3; }
+  .namemeta { white-space: normal; }
+
+  /* Line two: the facts, each labelled because there is no header row now.
+     Tightened so Sponsor / Posted / Found share ONE line instead of spilling
+     onto three — measured, that alone took ~30px off every card. */
+  #board td[data-label] { font-size: 11.5px; }
+  #board td[data-label]::before {
+    content: attr(data-label) ' ';
+    color: var(--text-faint); font-size: 9.5px; text-transform: uppercase;
+    letter-spacing: .3px; margin-right: 2px;
+  }
+  /* "Posted"/"Found" are self-evident once the dates sit side by side, and the
+     labels cost more width than they explain on a 390px screen. */
+  #board td[data-label="Posted"]::before { content: '◷ '; letter-spacing: 0; }
+  #board td[data-label="Found"]::before { content: 'seen '; }
+  #board td[data-label="Sponsor"]::before { content: ''; margin: 0; }
+  /* "RESUME —" is a labelled way of saying nothing, and it cost a line on every
+     card that has no packet yet — which is most of the board. */
+  #board td[data-label="Resume"]:has(.rs.none) { display: none; }
+  #board td[data-label="Status"] { flex: 1 1 100%; }
+  #board td[data-label="Status"] .bar { max-width: 180px; }
+  /* Two lines, not however many a long blocker message wants — one row grew to
+     1,206px tall and pushed every other card off the screen. */
+  #board .statusreason {
+    white-space: normal; display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; overflow: hidden;
+  }
+
+  /* An empty/error message is a block cell now, so it must not be squeezed. */
+  #board td.empty, #board td .empty { width: 100%; }
+}
+
 /* ─────────────────── detail rail ─────────────────── */
-.rail-sticky { position: sticky; top: 76px; }
+.rail-sticky { position: sticky; top: calc(var(--topbar-h, 51px) + var(--s5)); }
 .detail-head { display: flex; gap: var(--s3); align-items: flex-start; }
 .detail-head h2 { margin: 0; font-size: 15.5px; line-height: 1.35; }
 .chiprow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
@@ -760,6 +1164,12 @@ ul.plan li { margin: 3px 0; }
 
 .change-list { margin: 6px 0 0; padding-left: 18px; }
 .change-list li { margin: 4px 0; }
+/* Sponsorship evidence: the posting's own words, quoted. */
+.evidence-label { font-size: 12px; margin-top: var(--s2); }
+.evidence-quotes { margin-top: 2px; }
+.evidence-quotes li { color: var(--text); font-size: 12.5px; }
+.evidence-quotes q { font-style: italic; }
+
 .evidence-note {
   border-left: 3px solid var(--accent); background: var(--accent-soft);
   border-radius: var(--r-sm); padding: var(--s2) var(--s3);
@@ -772,10 +1182,80 @@ ul.plan li { margin: 3px 0; }
 }
 
 /* ─────────────────── analytics ─────────────────── */
+/* TWO columns, never three, and never auto-fit.
+   `auto-fit, minmax(258px, 1fr)` gave three narrow cards plus a lone orphan on
+   a second row at 1600px, and squeezed a five-column table into 250px until it
+   truncated its own headers ("STRONG F…"). Two columns give every table room
+   for its widest number, and the activity card spans both so the row always
+   fills. `align-items: start` keeps each card at its own height — grid items
+   stretch to their row by default, which is how a five-row card ended up 2,799px
+   tall next to the 56-row one. */
 .analytics {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(258px, 1fr));
-  gap: var(--s3); margin-top: var(--s4);
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--s3); margin-top: 0;
 }
+.analytics .card.wide { grid-column: 1 / -1; }
+@media (max-width: 900px) {
+  .analytics { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── one card anatomy, used by all five ──
+   Title, then the ANSWER in a sentence, then the detail. Every card previously
+   opened straight into a table, so reading one meant deriving its point from
+   the numbers yourself. */
+.analytics .card { padding: 0; overflow: hidden; }
+.card-head {
+  padding: var(--s3) var(--s4) var(--s2);
+  border-bottom: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+.card-head h3 { margin: 0 0 3px; }
+.card-lead { margin: 0; font-size: 12.5px; color: var(--text-dim); }
+.analytics .minitable { width: 100%; }
+.analytics .minitable td, .analytics .minitable th { padding: 5px var(--s4); }
+.analytics .minitable thead th {
+  font-size: 10px; letter-spacing: .5px; color: var(--text-faint);
+  border-bottom: 1px solid var(--line-soft); white-space: nowrap;
+}
+.analytics .trend-row { padding: var(--s2) var(--s4) var(--s3); }
+
+/* A count and its bar are one unit: the bar reads as a magnitude for the number
+   it sits under, so they share a column and a right edge. */
+.num-with-bar { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 3px; min-width: 82px; }
+.num-with-bar .n { font-variant-numeric: tabular-nums; }
+.num-with-bar .bar { width: 100%; margin: 0; }
+
+/* Strong-fit yield. A zero here is the point of the column — a source can
+   supply a third of the corpus and one strong fit — so it is quiet rather than
+   absent, and a real figure is given the ink. */
+.yield-on { color: var(--good); font-variant-numeric: tabular-nums; }
+.yield-off { color: var(--text-faint); font-weight: 400; font-variant-numeric: tabular-nums; }
+
+.cell-link { padding: 0 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+.minitable .ellipsis { max-width: 0; width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Live automation failures arrive as raw driver messages; one unclamped line
+   set the height of the whole card. */
+.clamp-2 {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+
+/* The long tail of a breakdown: built, hidden, revealed in place. */
+.minitable tbody tr.tail { display: none; }
+.minitable tbody.show-tail tr.tail { display: table-row; }
+.breakdown-more { width: 100%; justify-content: center; margin-top: 2px; }
+.more-row td { border-bottom: 0; padding-top: 2px; }
+.analytics-head { margin: var(--s5) 0 var(--s2); font-size: 13px; }
+.analytics-toggle {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  width: 100%; padding: 6px 8px; text-align: left; white-space: normal;
+  font-size: 13px; font-weight: 650;
+  background: none; border-color: transparent;
+}
+.analytics-toggle:hover { background: var(--surface); border-color: var(--line-soft); }
+.analytics-toggle .caret { color: var(--text-faint); font-size: 11px; flex: none; }
+.analytics-head .faint { font-size: 12px; font-weight: 400; }
 .analytics .card { margin: 0; min-width: 0; }
 .scrollx { overflow-x: auto; }
 .minitable { width: 100%; }
@@ -784,6 +1264,47 @@ ul.plan li { margin: 3px 0; }
 }
 .minitable thead th { position: static; }
 .minitable td.r, .minitable th.r { text-align: right; }
+
+/* ── daily activity: one facet per measure ──
+   Each facet is a single series on its own scale, so the label carries identity
+   and the mark needs no colour of its own beyond the accent. Mark specs: 2px
+   line with round joins, an end marker ringed in the surface colour so it stays
+   readable where the line doubles back beneath it. */
+/* The analytics grid can hand this card as little as 258px, and a fixed-width
+   spark plus the label column overflowed it — clipping the end marker off the
+   Found facet, which is the one point a sparkline most needs to show. Both
+   columns are now allowed to shrink, and the SVG scales with its box. */
+/* Three facets across the full-width card instead of stacked, so the whole
+   week reads in one glance rather than three. */
+.trend-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 var(--s4); }
+.trend-row .sr-only { grid-column: 1 / -1; }
+@media (max-width: 700px) { .trend-row { grid-template-columns: minmax(0, 1fr); } }
+/* `1fr auto` let the label block absorb the slack and pushed each sparkline to
+   the far right of its third, so a number and the line it describes sat ~180px
+   apart. `auto 1fr` gives the text what it needs and hands the rest to the
+   chart, which is the element that benefits from width. */
+.trend {
+  display: grid; grid-template-columns: auto minmax(74px, 1fr);
+  align-items: center; gap: 2px var(--s3);
+  padding: 7px 0; border-bottom: 1px solid var(--line-soft);
+}
+.trend-row .trend { border-bottom: 0; padding: 4px 0; }
+.trend-head { display: flex; align-items: baseline; gap: 7px; grid-column: 1; min-width: 0; }
+.trend-label { font-size: 12.5px; color: var(--text-dim); }
+.trend-now { font-size: 15px; font-variant-numeric: tabular-nums; }
+.trend .spark { grid-column: 2; grid-row: 1 / span 2; width: 100%; height: 30px; }
+.trend-sum {
+  grid-column: 1; font-size: 11px; color: var(--text-faint);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.spark-line {
+  fill: none; stroke: var(--accent); stroke-width: 2;
+  stroke-linejoin: round; stroke-linecap: round;
+  /* The viewBox is stretched to the box, which would squash the stroke with it. */
+  vector-effect: non-scaling-stroke;
+}
+.spark-end { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
 
 /* ─────────────────── dialogs ─────────────────── */
 dialog {
@@ -823,6 +1344,20 @@ dialog.sheet { width: min(1200px, 96vw); max-height: 92vh; overflow: auto; }
 .preview-status { min-height: 18px; color: var(--text-dim); font-size: 12px; }
 .preview-status.bad { color: var(--bad); }
 
+/* ─────────────────── keyboard shortcut sheet ─────────────────── */
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 7px var(--s3); margin: 0; align-items: baseline; }
+.keys dt { text-align: right; white-space: nowrap; }
+.keys dd { margin: 0; color: var(--text-dim); font-size: 13px; }
+.keys .keys-sec {
+  margin-top: var(--s2); font-size: 10.5px; text-transform: uppercase;
+  letter-spacing: .55px; color: var(--text-faint); font-weight: 650;
+}
+kbd {
+  font: 11.5px/1.6 var(--mono); background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: var(--r-xs); padding: 1px 6px; white-space: nowrap;
+}
+
 /* ─────────────────── master resume ─────────────────── */
 #dlgMaster { width: min(820px, 96vw); max-height: 92vh; flex-direction: column; }
 #dlgMaster[open] { display: flex; }
@@ -859,6 +1394,38 @@ dialog.sheet { width: min(1200px, 96vw); max-height: 92vh; overflow: auto; }
 /* Spacing only — .attention itself is defined once with the detail rail. */
 #dlgMaster .attention, #documentsBody .attention { margin: var(--s2) 0; }
 
+/* ─────────────────── signature ───────────────────
+   A designer's mark, set the way a signature is set: small, quiet, at the end.
+   It uses `--text-faint`, which is the palette's quietest ink and is contrast-
+   checked (5.02:1 dark / 4.93:1 light), so "subtle" never means "unreadable".
+   The gradient chip is the same mark as the header brand, at half size — the
+   page signs itself with the logo it already wears. */
+.signature {
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+  gap: var(--s2) var(--s3);
+  padding: var(--s5) var(--s5) var(--s6);
+  border-top: 1px solid var(--line-soft);
+  margin-top: var(--s5);
+  font-size: 12px; color: var(--text-faint);
+}
+.signature .sig-mark {
+  width: 11px; height: 11px; border-radius: 3px; flex: none;
+  background: linear-gradient(135deg, var(--accent) 0%, #7cc7ff 55%, var(--good) 100%);
+  opacity: .9;
+}
+.signature .sig-text { letter-spacing: .2px; }
+/* The name itself carries the emphasis — one step up in weight and ink, which
+   is all a signature needs to be legible without becoming a headline. */
+.signature .sig-text b { font-weight: 640; color: var(--text-dim); }
+.signature .sig-sep { width: 1px; height: 11px; background: var(--line); }
+.signature .sig-meta { font-size: 11.5px; }
+@media (max-width: 860px) {
+  .signature { padding: var(--s4) var(--s3) var(--s5); }
+  .signature .sig-sep { display: none; }
+}
+/* The board is a long page; the signature should not print on every sheet. */
+@media print { .signature { border-top: 0; } }
+
 /* ─────────────────── toasts + selection bar ─────────────────── */
 #toasts {
   position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
@@ -873,6 +1440,10 @@ dialog.sheet { width: min(1200px, 96vw); max-height: 92vh; overflow: auto; }
 }
 .toast.bad { border-color: var(--bad); }
 .toast.good { border-color: var(--good); }
+/* An undo toast is interactive, so it earns a little more room and a real
+   button rather than the plain text of an ordinary notice. */
+.undo-toast { display: flex; align-items: center; gap: var(--s3); padding-right: 10px; }
+.undo-toast button { flex: none; }
 @keyframes toastin { from { opacity: 0; transform: translateY(6px); } }
 
 #selbar {
@@ -924,23 +1495,66 @@ code.jobid {
 a.btn { text-decoration: none; color: var(--text); }
 a.btn:hover { color: var(--text); }
 
-/* Next-action items are full sentences. The global `white-space: nowrap` on
-   buttons made them overflow the 420px rail instead of wrapping. */
-#nextActions .plan button {
-  white-space: normal;
-  text-align: left;
-  display: inline;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
+/* ─────────────────── next actions ───────────────────
+   One promoted action, then a scannable ranked list, then tool notices. The
+   old rendering was six identical link-blue sentences; nothing could be skimmed
+   because the counts were mid-sentence and every row had equal weight. */
+#nextActions h2 {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .55px;
+  color: var(--text-faint); font-weight: 650; margin-bottom: var(--s2);
 }
-#nextActions .plan button:hover { background: none; text-decoration: underline; }
-#nextActions .plan li { margin: 5px 0; }
+
+/* The single most important thing to do, given the weight to say so. */
+.na-primary {
+  display: flex; align-items: center; gap: var(--s3); width: 100%;
+  text-align: left; white-space: normal; padding: var(--s3);
+  border-radius: var(--r-md);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: linear-gradient(135deg, var(--accent-soft), transparent 70%);
+}
+.na-primary:hover { border-color: var(--accent); background: var(--accent-soft); }
+.na-count {
+  font-size: 26px; font-weight: 680; line-height: 1; color: var(--accent);
+  font-variant-numeric: tabular-nums; flex: none;
+}
+.na-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.na-body b { font-size: 13.5px; font-weight: 650; }
+.na-detail { font-size: 11.5px; color: var(--text-dim); }
+.na-go { flex: none; color: var(--text-faint); }
+.na-primary:hover .na-go, .na-row:hover .na-go { color: var(--accent); }
+
+/* The rest: one line each, counts right-aligned in a fixed column so the eye
+   runs down the numbers instead of hunting for them inside sentences. */
+.na-list { list-style: none; margin: var(--s2) 0 0; padding: 0; }
+.na-row {
+  display: grid; grid-template-columns: 3.4em 1fr auto; align-items: baseline;
+  gap: var(--s2); width: 100%; padding: 5px var(--s2);
+  background: none; border-color: transparent; text-align: left;
+}
+.na-row:hover { background: var(--surface-2); border-color: transparent; }
+.na-n {
+  text-align: right; font-variant-numeric: tabular-nums;
+  font-weight: 640; color: var(--text);
+}
+.na-verb { color: var(--text-dim); white-space: normal; }
+.na-row:hover .na-verb { color: var(--text); }
+
+/* A fact about the tool, not a queue of jobs — so it does not sit in the ranked
+   list pretending to be the fifth most important thing to work on. */
+.na-note {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--s2); flex-wrap: wrap;
+  margin-top: var(--s3); padding-top: var(--s3);
+  border-top: 1px solid var(--line-soft);
+  font-size: 12px; color: var(--text-faint);
+}
+.na-note-text { min-width: 0; }
 
 /* Source-name buttons in the analytics table are chips, not sentences. */
-#srcRows button { padding: 0 2px; background: none; border: 0; color: var(--accent); }
+#srcRows button {
+  padding: 2px 6px; background: none; border: 0; color: var(--accent);
+  min-height: 24px; border-radius: var(--r-xs);
+}
 #srcRows button:hover { background: none; text-decoration: underline; }
 
 /* Long role names must wrap inside the rail rather than widen the panel. */

@@ -15,9 +15,16 @@ describe('dashboard shell structure', () => {
     // contract between them is asserted directly.
     for (const id of [
       'health', 'tabs', 'rows', 'pager', 'detail', 'nextActions', 'activeFilters',
-      'srcRows', 'sponRows', 'stateRows', 'blockRows', 'dailyRows',
+      // `dailyTrend` replaced the `dailyRows` table: the daily figures are a
+      // time series across three measures of wildly different magnitude, which
+      // is small multiples, not four columns of numbers.
+      'srcRows', 'sponRows', 'stateRows', 'blockRows', 'dailyTrend',
       'selbar', 'selCount', 'selAll', 'toasts', 'conn', 'runStatus', 'offline',
       'btnDiscover', 'btnPrepare', 'btnCancel', 'autoApplyBtn', 'cmpBtn',
+      // The board region the tabs control and the skip link targets.
+      'boardwrap', 'filterbar', 'boardAnnounce',
+      // View preferences: density + columns.
+      'viewMenu', 'columnToggles',
     ]) {
       expect(html, `missing id="${id}"`).toContain(`id="${id}"`);
     }

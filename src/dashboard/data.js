@@ -853,29 +853,65 @@ function computeDashboardStats(db, now) {
  */
 export function buildNextActions(totals, strongUntriaged = 0) {
   const actions = [];
+  /*
+   * Each entry carries BOTH a full sentence and its parts.
+   *
+   * `text` is the whole guidance in one line — it stays because it is the
+   * accessible description and because callers already read it. The parts exist
+   * because the panel that renders these was a wall of six identical blue
+   * sentences: the count, which is the only scannable thing in each, sat buried
+   * mid-sentence in link-coloured prose, and the ORDER of this array — which is
+   * a real priority ranking, submit-unverified before ready-to-submit before
+   * approvals — was flattened away by rendering every item the same.
+   *
+   * `verb` is deliberately imperative and short. The stage tabs above the board
+   * are NOUNS ("Needs review", "Needs you"); four of these actions point at the
+   * very same queues, so saying "Approve prepared packets" rather than
+   * "179 prepared packet(s) await your approval" is what stops this panel from
+   * being a third restatement of the same counts in a third visual language.
+   *
+   * `kind: 'system'` marks a notice about the TOOL rather than a queue of jobs,
+   * so the renderer can keep it out of the ranked list where it does not belong.
+   */
+  const add = ({ count, verb, detail, text, filter, kind = 'job' }) => {
+    actions.push({ text: text ?? `${count} ${detail}`, count: count ?? null, verb, detail, filter, kind });
+  };
+
   // Unverified auto-submits come first: until confirmed, the job is neither
   // safely "submitted" nor safe to re-fill — only the human can resolve it.
   if (totals.submitUnverified > 0) {
-    actions.push({
+    add({
+      count: totals.submitUnverified,
+      verb: 'Confirm auto-submits',
+      detail: 'check your email for the ATS confirmation, then Mark submitted (or finish manually)',
       text: `${totals.submitUnverified} auto-submit(s) could not be confirmed — check your email for the ATS `
         + 'confirmation, then Mark submitted (or finish manually)',
       filter: { appStatus: APP_STATUS.SUBMIT_UNVERIFIED },
     });
   }
   if (totals.readyForSubmit > 0) {
-    actions.push({
+    add({
+      count: totals.readyForSubmit,
+      verb: 'Submit filled applications',
+      detail: 'review each browser tab and click Submit yourself',
       text: `${totals.readyForSubmit} application(s) are filled and waiting — review each browser tab and click Submit yourself`,
       filter: { appStatus: APP_STATUS.READY_FOR_SUBMIT },
     });
   }
   if (totals.pendingReview > 0) {
-    actions.push({
+    add({
+      count: totals.pendingReview,
+      verb: 'Approve prepared packets',
+      detail: 'read the tailored resume, then approve it for auto-fill',
       text: `${totals.pendingReview} prepared packet(s) await your approval`,
       filter: { appStatus: APP_STATUS.NEEDS_REVIEW },
     });
   }
   if (totals.blocked > 0) {
-    actions.push({
+    add({
+      count: totals.blocked,
+      verb: 'Unblock applications',
+      detail: 'a login, CAPTCHA or unanswered question stopped the fill',
       text: `${totals.blocked} application(s) are blocked (login / CAPTCHA / unanswered questions) and need you`,
       // totals.blocked counts blocked + failed + cancelled, so this must open
       // the "Needs you" VIEW. Filtering on appStatus: blocked alone showed
@@ -884,7 +920,10 @@ export function buildNextActions(totals, strongUntriaged = 0) {
     });
   }
   if (strongUntriaged > 0) {
-    actions.push({
+    add({
+      count: strongUntriaged,
+      verb: 'Decide on strong fits',
+      detail: 'shortlist the ones worth pursuing, reject the rest',
       text: `${strongUntriaged} strong-fit job(s) have no decision yet — shortlist or reject them`,
       // "No decision yet" is exactly the Best matches view. The old
       // { fit: 'strong' } filter also showed every strong job already
@@ -894,7 +933,10 @@ export function buildNextActions(totals, strongUntriaged = 0) {
     });
   }
   if (totals.needsSponsorshipCheck > 0) {
-    actions.push({
+    add({
+      count: totals.needsSponsorshipCheck,
+      verb: 'Verify sponsorship',
+      detail: "check the employer's careers page and past H-1B filings, then shortlist and prepare",
       text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check — verify the employer `
         + 'sponsors H-1B (their careers page, past filings), then shortlist and prepare',
       // The count is isSponsorshipGated(); the board has a filter for exactly
@@ -904,7 +946,10 @@ export function buildNextActions(totals, strongUntriaged = 0) {
     });
   }
   if (totals.dateUnconfirmed > 0) {
-    actions.push({
+    add({
+      count: totals.dateUnconfirmed,
+      verb: 'Confirm posting dates',
+      detail: 'the source gave no confirmed date, so these were held back',
       text: `${totals.dateUnconfirmed} job(s) have no confirmed posting date — review them manually`,
       filter: { appStatus: APP_STATUS.DATE_UNCONFIRMED },
     });
@@ -914,9 +959,13 @@ export function buildNextActions(totals, strongUntriaged = 0) {
   // warning (this avoids the confusing "0 discovered today" vs "many posted
   // last 24h" mismatch users saw).
   if ((totals.discoveredLast24h ?? totals.discoveredToday) === 0) {
-    actions.push({
+    add({
+      count: null,
+      verb: 'Find new jobs',
+      detail: 'nothing new has been found in the last 24 hours',
       text: 'No new jobs found in the last 24h — run Discover (or Find & Prepare) to refresh the board',
       filter: null,
+      kind: 'system',
     });
   }
   return actions;
@@ -1025,11 +1074,11 @@ export function boardPage(db, filters = {}) {
     rows = rows.filter((r) => [r.company, r.title, r.location]
       .some((v) => String(v ?? '').toLowerCase().includes(q)));
   }
-  // Section-tab view: a curated predicate that scopes the board to exactly the
-  // jobs counted by that tab's badge. Applied before the other filters.
-  if (filters.view && BOARD_VIEWS[filters.view]) {
-    rows = rows.filter(BOARD_VIEWS[filters.view]);
-  }
+  // NOTE: the section-tab view is applied at the END of this pipeline, not
+  // here. Every filter is a conjunctive predicate so the surviving set is
+  // identical either way, but applying the view last leaves a row set that has
+  // every OTHER filter applied — which is exactly what the tab badges have to
+  // be counted against once filters and tabs can be combined.
   if (filters.fit) rows = rows.filter((r) => r.fit === filters.fit);
   if (filters.appStatus) rows = rows.filter((r) => r.appStatus === filters.appStatus);
   if (filters.source) rows = rows.filter((r) => r.source === filters.source);
@@ -1114,6 +1163,33 @@ export function boardPage(db, filters = {}) {
     rows = rows.filter((r) => !CLOSED_SET.has(r.appStatus));
   }
 
+  /*
+   * Tab badges, counted against everything EXCEPT the tab itself.
+   *
+   * A tab badge promises "this many rows if you click me". While filters reset
+   * the tab that promise was trivially true. Now that a filter narrows WITHIN a
+   * tab, the unfiltered count would claim 179 while the board showed 154, and
+   * every other tab's badge would be wrong the moment you clicked it.
+   *
+   * Only computed when asked for, because the caller only needs it when a
+   * filter is actually active — otherwise `/api/stats` already has these and
+   * this would be up to 8 predicate passes over the whole table for nothing.
+   */
+  let viewCounts;
+  if (filters.withViewCounts === true || filters.withViewCounts === 'true') {
+    viewCounts = {};
+    for (const [key, predicate] of BOARD_VIEW_ENTRIES) {
+      let n = 0;
+      for (const row of rows) if (predicate(row)) n += 1;
+      viewCounts[key] = n;
+    }
+  }
+
+  // Applied last — see the note above the other filters.
+  if (filters.view && BOARD_VIEWS[filters.view]) {
+    rows = rows.filter(BOARD_VIEWS[filters.view]);
+  }
+
   // `rows` may still be the exact array `allBoardRows` cached (no filter above
   // reassigned it, e.g. the "tracked" tile's `includeClosed`-only request) —
   // sort a copy so this doesn't reorder the cached value out from under every
@@ -1135,6 +1211,7 @@ export function boardPage(db, filters = {}) {
     offset,
     page: Math.floor(offset / limit) + 1,
     pages: Math.max(1, Math.ceil(total / limit)),
+    ...(viewCounts ? { viewCounts } : {}),
   };
 }
 
