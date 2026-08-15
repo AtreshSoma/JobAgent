@@ -2,10 +2,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-
-function pythonExe(env = process.env) {
-  return env.PYTHON || env.PYTHON_EXECUTABLE || 'python';
-}
+import { pythonExe, pythonEnv } from './pythonEnv.js';
 
 function lastJsonLine(text) {
   const lines = String(text ?? '').split(/\r?\n/).filter((line) => line.trim());
@@ -24,7 +21,13 @@ export function ensureResumePdf(docxPath, { spawnImpl = spawn, env = process.env
   return new Promise((resolve) => {
     let child;
     try {
-      child = spawnImpl(pythonExe(env), [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+      // `pythonEnv` is what keeps the docx path intact across the pipe. Without
+      // it Python reads this path in the OS code page and looks for a file that
+      // does not exist, one byte different from the one Node just verified.
+      child = spawnImpl(pythonExe(env), [script], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: pythonEnv(env),
+      });
     } catch (err) {
       resolve({ exported: false, pdfPath: null, reason: `preview converter could not start: ${err.message}` });
       return;

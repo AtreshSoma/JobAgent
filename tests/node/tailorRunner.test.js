@@ -61,6 +61,13 @@ describe('tailorResumeForJob', () => {
     writeFileSync(masterResumePath(root), 'fake docx');
 
     const outputPath = join(root, 'resumes', 'output', 'acme.docx');
+    // A successful tailor leaves a file behind, so the mock has to as well:
+    // the runner now verifies that the path python reports back actually
+    // exists. That check is what catches a Node/Python encoding disagreement
+    // over a non-ASCII employer name, which once wrote resumes into a
+    // directory nobody else could find.
+    mkdirSync(join(root, 'resumes', 'output'), { recursive: true });
+    writeFileSync(outputPath, 'tailored docx');
     let written = '';
     const spawnImpl = () => {
       const child = new EventEmitter();

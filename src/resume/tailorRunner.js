@@ -19,6 +19,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { extractJdRequirements } from '../llm/jdRequirements.js';
+import { pythonExe, pythonEnv } from './pythonEnv.js';
 
 /** Default master resume location (never overwritten). */
 export function masterResumePath(root) {
@@ -28,11 +29,6 @@ export function masterResumePath(root) {
 /** Default tailored-output directory. */
 export function outputDir(root) {
   return join(root, 'resumes', 'output');
-}
-
-/** Resolve the python executable (env override -> python -> python3). */
-function pythonExe(env = process.env) {
-  return env.PYTHON || env.PYTHON_EXECUTABLE || 'python';
 }
 
 /** Build the keyword set to emphasize from a score result. */
@@ -218,6 +214,22 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     return { ...fallback, warning: `resume tailoring failed: ${response?.error ?? 'unknown error'}` };
   }
 
+  // The path Python reports back is where the file REALLY went. If it does not
+  // exist from Node's side, the two processes disagreed about the bytes in a
+  // filename — which is exactly how "84.51°" resumes were written into a
+  // directory called "84.51Â°" while their packet JSON went to the right one,
+  // and nothing noticed for weeks. The pipe is UTF-8 now (see pythonEnv.js);
+  // this is the assertion that says so on every single run, so the next variant
+  // of this bug surfaces immediately instead of silently splitting a packet.
+  if (response.output_path && !existsSync(response.output_path)) {
+    return {
+      ...fallback,
+      warning: 'resume tailoring reported a file that is not there: '
+        + `${response.output_path}. This usually means the Node/Python text `
+        + 'encodings disagree about a non-ASCII character in the employer name.',
+    };
+  }
+
   return {
     tailored: true,
     output_path: response.output_path,
@@ -270,7 +282,13 @@ function invokePython(request, deps = {}) {
   return new Promise((resolve, reject) => {
     let child;
     try {
-      child = spawnImpl(pythonExe(env), [script], { stdio: ['pipe', 'pipe', 'pipe'] });
+      // The request carries the output directory, which is derived from the
+      // company name. Without a UTF-8 pipe the tailor CREATES the mangled
+      // directory and writes the resume into it — see pythonEnv.js.
+      child = spawnImpl(pythonExe(env), [script], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: pythonEnv(env),
+      });
     } catch (err) {
       reject(err);
       return;
