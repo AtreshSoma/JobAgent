@@ -26,14 +26,13 @@ const DEFAULT_BOARD_CONCURRENCY = 8;
  * @param {object} source jobboards source entry ({ boards: string[] })
  * @param {object} ctx
  * @param {typeof fetch} [ctx.fetchImpl]
- * @param {{ wait: Function }} [ctx.rateLimiter]
  * @param {number} [ctx.maxRetries]
  * @param {number} [ctx.boardConcurrency]
  * @param {number} [ctx.requestTimeoutMs]
  * @returns {Promise<{ jobs: object[], errors: Array<{board: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = fetch, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const jobs = [];
@@ -44,7 +43,13 @@ export async function run(source = {}, ctx = {}) {
   // fan-out within the budget boards-api.greenhouse.io is actually counting.
   const perBoard = await mapWithConcurrency(boards, concurrency, async (token) => {
     try {
-      if (rateLimiter) await rateLimiter.wait(`greenhouse:${GREENHOUSE_HOST}`, source.rateLimitMs);
+      // No rate-limiter call here. It was keyed on the constant host string, so
+      // every board shared ONE key: concurrent callers all read the same
+      // `lastCall` before any of them wrote it, were released together, and
+      // arrived as one burst — the limiter enforced no spacing at all and only
+      // added dead latency. `hostGate` is the real politeness mechanism for
+      // this host: it bounds in-flight requests, honors Retry-After, and trips
+      // a breaker on repeated 429s. In-flight concurrency is unchanged.
       const url = `https://${GREENHOUSE_HOST}/v1/boards/${encodeURIComponent(token)}/jobs?content=true`;
       const call = () => fetchJson(fetchImpl, url, requestTimeoutMs);
       const data = await withRetry(

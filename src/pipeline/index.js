@@ -27,6 +27,7 @@ import { urlKeyFor } from '../search/deduplicator.js';
 import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
+import { createSourceTimings } from '../search/sourceTimings.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { buildProfileVocabulary, classifyTitleFit } from '../scoring/profileFit.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
@@ -122,9 +123,12 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       ? db.listJobIds()
       : (db.listJobs?.({}) ?? []).map((r) => r.id),
   );
-  const workdayDetailCache = db.getReusableWorkdayDetail
-    ? (jobId) => db.getReusableWorkdayDetail(jobId)
-    : null;
+  // Descriptions bought by an earlier run, reusable by ANY adapter with a
+  // detail budget — not just Workday. `workdayDetailCache` stays as an alias so
+  // the Workday adapter's existing parameter name keeps resolving.
+  const detailCache = db.getReusableDetail
+    ? (jobId) => db.getReusableDetail(jobId)
+    : (db.getReusableWorkdayDetail ? (jobId) => db.getReusableWorkdayDetail(jobId) : null);
   const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
@@ -137,7 +141,12 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       // is only checked BETWEEN operations, so without this a request already on
       // the wire ran to completion or to its timeout — a ~30s "Stopping…".
       abortSignal: deps.abortSignal,
-      workdayDetailCache,
+      detailCache,
+      workdayDetailCache: detailCache,
+      // Lets the orchestrator claim the slowest sources first and leaves a
+      // per-source timing record behind for diagnosis. Injectable so tests
+      // never touch the filesystem.
+      sourceTimings: deps.sourceTimings ?? createSourceTimings({ root: config.root }),
     },
     hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs

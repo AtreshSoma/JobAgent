@@ -128,6 +128,15 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   // Run all enabled sources concurrently (bounded). mapSettled preserves input
   // order, so results are gathered in priority order — collection and dedup
   // stay deterministic regardless of which source finishes first.
+  //
+  // What it does NOT preserve is the order work is claimed in. Priority says
+  // which source we trust, not how long it takes, and the pool is smaller than
+  // the source list: with the two slowest sources sitting 9th and 10th of 15
+  // behind a pool of 6, they started only after eight shorter ones finished and
+  // the run ended when the last of them drained on its own. Claiming
+  // longest-first (measured, from the previous run) overlaps them with the
+  // short work. With no timings on disk this is a no-op and order is unchanged.
+  const timings = ctx.sourceTimings ?? null;
   const settled = await mapSettled(sources, sourceConcurrency, async (source) => {
     const startedAt = Date.now();
     if (ctx.shouldCancel?.()) {
@@ -154,13 +163,17 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
       return {
         jobs, errors: sourceErrors, cancelled: result.cancelled === true,
         durationMs, cached: result.cached === true,
+        // Descriptions answered from an earlier run instead of re-bought. Worth
+        // reporting: it is the difference between a source that reads a board
+        // and one that re-reads the same board every time.
+        reused: Number(result.reused) || 0,
       };
     } catch (error) {
       const durationMs = Date.now() - startedAt;
       hooks.onSource?.({ phase: 'end', source: source.id, adapter: source.adapter, found: 0, errors: 1, durationMs });
       throw error;
     }
-  });
+  }, timings ? { costOf: (source) => timings.expectedMs(source.id) } : {});
 
   const collected = [];
   const errors = [];
@@ -187,8 +200,14 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
       cancelled: payload.cancelled === true,
       durationMs: payload.durationMs ?? null,
       cached: payload.cached === true,
+      reused: Number(payload.reused) || 0,
     });
   }
+
+  // Remember what each source cost, so the next run can schedule on measurement
+  // instead of on priority — and so a slow run can still be explained after it
+  // has finished. Recording never throws.
+  timings?.record?.(perSource);
 
   const { unique, duplicates } = deduplicate(collected, { existsInDb });
 

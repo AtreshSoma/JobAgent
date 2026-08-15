@@ -56,6 +56,9 @@ data/unknown_date_review.json
 data/job_tracker.csv
 data/approval_queue.json
 data/run_state.json
+# Measured per-source discovery durations. A local cache used to schedule the
+# slowest sources first — machine- and network-specific, so it is never shared.
+data/source_timings.json
 data/packets/
 data/application-state/
 resumes/output/*
@@ -63,6 +66,9 @@ resumes/output/*
 # Timestamped copies the tailoring step writes before touching the master.
 # Generated artifacts, not sources — the master itself stays tracked.
 resumes/base/history/
+# A PDF rendered FROM the tracked MASTER_RESUME.docx. Derived, regenerated on
+# demand, and a binary that would churn on every export.
+resumes/base/MASTER_RESUME.pdf
 applications/output/*
 !applications/output/.gitkeep
 logs/*
@@ -87,3 +93,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.code-workspace
+
+# Local Claude Code tooling: vendored skills/agents plus `.claude/worktrees/`,
+# which holds real git worktrees. A worktree is a checkout, never a thing to
+# commit into the repo it belongs to.
+.claude/

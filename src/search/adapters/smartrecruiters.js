@@ -95,7 +95,8 @@ const SMARTRECRUITERS_HOST = 'api.smartrecruiters.com';
  * @returns {Promise<{ jobs: object[], errors: Array<{company: string, error: string}> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = fetch, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
+  const detailCache = ctx.detailCache ?? ctx.workdayDetailCache ?? null;
   const companies = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
   const options = source.options ?? {};
@@ -129,7 +130,6 @@ export async function run(source = {}, ctx = {}) {
       // each one's necessity depends on the previous page's `totalFound`.
       for (let offset = 0; offset < maxPostings;) {
         if (ctx.shouldCancel?.()) { cancelled = true; break; }
-        if (rateLimiter) await rateLimiter.wait(`smartrecruiters:${SMARTRECRUITERS_HOST}`, source.rateLimitMs);
         const limit = Math.min(PAGE_LIMIT, maxPostings - offset);
         const url = `https://${SMARTRECRUITERS_HOST}/v1/companies/${encodeURIComponent(company)}`
           + `/postings?limit=${limit}&offset=${offset}`;
@@ -148,8 +148,8 @@ export async function run(source = {}, ctx = {}) {
         if (Number.isFinite(total) && offset >= total) break;
       }
       const kept = await enrichCompany(collected, company, {
-        titleGate, vocab, maxDetailFetches, detailConcurrency,
-        fetchImpl, rateLimiter, hostGate, maxRetries, requestTimeoutMs, source, ctx,
+        titleGate, vocab, maxDetailFetches, detailConcurrency, detailCache,
+        fetchImpl, hostGate, maxRetries, requestTimeoutMs, ctx,
       });
       return { ...kept, error: null };
     } catch (err) {
@@ -165,6 +165,7 @@ export async function run(source = {}, ctx = {}) {
 
   let unread = 0;
   let failed = 0;
+  let reused = 0;
   const statuses = new Set();
   for (const r of perCompany) {
     if (!r) continue;
@@ -173,6 +174,7 @@ export async function run(source = {}, ctx = {}) {
     if (Array.isArray(r.errors)) errors.push(...r.errors);
     unread += r.unread ?? 0;
     failed += r.failed ?? 0;
+    reused += r.reused ?? 0;
     for (const s of r.statuses ?? []) if (s) statuses.add(s);
   }
 
@@ -197,7 +199,7 @@ export async function run(source = {}, ctx = {}) {
         + 'needs_description, not judged — run `npm run enrich` to read and score them.',
     });
   }
-  return { jobs, errors, cancelled };
+  return { jobs, errors, cancelled, reused };
 }
 
 /**
@@ -212,20 +214,46 @@ export async function run(source = {}, ctx = {}) {
  */
 async function enrichCompany(postings, company, cfg) {
   const {
-    titleGate, vocab, maxDetailFetches, detailConcurrency,
-    fetchImpl, rateLimiter, hostGate, maxRetries, requestTimeoutMs, source, ctx,
+    titleGate, vocab, maxDetailFetches, detailConcurrency, detailCache,
+    fetchImpl, hostGate, maxRetries, requestTimeoutMs, ctx,
   } = cfg;
 
   const gated = postings.filter((p) => titleGate(p?.name));
   const jobs = gated.map((p) => mapPosting(p, company));
   const errors = [];
-  if (maxDetailFetches === 0 || jobs.length === 0) return { jobs, errors };
+
+  // A description already stored by an earlier run is just as accurate as
+  // buying the same posting again. Hydrating first was the single largest cost
+  // in discovery: ~3,700 of this adapter's ~3,800 requests per run were detail
+  // reads, and at 4 in-flight against a ~500ms endpoint that is ~8 minutes of
+  // wall clock spent re-reading postings already on disk. Workday has hydrated
+  // from this cache for some time; this adapter never did.
+  let reused = 0;
+  if (detailCache) {
+    for (const job of jobs) {
+      const cached = typeof detailCache === 'function'
+        ? detailCache(job.id)
+        : detailCache.get?.(job.id);
+      if (!cached?.jdText) continue;
+      job.jdText = cached.jdText;
+      if (cached.postedAt) job.postedAt = cached.postedAt;
+      job.rawMetadata.summaryOnly = false;
+      job.rawMetadata.detailReused = true;
+      reused += 1;
+    }
+  }
+
+  // Only postings we still have no description for can consume budget. Nothing
+  // is "unread" here: `maxDetailFetches: 0` is an explicit list-only choice,
+  // and an empty `needDetail` means the cache already answered for every one.
+  const needDetail = jobs.filter((j) => j.rawMetadata?.summaryOnly !== false);
+  if (maxDetailFetches === 0 || needDetail.length === 0) return { jobs, errors, reused };
 
   // Best-first: an exact target-title match is enriched before a speculative
   // one, so a small budget buys the descriptions most likely to matter.
   const ordered = vocab
-    ? [...jobs].sort((a, b) => titleFitPriority(b.title, vocab) - titleFitPriority(a.title, vocab))
-    : jobs;
+    ? [...needDetail].sort((a, b) => titleFitPriority(b.title, vocab) - titleFitPriority(a.title, vocab))
+    : needDetail;
   const budgeted = ordered.slice(0, maxDetailFetches);
   const unread = ordered.length - budgeted.length;
 
@@ -241,7 +269,6 @@ async function enrichCompany(postings, company, cfg) {
       return null;
     }
     try {
-      if (rateLimiter) await rateLimiter.wait(`smartrecruiters:${SMARTRECRUITERS_HOST}`, source.rateLimitMs);
       const call = () => fetchJson(fetchImpl, detailsUrl, requestTimeoutMs);
       const data = await withRetry(
         () => (hostGate ? hostGate.run(detailsUrl, call) : call()),
@@ -263,7 +290,7 @@ async function enrichCompany(postings, company, cfg) {
   // Counts are returned, not turned into notes here. One note per company would
   // mean up to one per configured board on every run — 123 near-identical rows
   // that bury whatever actually went wrong. The caller folds them into one.
-  return { jobs, errors, unread, failed: failures.length, statuses: failures.map((f) => f.status) };
+  return { jobs, errors, unread, reused, failed: failures.length, statuses: failures.map((f) => f.status) };
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {

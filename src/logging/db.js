@@ -432,17 +432,35 @@ export class Database {
   }
 
   /**
-   * Full Workday descriptions already paid for in earlier discovery runs.
-   * Reusing them avoids repeating hundreds of optional public detail requests.
+   * A full description already paid for in an earlier discovery run.
+   *
+   * Reusing it avoids repeating hundreds of optional public detail requests.
+   * This was originally hardcoded to `source = 'workday'`, which meant every
+   * OTHER adapter with a detail budget re-bought descriptions it already had on
+   * every single run — SmartRecruiters alone spent ~3,700 requests per run
+   * re-reading postings that were already stored. A posting's description does
+   * not change often enough to be worth that, and the id is already
+   * source-qualified, so the restriction bought nothing.
+   *
+   * @param {string} id
+   * @returns {{jdText:string,postedAt:string|null}|null}
+   */
+  getReusableDetail(id) {
+    return this.prepareCached(`
+      SELECT jd_text AS jdText, posted_at AS postedAt FROM jobs
+      WHERE id = ?
+        AND length(trim(coalesce(jd_text, ''))) >= 200
+    `).get(id) ?? null;
+  }
+
+  /**
+   * @deprecated Use {@link getReusableDetail}. Kept so an external caller that
+   * still asks for the Workday-only form keeps working.
    * @param {string} id
    * @returns {{jdText:string,postedAt:string|null}|null}
    */
   getReusableWorkdayDetail(id) {
-    return this.prepareCached(`
-      SELECT jd_text AS jdText, posted_at AS postedAt FROM jobs
-      WHERE id = ? AND source = 'workday'
-        AND length(trim(coalesce(jd_text, ''))) >= 200
-    `).get(id) ?? null;
+    return this.getReusableDetail(id);
   }
 
   /**

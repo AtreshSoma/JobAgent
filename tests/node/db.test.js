@@ -152,4 +152,35 @@ describe('db (node:sqlite, in-memory)', () => {
       expect(db.getRunLog('r-2026-08-01T00:00:00.000Z').errors).toBeNull();
     });
   });
+
+  // Discovery re-buys a description it already owns unless this answers first.
+  // It used to be restricted to `source = 'workday'`, so every other adapter
+  // with a detail budget paid full price on every run.
+  describe('getReusableDetail', () => {
+    const description = 'A real description. '.repeat(20);
+
+    it('returns a stored description for any source, not just workday', () => {
+      db.upsertJob({ id: 'smartrecruiters:acme::sde::1', source: 'smartrecruiters', jd_text: description });
+      expect(db.getReusableDetail('smartrecruiters:acme::sde::1')?.jdText).toBe(description);
+    });
+
+    it('still answers for workday', () => {
+      db.upsertJob({ id: 'workday:acme::sde::1', source: 'workday', jd_text: description });
+      expect(db.getReusableDetail('workday:acme::sde::1')?.jdText).toBe(description);
+    });
+
+    it('refuses a teaser, so a summary row is not mistaken for a real read', () => {
+      db.upsertJob({ id: 'smartrecruiters:acme::sde::2', source: 'smartrecruiters', jd_text: 'SDE. Austin, TX' });
+      expect(db.getReusableDetail('smartrecruiters:acme::sde::2')).toBeNull();
+    });
+
+    it('returns null for an unknown id', () => {
+      expect(db.getReusableDetail('nope')).toBeNull();
+    });
+
+    it('keeps the legacy name working', () => {
+      db.upsertJob({ id: 'workday:acme::sde::3', source: 'workday', jd_text: description });
+      expect(db.getReusableWorkdayDetail('workday:acme::sde::3')?.jdText).toBe(description);
+    });
+  });
 });

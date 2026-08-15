@@ -32,6 +32,19 @@ export function jitter(baseMs, jitterRatio = 0.2, rng = Math.random) {
 /**
  * Creates a rate limiter that spaces calls per logical key (e.g. source id).
  *
+ * ONE KEY, ONE CALLER AT A TIME. `wait()` reads the key's last-call stamp and
+ * writes it back only after sleeping, so callers that are already in flight
+ * concurrently all read the SAME stamp, all sleep the same interval, and are
+ * released together. Measured: 48 concurrent waiters on one key at
+ * minIntervalMs=3000 were all released at 3008ms — one burst, not 141s of
+ * spacing. Used that way it enforces no spacing and only adds latency, which is
+ * what it was doing for four adapters that keyed it on a constant host string.
+ *
+ * So: use this to space a SEQUENTIAL series of calls (a paging loop, one
+ * per-key request per run). To bound CONCURRENT requests against a shared host,
+ * use `createHostGate` — it queues properly, honors Retry-After, and trips a
+ * breaker on repeated 429s.
+ *
  * @param {object} [options]
  * @param {number} [options.minIntervalMs=3000] minimum spacing between calls
  * @param {number} [options.jitterRatio=0.2] bounded jitter applied to spacing

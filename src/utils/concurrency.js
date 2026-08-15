@@ -23,21 +23,42 @@
  * @param {T[]} items
  * @param {number} limit max concurrent invocations (clamped to >= 1)
  * @param {(item: T, index: number) => Promise<R>} mapper
+ * @param {object} [options]
+ * @param {(item: T, index: number) => number} [options.costOf] expected cost of
+ *   an item. When given, work is CLAIMED longest-first. Results are still
+ *   returned in input order — this only changes the schedule.
  * @returns {Promise<Array<{ ok: true, value: R } | { ok: false, error: any }>>}
  */
-export async function mapSettled(items, limit, mapper) {
+export async function mapSettled(items, limit, mapper, options = {}) {
   const list = Array.isArray(items) ? items : [];
   const results = new Array(list.length);
   if (list.length === 0) return results;
 
   const ceiling = Math.max(1, Math.min(Number(limit) || 1, list.length));
+
+  // The ORDER WORK IS CLAIMED IN, which is not the order results come back in.
+  // `results[index]` is always written at the item's original position, so
+  // callers see input order no matter how this is sorted — only the schedule
+  // changes. Default is input order.
+  const order = list.map((_, i) => i);
+  if (typeof options.costOf === 'function') {
+    // Longest-processing-time-first. With a bounded pool, starting the longest
+    // item last leaves it running alone after everything else has drained, and
+    // the run cannot finish before it does. Starting it first overlaps it with
+    // the short work instead. Ties keep input order so the schedule stays
+    // deterministic.
+    const cost = list.map((item, i) => Number(options.costOf(item, i)) || 0);
+    order.sort((a, b) => (cost[b] - cost[a]) || (a - b));
+  }
+
   let cursor = 0;
 
   async function worker() {
     for (;;) {
-      const index = cursor;
+      const slot = cursor;
       cursor += 1;
-      if (index >= list.length) return;
+      if (slot >= order.length) return;
+      const index = order[slot];
       try {
         results[index] = { ok: true, value: await mapper(list[index], index) };
       } catch (error) {
