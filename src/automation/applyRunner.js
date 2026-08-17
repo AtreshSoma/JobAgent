@@ -73,6 +73,11 @@ export async function assistApply({
     guard: { blocked: false },
     filled: [],
     unresolved: [],
+    // Every question this run could not answer, deduplicated across steps and
+    // carrying the live form's own metadata (required? what choices?). The
+    // dashboard feeds these into the screening-answer queue so answering one by
+    // hand covers every future application that asks the same thing.
+    needsUser: [],
     uploads: { uploaded: [], blockers: [], skipped: [] },
     blockers: [...(packet?.blockers ?? [])],
     submitSelector: null,
@@ -343,6 +348,22 @@ export async function assistApply({
       fieldResultKeys.add(key);
       result.filled.push({ ...field, step });
     };
+    const needsUserKeys = new Set();
+    const addNeedsUser = (item, step, source) => {
+      const label = String(item?.label ?? item ?? '').trim();
+      if (!label) return;
+      const key = label.toLowerCase();
+      if (needsUserKeys.has(key)) return;
+      needsUserKeys.add(key);
+      result.needsUser.push({
+        label,
+        required: item?.required === true,
+        kind: item?.kind ?? null,
+        options: Array.isArray(item?.options) ? item.options : [],
+        source,
+        step,
+      });
+    };
     const addUploadResult = (upload, step) => {
       const key = `${step}|${upload.type ?? ''}|${upload.selector ?? ''}`;
       if (uploadResultKeys.has(key)) return;
@@ -486,8 +507,15 @@ export async function assistApply({
 
       // 3. Unknown screening questions (from the packet) + REQUIRED unknown form
       //    fields pause the run — we never fabricate answers.
-      for (const nu of packet?.screeningPlan?.needsUser ?? []) stepBlockers.push(`screening needs user: ${nu.label}`);
+      for (const nu of packet?.screeningPlan?.needsUser ?? []) {
+        stepBlockers.push(`screening needs user: ${nu.label}`);
+        addNeedsUser({ ...nu, required: true }, stepNumber, 'packet');
+      }
       for (const nu of requiredDynamicNeedsUser) stepBlockers.push(`required field needs user: ${nu.label ?? nu}`);
+      // Optional unknowns are captured too. They do not block the run, but they
+      // are still fields left blank on a real application — worth answering once
+      // rather than never learning they were skipped.
+      for (const nu of dynamicNeedsUser) addNeedsUser(nu, stepNumber, 'form');
 
       // 4. Upload resume (+ optional cover letter). An upload input commonly
       //    appears only AFTER the public landing page or a profile/contact step.

@@ -70,6 +70,8 @@
         <button role="menuitem" data-action="open-reports">📊 View reports…</button>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">🧾 Master resume…</button>
+        <button role="menuitem" data-action="open-profile"
+          title="The name, contact details and links the form filler types on every application — plus how it answers the questions forms ask.">👤 Application profile…</button>
         <button role="menuitem" data-action="open-documents">📄 Resume library…</button>
         <button role="menuitem" data-action="export-jobs">⬇ Export all jobs + scores (CSV)</button>
         <button role="menuitem" data-action="export-tracker">⬇ Export application tracker (CSV)</button>
@@ -433,17 +435,37 @@
   <button class="small ghost" data-action="clear-selection">Clear</button>
 </div>
 
-<!-- Attribution belongs in a footer, at the end of the document, after the work
-     it refers to — not floated over the board where it would compete with the
-     data for attention on every screen. It reuses the brand mark and the
-     quietest ink in the palette, so it reads as a signature rather than a
-     banner, and it is the last thing in the tab order rather than a detour on
-     the way to the jobs. -->
-<footer class="signature">
-  <span class="sig-mark" aria-hidden="true"></span>
-  <span class="sig-text">Designed by <b>Atresh</b></span>
-  <span class="sig-sep" aria-hidden="true"></span>
-  <span class="sig-meta">JobAgent · runs locally on 127.0.0.1</span>
+<!-- A colophon, not a byline. Attribution belongs at the END of the document,
+     after the work it refers to — never floated over the board, where it would
+     compete with the data on every screen. So the one place it appears is the
+     one place it can afford to be generous: a plate, set the way the last page
+     of a book is set — a monogram, the name at full size, and the standing
+     facts about the thing that was built underneath it.
+
+     It is still the last stop in the tab order, and it still carries no
+     controls, so making it larger costs nothing on the way to a job. -->
+<footer class="signature" aria-label="Colophon">
+  <div class="sig-rule" aria-hidden="true"></div>
+
+  <div class="sig-plate">
+    <!-- The header wears this gradient as a blank chip; the signature turns it
+         into a monogram. Same mark, one step more personal. -->
+    <span class="sig-monogram" aria-hidden="true">A</span>
+    <span class="sig-lines">
+      <span class="sig-eyebrow">Designed &amp; engineered by</span>
+      <span class="sig-name">Atresh</span>
+    </span>
+  </div>
+
+  <!-- Each fact is one unbreakable unit, so a narrow window breaks BETWEEN
+       clauses instead of stranding "exposed" on a line of its own. -->
+  <p class="sig-meta">
+    <span class="sig-fact"><b>JobAgent</b> — a local-first application cockpit</span>
+    <span class="sig-dot" aria-hidden="true"></span>
+    <span class="sig-fact">binds to 127.0.0.1, never exposed</span>
+    <span class="sig-dot" aria-hidden="true"></span>
+    <span class="sig-fact">nothing is submitted without you</span>
+  </p>
 </footer>
 
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
@@ -544,6 +566,25 @@
          control matches the rest of the UI; the input itself stays hidden. -->
     <input type="file" id="masterFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
     <span class="grow-1" id="masterMsg"></span>
+    <button class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<!-- The two personal config files the form filler reads, edited in place. Each
+     section saves itself: the details form, an individual queued question, and
+     the saved-answer list are three separate commitments, and one "Save" for
+     all three would make it unclear what a click was about to write. -->
+<dialog id="dlgProfile" class="sheet" aria-labelledby="dlgProfileTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgProfileTitle">Application profile</h2>
+      <div class="muted subtle-sub">What the filler types on every application — and how it answers what forms ask.</div>
+    </div>
+    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="profileBody"></div>
+  <div class="dlg-foot">
+    <span class="grow-1" id="profileMsg"></span>
     <button class="small" data-action="close-dialog">Close</button>
   </div>
 </dialog>

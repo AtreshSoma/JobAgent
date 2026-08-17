@@ -59,6 +59,9 @@ data/run_state.json
 # Measured per-source discovery durations. A local cache used to schedule the
 # slowest sources first — machine- and network-specific, so it is never shared.
 data/source_timings.json
+# Questions real employers' forms asked that the filler could not answer, with
+# the jobs that asked them. Personal, like the answers they lead to.
+data/question_queue.json
 data/packets/
 data/application-state/
 resumes/output/*

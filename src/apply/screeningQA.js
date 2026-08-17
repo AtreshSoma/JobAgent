@@ -182,7 +182,7 @@ export function answerScreeningQuestion(question, screeningAnswers, { choices } 
  * against any sentence containing those three tokens in any arrangement, which
  * is how one entry hijacked questions meant for another.
  */
-const STOPWORDS = new Set([
+export const STOPWORDS = new Set([
   'a', 'an', 'the', 'to', 'of', 'in', 'on', 'at', 'for', 'with', 'and', 'or',
   'do', 'does', 'did', 'will', 'would', 'is', 'are', 'was', 'be', 'been',
   'you', 'your', 'yours', 'we', 'our', 'us', 'i', 'my', 'me', 'this', 'that',

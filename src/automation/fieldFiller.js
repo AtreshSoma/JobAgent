@@ -219,11 +219,13 @@ export async function fillScannedFields(page, scannedFields = [], { candidate, s
   // REQUIRED. The assistant stops only for required unknowns; optional ones
   // (e.g. middle name, address line 2, "decline to answer" EEO selects) are
   // simply left blank so the run can still advance.
+  // `options` rides along so the dashboard's answer form can offer the choices
+  // the live form actually had, instead of asking you to guess its wording.
   const needsUserAnnotated = needsUser.map((nu) => {
     const f = scannedFields.find(
       (s) => s.label === nu.label && (s.selector ?? null) === (nu.selector ?? null),
     );
-    return { ...nu, required: f?.required === true, kind: f?.kind };
+    return { ...nu, required: f?.required === true, kind: f?.kind, options: f?.options ?? [] };
   });
 
   const filled = [];

@@ -60,6 +60,16 @@
   --s5: 22px;
   --s6: 32px;
 
+  /* Signature plate. The monogram carries a LETTER, so unlike the header's
+     blank brand chip its gradient has to be dark enough for ink to sit on.
+     In dark mode the gradient is bright and the ink is near-black (9.3:1 at
+     the gradient's palest stop); light mode deepens the gradient instead so
+     white ink clears 3:1 at every stop — the AA bar for text this size. */
+  --sig-a: #4d9fff;
+  --sig-b: #7cc7ff;
+  --sig-c: #3ecf8e;
+  --sig-ink: #05121f;
+
   --rail: 420px;
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
   --mono: "Cascadia Code", "SF Mono", ui-monospace, Consolas, monospace;
@@ -92,6 +102,10 @@
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
   --shadow: 0 8px 24px rgba(16, 24, 40, .12);
   --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
+  --sig-a: #1a5fc4;
+  --sig-b: #2f8fd6;
+  --sig-c: #0f8f5c;
+  --sig-ink: #ffffff;
 }
 
 /* Same palette, applied when the OS asks for light and the user has expressed
@@ -127,6 +141,10 @@
     --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
     --shadow: 0 8px 24px rgba(16, 24, 40, .12);
     --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
+    --sig-a: #1a5fc4;
+    --sig-b: #2f8fd6;
+    --sig-c: #0f8f5c;
+    --sig-ink: #ffffff;
   }
 }
 
@@ -1392,39 +1410,149 @@ kbd {
 .mr-versions li:last-child { border-bottom: none; }
 .mr-versions .when { color: var(--text-dim); flex: 1 1 auto; }
 /* Spacing only — .attention itself is defined once with the detail rail. */
-#dlgMaster .attention, #documentsBody .attention { margin: var(--s2) 0; }
+#dlgMaster .attention, #documentsBody .attention, #profileBody .attention { margin: var(--s2) 0; }
+
+/* ─────────────────── application profile ───────────────────
+   Three stacked sections, each ending in its own save button, because each one
+   writes a different thing. The rules here are spacing and grouping only — the
+   inputs, chips and notes reuse the dialog/detail styles defined above. */
+#dlgProfile { width: min(900px, 96vw); }
+/* Sticks to the top of the scrolling sheet so the details form stays one click
+   away however long the question queue gets. */
+.pf-nav {
+  position: sticky; top: 0; z-index: 1;
+  display: flex; gap: var(--s2); flex-wrap: wrap;
+  padding: var(--s2) 0; margin-bottom: var(--s2);
+  background: var(--surface); border-bottom: 1px solid var(--line-soft);
+}
+.pf-section { margin-top: var(--s4); scroll-margin-top: 44px; }
+.pf-section:first-child { margin-top: 0; }
+.pf-section h3 { margin: 0 0 var(--s2); font-size: 14px; }
+.pf-section .evidence-note { margin-bottom: var(--s3); }
+
+/* One queued question. The card boundary matters: each is a separate decision
+   with its own answer box and its own Save. */
+.pf-q {
+  border: 1px solid var(--line); border-radius: var(--r-md);
+  background: var(--surface-2); padding: var(--s3); margin-bottom: var(--s3);
+}
+.pf-q-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.pf-q-head b { font-size: 13.5px; overflow-wrap: anywhere; }
+.pf-q .fineprint { margin: 3px 0 var(--s2); }
+.pf-q textarea, .pf-q input[type=text] { margin-bottom: var(--s2); }
+.pf-choices { margin: var(--s2) 0; flex-wrap: wrap; }
+.pf-adv { margin-bottom: var(--s2); }
+.pf-adv summary { font-size: 12px; color: var(--text-faint); cursor: pointer; margin-bottom: var(--s2); }
+
+/* Two columns on a laptop, one on a phone — an application form's contact
+   block is short fields, and a single column of thirteen is a lot of scroll. */
+.pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 var(--s3); }
+.pf-cell input { margin-bottom: 4px; }
+.pf-cell .fineprint { margin-bottom: var(--s3); }
+.pf-req { color: var(--warn); }
+
+.pf-saved summary { font-size: 13px; font-weight: 650; cursor: pointer; margin-bottom: var(--s3); }
+.pf-answer {
+  border-top: 1px solid var(--line-soft); padding-top: var(--s3); margin-bottom: var(--s2);
+}
+.pf-answer-id { font-family: var(--mono); font-size: 12px; margin-bottom: var(--s2); }
 
 /* ─────────────────── signature ───────────────────
-   A designer's mark, set the way a signature is set: small, quiet, at the end.
-   It uses `--text-faint`, which is the palette's quietest ink and is contrast-
-   checked (5.02:1 dark / 4.93:1 light), so "subtle" never means "unreadable".
-   The gradient chip is the same mark as the header brand, at half size — the
-   page signs itself with the logo it already wears. */
+   A colophon plate. The credit used to be one 12px line sharing a row with the
+   host and port, which read as fine print rather than as authorship. It now has
+   the three parts a signature actually needs — a mark, a name at full size, and
+   the standing facts about the thing signed — stacked and centred, with the
+   scale ordered so the eye lands on the NAME first and the facts second.
+
+   Every colour here is a token, so the plate re-themes with the rest of the
+   page. The ink on the monogram is the one place that needed its own pair
+   (see --sig-ink): the header's chip is blank, this one carries a letter. */
 .signature {
-  display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
-  gap: var(--s2) var(--s3);
-  padding: var(--s5) var(--s5) var(--s6);
-  border-top: 1px solid var(--line-soft);
-  margin-top: var(--s5);
-  font-size: 12px; color: var(--text-faint);
+  display: flex; flex-direction: column; align-items: center;
+  gap: var(--s3);
+  padding: var(--s6) var(--s5) calc(var(--s6) + var(--s3));
+  margin-top: var(--s6);
+  text-align: center;
 }
-.signature .sig-mark {
-  width: 11px; height: 11px; border-radius: 3px; flex: none;
-  background: linear-gradient(135deg, var(--accent) 0%, #7cc7ff 55%, var(--good) 100%);
-  opacity: .9;
+/* Replaces the old flat hairline. A rule that fades out at both ends and warms
+   at the centre closes the page instead of merely cutting it. */
+.signature .sig-rule {
+  width: min(340px, 55%); height: 1px; flex: none;
+  background: linear-gradient(90deg,
+    transparent, var(--line) 22%, var(--sig-b) 50%, var(--line) 78%, transparent);
+  opacity: .85;
 }
-.signature .sig-text { letter-spacing: .2px; }
-/* The name itself carries the emphasis — one step up in weight and ink, which
-   is all a signature needs to be legible without becoming a headline. */
-.signature .sig-text b { font-weight: 640; color: var(--text-dim); }
-.signature .sig-sep { width: 1px; height: 11px; background: var(--line); }
-.signature .sig-meta { font-size: 11.5px; }
+.sig-plate { display: flex; align-items: center; gap: var(--s3); }
+
+/* The header's brand chip at double size, with the initial in it. */
+.sig-monogram {
+  width: 46px; height: 46px; border-radius: 13px; flex: none;
+  display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--sig-a) 0%, var(--sig-b) 55%, var(--sig-c) 100%);
+  color: var(--sig-ink);
+  font-size: 25px; font-weight: 800; line-height: 1;
+  /* The optical centre of a capital A sits below its geometric one. */
+  padding-bottom: 2px;
+  box-shadow: 0 0 0 1px rgba(124, 199, 255, .28), 0 6px 20px rgba(77, 159, 255, .28);
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.sig-lines { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
+/* Small, spaced and quiet: it labels the name without competing with it. */
+.sig-eyebrow {
+  font-size: 10px; font-weight: 650; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--text-faint);
+}
+/* Full-strength ink at headline size — this is the only element on the page
+   whose job is to be read as a name. */
+.sig-name {
+  font-size: 27px; font-weight: 700; line-height: 1.1;
+  letter-spacing: .3px; color: var(--text);
+}
+/* Wide enough that the three facts sit on ONE line on a laptop — a colophon
+   rule, not a paragraph. Narrower windows wrap it between clauses. */
+.signature .sig-meta {
+  margin: 0; max-width: min(780px, 100%);
+  font-size: 11.5px; line-height: 1.8; color: var(--text-faint);
+}
+.signature .sig-meta b { font-weight: 650; color: var(--text-dim); }
+/* Keeps a clause whole. Without it the line broke after "never", leaving
+   "exposed" orphaned at the start of the next row. */
+.sig-fact { white-space: nowrap; }
+.sig-dot {
+  display: inline-block; vertical-align: middle;
+  width: 3px; height: 3px; border-radius: 50%;
+  background: var(--line); margin: 0 7px;
+}
+/* A signature is a nice place for one small piece of life. It is decoration, so
+   it is hover-only, tiny, and the first thing reduced-motion turns off. */
+.sig-plate:hover .sig-monogram {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 1px rgba(124, 199, 255, .45), 0 10px 26px rgba(77, 159, 255, .38);
+}
+@media (prefers-reduced-motion: reduce) {
+  .sig-monogram { transition: none; }
+  .sig-plate:hover .sig-monogram { transform: none; }
+}
 @media (max-width: 860px) {
-  .signature { padding: var(--s4) var(--s3) var(--s5); }
-  .signature .sig-sep { display: none; }
+  .signature { padding: var(--s5) var(--s3) var(--s6); margin-top: var(--s5); gap: var(--s2); }
+  .sig-monogram { width: 38px; height: 38px; border-radius: 11px; font-size: 21px; }
+  .sig-name { font-size: 22px; }
+  .signature .sig-meta { line-height: 1.9; }
+  .sig-dot { margin: 0 5px; }
 }
-/* The board is a long page; the signature should not print on every sheet. */
-@media print { .signature { border-top: 0; } }
+/* On a phone the three facts together fill the line edge to edge, which reads
+   as crowded rather than as a rule. One fact per line instead — the dots are
+   what separated them, and stacked lines separate themselves. */
+@media (max-width: 560px) {
+  .signature .sig-meta { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .sig-dot { display: none; }
+}
+/* The board is a long page; the signature should not decorate every sheet. */
+@media print {
+  .signature { padding: var(--s3) 0 0; margin-top: var(--s3); }
+  .sig-rule, .sig-monogram { display: none; }
+  .sig-name { font-size: 14px; }
+}
 
 /* ─────────────────── toasts + selection bar ─────────────────── */
 #toasts {

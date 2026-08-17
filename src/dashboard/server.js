@@ -32,6 +32,11 @@
  *   GET  /api/master-resume/file          download the master resume DOCX
  *   POST /api/master-resume               replace it (validated, previous kept)
  *   POST /api/master-resume/restore       roll back to a kept previous version
+ *   GET  /api/profile                     application profile + screening answers + question queue
+ *   POST /api/profile                     save the profile fields the filler uses
+ *   POST /api/profile/answers             replace the whole screening-answer set
+ *   POST /api/profile/questions/answer    answer one queued question, once, forever
+ *   POST /api/profile/questions/status    dismiss / reopen a queued question
  *   POST /api/jobs/:id/check-link         classify current URL availability
  *   POST /api/jobs/:id/link {url}         replace stale URL with a direct job URL
  *   POST /api/jobs/:id/decision {decision} shortlist | rejected | archived | clear
@@ -80,6 +85,15 @@ import {
   preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { loadConfig } from '../config/loadConfig.js';
+import {
+  PROFILE_FIELDS, readProfile, writeProfile, readScreeningAnswers,
+  writeScreeningAnswers, upsertScreeningAnswer,
+} from '../config/profileStore.js';
+import {
+  dismissQuestion, markQuestionAnswered, recordUnansweredQuestions, reopenQuestion,
+  suggestAnswerId, suggestPatterns, summarizeQuestionQueue,
+} from '../apply/questionQueue.js';
 import { evaluateAutoApplyBatch } from '../apply/autoApplyEligibility.js';
 import { markApplicationUserSubmitted, markApplicationVerified } from '../apply/applicationState.js';
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
@@ -178,7 +192,13 @@ export function collapseRca(entries = []) {
  * @param {object} [args.deps] injectable: runners/assistFn/now (testing)
  * @returns {{ server: import('node:http').Server, runState: object }}
  */
-export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
+export function createDashboardServer({ config: bootConfig, db, logger, deps = {} } = {}) {
+  // The Application Profile editor rewrites config/candidate.json and
+  // config/screening_answers.json while this process is running, and loadConfig
+  // returns a FROZEN snapshot. The bundle is therefore rebound after every
+  // save — otherwise the next auto-apply run would keep filling the old values
+  // and the page would look like it had saved nothing.
+  let config = bootConfig;
   const extensionKey = deps.extensionKey ?? process.env.JOB_AGENT_EXTENSION_KEY ?? '';
   const runners = {
     // "Find New Jobs" must leave jobs ON THE BOARD. The bare discover phase
@@ -246,6 +266,119 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     })();
     try { return await healthPromise; }
     finally { healthPromise = null; }
+  }
+
+  /**
+   * Re-read every config file after the profile editor writes one, so the next
+   * run fills the new values without restarting the dashboard.
+   *
+   * A reload failure is reported, never swallowed: the file on disk has already
+   * been validated by the writer, so a failure here means something ELSE in
+   * config/ is broken and the process is now running on the previous bundle.
+   *
+   * @returns {string|null} an error to show the user, or null on success
+   */
+  function reloadConfig() {
+    const root = config?.root;
+    if (!root) return null; // unit-test servers boot with a bare config object
+    try {
+      const loader = deps.loadConfigImpl ?? loadConfig;
+      config = loader({ root, loadEnv: false });
+      return null;
+    } catch (err) {
+      const message = sanitizeErrorMessage(err.message);
+      logger?.warn?.(`config reload failed: ${message}`);
+      return `Saved, but the config could not be reloaded (${message}). `
+        + 'Restart the dashboard before the next auto-apply run.';
+    }
+  }
+
+  /**
+   * Record the questions one assist run could not answer.
+   *
+   * This is the learning loop's only capture point: without it the human
+   * answers the question in the browser and the knowledge dies with the run.
+   * Never throws — a queue write must not turn a successful fill into a failure.
+   *
+   * @param {string} jobId
+   * @param {object} result assist result (carries `needsUser`)
+   */
+  function captureUnansweredQuestions(jobId, result) {
+    const root = config?.root;
+    const questions = Array.isArray(result?.needsUser) ? result.needsUser : [];
+    if (!root || questions.length === 0) return;
+    try {
+      const job = db.getJob?.(jobId) ?? {};
+      recordUnansweredQuestions(root, {
+        jobId,
+        company: job.company ?? null,
+        title: job.title ?? null,
+        url: result.url ?? job.url ?? null,
+        ats: job.ats ?? job.ats_platform ?? null,
+        questions,
+        now: nowDate(),
+      });
+    } catch (err) {
+      logger?.warn?.(`could not record unanswered questions for ${jobId}: ${err.message}`);
+    }
+  }
+
+  /**
+   * The Application Profile page in one payload: the fields the filler can use,
+   * the screening answers it draws on, and the questions it could not answer.
+   */
+  function profileState() {
+    const root = config?.root;
+    if (!root) {
+      return {
+        available: false,
+        reason: 'This dashboard was started without a project root, so the config files cannot be located.',
+        fields: PROFILE_FIELDS, missing: [], answers: [], questions: { open: [], resolved: [], openCount: 0, requiredCount: 0 },
+      };
+    }
+    const profile = readProfile(root);
+    const screening = readScreeningAnswers(root);
+    const questions = summarizeQuestionQueue(root);
+    return {
+      available: true,
+      profile,
+      screening,
+      questions: {
+        ...questions,
+        // Suggested id/patterns are computed here, so the browser never has to
+        // reimplement the matcher's tokenizing rules and get them subtly wrong.
+        open: questions.open.map((q) => ({
+          ...q,
+          suggestedId: suggestAnswerId(q.label),
+          suggestedPatterns: suggestPatterns(q.label),
+        })),
+      },
+    };
+  }
+
+  /** Project root, or a 400 when this dashboard was started without one. */
+  function requireConfigRoot() {
+    const root = config?.root;
+    if (!root) {
+      throw new Error('This dashboard was started without a project root, so the config files cannot be edited.');
+    }
+    return root;
+  }
+
+  /**
+   * Run a config write, reporting its refusals as 400s.
+   *
+   * A rejected profile or answer is the request being wrong — a bad email, a
+   * pattern that could never match, an answer that would misstate work
+   * authorization. Letting those fall through to the generic 500 handler would
+   * present the user's own typo as "the dashboard is broken".
+   */
+  function saving(res, work) {
+    try {
+      return work();
+    } catch (err) {
+      return sendJson(res, err.statusCode ?? 400, { error: sanitizeErrorMessage(err.message) });
+    }
   }
 
   /**
@@ -979,6 +1112,7 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
               deps: { ...deps, shouldCancel: () => runState.cancelRequested },
             });
             recordAssistResult(db, jobId, result);
+            captureUnansweredQuestions(jobId, result);
             if (result.submitted === true) dailyCount += 1;
             const itemResult = {
               jobId, status: result.status, submitted: result.submitted === true,
@@ -1250,6 +1384,66 @@ export function createDashboardServer({ config, db, logger, deps = {} } = {}) {
     if (req.method === 'POST' && path === '/api/master-resume/restore') {
       const body = await readBody(req);
       return sendJson(res, 200, restoreMasterResume(body.name));
+    }
+    // ── Application profile ────────────────────────────────────────────────
+    // The values the form filler types, the answers it draws on, and the
+    // questions it could not answer. Editing them here replaces hand-editing
+    // two JSON files, and every write is validated before it reaches disk.
+    if (req.method === 'GET' && path === '/api/profile') {
+      return sendJson(res, 200, profileState());
+    }
+    if (req.method === 'POST' && path === '/api/profile') {
+      const body = await readBody(req);
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        if (!body.values || typeof body.values !== 'object' || Array.isArray(body.values)) {
+          throw new Error('send { values: { "<field path>": "<value>" } }');
+        }
+        const saved = writeProfile(root, body.values);
+        return sendJson(res, 200, { ...saved, warning: reloadConfig(), profile: readProfile(root) });
+      });
+    }
+    if (req.method === 'POST' && path === '/api/profile/answers') {
+      const body = await readBody(req);
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        const saved = writeScreeningAnswers(root, {
+          defaults: body.defaults ?? {},
+          answers: Array.isArray(body.answers) ? body.answers : [],
+        });
+        return sendJson(res, 200, { ...saved, warning: reloadConfig(), screening: readScreeningAnswers(root) });
+      });
+    }
+    if (req.method === 'POST' && path === '/api/profile/questions/answer') {
+      const body = await readBody(req);
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        // The original question travels with the answer so the truthfulness
+        // check can see the POLARITY of what is being answered, not just the
+        // text of the answer. That is the only way an affirmative reply to a
+        // reversed sponsorship question can be caught.
+        const saved = upsertScreeningAnswer(root, {
+          id: body.id,
+          patterns: Array.isArray(body.patterns) ? body.patterns : [],
+          answer: body.answer,
+          type: body.type,
+        }, { question: body.question, replace: body.replace === true });
+        if (body.key) markQuestionAnswered(root, String(body.key), { answerId: saved.id, now: nowDate() });
+        return sendJson(res, 200, { ...saved, warning: reloadConfig(), ...profileState() });
+      });
+    }
+    if (req.method === 'POST' && path === '/api/profile/questions/status') {
+      const body = await readBody(req);
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        const key = String(body.key ?? '');
+        if (!key) throw new Error('which question? send its key');
+        const outcome = body.status === 'open'
+          ? reopenQuestion(root, key)
+          : dismissQuestion(root, key, { now: nowDate() });
+        if (!outcome.ok) throw new Error(outcome.reason);
+        return sendJson(res, 200, profileState());
+      });
     }
     if (req.method === 'GET' && path === '/api/health') {
       // Full doctor pass (config, resume, python, browsers, dirs) — the
