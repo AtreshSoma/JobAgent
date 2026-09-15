@@ -635,14 +635,58 @@ export class Database {
     ).run(params);
   }
 
-  /** @param {string} runId @param {Record<string, any>} patch */
+  /**
+   * Update a run_log row, INSERTING it if no row exists for this run id.
+   *
+   * It used to be a bare UPDATE. The dashboard — the primary UI — opened its
+   * runs with its own `startRun()` and never called `logger.startRun()`, so the
+   * row was never inserted and every `UPDATE ... WHERE run_id = ?` matched
+   * nothing. Each run's counters, duration and errors were silently discarded:
+   * `SELECT COUNT(*) FROM run_log` returned 0 against 101,857 jobs and six
+   * recorded `run_end` events. Upserting means a missing opening row costs the
+   * end of the record, never the whole thing.
+   *
+   * @param {string} runId
+   * @param {Record<string, any>} patch
+   */
   updateRunLog(runId, patch) {
     const cols = Object.keys(patch);
     if (cols.length === 0) return;
     const set = cols.map((c) => `${c} = @${c}`).join(', ');
     const params = { run_id: runId };
     for (const c of cols) params[c] = toText(patch[c]);
-    this.db.prepare(`UPDATE run_log SET ${set} WHERE run_id = @run_id`).run(params);
+    const result = this.db.prepare(`UPDATE run_log SET ${set} WHERE run_id = @run_id`).run(params);
+    if (Number(result?.changes ?? 0) > 0) return;
+    this.insertRunLog({
+      run_id: runId,
+      mode: patch.mode ?? 'unknown',
+      started_at: patch.started_at ?? nowIso(),
+      ...patch,
+    });
+  }
+
+  /**
+   * Most recent runs, newest first.
+   *
+   * `run_log` was write-only: nothing in the codebase read it, so even once
+   * rows existed a user still could not answer "what did last night's run do?".
+   *
+   * @param {object} [options]
+   * @param {number} [options.limit=25]
+   * @returns {object[]} run_log rows with a computed durationMs
+   */
+  listRunLogs({ limit = 25 } = {}) {
+    const rows = this.db.prepare(
+      'SELECT * FROM run_log ORDER BY started_at DESC LIMIT ?',
+    ).all(Math.max(1, Math.min(500, Number(limit) || 25)));
+    return rows.map((row) => {
+      const started = Date.parse(row.started_at ?? '');
+      const ended = Date.parse(row.ended_at ?? '');
+      return {
+        ...row,
+        durationMs: Number.isFinite(started) && Number.isFinite(ended) ? ended - started : null,
+      };
+    });
   }
 
   /** @param {string} runId */

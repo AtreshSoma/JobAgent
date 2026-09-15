@@ -46,6 +46,7 @@ export const APP_STATUS = Object.freeze({
   SHORTLISTED: 'shortlisted',      // user shortlisted; not yet prepared/approved
   DATE_UNCONFIRMED: 'date_unconfirmed', // no parseable posting date; flagged for review
   DISCARDED: 'discarded',          // pipeline hard-excluded or below threshold
+  NEEDS_DESCRIPTION: 'needs_description', // found, but the JD was never fetched — NOT judged
   SCORED: 'scored',                // scored, no action yet
   DISCOVERED: 'discovered',        // found, not yet scored
 });
@@ -78,6 +79,13 @@ export function deriveAppStatus(job = {}, approval = null) {
   if (job.user_decision === 'shortlisted') return APP_STATUS.SHORTLISTED;
   if (job.status === 'unknown_date_review') return APP_STATUS.DATE_UNCONFIRMED;
   if (job.status === 'discarded') return APP_STATUS.DISCARDED;
+  // `needs_description` is written to jobs.status by the pipeline for rows whose
+  // JD was never fetched, precisely so they are NOT reported as judged. With no
+  // case here they fell through to the score/tier test below and surfaced as
+  // "Scored" — 5,029 unread rows inside a tile reporting 5,175, so 97% of what
+  // the board called "Scored" was never read. A provisional score is set on
+  // these rows; it is not a verdict.
+  if (job.status === 'needs_description') return APP_STATUS.NEEDS_DESCRIPTION;
   if (typeof job.score === 'number' || job.tier) return APP_STATUS.SCORED;
   return APP_STATUS.DISCOVERED;
 }
@@ -174,6 +182,9 @@ const OFFRAMP_STAGE = Object.freeze({
   [APP_STATUS.DISCARDED]: 'discarded',
   [APP_STATUS.DATE_UNCONFIRMED]: 'date_unconfirmed',
   [APP_STATUS.SUBMIT_UNVERIFIED]: 'submit_unverified',
+  // Not a failure, but genuinely off the main progress line: the row is parked
+  // until its description is fetched, and no amount of waiting advances it.
+  [APP_STATUS.NEEDS_DESCRIPTION]: 'needs_description',
 });
 
 /**
@@ -222,6 +233,10 @@ export function lastActionFor(job = {}, appStatus = '') {
 export function explainStatus(job = {}, appStatus = '', approval = null) {
   const blockers = jsonList(job.assist_blockers);
   switch (appStatus) {
+    case APP_STATUS.NEEDS_DESCRIPTION:
+      return 'The source gave only a title and no job description, so this row has NOT been judged on fit. '
+        + 'Any score shown is provisional. Run `npm run enrich` to fetch the descriptions, after which it '
+        + 'will be scored properly.';
     case APP_STATUS.SUBMIT_UNVERIFIED:
       return 'Auto-submit clicked Submit, but no confirmation page could be detected. Check your email '
         + '(or the ATS) for a confirmation: if the application went through, use "Mark submitted"; if not, '
@@ -386,9 +401,44 @@ function listSummaryRows(db) {
   return typeof db.listJobsSummary === 'function' ? db.listJobsSummary() : db.listJobs({});
 }
 
-/** ISO date prefix (YYYY-MM-DD) of a date. */
-function dayOf(value) {
-  return String(value ?? '').slice(0, 10);
+/**
+ * The calendar day a timestamp falls on, IN THE CANDIDATE'S TIMEZONE.
+ *
+ * This used to be `String(value).slice(0, 10)` over an ISO-8601 UTC timestamp,
+ * i.e. the UTC day. For a US Eastern user that rolls over at 7–8 pm local, so
+ * "Discovered today", "Prepared today", "Submitted today" and "New qualified
+ * today" all reset to zero while the evening's work was still happening.
+ * Measured live at 00:07 UTC: `discoveredToday: 0` next to
+ * `discoveredLast24h: 15954`, 35 minutes after a run.
+ *
+ * The zone comes from `candidate.location.timezone`, which is already a
+ * required profile field. `en-CA` is used only because it formats as
+ * YYYY-MM-DD, which is what every caller compares.
+ *
+ * @param {unknown} value ISO timestamp
+ * @param {string} [timeZone] IANA zone; UTC slicing is kept as the fallback
+ * @returns {string} YYYY-MM-DD
+ */
+function dayOf(value, timeZone) {
+  const raw = String(value ?? '');
+  if (!raw) return '';
+  if (!timeZone) return raw.slice(0, 10);
+  const at = new Date(raw);
+  if (Number.isNaN(at.getTime())) return raw.slice(0, 10);
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(at);
+  } catch {
+    // An unknown/invalid zone must not break the dashboard.
+    return raw.slice(0, 10);
+  }
+}
+
+/** The candidate's IANA timezone, or null to fall back to UTC. */
+function candidateTimeZone(config) {
+  const tz = config?.candidate?.location?.timezone;
+  return typeof tz === 'string' && tz.trim() ? tz.trim() : null;
 }
 
 /**
@@ -617,23 +667,27 @@ function boardRow(job, approval, now) {
  * @param {Date} [options.now]
  * @returns {object}
  */
-export function dashboardStats(db, { now = new Date() } = {}) {
-  return cached(db, 'stats', now, () => computeDashboardStats(db, now));
+export function dashboardStats(db, { now = new Date(), config = null } = {}) {
+  const timeZone = candidateTimeZone(config);
+  // The cache key must include the zone: the same instant belongs to different
+  // calendar days in different zones, so a cached UTC-day answer must not be
+  // served after the profile's timezone changes.
+  return cached(db, `stats:${timeZone ?? 'utc'}`, now, () => computeDashboardStats(db, now, timeZone));
 }
 
-function computeDashboardStats(db, now) {
+function computeDashboardStats(db, now, timeZone = null) {
   // Narrow column projection where available (see db.listJobsForStats); test
   // stubs that only implement listJobsSummary/listJobs still work.
   const jobs = typeof db.listJobsForStats === 'function'
     ? db.listJobsForStats()
     : listSummaryRows(db);
   const approvals = approvalsByJob(db);
-  const today = dayOf(now.toISOString());
+  const today = dayOf(now.toISOString(), timeZone);
 
   // Last 7 calendar days (oldest first) for the daily-progress strip.
   const days = [];
   for (let i = 6; i >= 0; i -= 1) {
-    days.push(dayOf(new Date(now.getTime() - i * 86_400_000).toISOString()));
+    days.push(dayOf(new Date(now.getTime() - i * 86_400_000).toISOString(), timeZone));
   }
   const daily = new Map(days.map((d) => [d, { day: d, discovered: 0, prepared: 0, submitted: 0 }]));
 
@@ -708,7 +762,7 @@ function computeDashboardStats(db, now) {
     const isOpen = !CLOSED_SET.has(status);
     const applied = Number(job.applied) === 1;
     const postedLast24h = isWithinLast24Hours(job.posted_at, now);
-    const createdDay = dayOf(job.created_at);
+    const createdDay = dayOf(job.created_at, timeZone);
     const gated = isSponsorshipGated(job);
 
     if (createdDay === today) stats.totals.discoveredToday += 1;
@@ -750,8 +804,8 @@ function computeDashboardStats(db, now) {
     // 2 past what this stat reported — the same "tile promises a number
     // clicking it doesn't open" bug as everywhere else in this file.
     if (isUndatedDrop(job) || postedConfidence(job) === 'unconfirmed') stats.totals.undatedDropped += 1;
-    if (!applied && dayOf(preparedAtOf(job)) === today) stats.totals.preparedToday += 1;
-    if (applied && dayOf(job.applied_at) === today) stats.totals.submittedToday += 1;
+    if (!applied && dayOf(preparedAtOf(job), timeZone) === today) stats.totals.preparedToday += 1;
+    if (applied && dayOf(job.applied_at, timeZone) === today) stats.totals.submittedToday += 1;
     if (applied && job.applied_at
         && (now.getTime() - new Date(job.applied_at).getTime()) < 7 * 86_400_000) {
       stats.totals.submittedThisWeek += 1;
@@ -818,13 +872,13 @@ function computeDashboardStats(db, now) {
     // has()/get() pairs are cheap; reuse createdDay from above.
     const createdBucket = daily.get(createdDay);
     if (createdBucket) createdBucket.discovered += 1;
-    const preparedDay = dayOf(preparedAtOf(job));
+    const preparedDay = dayOf(preparedAtOf(job), timeZone);
     if (preparedDay) {
       const preparedBucket = daily.get(preparedDay);
       if (preparedBucket) preparedBucket.prepared += 1;
     }
     if (applied) {
-      const submittedBucket = daily.get(dayOf(job.applied_at));
+      const submittedBucket = daily.get(dayOf(job.applied_at, timeZone));
       if (submittedBucket) submittedBucket.submitted += 1;
     }
   }
@@ -1627,11 +1681,13 @@ function reportRow(r) {
  * @param {import('../logging/db.js').Database} db
  * @param {object} [options]
  * @param {Date} [options.now]
+ * @param {object} [options.config] loadConfig() bundle — supplies the
+ *   candidate timezone so "today" means the user's day, not the UTC day
  * @returns {object} { generatedAt, dailySummary, applicationLog, preparedPackets,
  *                     blockedJobs, skippedJobs, sponsorshipSummary, sourcePerformance }
  */
-export function buildReports(db, { now = new Date() } = {}) {
-  const stats = dashboardStats(db, { now });
+export function buildReports(db, { now = new Date(), config = null } = {}) {
+  const stats = dashboardStats(db, { now, config });
   const rows = listBoardJobs(db, { now, hideClosed: false, limit: 100000 });
 
   const byStatus = (status) => rows.filter((r) => r.appStatus === status).map(reportRow);

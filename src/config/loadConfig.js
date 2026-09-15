@@ -38,6 +38,73 @@ export const CONFIG_FILES = {
 const VALIDATED = Object.keys(SCHEMA_FILES);
 
 /**
+ * Find keys that appear more than once in the same JSON object.
+ *
+ * `JSON.parse` silently keeps the LAST of a repeated key and discards the rest,
+ * and it does so before any validation runs — Ajv never sees that anything was
+ * dropped, because by then the key is gone. `config/scoring.json` defined
+ * `evidenceAliases.streaming` twice, so one of the two alias lists was thrown
+ * away on every load with nothing reporting it.
+ *
+ * This has to scan the SOURCE TEXT. A `JSON.parse` reviver is no use: it runs
+ * after the parser has already collapsed the duplicate, so it only ever sees
+ * the surviving value. The scanner below walks the raw string, tracks object
+ * nesting, and records a key the second time it is declared in the same object.
+ *
+ * @param {string} raw JSON source text
+ * @returns {string[]} duplicated key names, with their object path
+ */
+function duplicateKeys(raw) {
+  const dupes = new Set();
+  /** Stack of { keys:Set, path:string } — one frame per open object. */
+  const stack = [];
+  /** Key most recently read at the current level, so nested frames can be named. */
+  let lastKey = null;
+  let i = 0;
+
+  /** Read a JSON string literal starting at the opening quote; returns its value. */
+  const readString = () => {
+    let out = '';
+    i += 1; // opening quote
+    while (i < raw.length) {
+      const ch = raw[i];
+      if (ch === '\\') { out += raw[i + 1] ?? ''; i += 2; continue; }
+      if (ch === '"') { i += 1; return out; }
+      out += ch;
+      i += 1;
+    }
+    return out;
+  };
+
+  while (i < raw.length) {
+    const ch = raw[i];
+    if (ch === '"') {
+      const value = readString();
+      // A string is a KEY when the next non-space character is a colon.
+      let j = i;
+      while (j < raw.length && /\s/.test(raw[j])) j += 1;
+      if (raw[j] === ':' && stack.length) {
+        const frame = stack[stack.length - 1];
+        if (frame.keys.has(value)) dupes.add(frame.path ? `${frame.path}.${value}` : value);
+        frame.keys.add(value);
+        lastKey = value;
+      }
+      continue;
+    }
+    if (ch === '{') {
+      const parent = stack[stack.length - 1];
+      const path = parent ? (parent.path ? `${parent.path}.${lastKey}` : lastKey) : '';
+      stack.push({ keys: new Set(), path: path ?? '' });
+      lastKey = null;
+    } else if (ch === '}') {
+      stack.pop();
+    }
+    i += 1;
+  }
+  return [...dupes];
+}
+
+/**
  * Read and parse a JSON file, throwing a clear error on failure.
  * @param {string} filePath
  * @returns {any}
@@ -49,11 +116,22 @@ export function readJson(filePath) {
   } catch (err) {
     throw new Error(`Config file not found or unreadable: ${filePath} (${err.code || err.message})`);
   }
+  let parsed;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch (err) {
     throw new Error(`Config file is not valid JSON: ${filePath} - ${err.message}`);
   }
+  // Fail loudly rather than silently using whichever copy happened to be last.
+  const dupes = duplicateKeys(raw);
+  if (dupes.length) {
+    throw new Error(
+      `Config file has duplicate key(s): ${filePath} - ${dupes.map((k) => `"${k}"`).join(', ')}. `
+      + 'JSON.parse keeps only the last occurrence and silently discards the others, '
+      + 'so merge them into a single entry.',
+    );
+  }
+  return parsed;
 }
 
 /**

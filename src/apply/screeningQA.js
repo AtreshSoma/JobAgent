@@ -11,7 +11,7 @@
  *   - All answers are drawn from config; nothing about the candidate is invented.
  */
 
-import { normalizeText, wholeWordIn } from '../utils/textNormalize.js';
+import { normalizeText, normalizeForMatch, wholeWordIn } from '../utils/textNormalize.js';
 
 /** Phrases an answer must never contain (would misrepresent the candidate). */
 const FORBIDDEN_ANSWER_FRAGMENTS = [
@@ -356,18 +356,21 @@ const MAX_SCATTERED_SCORE = 0.8;
  */
 function matchScore(text, patterns) {
   let best = 0;
+  // Both sides are singularized so a plural phrasing matches a singular pattern
+  // (see normalizeForMatch). "What are your salary expectations?" used to miss.
+  const matchText = normalizeForMatch(text);
   for (const pattern of patterns) {
-    const p = normalizeText(pattern);
+    const p = normalizeForMatch(pattern);
     if (!p) continue;
     // 1. Exact contiguous phrase — highest confidence.
-    if (wholeWordIn(text, p)) {
+    if (wholeWordIn(matchText, p)) {
       best = Math.max(best, 1);
       continue;
     }
     // 2. Scattered content words — every one must be present, min two.
     const content = p.split(' ').filter((w) => w && !STOPWORDS.has(w));
     if (content.length < 2) continue;
-    const hit = content.filter((w) => wholeWordIn(text, w)).length;
+    const hit = content.filter((w) => wholeWordIn(matchText, w)).length;
     if (hit === content.length) best = Math.max(best, MAX_SCATTERED_SCORE);
   }
   return best;

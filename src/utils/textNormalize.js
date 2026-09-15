@@ -44,6 +44,58 @@ export function slugify(text, maxLength = 60) {
 }
 
 /**
+ * Reduce a single English word to its singular form.
+ *
+ * Screening patterns are matched as literal whole words, so "What is your
+ * salary expectation?" answered correctly while "What are your salary
+ * expectationS?" — the far more common phrasing on real forms — fell through to
+ * `ask_user` and became a blocker that stopped an assisted run. Every such miss
+ * is a stop, so this is a plausible contributor to the zero-submission rate.
+ *
+ * Deliberately conservative: it handles the regular cases and leaves anything
+ * ambiguous alone. Over-stemming would make unrelated patterns collide, and a
+ * wrong screening answer is far worse than an unanswered one.
+ *
+ * @param {string} word one lowercase token
+ * @returns {string}
+ */
+export function singularize(word) {
+  const w = String(word ?? '');
+  // Too short to carry a safe plural rule ("is", "as", "gas", "its").
+  if (w.length <= 3) return w;
+  // Not plurals: class, status, analysis, various, previous.
+  if (/(?:ss|us|is|ous)$/.test(w)) return w;
+  // expectancies -> expectancy
+  if (/[^aeiou]ies$/.test(w)) return `${w.slice(0, -3)}y`;
+  // matches, boxes, buzzes, wishes -> match, box, buzz, wish
+  if (/(?:ch|sh|s|x|z)es$/.test(w)) return w.slice(0, -2);
+  // expectations -> expectation
+  if (/s$/.test(w)) return w.slice(0, -1);
+  return w;
+}
+
+/**
+ * Normalize text for pattern matching: lowercase, whitespace-collapsed, and
+ * with every word reduced to its singular form.
+ *
+ * Applied to BOTH sides of a comparison so "salary expectations" and "salary
+ * expectation" meet in the middle.
+ *
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function normalizeForMatch(text) {
+  return normalizeText(text)
+    .split(' ')
+    .map((token) => {
+      // Keep punctuation attached to the token ("t-sql", "ci/cd") intact.
+      const m = /^([a-z0-9]+)([^a-z0-9]*)$/.exec(token);
+      return m ? singularize(m[1]) + m[2] : token;
+    })
+    .join(' ');
+}
+
+/**
  * True when `needle` appears as a whole word/phrase inside `haystack` —
  * "race" must match "Race/Ethnicity" but never "embrace". Falls back to plain
  * containment only if the needle produces an invalid regex.

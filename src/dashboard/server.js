@@ -47,6 +47,7 @@
  *   POST /api/run {phase}                 discover | score | prepare (async)
  *   POST /api/run/cancel                  stop a running batch between jobs
  *   GET  /api/run/status                  current/last run state
+ *   GET  /api/runs                        recent run history (run_log)
  *   GET  /api/sections                    curated command-center sections
  *   POST /api/jobs/:id/note {note}        save a free-text note on a job
  *   POST /api/decide-batch {jobIds,decision}  bulk shortlist/reject/archive
@@ -800,6 +801,22 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         }))
       : [];
     runAbort = new AbortController();
+    // Open the run_log row. The dashboard defines its own startRun and never
+    // called logger.startRun(), so no row was ever inserted and the matching
+    // endRun UPDATE hit nothing — run_log held 0 rows against 101,857 jobs.
+    // Observability that looked present and was not.
+    const runStartedAt = new Date().toISOString();
+    try {
+      db.reapAbandonedRuns?.();
+      db.insertRunLog?.({
+        run_id: runId, mode: phase, started_at: runStartedAt,
+        jobs_found: 0, jobs_scored: 0, jobs_queued: 0,
+        jobs_prepared: 0, jobs_applied: 0, jobs_discarded: 0, errors: null,
+      });
+    } catch (err) {
+      // Never let bookkeeping stop a run the user asked for.
+      logger?.warn?.({ runId, phase, err: err.message }, 'could not open run_log row');
+    }
     // discover/score can upsert thousands of rows in quick succession; without
     // this the dashboard's decoration cache misses on nearly every poll for the
     // run's full duration (see setDuringBulkRun in data.js).
@@ -900,6 +917,27 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
         setDuringBulkRun(false);
+        // Close the run_log row with what the run actually did. updateRunLog
+        // upserts, so a run whose opening insert failed still leaves a record.
+        try {
+          const counters = runState.lastResult?.counters ?? {};
+          db.updateRunLog?.(runId, {
+            mode: phase,
+            started_at: runStartedAt,
+            ended_at: runState.finishedAt,
+            jobs_found: Number(counters.jobs_found ?? 0),
+            jobs_scored: Number(counters.jobs_scored ?? 0),
+            jobs_queued: Number(counters.jobs_queued ?? 0),
+            jobs_prepared: Number(counters.jobs_prepared ?? 0),
+            jobs_applied: Number(counters.jobs_applied ?? 0),
+            jobs_discarded: Number(counters.jobs_discarded ?? 0),
+            errors: runState.lastError
+              ? runState.lastError
+              : (runState.rca.length ? JSON.stringify(runState.rca.slice(0, 20)) : null),
+          });
+        } catch (err) {
+          logger?.warn?.({ runId, phase, err: err.message }, 'could not close run_log row');
+        }
       }
     })());
     return { started: true, phase, runId };
@@ -1320,7 +1358,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return serveStatic(res, path);
     }
     if (req.method === 'GET' && path === '/api/stats') {
-      return sendJson(res, 200, dashboardStats(db, { now: nowDate() }));
+      return sendJson(res, 200, dashboardStats(db, { now: nowDate(), config }));
     }
     if (req.method === 'GET' && path === '/api/jobs') {
       const filters = Object.fromEntries(url.searchParams.entries());
@@ -1329,6 +1367,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     }
     if (req.method === 'GET' && path === '/api/run/status') {
       return sendJson(res, 200, runState);
+    }
+    // Run HISTORY, as opposed to the live state above. run_log was written by
+    // nothing and read by nothing, so "what did last night's run do?" had no
+    // answer anywhere in the product.
+    if (req.method === 'GET' && path === '/api/runs') {
+      const limit = Number(new URL(req.url, 'http://localhost').searchParams.get('limit') ?? 25);
+      return sendJson(res, 200, { runs: db.listRunLogs?.({ limit }) ?? [] });
     }
     if (req.method === 'POST' && path === '/api/run/cancel') {
       if (!runState.running) {
@@ -1352,7 +1397,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return sendJson(res, 200, dashboardSections(db, { now: nowDate() }));
     }
     if (req.method === 'GET' && path === '/api/reports') {
-      return sendJson(res, 200, buildReports(db, { now: nowDate() }));
+      return sendJson(res, 200, buildReports(db, { now: nowDate(), config }));
     }
     if (req.method === 'GET' && path === '/api/documents') {
       return sendJson(res, 200, buildDocuments(db, { root: config?.root ?? null, now: nowDate() }));

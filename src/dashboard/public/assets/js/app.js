@@ -1320,6 +1320,10 @@ function progressBar(progress) {
 }
 
 const STATUS_LABELS = {
+  // Deliberately NOT "Scored". These rows arrived as a title with no
+  // description, so nothing has judged them; folding them into "Scored" put
+  // 5,029 unread jobs inside a tile of 5,175.
+  needs_description: 'Description not fetched',
   ready_for_submit: 'Ready for your review',
   needs_review: 'Review resume',
   approved: 'Ready to auto-fill',
@@ -1454,7 +1458,7 @@ function renderDetail(job) {
 
   // attention
   if (job.statusReason && ['blocked', 'failed', 'cancelled', 'rejected', 'discarded', 'skipped',
-    'date_unconfirmed', 'submit_unverified'].includes(job.appStatus)) {
+    'date_unconfirmed', 'submit_unverified', 'needs_description'].includes(job.appStatus)) {
     panel.append(el('h3', { text: 'Needs attention' }));
     const box = el('div', { class: 'attention' });
     box.append(el('span', { class: 'mark', text: '!' }));
