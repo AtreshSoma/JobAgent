@@ -20,10 +20,27 @@
  *        node src/index.js --mode=DRY_RUN | PREPARE | LIVE_ASSIST
  *        node src/index.js --report
  *
- * No command ever submits an application. The browser assist fills forms and
+ * No CLI COMMAND ever submits an application. The browser assist fills forms and
  * advances through safe navigation (Next/Continue/Review) but always stops
  * before the final submit so a human can review and click it. There is no
- * auto-submit path and no bypass of CAPTCHA / login / MFA / bot protection.
+ * bypass of CAPTCHA / login / MFA / bot protection anywhere in this project.
+ *
+ * On auto-submit, precisely (this file used to say "there is no auto-submit
+ * path", which contradicted both the README and the code):
+ *
+ *   - No CLI command can submit. `runAssist` hardcodes autoSubmit: false.
+ *   - ONE path can submit: POST /api/auto-submit-batch on the local dashboard,
+ *     which requires an explicit per-run authorization (`confirmed: true`), a
+ *     fresh server-side eligibility check, zero blockers, a truthful-sponsorship
+ *     assertion, and a uniquely-resolved submit control. A click is still not a
+ *     submission: `verifySubmission()` must find confirmation evidence or the
+ *     row is recorded as `submit_unverified`, explicitly NOT as submitted.
+ *   - That route is currently NOT reachable from the shipped dashboard UI — no
+ *     front-end code calls it. It exists for an explicit, deliberate opt-in and
+ *     is exercised by tests, not by a button.
+ *
+ * docs/SUPPORT_MATRIX.md and the README's Safety model section say the same
+ * thing; this comment is the CLI-local statement of it.
  */
 
 import { loadConfig } from './config/loadConfig.js';

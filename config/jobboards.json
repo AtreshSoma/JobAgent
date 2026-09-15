@@ -373,7 +373,8 @@
           "Software Engineering",
           "IT"
         ],
-        "museMaxPages": 3
+        "museMaxPages": 3,
+        "detailBudgetNote": "Left at 25 DELIBERATELY. The audit listed raising this as a quick win, but measured against the live store atsSearch has 0 of 331 rows under 200 characters — Workable returns the full JD inline, so the detail budget is not this source's constraint and raising it would buy nothing. The description gap is Workday (69%) and SmartRecruiters (70%); those budgets were raised instead. atsSearch's real limitation is VOLUME (0.3% of the corpus), which is a query/coverage problem, not a detail-fetch one."
       }
     },
     {
@@ -2170,9 +2171,9 @@
       ],
       "rateLimitMs": 4000,
       "hostSpacingMs": 0,
-      "maxDetailFetches": 20,
+      "maxDetailFetches": 40,
       "options": {
-        "detailBudgetNote": "20 per tenant, raised from 8. Measured on 3 tenants: 8 -> 24 descriptions in 19.7s, 20 -> 60 in 29.7s, so across 214 tenants at boardConcurrency 24 this costs roughly +30-50s per run. It is a mitigation, not a fix: even 20 reads about 2% of what a large tenant returns. Descriptions are cached per requisition and reused on later runs, and `npm run enrich` is what actually clears the summary-only backlog.",
+        "detailBudgetNote": "20 per tenant, raised from 8. Measured on 3 tenants: 8 -> 24 descriptions in 19.7s, 20 -> 60 in 29.7s, so across 214 tenants at boardConcurrency 24 this costs roughly +30-50s per run. It is a mitigation, not a fix: even 20 reads about 2% of what a large tenant returns. Descriptions are cached per requisition and reused on later runs, and `npm run enrich` is what actually clears the summary-only backlog. AUDIT 2026-09-14 follow-up: measured against the live store, 27,254 of 39,599 Workday rows (69%) still carry under 200 characters of JD — by far the largest share of the ~51,000 unreadable rows in the corpus, and every one of them is a guaranteed Discard because the reachable score without a description (~44) sits below the 50 floor. Raised 20 -> 40 on that basis; by the measurement above that is roughly another +30-50s per run. This is still a mitigation: `npm run enrich` remains the thing that actually clears the backlog, and nothing yet schedules it.",
         "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) — adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant."
       },
       "maxSearchTerms": 2,
@@ -2301,9 +2302,10 @@
       "priority": 3,
       "maxPostingsPerCompany": 1000,
       "options": {
-        "maxDetailFetches": 40,
+        "maxDetailFetches": 80,
         "strictTitleMatch": true,
-        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). Pages through `offset` until totalFound is reached — it previously read only the first 100 postings per company, which silently truncated ServiceNow (442) and Experian (495). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting. Bosch and IKEA were removed after both returned 0 postings on verification."
+        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). Pages through `offset` until totalFound is reached — it previously read only the first 100 postings per company, which silently truncated ServiceNow (442) and Experian (495). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting. Bosch and IKEA were removed after both returned 0 postings on verification.",
+        "detailBudgetNote": "80 per company, raised from 40. AUDIT 2026-09-14: 23,773 of 33,738 SmartRecruiters rows (70%) hold under 200 characters of JD — the second-largest block of unreadable rows after Workday. The company Posting API is a cheap per-posting read, so this budget is the direct lever on how many of those become scoreable."
       },
       "boards": [
         "ServiceNow",

@@ -41,6 +41,8 @@
     "audit:resumes": "node scripts/auditTailoredResumes.js --limit=3",
     "verify": "node scripts/verifyRepoHealth.js",
     "db:maintenance": "node scripts/dbMaintenance.mjs",
+    "db:prune": "node scripts/dbMaintenance.mjs --prune-descriptions=60",
+    "db:prune:apply": "node scripts/dbMaintenance.mjs --prune-descriptions=60 --apply --vacuum",
     "setup": "node scripts/setupLocalConfig.mjs",
     "setup:check": "node scripts/setupLocalConfig.mjs --check",
     "test": "vitest run",
