@@ -67,6 +67,34 @@ const PM_RESUME = [
   'Master of Business Administration | Example State University | 2016',
 ];
 
+/**
+ * A long career history: two CURRENT data-engineering roles and five earlier
+ * ones. This is the shape that produced the reported false positive — 2 of 7
+ * titles matched, 29% coverage, and the panel said the resume and the search
+ * "disagree" when the current role matched exactly.
+ */
+const LONG_CAREER_RESUME = [
+  'Someone',
+  'Data ENGINEER | Cloud & DATA PLATFORM | APACHE Spark & Lakehouse',
+  'Raleigh, NC | someone@example.com',
+  'SKILLS',
+  'Cloud: Azure Databricks, Microsoft Fabric',
+  'PROFESSIONAL EXPERIENCE',
+  'Senior Data Engineer, Finance Analytics | Northwind Analytics',
+  'Raleigh, NC (Remote) | April 2022 - Present',
+  'Data / BI Engineer, Cloud Modernization | Contoso Insurance',
+  'Remote | January 2022 - March 2022',
+  'Power BI Developer, Product Analytics | Fabrikam Health',
+  'Horsham, PA (Remote) | February 2021 - December 2021',
+  'Business Intelligence Developer, Healthcare | Tailspin Services',
+  'Raleigh, NC | May 2018 - January 2021',
+  'EARLIER EXPERIENCE',
+  'Migration Specialist | Globex Payroll',
+  'Florence, SC | October 2017 - April 2018',
+  'SQL BI Developer | Woodgrove Financial',
+  'Bloomington, IL | February 2017 - September 2017',
+];
+
 describe('reading a resume as profile evidence', () => {
   it('splits a resume into labelled sections', () => {
     const kinds = splitSections(DE_RESUME).map((s) => s.kind);
@@ -157,6 +185,68 @@ describe('comparing the resume with what is actually searched', () => {
     // Already in the fixture stack, so not proposed again.
     const de = diffAgainstProfile(extractResumeEvidence(DE_RESUME), fixtureCandidate);
     expect(de.newSkills).not.toContain('Azure Data Factory');
+  });
+
+  // REGRESSION. The drift verdict was "fewer than half of ALL titles match",
+  // which is wrong on any real resume: a resume is a career history, so most of
+  // its titles are roles already moved past. Measured on a genuine Senior Data
+  // Engineer resume against a profile targeting exactly that, the two current
+  // roles matched and five roles last held in 2017-2021 did not — 29% coverage,
+  // and the panel announced that the resume and the job search "disagree" when
+  // they agreed completely.
+  it('does NOT cry drift when the current role matches but old roles do not', () => {
+    const evidence = extractResumeEvidence(LONG_CAREER_RESUME);
+    const profile = {
+      targetTitles: ['Senior Data Engineer', 'Data Engineer', 'Analytics Engineer'],
+      technicalStack: {},
+    };
+    const diff = diffAgainstProfile(evidence, profile);
+
+    // Reproduces the reported numbers: a minority of titles match...
+    expect(evidence.titles.length).toBeGreaterThanOrEqual(6);
+    expect(diff.coverage).toBeLessThan(0.5);
+    expect(diff.newTitles.length).toBeGreaterThan(diff.matchedTitles.length);
+    // ...and the verdict is still "covered", because the CURRENT role is.
+    expect(diff.drifted).toBe(false);
+    expect(diff.currentCovered.length).toBeGreaterThan(0);
+    expect(diff.summary).toMatch(/current role .* is already being searched for/i);
+    expect(diff.summary).not.toMatch(/disagree|describe different jobs/i);
+  });
+
+  it('separates the current role from earlier ones', () => {
+    const evidence = extractResumeEvidence(LONG_CAREER_RESUME);
+    expect(evidence.currentTitles).toContain('Senior Data Engineer');
+    // Held 2017-2018, so history — never presented as what this person is now.
+    expect(evidence.earlierTitles).toContain('Migration Specialist');
+    expect(evidence.currentTitles).not.toContain('Migration Specialist');
+  });
+
+  it('still cries drift when the CURRENT role is not searched for', () => {
+    const diff = diffAgainstProfile(extractResumeEvidence(PM_RESUME), fixtureCandidate);
+    expect(diff.drifted).toBe(true);
+    expect(diff.currentCovered).toEqual([]);
+  });
+
+  it('normalizes shouted title casing instead of proposing it verbatim', () => {
+    // "Data ENGINEER | Cloud & DATA PLATFORM" is real resume formatting. Left
+    // alone it is shown back as a suggestion AND written into targetTitles,
+    // where it becomes the literal search phrase.
+    const { titles } = extractResumeEvidence([
+      'Someone', 'Data ENGINEER | Cloud & DATA PLATFORM', 'city@example.com',
+      'PROFESSIONAL EXPERIENCE', 'SENIOR DATA ENGINEER | Northwind', 'Remote | 2021 - Present',
+    ]);
+    expect(titles).toContain('Data Engineer');
+    expect(titles).toContain('Senior Data Engineer');
+    expect(titles).not.toContain('Data ENGINEER');
+  });
+
+  it('keeps acronyms intact while fixing case', () => {
+    const { titles } = extractResumeEvidence([
+      'Someone', 'BI Developer', 'a@example.com',
+      'PROFESSIONAL EXPERIENCE', 'SQL BI DEVELOPER | Contoso', 'Remote | 2019 - 2021',
+    ]);
+    expect(titles.some((t) => t.includes('BI'))).toBe(true);
+    expect(titles.some((t) => t.includes('Bi '))).toBe(false);
   });
 
   it('treats an empty resume as no evidence rather than total drift', () => {

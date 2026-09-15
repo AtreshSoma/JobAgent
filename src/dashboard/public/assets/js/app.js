@@ -2487,24 +2487,53 @@ async function renderResumeSuggestions(body) {
   if (diff.drifted) box.append(el('span', { class: 'mark', text: '!' }));
 
   const inner = el('div');
-  inner.append(el('div', {}, el('b', { text: diff.drifted ? 'This resume and your job search disagree. ' : 'Resume vs. your job search. ' }), diff.summary));
+  inner.append(el('div', {},
+    el('b', {
+      // A label, not a restatement — the summary already names the role.
+      text: diff.drifted
+        ? 'This resume and your job search describe different jobs. '
+        : 'Resume vs. your job search. ',
+    }),
+    diff.summary));
 
-  if (evidence.titles.length) {
+  // What the resume says you are NOW, separately from what you used to be.
+  // Collapsing the two made an aligned resume look mismatched, because a career
+  // history is mostly roles you have moved past.
+  if (evidence.currentTitles?.length) {
     inner.append(el('div', { class: 'muted small' },
-      `Roles found in the resume: ${evidence.titles.join(' · ')}`));
+      `Current role in this resume: ${evidence.currentTitles.join(' · ')}`));
+  }
+  if (evidence.earlierTitles?.length) {
+    inner.append(el('div', { class: 'muted small' },
+      `Earlier roles: ${evidence.earlierTitles.join(' · ')}`));
   }
 
   // Titles the resume shows that nothing is being searched for. These are the
   // actionable half: adopting one changes what every source looks for.
   if (diff.newTitles.length) {
-    const pick = el('div', { class: 'row-gap' });
-    for (const title of diff.newTitles) {
-      pick.append(el('label', { class: 'chipbox' },
-        el('input', { type: 'checkbox', 'data-adopt-title': title }),
-        el('span', { text: title })));
+    const currentSet = new Set((diff.currentTitles ?? []).map((t) => t.toLowerCase()));
+    const currentUnmatched = diff.newTitles.filter((t) => currentSet.has(t.toLowerCase()));
+    const earlierUnmatched = diff.newTitles.filter((t) => !currentSet.has(t.toLowerCase()));
+
+    const chips = (titles) => {
+      const pick = el('div', { class: 'row-gap' });
+      for (const title of titles) {
+        pick.append(el('label', { class: 'chipbox' },
+          el('input', { type: 'checkbox', 'data-adopt-title': title }),
+          el('span', { text: title })));
+      }
+      return pick;
+    };
+
+    if (currentUnmatched.length) {
+      inner.append(el('div', { class: 'muted small', text: 'Your CURRENT role is not being searched for:' }));
+      inner.append(chips(currentUnmatched));
     }
-    inner.append(el('div', { class: 'muted small', text: 'Not currently searched for:' }));
-    inner.append(pick);
+    if (earlierUnmatched.length) {
+      inner.append(el('div', { class: 'muted small' },
+        'Earlier roles, not searched for — tick one only if you would still take that job:'));
+      inner.append(chips(earlierUnmatched));
+    }
 
     const actions = el('div', { class: 'row-gap' });
     actions.append(el('button', {

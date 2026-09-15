@@ -178,7 +178,10 @@ function titlesFromExperience(sections) {
     for (const line of section.lines) {
       const beforeEmployer = line.split(/\s*[|·]\s*|\s+[—–]\s+/)[0];
       const title = beforeEmployer.split(',')[0].trim();
-      if (looksLikeTitle(title, { line })) found.push(title);
+      // Order is preserved. Resumes are reverse-chronological by convention, so
+      // the first title found is the most recent role — which is the one that
+      // says what this person does NOW.
+      if (looksLikeTitle(title, { line })) found.push(tidyTitleCase(title));
     }
   }
   return found;
@@ -198,7 +201,7 @@ function titlesFromHeadline(sections) {
   for (const line of candidates) {
     for (const part of line.split(/\s*[|·]\s*/)) {
       const t = part.trim();
-      if (looksLikeTitle(t, { line })) out.push(t);
+      if (looksLikeTitle(t, { line })) out.push(tidyTitleCase(t));
     }
   }
   return out;
@@ -231,6 +234,44 @@ function skillsFromSections(sections) {
   return out;
 }
 
+/**
+ * Normalize a title's CASING for display and for writing into the profile.
+ *
+ * Resumes style their headings freely — "Data ENGINEER | Cloud & DATA PLATFORM"
+ * is real formatting from a real document. Left alone, that shouting is shown
+ * back to the user as a suggestion and, worse, written verbatim into
+ * `candidate.targetTitles` where it becomes the literal search phrase.
+ *
+ * Known acronyms are kept upper-case; everything else is title-cased. The list
+ * is explicit rather than a length rule, because length does not separate the
+ * two: "SENIOR DATA ENGINEER" became "Senior DATA Engineer" when any all-caps
+ * token of four characters or fewer was assumed to be an acronym, and DATA,
+ * LEAD, FULL and WEB are all ordinary words of that length.
+ *
+ * @param {string} title
+ * @returns {string}
+ */
+const TITLE_ACRONYMS = new Set([
+  'BI', 'SQL', 'ETL', 'ELT', 'AI', 'ML', 'QA', 'QC', 'UX', 'UI', 'HR', 'IT',
+  'SRE', 'DBA', 'CRM', 'ERP', 'SEO', 'SEM', 'API', 'VP', 'SVP', 'EVP',
+  'CTO', 'CIO', 'CEO', 'CFO', 'COO', 'PM', 'PMO', 'GIS', 'NLP', 'LLM',
+  'AWS', 'GCP', 'SAP', 'MDM', 'BA', 'QAE', 'DE', 'ML/AI', 'R&D', 'IOS', 'DEVOPS',
+]);
+
+function tidyTitleCase(title) {
+  return String(title ?? '')
+    .split(/(\s+|\/)/)
+    .map((token) => {
+      if (!/[a-zA-Z]/.test(token)) return token;
+      const bare = token.replace(/[^A-Za-z0-9&/+.-]/g, '');
+      if (TITLE_ACRONYMS.has(bare.toUpperCase()) && bare === bare.toUpperCase()) return token;
+      // Leave deliberate mixed case alone ("PySpark", "iOS", "McDonald").
+      if (/[a-z]/.test(token) && /[A-Z]/.test(token.slice(1))) return token;
+      return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join('');
+}
+
 /** Distinct, order-preserving, compared loosely (case/punctuation-insensitive). */
 function distinct(values) {
   const seen = new Set();
@@ -257,10 +298,29 @@ export function extractResumeEvidence(paragraphs = []) {
   const sections = splitSections(paragraphs);
   const headlineTitles = distinct(titlesFromHeadline(sections));
   const experienceTitles = distinct(titlesFromExperience(sections));
+
+  // CURRENT vs EARLIER is the distinction that makes this evidence usable.
+  //
+  // A resume is a career history, so most of the titles in it are roles the
+  // person has already moved past. Treating all of them as equally live made a
+  // perfectly aligned resume look mismatched: a Senior Data Engineer whose
+  // profile targets exactly that was reported as "disagreeing" with its own job
+  // search, because five roles last held in 2017-2021 outnumbered the two
+  // current ones and dragged a flat coverage count to 29%.
+  //
+  // Current = what the headline claims + the most recent position. Everything
+  // else is history: still worth showing, never a reason to say the two
+  // documents describe different jobs.
+  const currentTitles = distinct([...headlineTitles, ...experienceTitles.slice(0, 1)]);
+  const earlierTitles = distinct(experienceTitles.slice(1))
+    .filter((t) => !currentTitles.some((c) => normalizeLoose(c) === normalizeLoose(t)));
+
   return {
     // Headline first: it is the candidate's own statement of what they are.
     titles: distinct([...headlineTitles, ...experienceTitles]),
     headlineTitles,
+    currentTitles,
+    earlierTitles,
     skills: distinct(skillsFromSections(sections)),
     sections: sections.map((s) => ({ kind: s.kind, lines: s.lines.length })),
   };
@@ -332,24 +392,55 @@ export function diffAgainstProfile(evidence, candidate = {}) {
     ? matchedTitles.length / evidence.titles.length
     : 1;
 
-  // Below half the resume's own role statements matching the search targets,
-  // the two documents are describing different jobs. Chosen as a threshold
-  // rather than "any mismatch" because a resume legitimately lists earlier
-  // roles the candidate has moved on from.
-  const drifted = evidence.titles.length > 0 && coverage < 0.5;
+  // DRIFT IS A QUESTION ABOUT THE CURRENT ROLE, NOT A HEAD COUNT.
+  //
+  // This used to be "fewer than half of all titles match". That is wrong on any
+  // real resume, because a resume is a career history: most of its titles are
+  // roles already moved past. Measured on a genuine Senior Data Engineer resume
+  // against a profile targeting exactly "Senior Data Engineer" and "Data
+  // Engineer", the two current roles matched and five roles last held in
+  // 2017-2021 did not, giving 29% coverage — and the panel announced that the
+  // resume and the job search "disagree" when they agreed completely.
+  //
+  // They disagree only when NOTHING the person currently claims to be is being
+  // searched for. That is the career-change case this is meant to catch, and it
+  // is the only case where "uploading this changed nothing" is a warning rather
+  // than a note.
+  const currentTitles = Array.isArray(evidence.currentTitles) && evidence.currentTitles.length
+    ? evidence.currentTitles
+    : evidence.titles.slice(0, 1);
+  const currentCovered = currentTitles.filter((t) => coveredBy(t, targetTitles));
+  const drifted = currentTitles.length > 0 && currentCovered.length === 0;
+
+  const earlierUnmatched = newTitles.filter(
+    (t) => !currentTitles.some((c) => normalizeLoose(c) === normalizeLoose(t)),
+  );
+
+  let summary;
+  if (drifted) {
+    summary = `This resume presents you as ${currentTitles.map((t) => `"${t}"`).join(' / ')}, `
+      + `but discovery is searching for ${targetTitles.slice(0, 3).map((t) => `"${t}"`).join(', ')}`
+      + `${targetTitles.length > 3 ? ` and ${targetTitles.length - 3} more` : ''}. `
+      + 'Discovery follows the profile, not the resume — nothing changes until you adopt a title.';
+  } else if (earlierUnmatched.length) {
+    summary = `Your current role (${currentCovered.map((t) => `"${t}"`).join(' / ')}) is already being `
+      + `searched for. ${earlierUnmatched.length} earlier role(s) in this resume are not — `
+      + 'add them only if you would still take that kind of job.';
+  } else {
+    summary = `Your current role (${currentCovered.map((t) => `"${t}"`).join(' / ')}) is already being `
+      + 'searched for, and so is every other role in this resume.';
+  }
 
   return {
     matchedTitles,
     newTitles,
+    currentTitles,
+    currentCovered,
+    earlierUnmatched,
     unusedTargets,
     newSkills,
     coverage,
     drifted,
-    summary: drifted
-      ? `This resume reads as ${evidence.titles.slice(0, 3).map((t) => `"${t}"`).join(', ')}, `
-        + `but discovery is searching for ${targetTitles.slice(0, 3).map((t) => `"${t}"`).join(', ')}. `
-        + 'Discovery follows the profile, not the resume — nothing changes until you adopt a title.'
-      : `${matchedTitles.length} of ${evidence.titles.length} role titles in this resume are already covered `
-        + `by your ${targetTitles.length} search target(s).`,
+    summary,
   };
 }
