@@ -93,6 +93,9 @@ describe('runDoctor', () => {
     cpSync(join(PROJECT_ROOT, 'config'), join(root, 'config'), { recursive: true });
     cpSync(join(FIXTURE_CONFIG_DIR, 'candidate.json'), join(root, 'config', 'candidate.json'));
     cpSync(join(FIXTURE_CONFIG_DIR, 'screening_answers.json'), join(root, 'config', 'screening_answers.json'));
+    // cover_letter.json is gitignored personal config too, so the repo copy is
+    // a placeholder on a clean clone and would fail the sentinel check.
+    cpSync(join(FIXTURE_CONFIG_DIR, 'cover_letter.json'), join(root, 'config', 'cover_letter.json'));
     mkdirSync(join(root, 'resumes', 'base'), { recursive: true });
     writeFileSync(join(root, 'resumes', 'base', 'MASTER_RESUME.docx'), 'stub docx bytes', 'utf8');
   });
