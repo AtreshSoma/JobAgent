@@ -17,8 +17,8 @@ def _good_paragraphs():
     # ~160 words across the core sections with contact details.
     filler = "Built and shipped reliable data pipelines and analytics across teams. " * 12
     return [
-        "Atresh Somayajula",
-        "atresh@example.com | 555-123-4567",
+        "Priya Raghunathan",
+        "priya@example.com | 555-123-4567",
         "Experience",
         "Senior Data Engineer — " + filler,
         "Education",

@@ -4,9 +4,9 @@
  * Every generated application artifact lives under:
  *
  *   applications/output/{Company Name}/{Job Title}_{JobID-or-PostedDate}/
- *     Atresh_Somayajula_Resume_{Job_Title}.docx
- *     Atresh_Somayajula_Resume_{Job_Title}.pdf
- *     Atresh_Somayajula_Cover_Letter_{Job_Title}.(pdf|txt)
+ *     {Candidate_Name}_Resume_{Job_Title}.docx
+ *     {Candidate_Name}_Resume_{Job_Title}.pdf
+ *     {Candidate_Name}_Cover_Letter_{Job_Title}.(pdf|txt)
  *     Application_Packet_{Company_Name}_{Job_Title}.json
  *
  * Folder names are human-readable (spaces preserved) so the tree is easy to
@@ -21,7 +21,15 @@
 import { join, relative } from 'node:path';
 
 /** Candidate name fallback if config is unavailable. */
-export const DEFAULT_CANDIDATE_NAME = 'Atresh Somayajula';
+/**
+ * Fallback used only when a caller supplies no candidate name.
+ *
+ * This was the repository owner's real name, so any code path that forgot to
+ * pass `candidateName` silently named a SECOND user's resume and cover letter
+ * after the author — in files sent to employers. A neutral default is the only
+ * safe one; the real name always arrives from `candidate.identity.fullName`.
+ */
+export const DEFAULT_CANDIDATE_NAME = 'Candidate';
 
 /**
  * Project-relative path with forward slashes, for tidy console output.
@@ -104,7 +112,7 @@ export function fileToken(text) {
 }
 
 /**
- * Candidate filename prefix, e.g. "Atresh Somayajula" -> "Atresh_Somayajula".
+ * Candidate filename prefix, e.g. "Priya Raghunathan" -> "Priya_Raghunathan".
  * @param {string} [fullName]
  * @returns {string}
  */

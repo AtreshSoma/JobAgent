@@ -15,7 +15,7 @@ const base = loadTestConfig({ loadEnv: false, env: {} });
 
 /** Candidate with every required field present. */
 const fullCandidate = {
-  identity: { fullName: 'Atresh Somayajula', links: { linkedin: 'https://linkedin.com/in/x', github: '', portfolio: '' } },
+  identity: { fullName: 'Priya Raghunathan', links: { linkedin: 'https://linkedin.com/in/x', github: '', portfolio: '' } },
   contact: { email: 'a@example.com', phone: '5550100' },
   location: { street: '', city: 'Morrisville', state: 'NC', zip: '27560', country: 'United States' },
   workAuthorization: { status: 'H-1B', requiresSponsorship: true },

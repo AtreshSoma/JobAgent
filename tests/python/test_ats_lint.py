@@ -18,7 +18,7 @@ def _save(doc, tmp_path, name="resume.docx"):
 
 def test_clean_resume_passes(tmp_path):
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     doc.add_paragraph("Senior Data Engineer")
     doc.add_paragraph("Built Databricks and Delta Lake pipelines with PySpark.")
     path = _save(doc, tmp_path)
@@ -30,7 +30,7 @@ def test_clean_resume_passes(tmp_path):
 
 def test_table_is_a_high_severity_finding(tmp_path):
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     table = doc.add_table(rows=1, cols=2)
     table.rows[0].cells[0].text = "Skill"
     table.rows[0].cells[1].text = "Level"
@@ -76,7 +76,7 @@ def test_missing_file_is_non_fatal(tmp_path):
 
 def test_image_is_high_severity(tmp_path):
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     # Create a tiny 1x1 PNG to embed.
     png = (
         b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"

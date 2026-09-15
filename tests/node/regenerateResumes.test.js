@@ -40,7 +40,7 @@ describe('regenerateResumes helpers', () => {
     const root = mkdtempSync(join(tmpdir(), 'regen-'));
     const folder = join(root, 'applications', 'output', 'Acme', 'Data Engineer_2026-06-06');
     mkdirSync(folder, { recursive: true });
-    const resumePath = join(folder, 'Atresh_Somayajula_Resume_Data_Engineer.docx');
+    const resumePath = join(folder, 'Priya_Raghunathan_Resume_Data_Engineer.docx');
     writeFileSync(resumePath, 'docx');
 
     writeFileSync(join(folder, 'Application_Packet_Acme_Data_Engineer.json'), JSON.stringify({
@@ -67,9 +67,9 @@ describe('regenerateResumes helpers', () => {
     mkdirSync(withPacket, { recursive: true });
     mkdirSync(orphan, { recursive: true });
 
-    const resumePath = join(withPacket, 'Atresh_Somayajula_Resume_Data_Engineer.docx');
+    const resumePath = join(withPacket, 'Priya_Raghunathan_Resume_Data_Engineer.docx');
     writeFileSync(resumePath, 'docx');
-    writeFileSync(join(orphan, 'Atresh_Somayajula_Resume_Lead_Engineer.docx'), 'docx');
+    writeFileSync(join(orphan, 'Priya_Raghunathan_Resume_Lead_Engineer.docx'), 'docx');
     writeFileSync(join(withPacket, 'Application_Packet_Acme_Data_Engineer.json'), JSON.stringify({
       resumePath, job: { company: 'Acme', title: 'Data Engineer' },
       matchedKeywords: ['pyspark', 'snowflake'], missingKeywords: [],

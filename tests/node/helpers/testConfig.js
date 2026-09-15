@@ -9,7 +9,7 @@
  * Two things followed from that:
  *
  *   1. Assertions encoded personal data. `loadConfig.test.js` asserted
- *      `fullName === 'Atresh Somayajula'`; `coverLetter.test.js` expected an
+ *      the author's own `fullName`; `coverLetter.test.js` expected an
  *      H-1B sentence; `discoveryCoverage.test.js` expected a specific target
  *      title. None of those can pass for any other user, and they turned the
  *      suite red the moment the local config became a placeholder.

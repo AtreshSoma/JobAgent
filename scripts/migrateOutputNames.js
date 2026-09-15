@@ -9,9 +9,9 @@
  *
  * They are reorganized into:
  *   applications/output/{Company Name}/{Job Title}_{Date}/
- *     Atresh_Somayajula_Resume_{Job_Title}.docx
- *     Atresh_Somayajula_Resume_{Job_Title}.pdf
- *     Atresh_Somayajula_Cover_Letter_{Job_Title}.txt
+ *     Priya_Raghunathan_Resume_{Job_Title}.docx
+ *     Priya_Raghunathan_Resume_{Job_Title}.pdf
+ *     Priya_Raghunathan_Cover_Letter_{Job_Title}.txt
  *     Application_Packet_{Company}_{Job_Title}.json
  *
  * Rules:

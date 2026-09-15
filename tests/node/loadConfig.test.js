@@ -5,7 +5,7 @@ import { loadConfig, readJson, CONFIG_FILES, PROJECT_ROOT } from '../../src/conf
  * This is the one place that loads the REAL local configuration, and it asserts
  * only its SHAPE.
  *
- * It used to assert values: `fullName === 'Atresh Somayajula'`, a specific
+ * It used to assert values: the author's own `fullName`, a specific
  * sponsorship flag, a specific target title. Those assertions encoded one
  * person's personal data as a test expectation, could never pass for any other
  * user, and went red the moment the local config was replaced with a template.

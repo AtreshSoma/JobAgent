@@ -25,7 +25,7 @@ def sample_resume(tmp_path):
     from docx import Document
 
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     doc.add_paragraph("Senior Data Engineer")
     doc.add_paragraph("Built medallion pipelines on Azure Databricks with PySpark and Delta Lake.")
     doc.add_paragraph("Developed Power BI semantic models and DAX measures for finance analytics.")
@@ -49,7 +49,7 @@ def sample_resume_paragraph_competencies(tmp_path):
     from docx import Document
 
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     doc.add_paragraph("PROFESSIONAL SUMMARY")
     doc.add_paragraph(
         "Senior Data Engineer with 10+ years building cloud data platforms."
@@ -83,7 +83,7 @@ def sample_resume_with_competencies(tmp_path):
     from docx import Document
 
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     doc.add_paragraph("PROFESSIONAL SUMMARY")
     doc.add_paragraph("Senior Data Engineer with cloud data platform experience.")
     doc.add_paragraph("CORE COMPETENCIES")

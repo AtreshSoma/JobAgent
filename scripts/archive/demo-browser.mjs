@@ -21,9 +21,9 @@ const cover = join(fixtures, 'sample_cover.txt');
 
 const fillPlan = {
   steps: [
-    { field: 'first_name', label: 'First name', value: 'Atresh', source: 'profile', selector: '#first_name' },
-    { field: 'last_name', label: 'Last name', value: 'Somayajula', source: 'profile', selector: '#last_name' },
-    { field: 'email', label: 'Email', value: 'atresh@example.com', source: 'profile', selector: '#email' },
+    { field: 'first_name', label: 'First name', value: 'Priya', source: 'profile', selector: '#first_name' },
+    { field: 'last_name', label: 'Last name', value: 'Raghunathan', source: 'profile', selector: '#last_name' },
+    { field: 'email', label: 'Email', value: 'priya@example.com', source: 'profile', selector: '#email' },
     { field: 'phone', label: 'Phone', value: '555-0100', source: 'profile', selector: '#phone' },
   ],
   uploads: [

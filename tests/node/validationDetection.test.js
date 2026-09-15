@@ -60,7 +60,7 @@ describe('validation-error detection (real browser)', () => {
       screeningPlan: { answered: [], needsUser: [] },
       fillPlan: {
         fields: [
-          { field: 'first_name', selector: '#first_name', value: 'Atresh', required: true, source: 'profile' },
+          { field: 'first_name', selector: '#first_name', value: 'Priya', required: true, source: 'profile' },
           { field: 'email', selector: '#email', value: 'a@example.com', required: true, source: 'profile' },
         ],
         uploads: [],

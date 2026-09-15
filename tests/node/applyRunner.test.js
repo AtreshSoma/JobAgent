@@ -42,7 +42,7 @@ function basePacket(overrides = {}) {
     fillPlan: {
       steps: [
         { field: 'email', label: 'Email', value: 'a@b.com', source: 'profile', selector: '#email' },
-        { field: 'first_name', label: 'First', value: 'Atresh', source: 'profile', selector: '#first_name' },
+        { field: 'first_name', label: 'First', value: 'Priya', source: 'profile', selector: '#first_name' },
       ],
       uploads: [{ type: 'resume', path: RESUME, selector: '#resume' }],
       submitSelector: '#submit_app',
@@ -429,7 +429,7 @@ describe('assistApply', () => {
       config: {
         runtime: { maxApplicationsPerDay: 15, assistMaxSteps: 1 },
         scoring: { submit: { minScore: 75 } },
-        candidate: { identity: { fullName: 'Atresh Somayajula' }, contact: { email: 'a@b.com' } },
+        candidate: { identity: { fullName: 'Priya Raghunathan' }, contact: { email: 'a@b.com' } },
         screeningAnswers: {},
       },
       mode: 'LIVE_ASSIST',

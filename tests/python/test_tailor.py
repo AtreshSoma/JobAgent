@@ -25,10 +25,10 @@ def test_tailor_honors_explicit_output_name(sample_resume, tmp_path, humanizer_p
         sample_resume, out_dir, job,
         keywords=["azure"],
         patterns=humanizer_patterns,
-        output_name="Atresh_Somayajula_Resume_Senior_Data_Engineer.docx",
+        output_name="Priya_Raghunathan_Resume_Senior_Data_Engineer.docx",
     )
     assert result["output_path"].endswith(
-        "Atresh_Somayajula_Resume_Senior_Data_Engineer.docx"
+        "Priya_Raghunathan_Resume_Senior_Data_Engineer.docx"
     )
 
 
@@ -143,7 +143,7 @@ def test_focus_line_collapses_alias_duplicates(tmp_path, humanizer_patterns):
     from docx import Document
 
     doc = Document()
-    doc.add_paragraph("Atresh Somayajula")
+    doc.add_paragraph("Priya Raghunathan")
     doc.add_paragraph("Built pipelines on Azure Databricks with PySpark and Apache Spark.")
     master = tmp_path / "MASTER_RESUME.docx"
     doc.save(str(master))

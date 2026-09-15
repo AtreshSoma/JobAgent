@@ -79,13 +79,13 @@ describe('credentialManager', () => {
 
   it('redact masks secret-looking keys recursively', () => {
     const input = {
-      user: 'atresh',
+      user: 'priya',
       password: 'hunter2',
       nested: { apiKey: 'xyz', token: 't', safe: 1 },
       list: [{ cookie: 'c' }],
     };
     const out = redact(input);
-    expect(out.user).toBe('atresh');
+    expect(out.user).toBe('priya');
     expect(out.password).toBe('[REDACTED]');
     expect(out.nested.apiKey).toBe('[REDACTED]');
     expect(out.nested.token).toBe('[REDACTED]');

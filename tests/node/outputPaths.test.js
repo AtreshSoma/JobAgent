@@ -24,8 +24,12 @@ describe('outputPaths naming convention', () => {
   });
 
   it('derives the candidate filename prefix', () => {
-    expect(candidatePrefix('Atresh Somayajula')).toBe('Atresh_Somayajula');
-    expect(candidatePrefix()).toBe('Atresh_Somayajula');
+    expect(candidatePrefix('Priya Raghunathan')).toBe('Priya_Raghunathan');
+    // The no-argument default must stay NEUTRAL. It used to be the repository
+    // owner's real name, so any caller that forgot to pass a name silently
+    // titled a second user's resume and cover letter after the author — in the
+    // files that get sent to employers.
+    expect(candidatePrefix()).toBe('Candidate');
   });
 
   it('normalizes date / id folder suffixes to YYYY-MM-DD when dated', () => {
@@ -40,14 +44,14 @@ describe('outputPaths naming convention', () => {
       company: 'Databricks',
       title: 'Lakebase Sales Specialist - Retail',
       dateOrId: '20260606',
-      candidateName: 'Atresh Somayajula',
+      candidateName: 'Priya Raghunathan',
     });
     expect(p.companyFolder).toBe('Databricks');
     expect(p.jobFolder).toBe('Lakebase Sales Specialist - Retail_2026-06-06');
-    expect(p.resumeDocxPath).toMatch(/Atresh_Somayajula_Resume_Lakebase_Sales_Specialist_Retail\.docx$/);
-    expect(p.resumePdfPath).toMatch(/Atresh_Somayajula_Resume_Lakebase_Sales_Specialist_Retail\.pdf$/);
+    expect(p.resumeDocxPath).toMatch(/Priya_Raghunathan_Resume_Lakebase_Sales_Specialist_Retail\.docx$/);
+    expect(p.resumePdfPath).toMatch(/Priya_Raghunathan_Resume_Lakebase_Sales_Specialist_Retail\.pdf$/);
     expect(p.packetName).toBe('Application_Packet_Databricks_Lakebase_Sales_Specialist_Retail.json');
-    expect(p.coverLetterPath('txt')).toMatch(/Atresh_Somayajula_Cover_Letter_Lakebase_Sales_Specialist_Retail\.txt$/);
+    expect(p.coverLetterPath('txt')).toMatch(/Priya_Raghunathan_Cover_Letter_Lakebase_Sales_Specialist_Retail\.txt$/);
   });
 
   it('de-slugs company/title when building from a legacy slug', () => {

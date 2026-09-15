@@ -15,9 +15,9 @@ const RESUME = join(FIXTURES, 'sample_resume.txt');
 
 const FILL_PLAN = {
   steps: [
-    { field: 'first_name', label: 'First name', value: 'Atresh', source: 'profile', selector: '#first_name' },
-    { field: 'last_name', label: 'Last name', value: 'Somayajula', source: 'profile', selector: '#last_name' },
-    { field: 'email', label: 'Email', value: 'atresh@example.com', source: 'profile', selector: '#email' },
+    { field: 'first_name', label: 'First name', value: 'Priya', source: 'profile', selector: '#first_name' },
+    { field: 'last_name', label: 'Last name', value: 'Raghunathan', source: 'profile', selector: '#last_name' },
+    { field: 'email', label: 'Email', value: 'priya@example.com', source: 'profile', selector: '#email' },
     { field: 'phone', label: 'Phone', value: '555-0100', source: 'profile', selector: '#phone' },
   ],
   uploads: [{ type: 'resume', path: RESUME, selector: '#resume' }],
@@ -25,8 +25,8 @@ const FILL_PLAN = {
 };
 
 const CANDIDATE = {
-  identity: { fullName: 'Atresh Somayajula' },
-  contact: { email: 'atresh@example.com', phone: '4259749870' },
+  identity: { fullName: 'Priya Raghunathan' },
+  contact: { email: 'priya@example.com', phone: '9843127760' },
   location: { city: 'Morrisville', state: 'North Carolina', country: 'United States' },
 };
 
@@ -77,8 +77,8 @@ describe('embedded iframe form filling (real browser)', () => {
     const fill = await fillFields(scope, FILL_PLAN);
     expect(fill.filled.map((f) => f.field).sort()).toEqual(['email', 'first_name', 'last_name', 'phone']);
     // Read values back from inside the frame to prove they were written there.
-    expect(await scope.locator('#email').inputValue()).toBe('atresh@example.com');
-    expect(await scope.locator('#first_name').inputValue()).toBe('Atresh');
+    expect(await scope.locator('#email').inputValue()).toBe('priya@example.com');
+    expect(await scope.locator('#first_name').inputValue()).toBe('Priya');
     expect(await scope.locator('#phone').inputValue()).toBe('555-0100');
     // The top document still has no such fields.
     expect(await page.locator('#email').count()).toBe(0);
@@ -93,8 +93,8 @@ describe('embedded iframe form filling (real browser)', () => {
     const dyn = await fillScannedFields(scope, scanned, { candidate: CANDIDATE, screeningAnswers: {} });
     const filledLabels = dyn.filled.map((f) => f.label);
     expect(filledLabels).toEqual(expect.arrayContaining(['First name', 'Last name', 'Email']));
-    expect(await scope.locator('#first_name').inputValue()).toBe('Atresh');
-    expect(await scope.locator('#last_name').inputValue()).toBe('Somayajula');
+    expect(await scope.locator('#first_name').inputValue()).toBe('Priya');
+    expect(await scope.locator('#last_name').inputValue()).toBe('Raghunathan');
   }, 60000);
 
   it('uploads the resume to the file input INSIDE the iframe', async (ctx) => {

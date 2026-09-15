@@ -14,9 +14,9 @@ const COVER = join(FIXTURES, 'sample_cover.txt');
 
 const FILL_PLAN = {
   steps: [
-    { field: 'first_name', label: 'First name', value: 'Atresh', source: 'profile', selector: '#first_name' },
-    { field: 'last_name', label: 'Last name', value: 'Somayajula', source: 'profile', selector: '#last_name' },
-    { field: 'email', label: 'Email', value: 'atresh@example.com', source: 'profile', selector: '#email' },
+    { field: 'first_name', label: 'First name', value: 'Priya', source: 'profile', selector: '#first_name' },
+    { field: 'last_name', label: 'Last name', value: 'Raghunathan', source: 'profile', selector: '#last_name' },
+    { field: 'email', label: 'Email', value: 'priya@example.com', source: 'profile', selector: '#email' },
     { field: 'phone', label: 'Phone', value: '555-0100', source: 'profile', selector: '#phone' },
     { field: 'nope', label: 'Missing', value: 'x', source: 'profile', selector: '#does_not_exist' },
   ],
@@ -57,8 +57,8 @@ describe('browser automation against a local fixture form', () => {
     const fill = await fillFields(page, FILL_PLAN);
     expect(fill.filled.map((f) => f.field).sort()).toEqual(['email', 'first_name', 'last_name', 'phone']);
     expect(fill.unresolved.map((u) => u.field)).toContain('nope');
-    expect(await page.inputValue('#email')).toBe('atresh@example.com');
-    expect(await page.inputValue('#first_name')).toBe('Atresh');
+    expect(await page.inputValue('#email')).toBe('priya@example.com');
+    expect(await page.inputValue('#first_name')).toBe('Priya');
 
     const req = requiredFieldsSatisfied(fill.filled, FILL_PLAN);
     expect(req.ok).toBe(true);
