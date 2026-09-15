@@ -43,6 +43,17 @@ const ROOT = join(HERE, '..', '..', '..');
 export const fixtureCandidate = readJson(join(FIXTURE_CONFIG_DIR, 'candidate.json'));
 /** The fictional screening answers the whole suite runs against. */
 export const fixtureScreeningAnswers = readJson(join(FIXTURE_CONFIG_DIR, 'screening_answers.json'));
+/**
+ * The fictional cover-letter config.
+ *
+ * config/cover_letter.json is gitignored too — it carries a real person's years
+ * of experience and work-authorization sentence into documents sent to
+ * employers — so on a clean clone it is seeded as a PLACEHOLDER. Without this
+ * substitution the placeholder guard fails preflight and every packet-building
+ * test fails on a fresh checkout while passing on the author's machine: exactly
+ * the clean-clone failure this helper exists to prevent.
+ */
+export const fixtureCoverLetter = readJson(join(FIXTURE_CONFIG_DIR, 'cover_letter.json'));
 
 // Validate the fixtures against the same schemas the real configs must satisfy.
 // A fixture that has drifted out of schema would otherwise fail obscurely, deep
@@ -65,5 +76,6 @@ export function loadTestConfig({ loadEnv = false, env = {}, ...rest } = {}) {
     ...real,
     candidate: fixtureCandidate,
     screeningAnswers: fixtureScreeningAnswers,
+    coverLetter: fixtureCoverLetter,
   });
 }

@@ -1,0 +1,22 @@
+{
+  "_note": "TEST FIXTURE — a complete, realistic cover-letter config for the fictional candidate in ./candidate.json. Tests read this instead of config/cover_letter.json, which is gitignored (it carries YOUR years of experience and work-authorization wording into documents sent to employers) and is seeded as a PLACEHOLDER on a clean clone.",
+  "enabled": true,
+  "minScoreToGenerate": 75,
+  "wordCount": {
+    "min": 180,
+    "max": 260
+  },
+  "greeting": "Dear Hiring Team,",
+  "closing": "Sincerely,",
+  "template": {
+    "opening": "I am applying for the {title} role at {company}. As a {headline} with {years} of experience, I am confident my background maps closely to what you are looking for.",
+    "skillsLead": "My core strengths align with your requirements:",
+    "experience": "In my current role I {topHighlight}.",
+    "fitNote": "I focus on {focusAreas}, which appear central to this position.",
+    "sponsorshipNote": "I am authorized to work in the United States on an H-1B visa and am seeking an employer able to support sponsorship.",
+    "closingParagraph": "I would welcome the chance to discuss how I can contribute to {company}. Thank you for your consideration."
+  },
+  "yearsOfExperience": "10+ years",
+  "includeSponsorshipNote": true,
+  "maxSkillBullets": 5
+}
