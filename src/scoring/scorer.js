@@ -71,12 +71,28 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
     ...(kw.dataEngineering ?? []), ...(kw.devopsInfra ?? []),
     ...(kw.dataQuality ?? []), ...(kw.genAI ?? []),
   ];
-  breakdown.titleFit = keywordCategory(titleText, kw.titles, weights.titleFit, 1, matchedAll);
-  breakdown.azureFabricStack = keywordCategory(text, kw.azureFabric, weights.azureFabricStack, 3, matchedAll);
-  breakdown.dataEngineeringStack = keywordCategory(text, dataEngineeringTerms, weights.dataEngineeringStack, 3, matchedAll);
-  breakdown.biSemanticDepth = keywordCategory(text, kw.biSemantic, weights.biSemanticDepth, 2, matchedAll);
-  breakdown.pythonSqlPyspark = keywordCategory(text, kw.languages, weights.pythonSqlPyspark, 2, matchedAll);
-  breakdown.domainFit = keywordCategory(text, kw.domains, weights.domainFit, 1, matchedAll);
+  // SATURATION: how many distinct keyword hits earn full marks for a category.
+  //
+  // These were hardcoded literals, and they saturated early enough that depth
+  // was not rewarded over presence: a JD mentioning Azure, Databricks and Delta
+  // Lake once each scored identically to a perfect stack match, and a mediocre
+  // posting cleared 55 before any real fit was established. They are now config
+  // (scoring.saturation), so a different candidate can tune matching without
+  // editing JavaScript — the same argument as the declarative-categories work.
+  //
+  // titleFit stays at 1 deliberately: a title either names the role or it does
+  // not, and that is genuinely binary.
+  const sat = scoring.saturation ?? {};
+  const fullAt = (key, fallback) => {
+    const v = Number(sat[key]);
+    return Number.isFinite(v) && v >= 1 ? v : fallback;
+  };
+  breakdown.titleFit = keywordCategory(titleText, kw.titles, weights.titleFit, fullAt('titleFit', 1), matchedAll);
+  breakdown.azureFabricStack = keywordCategory(text, kw.azureFabric, weights.azureFabricStack, fullAt('azureFabricStack', 3), matchedAll);
+  breakdown.dataEngineeringStack = keywordCategory(text, dataEngineeringTerms, weights.dataEngineeringStack, fullAt('dataEngineeringStack', 3), matchedAll);
+  breakdown.biSemanticDepth = keywordCategory(text, kw.biSemantic, weights.biSemanticDepth, fullAt('biSemanticDepth', 2), matchedAll);
+  breakdown.pythonSqlPyspark = keywordCategory(text, kw.languages, weights.pythonSqlPyspark, fullAt('pythonSqlPyspark', 2), matchedAll);
+  breakdown.domainFit = keywordCategory(text, kw.domains, weights.domainFit, fullAt('domainFit', 1), matchedAll);
 
   // Seniority fit.
   breakdown.seniorityFit = scoreSeniority(job, text, candidate.seniority, weights.seniorityFit);

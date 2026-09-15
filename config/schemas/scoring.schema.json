@@ -257,6 +257,19 @@
           "type": "string"
         }
       }
+    },
+    "saturation": {
+      "type": "object",
+      "description": "How many distinct keyword hits earn FULL marks for each scoring category (points = weight * min(1, matched / fullAt)). Higher values reward depth over mere presence. titleFit is binary by design.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1
+      }
+    }
+  },
+  "patternProperties": {
+    "^_": {
+      "type": "string"
     }
   }
 }

@@ -19,10 +19,20 @@ const base = loadTestConfig({ loadEnv: false, env: {} });
 
 const noSponsorship = F.noSponsorship; // "US citizens only; we are unable to sponsor visas"
 
+// The point of this fixture is the C2C EMPLOYMENT TYPE, not the stack: the
+// guard is that "corp to corp" must not hard-exclude an otherwise good role.
+// Its JD is a genuine stack match so the test exercises that guard rather than
+// the score floor — it previously cleared 50 only because keyword categories
+// saturated after three hits, so raising saturation (scoring.saturation) sank
+// a job the test calls "matching" and the failure looked like a scoring bug.
 const c2cOnly = normalizeJob({
   source: 'manual', company: 'StaffCo', title: 'Senior Data Engineer',
   sourceJobId: 'C2C-1', postedAt: '2026-06-01T00:00:00Z',
-  jdText: 'Corp to corp only. C2C contract position, 3 months. Azure, PySpark, SQL.',
+  jdText: 'Corp to corp only. C2C contract position, 3 months. '
+    + 'Azure Data Factory, Azure Databricks, Delta Lake and Microsoft Fabric on a '
+    + 'medallion lakehouse. PySpark and Structured Streaming transformations, '
+    + 'Python and SQL throughout, Power BI semantic models and dimensional '
+    + 'modeling for the gold layer. Azure Synapse Analytics and ADLS Gen2.',
 });
 
 const unrelatedManager = normalizeJob({

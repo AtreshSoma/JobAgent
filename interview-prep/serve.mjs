@@ -2,13 +2,21 @@
 /**
  * Interview Prep Academy — local static server.
  *
- * A tiny, zero-dependency node:http server that serves the study site in
- * ./site. Mirrors the dashboard's safety posture: binds to 127.0.0.1 ONLY,
- * never the network. Run it with:  npm run learn
+ * A tiny, zero-dependency node:http server that serves the study site. Mirrors
+ * the dashboard's safety posture: binds to 127.0.0.1 ONLY, never the network.
+ * Run it with:  npm run learn
  *
- * The site is fully static (no API), so you can also just open
- * interview-prep/site/index.html directly in a browser — this server only
- * adds a clean http:// origin and auto-opens your browser.
+ * ONE COPY OF THE SITE
+ * --------------------
+ * The site used to exist twice — ./site and src/dashboard/public/learn — as
+ * 356 KB of duplicated assets each. They drifted, and not harmlessly: four of
+ * the twelve content modules in ./site had literal newlines inside double-quoted
+ * JavaScript strings, which is a SYNTAX ERROR, so `npm run learn` served a site
+ * where a third of the curriculum silently failed to load. The dashboard's copy
+ * was also a CSS fix ahead.
+ *
+ * So there is now one source, under the dashboard's public directory, and both
+ * entry points serve it. A duplicate that drifts is worse than a shared path.
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
@@ -16,7 +24,8 @@ import { join, normalize, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), 'site');
+// The single source for the study site, shared with the dashboard's /learn mount.
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'dashboard', 'public', 'learn');
 const PORT = Number(process.env.LEARN_PORT) || 4747;
 
 const TYPES = {
