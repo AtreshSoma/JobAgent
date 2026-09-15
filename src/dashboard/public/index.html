@@ -105,8 +105,15 @@
     <h2 id="boardHeading" class="sr-only">Job board</h2>
     <div class="filterbar" id="filterbar" aria-label="Job filters" data-collapsed="true">
       <div class="filters">
-        <input type="search" id="q" class="grow" placeholder="Search company, role, or location…"
-          aria-label="Search company, role, or location">
+        <input type="search" id="q" class="grow" placeholder="Filter this board by company, role, or location…"
+          aria-label="Filter this board by company, role, or location">
+        <!-- Distinct from the filter on its left, and labelled to say so. That
+             box narrows rows ALREADY discovered; this one asks the job boards a
+             new question. Before it existed, every run searched
+             candidate.targetTitles and nothing else, so trying a different role
+             meant editing the profile and waiting for a full discovery pass. -->
+        <button type="button" class="small ghost" id="btnFindJobs" data-action="open-job-search"
+          title="Search job boards for a role that is not in your profile yet">🔎 Search job boards</button>
         <!-- Phones only (see .filter-toggle in the stylesheet). Search stays
              visible; everything else folds behind this. -->
         <button type="button" class="small ghost filter-toggle" id="btnFilterSheet"
@@ -486,6 +493,28 @@
   <div class="dlg-foot">
     <button class="small" data-action="close-dialog">Cancel</button>
     <button class="small primary" id="addUrlGo" data-action="submit-add-url">Add &amp; score</button>
+  </div>
+</dialog>
+
+<dialog id="dlgJobSearch" class="narrow" aria-labelledby="dlgJobSearchTitle">
+  <div class="dlg-head">
+    <h2 id="dlgJobSearchTitle">Search job boards</h2>
+    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body">
+    <p class="muted mt0">Ask the job boards for a role that is not in your profile yet.
+      Normal runs search only the target titles in your profile, so this is how you try a
+      different role without committing to it — nothing about your profile changes.</p>
+    <label for="jobSearchInput">Role or phrase</label>
+    <input id="jobSearchInput" type="search" placeholder="Senior Product Manager, payments" autocomplete="off">
+    <p class="muted small">Searches the query-first sources only (Workable, and Adzuna if you
+      have a key), which answer in seconds. Results are scored for information and added to the
+      board — a role outside your usual stack will score low, and is kept visible anyway.</p>
+    <div id="jobSearchMsg" class="muted"></div>
+  </div>
+  <div class="dlg-foot">
+    <button class="small" data-action="close-dialog">Cancel</button>
+    <button class="small primary" id="jobSearchGo" data-action="submit-job-search">Search</button>
   </div>
 </dialog>
 

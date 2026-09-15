@@ -1611,7 +1611,18 @@ code.jobid {
 /* Kept deliberately few and semantic-adjacent so markup stays style-free. */
 .mt0 { margin-top: 0; }
 .mb0 { margin-bottom: 0; }
-.row-gap { display: flex; gap: 6px; align-items: center; }
+.row-gap { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+
+/* Tickable role suggestions in the master-resume drawer. Wraps rather than
+   overflowing: a resume can surface a dozen titles and the drawer is narrow. */
+.chipbox {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px 3px 7px; border: 1px solid var(--rule, #d0d7de);
+  border-radius: 999px; font-size: .86em; cursor: pointer; line-height: 1.5;
+}
+.chipbox:hover { border-color: var(--accent, #0969da); }
+.chipbox:focus-within { outline: 2px solid var(--accent, #0969da); outline-offset: 1px; }
+.chipbox input { margin: 0; }
 .grow-1 { flex: 1; min-width: 0; }
 .fill { flex: 1; min-height: 0; display: flex; }
 .fineprint { font-size: 12px; margin: 0; }

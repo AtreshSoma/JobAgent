@@ -31,6 +31,9 @@
  *   GET  /api/master-resume               master resume metadata + readable text
  *   GET  /api/master-resume/file          download the master resume DOCX
  *   POST /api/master-resume               replace it (validated, previous kept)
+ *   GET  /api/master-resume/suggestions   role/skill evidence + diff vs the search profile
+ *   POST /api/profile/adopt               adopt selected titles/skills into the profile
+ *   POST /api/search {query}              ad-hoc query-first discovery (preview a role)
  *   POST /api/master-resume/restore       roll back to a kept previous version
  *   GET  /api/profile                     application profile + screening answers + question queue
  *   POST /api/profile                     save the profile fields the filler uses
@@ -45,6 +48,7 @@
  *   POST /api/jobs/:id/mark-submitted     record YOUR manual submission
  *   POST /api/jobs/:id/assist             fill the approved packet, stop before submit
  *   POST /api/run {phase}                 discover | score | prepare (async)
+ *   POST /api/search {query}              ad-hoc query-first discovery (synchronous)
  *   POST /api/run/cancel                  stop a running batch between jobs
  *   GET  /api/run/status                  current/last run state
  *   GET  /api/runs                        recent run history (run_log)
@@ -82,14 +86,14 @@ import {
 } from './data.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import {
-  runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult,
+  runScore, runRescore, runPrepareApps, runQuerySearch, loadPacket, recordAssistResult,
   preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { loadConfig } from '../config/loadConfig.js';
 import {
   PROFILE_FIELDS, readProfile, writeProfile, readScreeningAnswers,
-  writeScreeningAnswers, upsertScreeningAnswer,
+  writeScreeningAnswers, upsertScreeningAnswer, adoptResumeEvidence,
 } from '../config/profileStore.js';
 import {
   dismissQuestion, markQuestionAnswered, recordUnansweredQuestions, reopenQuestion,
@@ -104,6 +108,7 @@ import {
   buildExtensionPayload, isChromiumExtensionOrigin, readApprovedArtifact,
   validExtensionKey,
 } from '../extension/companion.js';
+import { extractResumeEvidence, diffAgainstProfile } from '../resume/resumeProfile.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'public');
 
@@ -573,6 +578,36 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     }
     if (job.resume_pdf_path !== safePdf) db.upsertJob({ id: jobId, resume_pdf_path: safePdf });
     return { ready: true, generated, url: `/api/jobs/${encodeURIComponent(jobId)}/resume?format=pdf` };
+  }
+
+  /**
+   * Role and skill evidence from the current master resume, with a diff against
+   * the profile that actually drives discovery.
+   *
+   * Uploading a new resume used to change nothing upstream — the file was
+   * written, and `candidate.targetTitles` kept steering every source. This is
+   * what makes that visible. It does not WRITE anything: see
+   * src/resume/resumeProfile.js for why adopting stays an explicit human act.
+   */
+  function resumeSuggestions() {
+    const root = config?.root;
+    if (!root) {
+      return { available: false, reason: 'no workspace root is configured' };
+    }
+    const file = join(root, MASTER_RESUME_RELATIVE);
+    if (!existsSync(file)) {
+      return { available: false, reason: 'no master resume has been uploaded yet' };
+    }
+    try {
+      const { paragraphs } = extractDocxText(readFileSync(file));
+      const evidence = extractResumeEvidence(paragraphs);
+      const diff = diffAgainstProfile(evidence, config.candidate ?? {});
+      return { available: true, evidence, diff, targetTitles: config.candidate?.targetTitles ?? [] };
+    } catch (err) {
+      // A present-but-unreadable master is worth saying plainly; tailoring will
+      // hit the same problem.
+      return { available: false, reason: `the master resume could not be read: ${sanitizeErrorMessage(err.message)}` };
+    }
   }
 
   function readResumePreview(jobId, requestedFormat = 'auto') {
@@ -1365,6 +1400,24 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       filters.now = nowDate();
       return sendJson(res, 200, boardPage(db, filters));
     }
+    // Ad-hoc query-first discovery: "find jobs matching this phrase, now".
+    // Shares the run lock with /api/run, because it drives the same pipeline
+    // and two concurrent writers would interleave upserts on the same rows.
+    if (req.method === 'POST' && path === '/api/search') {
+      const body = await readBody(req);
+      const query = String(body.query ?? '').trim();
+      if (!query) return sendJson(res, 400, { error: 'enter something to search for' });
+      if (runState.running) {
+        return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — wait for it to finish` });
+      }
+      try {
+        const searchFn = deps.querySearchFn ?? runQuerySearch;
+        const result = await searchFn({ config, db, logger, query, deps });
+        return sendJson(res, 200, result);
+      } catch (err) {
+        return sendJson(res, err.statusCode ?? 400, { error: sanitizeErrorMessage(err.message) });
+      }
+    }
     if (req.method === 'GET' && path === '/api/run/status') {
       return sendJson(res, 200, runState);
     }
@@ -1432,7 +1485,17 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       }
       const bytes = Buffer.from(encoded, 'base64');
       const result = replaceMasterResume({ filename: body.filename, bytes });
-      return sendJson(res, 200, result);
+      // The whole point of the upload: say immediately whether this resume and
+      // the saved search profile are describing the same job. Replacing the
+      // file changes nothing about discovery on its own.
+      return sendJson(res, 200, { ...result, suggestions: resumeSuggestions() });
+    }
+    // Role/skill evidence read out of the CURRENT master resume, next to what
+    // discovery is actually searching for. Read-only: it proposes, and adopting
+    // anything is a separate, explicit POST — see src/resume/resumeProfile.js
+    // for why deriving targetTitles automatically would be wrong.
+    if (req.method === 'GET' && path === '/api/master-resume/suggestions') {
+      return sendJson(res, 200, resumeSuggestions());
     }
     if (req.method === 'POST' && path === '/api/master-resume/restore') {
       const body = await readBody(req);
@@ -1455,6 +1518,19 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         const saved = writeProfile(root, body.values);
         return sendJson(res, 200, { ...saved, warning: reloadConfig(), profile: readProfile(root) });
       });
+    }
+    if (req.method === 'POST' && path === '/api/profile/adopt') {
+      const body = await readBody(req);
+      const titles = Array.isArray(body.titles) ? body.titles.slice(0, 40) : [];
+      const skills = Array.isArray(body.skills) ? body.skills.slice(0, 200) : [];
+      if (!titles.length && !skills.length) {
+        return sendJson(res, 400, { error: 'nothing was selected to adopt' });
+      }
+      const result = adoptResumeEvidence(config.root, { titles, skills });
+      // targetTitles drives every query-first source and Workday's derived
+      // phrases, so the in-memory config must not keep serving the old list.
+      reloadConfig();
+      return sendJson(res, 200, { ...result, suggestions: resumeSuggestions() });
     }
     if (req.method === 'POST' && path === '/api/profile/answers') {
       const body = await readBody(req);

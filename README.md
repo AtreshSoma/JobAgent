@@ -364,6 +364,35 @@ Phrases now get derived from `candidate.targetTitles` by `deriveSearchTerms`. Gi
 > [!NOTE]
 > **Two tokens, not longer**, because Workday's search *narrows* as words get added. Measured on one tenant: `data` gave 115 hits, `data engineer` gave 51, and a nine-word phrase gave **0**. Override with `searchTexts`, or cap cost with `maxSearchTerms`.
 
+### Changing your resume does not change your search — on purpose
+
+Discovery follows `candidate.targetTitles`. The master resume is not read until tailoring time, so **uploading a new resume does not, by itself, change a single search**. That used to be silent: swap in a resume for a different role and the pipeline kept searching the old one indefinitely.
+
+It is no longer silent. Uploading a resume (or opening **Master resume** in the dashboard) reads the role titles and skills out of it and shows them next to what is actually being searched for:
+
+> **This resume and your job search disagree.** This resume reads as "Senior Product Manager", "Product Manager", "Business Analyst", but discovery is searching for "Senior Data Engineer", "Data Engineer", "Analytics Engineer". Discovery follows the profile, not the resume — nothing changes until you adopt a title.
+
+Titles the resume shows and the profile does not target are offered as tick boxes. **Add selected to my job search** appends them to `candidate.targetTitles`, which is what every source reads.
+
+> [!IMPORTANT]
+> Adopting is always a click, never automatic. A resume says what you have **done**; target titles say what you **want next**. Those two differ exactly when someone is changing direction — a career-changer's resume is still full of the field they are leaving — so deriving the search from the resume automatically would confidently search the wrong thing. `candidate.json` keeps facts and preferences separate, and this keeps it that way.
+
+Extraction is deterministic, with no model involved, and deliberately conservative: a proposed title must name a role (`engineer`, `developer`, `manager`, …). That one rule is what stops the location line, the headline tagline and achievement bullets becoming real queries against real job boards.
+
+### Searching for a role you have not committed to
+
+**🔎 Search job boards**, next to the board filter, asks the boards a new question instead of filtering rows you already have:
+
+```
+🔎 Search job boards  →  "Senior Product Manager, payments"
+```
+
+Only the **query-first** sources run — Workable via `ats-search`, plus Adzuna if you have a key — because they search across employers from a phrase and answer in seconds. A full discovery pass spans 226 Workday tenants for about 14 minutes, which is not a search box.
+
+Results are scored and added to the board, and **kept visible even when they score badly**. The fit score comes from `scoring.keywords`, which is one stack's vocabulary, so a genuine product-management role scores near zero against a data-engineering profile. Discarding the rows you just asked for, because a keyword list you did not choose calls them irrelevant, would be the wrong behaviour — the score is shown as information, and you judge it.
+
+Your profile is not touched. This is a preview of what targeting that title would find, which is also why the resume panel offers **Preview one first** next to its suggestions.
+
 <details>
 <summary><b>📡 Aggregator discovery via Adzuna</b>: optional, free key, roughly 1,000 calls a month</summary>
 

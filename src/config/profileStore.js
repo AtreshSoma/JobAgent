@@ -172,6 +172,87 @@ export function writeProfile(root, values = {}) {
   return { path, backup, changed };
 }
 
+/** Most target titles worth searching. Each one costs requests on every run. */
+const MAX_TARGET_TITLES = 40;
+/** Most skill terms in technicalStack.other. */
+const MAX_STACK_TERMS = 200;
+
+/**
+ * Adopt role titles and/or skill terms proposed from the master resume.
+ *
+ * This is the write half of the resume-to-search loop. It is deliberately
+ * separate from `writeProfile` (which edits the contact boxes on a form) because
+ * it edits what the pipeline SEARCHES FOR — `targetTitles` drives Workday's
+ * derived search phrases, atsSearch, Adzuna, Amazon and `classifyTitleFit`, so
+ * one careless write changes every source at once.
+ *
+ * Additive only. Nothing the user already targets is removed, because the
+ * resume is evidence of what they have done and is not a statement of what they
+ * want next — see src/resume/resumeProfile.js for why that distinction is load
+ * bearing here.
+ *
+ * @param {string} root
+ * @param {object} [selection]
+ * @param {string[]} [selection.titles] titles to add to candidate.targetTitles
+ * @param {string[]} [selection.skills] terms to add to technicalStack.other
+ * @returns {{path: string, backup: string|null, addedTitles: string[], addedSkills: string[]}}
+ */
+export function adoptResumeEvidence(root, { titles = [], skills = [] } = {}) {
+  const path = candidatePath(root);
+  const candidate = existsSync(path) ? readJson(path) : templateCandidate(root);
+
+  const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
+  const keyOf = (v) => clean(v).toLowerCase();
+
+  const currentTitles = Array.isArray(candidate.targetTitles) ? [...candidate.targetTitles] : [];
+  const haveTitles = new Set(currentTitles.map(keyOf));
+  const addedTitles = [];
+  for (const raw of titles) {
+    const title = clean(raw);
+    if (!title || title.length > MAX_PROFILE_VALUE_CHARS) continue;
+    if (haveTitles.has(keyOf(title))) continue;
+    haveTitles.add(keyOf(title));
+    currentTitles.push(title);
+    addedTitles.push(title);
+  }
+  if (currentTitles.length > MAX_TARGET_TITLES) {
+    throw new Error(
+      `That would leave ${currentTitles.length} target titles (limit ${MAX_TARGET_TITLES}). `
+      + 'Every title is searched against every configured board on every run — remove some first.',
+    );
+  }
+
+  const stack = { ...(candidate.technicalStack ?? {}) };
+  const other = Array.isArray(stack.other) ? [...stack.other] : [];
+  const haveSkills = new Set(Object.values(stack).flat().filter(Boolean).map(keyOf));
+  const addedSkills = [];
+  for (const raw of skills) {
+    const skill = clean(raw);
+    if (!skill || skill.length > MAX_PROFILE_VALUE_CHARS) continue;
+    if (haveSkills.has(keyOf(skill))) continue;
+    haveSkills.add(keyOf(skill));
+    other.push(skill);
+    addedSkills.push(skill);
+  }
+  if (other.length > MAX_STACK_TERMS) {
+    throw new Error(`That would leave ${other.length} terms in technicalStack.other (limit ${MAX_STACK_TERMS}).`);
+  }
+
+  if (!addedTitles.length && !addedSkills.length) {
+    return { path, backup: null, addedTitles: [], addedSkills: [] };
+  }
+
+  candidate.targetTitles = currentTitles;
+  candidate.technicalStack = { ...stack, other };
+  // Once the user has adopted anything, the profile is theirs, not a template.
+  delete candidate._note;
+
+  assertCandidateValid(root, candidate);
+  const backup = keepPreviousVersion(path);
+  writeFileAtomic(path, `${JSON.stringify(candidate, null, 2)}\n`);
+  return { path, backup, addedTitles, addedSkills };
+}
+
 /** JSON pointer ("/contact/email") -> the label shown on the form ("Email"). */
 const LABEL_BY_POINTER = new Map(
   PROFILE_FIELDS.map((f) => [`/${f.path.split('.').join('/')}`, f.label]),

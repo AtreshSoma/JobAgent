@@ -71,6 +71,23 @@ const PREPARE_TIERS = new Set([TIERS.PRIORITY, TIERS.APPLY]);
 export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) {
   const now = deps.now ?? new Date();
   const searchFn = deps.searchFn ?? runSearch;
+  /**
+   * Keep rows that score below the near-miss floor VISIBLE instead of
+   * discarding them.
+   *
+   * Set only by an ad-hoc query search (`runQuerySearch`). The fit score is
+   * computed from `scoring.keywords`, which is one profile's stack vocabulary,
+   * so a role outside that stack scores near zero however good a match it is:
+   * a genuine "Senior Product Manager, Payments" scored 20 against a data
+   * engineering vocabulary and was discarded. Discarding the exact rows a user
+   * just asked for, because a keyword list they did not choose says they are
+   * irrelevant, is the wrong behaviour — so a query search records the score as
+   * information and leaves the row on the board for the human to judge.
+   *
+   * Normal runs are unaffected: the threshold is what stops 97,000 unrelated
+   * rows reaching the board.
+   */
+  const keepBelowThreshold = deps.keepBelowThreshold === true;
 
   logger.event(EVENT_TYPES.SEARCH_START, { message: 'Starting search' });
   // Preload the set of already-APPLIED job ids ONCE (cheap) rather than issuing
@@ -304,7 +321,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     const row = reportRow(job, discovery, {
       score: score.total, tier, sponsorship: sponsorship.status,
       missing_keywords: score.missingKeywords,
-      status: tier === TIERS.DISCARD ? 'discarded' : 'scored',
+      status: tier === TIERS.DISCARD && !keepBelowThreshold ? 'discarded' : 'scored',
     });
     reportRows.push(row);
 
@@ -314,7 +331,8 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       // rather than an unexplained assertion.
       sponsorship_signals: sponsorship.signals ?? [],
       matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
-      explanation, status: tier === TIERS.DISCARD ? 'discarded' : 'scored',
+      explanation,
+      status: tier === TIERS.DISCARD && !keepBelowThreshold ? 'discarded' : 'scored',
     }, config.exclusions?.employmentTypes);
     logger.event(EVENT_TYPES.SCORE_EXPLAINED, {
       jobId: job.id, message: `${score.total}/100 -> ${tier}`,
@@ -350,7 +368,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       continue;
     }
 
-    if (tier === TIERS.DISCARD) {
+    if (tier === TIERS.DISCARD && !keepBelowThreshold) {
       counters.jobs_discarded += 1;
       counters.jobs_discarded_low_score += 1;
       const dRow = discoveredRow(job, discovery, {

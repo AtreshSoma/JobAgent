@@ -2464,6 +2464,106 @@ async function openMasterResume() {
   await renderMasterResume();
 }
 
+/**
+ * "Does this resume match what we are searching for?"
+ *
+ * Replacing the master resume changed nothing upstream: discovery reads
+ * `candidate.targetTitles`, and the resume was not opened until tailoring time.
+ * So a new resume for a different role left the pipeline searching the old one
+ * indefinitely, silently. This panel makes that visible and offers the fix.
+ *
+ * It PROPOSES. Adopting a title is a click, never automatic — a resume says
+ * what you have done, while target titles say what you want next, and those two
+ * differ exactly when someone is changing direction.
+ */
+async function renderResumeSuggestions(body) {
+  let data;
+  try { data = await api('/api/master-resume/suggestions'); }
+  catch { return; } // never let this panel break the drawer it sits in
+  if (!data?.available) return;
+
+  const { diff, evidence } = data;
+  const box = el('div', { class: diff.drifted ? 'attention' : 'evidence-note' });
+  if (diff.drifted) box.append(el('span', { class: 'mark', text: '!' }));
+
+  const inner = el('div');
+  inner.append(el('div', {}, el('b', { text: diff.drifted ? 'This resume and your job search disagree. ' : 'Resume vs. your job search. ' }), diff.summary));
+
+  if (evidence.titles.length) {
+    inner.append(el('div', { class: 'muted small' },
+      `Roles found in the resume: ${evidence.titles.join(' · ')}`));
+  }
+
+  // Titles the resume shows that nothing is being searched for. These are the
+  // actionable half: adopting one changes what every source looks for.
+  if (diff.newTitles.length) {
+    const pick = el('div', { class: 'row-gap' });
+    for (const title of diff.newTitles) {
+      pick.append(el('label', { class: 'chipbox' },
+        el('input', { type: 'checkbox', 'data-adopt-title': title }),
+        el('span', { text: title })));
+    }
+    inner.append(el('div', { class: 'muted small', text: 'Not currently searched for:' }));
+    inner.append(pick);
+
+    const actions = el('div', { class: 'row-gap' });
+    actions.append(el('button', {
+      class: 'small primary', 'data-action': 'adopt-resume-titles',
+      text: 'Add selected to my job search',
+      title: 'Writes the selected titles into candidate.targetTitles. Nothing else changes.',
+    }));
+    actions.append(el('button', {
+      class: 'small ghost', 'data-action': 'preview-resume-title',
+      text: 'Preview one first',
+      title: 'Search the job boards for the first selected title without changing your profile.',
+    }));
+    inner.append(actions);
+  }
+
+  if (diff.newSkills.length) {
+    inner.append(el('div', { class: 'muted small' },
+      `${fmt(diff.newSkills.length)} skill term(s) in this resume are not in your profile stack `
+      + `(${diff.newSkills.slice(0, 8).join(', ')}${diff.newSkills.length > 8 ? '…' : ''}). `
+      + 'These affect how relevant a posting is judged to be.'));
+    inner.append(el('button', {
+      class: 'small ghost', 'data-action': 'adopt-resume-skills',
+      text: 'Add these skills to my profile',
+    }));
+  }
+
+  box.append(inner);
+  body.append(box);
+}
+
+/** Titles ticked in the suggestions panel. */
+function selectedAdoptTitles() {
+  return [...document.querySelectorAll('[data-adopt-title]')]
+    .filter((i) => i.checked)
+    .map((i) => i.dataset.adoptTitle);
+}
+
+async function adoptResumeSelection({ titles = [], skills = [] } = {}) {
+  if (!titles.length && !skills.length) {
+    toast('Tick at least one first.', '');
+    return;
+  }
+  try {
+    const r = await postJson('/api/profile/adopt', { titles, skills });
+    const bits = [];
+    if (r.addedTitles.length) bits.push(`${r.addedTitles.length} title(s)`);
+    if (r.addedSkills.length) bits.push(`${r.addedSkills.length} skill(s)`);
+    toast(
+      bits.length
+        ? `Added ${bits.join(' and ')} to your profile — the next run will search for them.`
+        : 'Those were already in your profile.',
+      'good',
+    );
+    await renderMasterResume();
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+}
+
 async function renderMasterResume() {
   const body = $('masterBody');
   let master;
@@ -2520,6 +2620,8 @@ async function renderMasterResume() {
       el('div', {}, el('b', { text: 'This file is present but unreadable: ' }), master.textError,
         el('br'), 'Tailoring would copy it through verbatim. Re-save it from Word as .docx and upload it again.')));
   }
+
+  if (master.exists) await renderResumeSuggestions(body);
 
   body.append(el('div', { class: 'evidence-note' },
     'Tailoring opens this document read-only and writes a separate resume per job — '
@@ -3339,6 +3441,24 @@ const ACTIONS = {
     closeDialog(target?.closest?.('dialog'));
     openMasterResume();
   },
+  'adopt-resume-titles': () => adoptResumeSelection({ titles: selectedAdoptTitles() }),
+  'adopt-resume-skills': async () => {
+    const data = await api('/api/master-resume/suggestions').catch(() => null);
+    if (data?.available) await adoptResumeSelection({ skills: data.diff.newSkills });
+  },
+  'preview-resume-title': () => {
+    const [first] = selectedAdoptTitles();
+    if (!first) { toast('Tick a title to preview.', ''); return; }
+    $('jobSearchMsg').textContent = '';
+    $('jobSearchInput').value = first;
+    openDialog($('dlgJobSearch'));
+  },
+  'open-job-search': () => {
+    $('jobSearchMsg').textContent = '';
+    $('jobSearchInput').value = '';
+    openDialog($('dlgJobSearch'));
+  },
+  'submit-job-search': () => runJobSearch(),
   'pick-master-file': () => {
     // Reset first so re-picking the SAME file still fires 'change'.
     $('masterFile').value = '';
@@ -3498,6 +3618,49 @@ async function submitAddUrl() {
     msg.className = 'st-blocked';
     msg.textContent = err.message;
     $('addUrlGo').disabled = false;
+  }
+}
+
+/**
+ * Ad-hoc search of the job boards for a role the profile does not target.
+ *
+ * Synchronous on purpose: only the query-first sources run (Workable, Adzuna),
+ * which answer in seconds. A full discovery pass spans 226 Workday tenants for
+ * ~14 minutes and is driven from the Run controls instead.
+ */
+async function runJobSearch() {
+  const query = $('jobSearchInput').value.trim();
+  const msg = $('jobSearchMsg');
+  if (!query) {
+    msg.className = 'st-blocked';
+    msg.textContent = 'Type a role or phrase to search for.';
+    return;
+  }
+  $('jobSearchGo').disabled = true;
+  msg.className = 'muted';
+  msg.textContent = `Searching the job boards for "${query}"…`;
+  try {
+    const result = await postJson('/api/search', { query });
+    const found = result.counters?.jobs_found ?? 0;
+    const scored = result.counters?.jobs_scored ?? 0;
+    closeDialog($('dlgJobSearch'));
+    toast(
+      found
+        ? `Found ${fmt(found)} for "${result.query}" — ${fmt(scored)} scored and added to the board`
+        : `No results for "${result.query}" from ${result.sources.join(', ')}`,
+      found ? 'good' : '',
+    );
+    // Point the board at what was just found, so the results are the first
+    // thing seen rather than something to go hunting for.
+    if (found) {
+      $('q').value = query;
+      await refreshAll();
+    }
+  } catch (err) {
+    msg.className = 'st-blocked';
+    msg.textContent = err.message;
+  } finally {
+    $('jobSearchGo').disabled = false;
   }
 }
 

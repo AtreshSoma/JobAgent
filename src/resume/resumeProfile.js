@@ -1,0 +1,355 @@
+/**
+ * Read a master resume as PROFILE EVIDENCE, and compare it to what the pipeline
+ * is actually searching for.
+ *
+ * Why this exists
+ * ---------------
+ * Replacing the master resume changed nothing upstream. `replaceMasterResume`
+ * writes the file and keeps a history copy; discovery is driven entirely by
+ * `candidate.targetTitles`, and the resume is not read until tailoring time.
+ * `scoreJob` even accepts a `resumeKeywords` argument that no caller has ever
+ * passed. So uploading a product-manager resume left the system searching for
+ * Senior Data Engineer indefinitely, with nothing anywhere saying so.
+ *
+ * Why this only PROPOSES
+ * ----------------------
+ * The obvious fix — derive `targetTitles` from the resume automatically — is
+ * wrong, and wrong precisely for the person who needs this most. A resume states
+ * what someone has DONE; `targetTitles` states what they WANT. Those two
+ * diverge exactly when somebody is changing direction, and a career-changer's
+ * resume is still full of the field they are leaving. Auto-deriving would search
+ * confidently for the wrong thing.
+ *
+ * config/candidate.json already separates facts (`workHistory`, `technicalStack`)
+ * from preferences (`targetTitles`, `locationPreferences`) and that separation is
+ * worth keeping. So this module extracts evidence and computes a diff; adopting
+ * any of it stays an explicit human act.
+ *
+ * Everything here is deterministic and reports what it matched. No model, no
+ * inference beyond documented text rules.
+ */
+
+import { normalizeLoose, normalizeText } from '../utils/textNormalize.js';
+
+/**
+ * Section headings a resume uses, mapped to the kind of evidence beneath them.
+ * Matched case-insensitively against a whole short line.
+ */
+const SECTION_PATTERNS = [
+  { kind: 'skills', re: /^(technical\s+)?(skills|core\s+competenc(y|ies)|technical\s+summary|expertise|technologies)$/i },
+  { kind: 'experience', re: /^((professional|work|relevant|earlier|additional|previous)\s+)?experience$/i },
+  { kind: 'experience', re: /^(employment|work)\s+history$/i },
+  { kind: 'summary', re: /^(professional\s+)?(summary|profile|objective|about)$/i },
+  { kind: 'education', re: /^education$/i },
+  { kind: 'certifications', re: /^(certifications?|licenses?|credentials)$/i },
+  { kind: 'projects', re: /^projects?$/i },
+];
+
+/** A heading is short; a paragraph of prose that happens to start with "Experience" is not. */
+const MAX_HEADING_CHARS = 42;
+
+/**
+ * Words that appear in a job title but carry no role identity on their own.
+ * Used to reject a "title" that is really a fragment.
+ */
+const TITLE_STOPWORDS = new Set([
+  'and', 'of', 'the', 'for', 'to', 'in', 'at', 'with', 'a', 'an', 'senior',
+  'lead', 'principal', 'staff', 'junior', 'associate', 'sr', 'jr', 'ii', 'iii',
+]);
+
+/**
+ * A job title names a ROLE, and roles are named with a small, stable set of
+ * nouns. Requiring one is the single rule that separates a title from the three
+ * things that otherwise leak in, all verified against real resumes:
+ *
+ *   - the location line  ("Raleigh, NC   |   April 2022 - Present" -> "Raleigh")
+ *   - headline taglines  ("Cloud & Data Platform", "Apache Spark & Lakehouse")
+ *   - achievement bullets ("Orchestrated DataOps automation with Azure DevOps")
+ *
+ * Each of those would otherwise become a search term, costing real requests
+ * against real job boards and polluting the board with unrelated rows. A title
+ * this rule rejects is simply not proposed — the user can still type it — which
+ * is the right way for the error to fall.
+ */
+const ROLE_NOUNS = [
+  'engineer', 'developer', 'analyst', 'architect', 'scientist', 'administrator',
+  'manager', 'director', 'consultant', 'specialist', 'lead', 'designer',
+  'programmer', 'strategist', 'researcher', 'technician', 'advisor', 'officer',
+  'president', 'partner', 'associate', 'intern', 'apprentice', 'fellow',
+  'master', 'owner', 'steward', 'modeler', 'modeller', 'statistician',
+  'accountant', 'auditor', 'controller', 'recruiter', 'writer', 'editor',
+  'marketer', 'salesperson', 'representative', 'coordinator', 'supervisor',
+  'head', 'chief', 'vp', 'cto', 'cio', 'ceo', 'devops', 'sre', 'dba',
+];
+const ROLE_NOUN_RE = new RegExp(`(?:^|[^a-z])(?:${ROLE_NOUNS.join('|')})(?:[^a-z]|$)`, 'i');
+
+/** "Raleigh, NC" / "Columbus, OH (Remote)" — a place, not a role. */
+const PLACE_RE = /^[A-Z][a-zA-Z.\- ]+,\s*[A-Z]{2}\b/;
+
+/** A date range anywhere on the line marks it as the employment-dates line. */
+const DATE_LINE_RE = /\b(19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(19|20)?\d{2}\b|\bpresent\b/i;
+
+/** Achievement bullets start with a past-tense verb, not a role. */
+const ACHIEVEMENT_RE = /^(architected|engineered|built|led|orchestrated|designed|developed|implemented|delivered|managed|created|drove|reduced|improved|optimiz|streamlin|deployed|migrated|automated|owned|partnered|collaborated)/i;
+
+/** Seniority prefixes stripped when comparing two titles for the same ROLE. */
+const SENIORITY_RE = /^(senior|sr\.?|lead|principal|staff|junior|jr\.?|associate|entry[- ]level|mid[- ]level|head\s+of|chief)\s+/i;
+
+/** Classify one line as a section heading, or null. */
+function headingKind(line) {
+  const text = line.trim().replace(/[:•\-–—]+$/, '').trim();
+  if (!text || text.length > MAX_HEADING_CHARS) return null;
+  for (const { kind, re } of SECTION_PATTERNS) {
+    if (re.test(text)) return kind;
+  }
+  return null;
+}
+
+/**
+ * Split a resume's paragraphs into labelled sections.
+ *
+ * @param {string[]} paragraphs from `extractDocxText`
+ * @returns {Array<{kind: string, lines: string[]}>}
+ */
+export function splitSections(paragraphs = []) {
+  const sections = [];
+  // Everything before the first heading is the header block: name, headline,
+  // contact line. The headline is often the single best statement of the role.
+  let current = { kind: 'header', lines: [] };
+  for (const raw of paragraphs) {
+    const line = String(raw ?? '').trim();
+    if (!line) continue;
+    const kind = headingKind(line);
+    if (kind) {
+      sections.push(current);
+      current = { kind, lines: [] };
+      continue;
+    }
+    current.lines.push(line);
+  }
+  sections.push(current);
+  return sections.filter((s) => s.lines.length > 0 || s.kind !== 'header');
+}
+
+/**
+ * Is this plausibly a job title rather than a bullet or a date line?
+ *
+ * Conservative on purpose: a false title becomes a search term, which costs
+ * real requests against real job boards.
+ */
+function looksLikeTitle(text, { line = '' } = {}) {
+  const t = String(text ?? '').trim();
+  if (t.length < 3 || t.length > 70) return false;
+  // Bullets, sentences and date lines are not titles. The date test runs on the
+  // WHOLE line, not the extracted fragment: "Raleigh, NC | April 2022 - Present"
+  // yields the clean-looking "Raleigh" once the date has been split away.
+  if (/^[•\-–—*]/.test(t)) return false;
+  if (/[.!?]$/.test(t)) return false;
+  if (DATE_LINE_RE.test(line || t)) return false;
+  if (PLACE_RE.test(t)) return false;
+  if (ACHIEVEMENT_RE.test(t)) return false;
+  if (/^(present|remote|onsite|hybrid)$/i.test(t)) return false;
+  const words = t.split(/\s+/);
+  if (words.length > 8) return false;
+  // Must name a role (see ROLE_NOUNS) ...
+  if (!ROLE_NOUN_RE.test(t)) return false;
+  // ... and carry at least one word beyond pure seniority/filler, so a bare
+  // "Senior" or "Lead" is not proposed as a search target.
+  return words.some((w) => !TITLE_STOPWORDS.has(normalizeText(w).replace(/[^a-z]/g, '')));
+}
+
+/**
+ * Pull job titles out of the experience sections.
+ *
+ * Real resumes write the role line one of a few ways, all of which put the
+ * TITLE first and the employer after a separator:
+ *
+ *   "Senior Data Engineer, Finance Analytics & AI Platform | Example Consulting"
+ *   "Power BI Developer | Fabrikam Health"
+ *   "Migration Specialist — Globex Payroll"
+ *
+ * So: take the text before the first separator, then before the first comma
+ * (which introduces the team/context, not the role).
+ */
+function titlesFromExperience(sections) {
+  const found = [];
+  for (const section of sections) {
+    if (section.kind !== 'experience') continue;
+    for (const line of section.lines) {
+      const beforeEmployer = line.split(/\s*[|·]\s*|\s+[—–]\s+/)[0];
+      const title = beforeEmployer.split(',')[0].trim();
+      if (looksLikeTitle(title, { line })) found.push(title);
+    }
+  }
+  return found;
+}
+
+/**
+ * The headline under the name ("Data Engineer | Cloud & Data Platform"), which
+ * is usually the most deliberate statement of role in the whole document.
+ */
+function titlesFromHeadline(sections) {
+  const header = sections.find((s) => s.kind === 'header');
+  if (!header || header.lines.length < 2) return [];
+  // Line 0 is the name; the contact line contains an @ or a phone.
+  const candidates = header.lines.slice(1, 3)
+    .filter((l) => !/@|\d{3}[-.\s]?\d{3,4}/.test(l));
+  const out = [];
+  for (const line of candidates) {
+    for (const part of line.split(/\s*[|·]\s*/)) {
+      const t = part.trim();
+      if (looksLikeTitle(t, { line })) out.push(t);
+    }
+  }
+  return out;
+}
+
+/**
+ * Skills from a "Category: a, b, c" skills section.
+ *
+ * Only the skills section is read. Harvesting terms from bullet prose produced
+ * fragments like "data" and "teams" that are useless as match vocabulary.
+ */
+function skillsFromSections(sections) {
+  const out = [];
+  for (const section of sections) {
+    if (section.kind !== 'skills') continue;
+    for (const line of section.lines) {
+      // "Cloud & Platform: Azure Databricks, Microsoft Fabric, ..."
+      const body = line.includes(':') ? line.slice(line.indexOf(':') + 1) : line;
+      for (const piece of body.split(/[,;•|]/)) {
+        const skill = piece.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+        // One to four words, no sentence punctuation. "Delta Live Tables" yes,
+        // "building scalable pipelines for the enterprise" no.
+        if (!skill || skill.length < 2 || skill.length > 40) continue;
+        if (/[.!?]$/.test(skill)) continue;
+        if (skill.split(/\s+/).length > 4) continue;
+        out.push(skill);
+      }
+    }
+  }
+  return out;
+}
+
+/** Distinct, order-preserving, compared loosely (case/punctuation-insensitive). */
+function distinct(values) {
+  const seen = new Set();
+  const out = [];
+  for (const v of values) {
+    const key = normalizeLoose(v);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(String(v).trim());
+  }
+  return out;
+}
+
+/**
+ * Extract role and skill evidence from a master resume's text.
+ *
+ * @param {string[]} paragraphs from `extractDocxText(...).paragraphs`
+ * @returns {{
+ *   titles: string[], headlineTitles: string[], skills: string[],
+ *   sections: Array<{kind: string, lines: number}>
+ * }}
+ */
+export function extractResumeEvidence(paragraphs = []) {
+  const sections = splitSections(paragraphs);
+  const headlineTitles = distinct(titlesFromHeadline(sections));
+  const experienceTitles = distinct(titlesFromExperience(sections));
+  return {
+    // Headline first: it is the candidate's own statement of what they are.
+    titles: distinct([...headlineTitles, ...experienceTitles]),
+    headlineTitles,
+    skills: distinct(skillsFromSections(sections)),
+    sections: sections.map((s) => ({ kind: s.kind, lines: s.lines.length })),
+  };
+}
+
+/** Compare two titles ignoring seniority, so "Senior Data Engineer" ~ "Data Engineer". */
+function roleKey(title) {
+  return normalizeLoose(String(title ?? '').replace(SENIORITY_RE, ''));
+}
+
+/**
+ * Does the configured target list already cover this resume title?
+ *
+ * Covered means the same role at any seniority, or one title containing the
+ * other as a whole phrase ("Data Engineer" covers "Azure Data Engineer").
+ */
+function coveredBy(title, targetTitles) {
+  const key = roleKey(title);
+  if (!key) return null;
+  for (const target of targetTitles) {
+    const tKey = roleKey(target);
+    if (!tKey) continue;
+    if (tKey === key || tKey.includes(key) || key.includes(tKey)) return target;
+  }
+  return null;
+}
+
+/**
+ * Compare resume evidence with the profile that actually drives discovery.
+ *
+ * @param {object} evidence from `extractResumeEvidence`
+ * @param {object} candidate parsed config/candidate.json
+ * @returns {{
+ *   matchedTitles: Array<{title: string, coveredBy: string}>,
+ *   newTitles: string[],
+ *   unusedTargets: string[],
+ *   newSkills: string[],
+ *   coverage: number,
+ *   drifted: boolean,
+ *   summary: string
+ * }}
+ */
+export function diffAgainstProfile(evidence, candidate = {}) {
+  const targetTitles = Array.isArray(candidate.targetTitles) ? candidate.targetTitles : [];
+  const stack = candidate.technicalStack ?? {};
+  const knownSkills = new Set(
+    Object.values(stack).flat().filter(Boolean).map((s) => normalizeLoose(s)),
+  );
+
+  const matchedTitles = [];
+  const newTitles = [];
+  for (const title of evidence.titles) {
+    const cover = coveredBy(title, targetTitles);
+    if (cover) matchedTitles.push({ title, coveredBy: cover });
+    else newTitles.push(title);
+  }
+
+  // Targets the resume shows no evidence for. Not necessarily wrong — you may
+  // be targeting a role you have not held — but worth surfacing next to the
+  // rest, because it is the other half of "do these two agree?".
+  const evidenceKeys = evidence.titles.map(roleKey);
+  const unusedTargets = targetTitles.filter(
+    (t) => !evidenceKeys.some((k) => k && (k === roleKey(t) || k.includes(roleKey(t)) || roleKey(t).includes(k))),
+  );
+
+  const newSkills = evidence.skills.filter((s) => !knownSkills.has(normalizeLoose(s)));
+
+  const coverage = evidence.titles.length
+    ? matchedTitles.length / evidence.titles.length
+    : 1;
+
+  // Below half the resume's own role statements matching the search targets,
+  // the two documents are describing different jobs. Chosen as a threshold
+  // rather than "any mismatch" because a resume legitimately lists earlier
+  // roles the candidate has moved on from.
+  const drifted = evidence.titles.length > 0 && coverage < 0.5;
+
+  return {
+    matchedTitles,
+    newTitles,
+    unusedTargets,
+    newSkills,
+    coverage,
+    drifted,
+    summary: drifted
+      ? `This resume reads as ${evidence.titles.slice(0, 3).map((t) => `"${t}"`).join(', ')}, `
+        + `but discovery is searching for ${targetTitles.slice(0, 3).map((t) => `"${t}"`).join(', ')}. `
+        + 'Discovery follows the profile, not the resume — nothing changes until you adopt a title.'
+      : `${matchedTitles.length} of ${evidence.titles.length} role titles in this resume are already covered `
+        + `by your ${targetTitles.length} search target(s).`,
+  };
+}

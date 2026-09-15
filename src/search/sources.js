@@ -39,6 +39,29 @@ export const DISCOVERY_ADAPTERS = Object.freeze(new Set([
   'icims',
 ]));
 
+/**
+ * Discovery adapters that search ACROSS employers from a free-text query,
+ * rather than enumerating one configured board at a time.
+ *
+ * This is the subset that can answer "find me jobs matching THIS phrase, now".
+ * Company-first adapters cannot: they enumerate a fixed tenant list, and a full
+ * run spans 226 Workday tenants for ~14 minutes, which is not a search box.
+ * These two are keyless (Workable) or a free API tier (Adzuna) and return in
+ * seconds, so they are what an interactive search can honestly be built on.
+ *
+ * Both already accept an `options.queries` override, so no adapter change is
+ * needed to point them at something other than `candidate.targetTitles`.
+ */
+export const QUERY_FIRST_ADAPTERS = Object.freeze(new Set([
+  'atsSearch',
+  'adzuna',
+]));
+
+/** Can this adapter be driven by an ad-hoc text query? */
+export function isQueryFirstAdapter(adapter) {
+  return QUERY_FIRST_ADAPTERS.has(String(adapter ?? ''));
+}
+
 /** Adapter ids that only read user-supplied public posting URLs (no search). */
 export const URL_READER_ADAPTERS = Object.freeze(new Set([
   'dice',

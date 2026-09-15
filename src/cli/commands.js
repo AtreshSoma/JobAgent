@@ -40,6 +40,7 @@ import { scoreJob } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
+import { isQueryFirstAdapter } from '../search/sources.js';
 
 /**
  * DISCOVER — search only, write data/found_jobs.json (no scoring).
@@ -96,6 +97,81 @@ export async function runDiscover({ config, logger, deps = {} } = {}) {
  */
 export async function runScore({ config, db, logger, deps = {} } = {}) {
   return runPipeline({ config, db, logger, mode: 'DRY_RUN', deps });
+}
+
+/**
+ * QUERY SEARCH — find jobs matching an ad-hoc phrase, right now.
+ *
+ * The board already had a free-text filter, but it only filtered rows that had
+ * ALREADY been discovered. There was no way to ask the job boards a new
+ * question: every run searched `candidate.targetTitles` and nothing else. So
+ * trying a different role meant editing the profile and waiting for a full run.
+ *
+ * Two deliberate narrowings make this fast enough to be interactive:
+ *
+ *   1. Only QUERY_FIRST_ADAPTERS run (Workable via atsSearch, Adzuna). They
+ *      search across employers from a phrase and return in seconds. A full run
+ *      enumerates 226 Workday tenants for ~14 minutes, which is not a search box.
+ *   2. The query is injected as `options.queries`, which both adapters already
+ *      support, so no adapter needed changing.
+ *
+ * The query is ALSO prepended to `targetTitles` for this call only, in a config
+ * copy that is never written. Without that, `classifyDiscovery` would judge the
+ * results against the stored profile and discard the very rows the user just
+ * asked for — searching "product manager" from a data-engineering profile would
+ * return nothing and look broken. Nothing about the saved profile changes; this
+ * is a preview of what targeting that title would find.
+ *
+ * @param {object} args
+ * @param {object} args.config loadConfig() bundle
+ * @param {object} args.db
+ * @param {object} args.logger
+ * @param {string} args.query free-text role/phrase to search for
+ * @param {object} [args.deps]
+ * @returns {Promise<{ query: string, counters: object, sources: string[], errors: object[] }>}
+ */
+export async function runQuerySearch({ config, db, logger, query, deps = {} } = {}) {
+  const phrase = String(query ?? '').replace(/\s+/g, ' ').trim();
+  if (!phrase) throw new Error('a search needs a query');
+  if (phrase.length > 120) throw new Error('that search phrase is too long (limit 120 characters)');
+
+  const all = config?.jobboards?.sources ?? [];
+  const sources = all
+    .filter((src) => src.enabled && isQueryFirstAdapter(src.adapter))
+    .map((src) => ({
+      ...src,
+      options: { ...(src.options ?? {}), queries: [phrase] },
+    }));
+
+  if (sources.length === 0) {
+    throw new Error(
+      'no query-capable source is enabled. Enable `ats-search` (keyless) or '
+      + '`adzuna-aggregator` in config/jobboards.json to search by phrase.',
+    );
+  }
+
+  const searchConfig = {
+    ...config,
+    jobboards: { ...config.jobboards, sources },
+    candidate: {
+      ...config.candidate,
+      targetTitles: [phrase, ...(config.candidate?.targetTitles ?? [])],
+    },
+  };
+
+  const result = await runPipeline({
+    config: searchConfig, db, logger, mode: 'DRY_RUN',
+    // The user asked for these rows by name. Scoring them against a keyword
+    // vocabulary built for a different role and then discarding them would
+    // return nothing and look broken — see keepBelowThreshold in the pipeline.
+    deps: { ...deps, keepBelowThreshold: true },
+  });
+  return {
+    query: phrase,
+    counters: result.counters ?? {},
+    sources: sources.map((src) => src.id),
+    errors: result.errors ?? [],
+  };
 }
 
 /**
