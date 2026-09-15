@@ -16,7 +16,12 @@ import { answerScreeningQuestion, experienceSubject } from '../../src/apply/scre
 import { isPlaceholderValue, findPlaceholders } from '../../src/config/placeholders.js';
 import { singularize, normalizeForMatch } from '../../src/utils/textNormalize.js';
 import { readJson } from '../../src/config/loadConfig.js';
-import { deriveAppStatus, APP_STATUS, dashboardStats } from '../../src/dashboard/data.js';
+import {
+  deriveAppStatus, APP_STATUS, dashboardStats, LIFECYCLE_TO_APP_STATUS,
+} from '../../src/dashboard/data.js';
+import {
+  LIFECYCLE, LIFECYCLE_VALUES, canTransition, assertTransition,
+} from '../../src/lifecycle.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { startDashboard } from '../../src/dashboard/server.js';
 import { uploadCheckpoint } from '../../src/apply/applicationState.js';
@@ -313,5 +318,74 @@ describe('§4 P1 — every run leaves a record', () => {
     const rows = db.listRunLogs({ limit: 10 });
     expect(rows).toHaveLength(1);
     expect(rows[0].jobs_found).toBe(5);
+  });
+});
+
+describe('§11 P1 — one lifecycle vocabulary, with legal transitions', () => {
+  it('the vocabulary covers every status actually written to jobs.status', () => {
+    // These two were written by the pipeline and were in NO vocabulary. The
+    // second is the one that surfaced 4,732 unread rows as "Scored".
+    expect(LIFECYCLE_VALUES).toContain('discarded');
+    expect(LIFECYCLE_VALUES).toContain('needs_description');
+  });
+
+  it('EVERY lifecycle status has an explicit board mapping', () => {
+    // The guard that would have caught needs_description. deriveAppStatus is a
+    // fallthrough chain, so an unmapped status does not error — it mislabels.
+    const missing = LIFECYCLE_VALUES.filter((v) => !(v in LIFECYCLE_TO_APP_STATUS));
+    expect(missing).toEqual([]);
+  });
+
+  it('has no stale mappings for statuses that no longer exist', () => {
+    const stale = Object.keys(LIFECYCLE_TO_APP_STATUS).filter((k) => !LIFECYCLE_VALUES.includes(k));
+    expect(stale).toEqual([]);
+  });
+
+  it('every mapped value is a real APP_STATUS', () => {
+    const valid = new Set(Object.values(APP_STATUS));
+    for (const [lifecycle, app] of Object.entries(LIFECYCLE_TO_APP_STATUS)) {
+      expect(valid.has(app), `${lifecycle} -> ${app}`).toBe(true);
+    }
+  });
+
+  it('allows the real pipeline path', () => {
+    const path = [
+      null, LIFECYCLE.FOUND, LIFECYCLE.SCORED, LIFECYCLE.QUEUED, LIFECYCLE.PREPARED,
+      LIFECYCLE.ASSIST_STARTED, LIFECYCLE.READY_FOR_SUBMIT, LIFECYCLE.SUBMITTED,
+    ];
+    for (let i = 1; i < path.length; i += 1) {
+      expect(canTransition(path[i - 1], path[i]), `${path[i - 1]} -> ${path[i]}`).toBe(true);
+    }
+  });
+
+  it('lets an enriched needs_description row rejoin the flow', () => {
+    expect(canTransition(LIFECYCLE.FOUND, LIFECYCLE.NEEDS_DESCRIPTION)).toBe(true);
+    expect(canTransition(LIFECYCLE.NEEDS_DESCRIPTION, LIFECYCLE.SCORED)).toBe(true);
+    expect(canTransition(LIFECYCLE.NEEDS_DESCRIPTION, LIFECYCLE.QUEUED)).toBe(true);
+  });
+
+  it('refuses to move a submitted job anywhere (terminal)', () => {
+    expect(canTransition(LIFECYCLE.SUBMITTED, LIFECYCLE.QUEUED)).toBe(false);
+    expect(canTransition(LIFECYCLE.SUBMITTED, LIFECYCLE.DISCARDED)).toBe(false);
+    expect(() => assertTransition(LIFECYCLE.SUBMITTED, LIFECYCLE.QUEUED, 're-discovery'))
+      .toThrow(/illegal lifecycle transition/);
+  });
+
+  it('refuses a status that is not in the vocabulary at all', () => {
+    expect(canTransition(LIFECYCLE.SCORED, 'invented_status')).toBe(false);
+    expect(() => assertTransition(LIFECYCLE.SCORED, 'invented_status'))
+      .toThrow(/not a known lifecycle status/);
+  });
+
+  it('allows failure from anywhere, and an idempotent re-write', () => {
+    for (const from of LIFECYCLE_VALUES) {
+      expect(canTransition(from, LIFECYCLE.FAILED), from).toBe(true);
+      expect(canTransition(from, from), from).toBe(true);
+    }
+  });
+
+  it('treats a brand-new row as a legal entry point', () => {
+    expect(canTransition(null, LIFECYCLE.FOUND)).toBe(true);
+    expect(canTransition('', LIFECYCLE.FOUND)).toBe(true);
   });
 });

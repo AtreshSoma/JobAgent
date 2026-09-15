@@ -24,6 +24,16 @@
 export const LIFECYCLE = Object.freeze({
   FOUND: 'found',
   HARD_DISCARDED: 'hard_discarded',
+  // Written to jobs.status by the pipeline for excluded / below-threshold rows.
+  // It was NOT in this vocabulary even though it is by far the most common
+  // value in the store (97,230 of 102,099 rows), which is how the vocabulary
+  // came to disagree with the column it is supposed to describe.
+  DISCARDED: 'discarded',
+  // The source returned a title and no description, so the row has NOT been
+  // judged. Also written to jobs.status and also missing from every vocabulary
+  // — and because deriveAppStatus had no case for it, 4,732 unread rows were
+  // reported to the user as "Scored". That is the defect this file now guards.
+  NEEDS_DESCRIPTION: 'needs_description',
   UNKNOWN_DATE_REVIEW: 'unknown_date_review',
   SCORED: 'scored',
   NEAR_MISS: 'near_miss',
@@ -41,6 +51,90 @@ export const LIFECYCLE = Object.freeze({
 
 /** All known lifecycle values (handy for validation/tests). */
 export const LIFECYCLE_VALUES = Object.freeze(Object.values(LIFECYCLE));
+
+/**
+ * Which states may legally follow which.
+ *
+ * Transitions were implicit everywhere: no function owned "which states may
+ * follow this one", so a new status could be introduced by one writer and
+ * silently mishandled by three readers — which is exactly what happened with
+ * `needs_description`. This map is the explicit contract.
+ *
+ * `null` predecessors are entry points (a row first appearing in the store).
+ * FAILED is reachable from anywhere: an unexpected error is not a state the
+ * pipeline chooses.
+ */
+export const TRANSITIONS = Object.freeze({
+  [LIFECYCLE.FOUND]: [
+    LIFECYCLE.SCORED, LIFECYCLE.NEEDS_DESCRIPTION, LIFECYCLE.HARD_DISCARDED,
+    LIFECYCLE.DISCARDED, LIFECYCLE.UNKNOWN_DATE_REVIEW,
+  ],
+  // An enriched row rejoins the normal flow; it can also be discarded once read.
+  [LIFECYCLE.NEEDS_DESCRIPTION]: [
+    LIFECYCLE.SCORED, LIFECYCLE.NEAR_MISS, LIFECYCLE.QUEUED,
+    LIFECYCLE.DISCARDED, LIFECYCLE.HARD_DISCARDED,
+  ],
+  [LIFECYCLE.UNKNOWN_DATE_REVIEW]: [
+    LIFECYCLE.SCORED, LIFECYCLE.QUEUED, LIFECYCLE.DISCARDED, LIFECYCLE.HARD_DISCARDED,
+  ],
+  [LIFECYCLE.SCORED]: [LIFECYCLE.QUEUED, LIFECYCLE.NEAR_MISS, LIFECYCLE.DISCARDED],
+  [LIFECYCLE.NEAR_MISS]: [LIFECYCLE.QUEUED, LIFECYCLE.DISCARDED],
+  [LIFECYCLE.QUEUED]: [LIFECYCLE.PREPARED, LIFECYCLE.SKIPPED, LIFECYCLE.DISCARDED],
+  [LIFECYCLE.PREPARED]: [LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SUBMITTED, LIFECYCLE.SKIPPED],
+  [LIFECYCLE.ASSIST_STARTED]: [
+    LIFECYCLE.READY_FOR_SUBMIT, LIFECYCLE.ASSIST_BLOCKED,
+    LIFECYCLE.SUBMIT_UNVERIFIED, LIFECYCLE.SUBMITTED, LIFECYCLE.CANCELLED,
+  ],
+  // Re-entry is deliberate: a resumed run performs a fresh precheck.
+  [LIFECYCLE.ASSIST_BLOCKED]: [LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SKIPPED, LIFECYCLE.SUBMITTED],
+  [LIFECYCLE.CANCELLED]: [LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SKIPPED],
+  [LIFECYCLE.READY_FOR_SUBMIT]: [LIFECYCLE.SUBMITTED, LIFECYCLE.SUBMIT_UNVERIFIED, LIFECYCLE.SKIPPED],
+  // Only the human resolves an unverified submit, in either direction.
+  [LIFECYCLE.SUBMIT_UNVERIFIED]: [LIFECYCLE.SUBMITTED, LIFECYCLE.SKIPPED],
+  [LIFECYCLE.FAILED]: [LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SKIPPED, LIFECYCLE.QUEUED],
+  [LIFECYCLE.SKIPPED]: [LIFECYCLE.QUEUED, LIFECYCLE.ASSIST_STARTED],
+  [LIFECYCLE.DISCARDED]: [LIFECYCLE.SCORED, LIFECYCLE.QUEUED],
+  [LIFECYCLE.HARD_DISCARDED]: [],
+  // Terminal. Nothing follows a confirmed submission.
+  [LIFECYCLE.SUBMITTED]: [],
+});
+
+/** States reachable from any other (an unexpected error is not a choice). */
+const ALWAYS_REACHABLE = Object.freeze([LIFECYCLE.FAILED]);
+
+/**
+ * May `from` legally become `to`?
+ *
+ * @param {string|null} from current jobs.status (null for a brand-new row)
+ * @param {string} to proposed next status
+ * @returns {boolean}
+ */
+export function canTransition(from, to) {
+  if (!LIFECYCLE_VALUES.includes(to)) return false;
+  if (from == null || from === '') return true; // entry point
+  if (from === to) return true;                 // idempotent re-write
+  if (ALWAYS_REACHABLE.includes(to)) return true;
+  return (TRANSITIONS[from] ?? []).includes(to);
+}
+
+/**
+ * Throw unless the transition is legal. Use at a write site that owns a
+ * lifecycle move, so an illegal one fails where it is made rather than
+ * surfacing later as a misreported row.
+ *
+ * @param {string|null} from
+ * @param {string} to
+ * @param {string} [reason] human-readable cause, included in the error
+ */
+export function assertTransition(from, to, reason = '') {
+  if (canTransition(from, to)) return;
+  const known = LIFECYCLE_VALUES.includes(to) ? '' : ' (not a known lifecycle status)';
+  throw new Error(
+    `illegal lifecycle transition: "${from}" -> "${to}"${known}`
+    + `${reason ? ` [${reason}]` : ''}. Legal from "${from}": `
+    + `${(TRANSITIONS[from] ?? []).join(', ') || '(terminal)'}.`,
+  );
+}
 
 /**
  * DB statuses that represent human or assist investment. Re-discovery and

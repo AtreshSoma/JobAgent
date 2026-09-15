@@ -90,6 +90,42 @@ export function deriveAppStatus(job = {}, approval = null) {
   return APP_STATUS.DISCOVERED;
 }
 
+/**
+ * Every lifecycle status this presentation layer knows how to render.
+ *
+ * `deriveAppStatus` is a chain of `if`s with a fallthrough, which is why a
+ * status could be introduced by one writer and silently mishandled here: a row
+ * whose status nothing matched simply fell through to SCORED. That is exactly
+ * how 4,732 rows the pipeline had deliberately marked unread came to be
+ * reported as judged.
+ *
+ * Keeping the mapping explicit lets a test assert exhaustiveness over
+ * LIFECYCLE_VALUES, so adding a status without deciding how it is DISPLAYED
+ * fails the suite rather than quietly mislabelling rows in production.
+ *
+ * A status maps to `null` when it is deliberately not a distinct board status
+ * (it is represented by approval/user-decision precedence instead).
+ */
+export const LIFECYCLE_TO_APP_STATUS = Object.freeze({
+  found: APP_STATUS.DISCOVERED,
+  hard_discarded: APP_STATUS.DISCARDED,
+  discarded: APP_STATUS.DISCARDED,
+  needs_description: APP_STATUS.NEEDS_DESCRIPTION,
+  unknown_date_review: APP_STATUS.DATE_UNCONFIRMED,
+  scored: APP_STATUS.SCORED,
+  near_miss: APP_STATUS.SCORED,
+  queued: APP_STATUS.SCORED,
+  prepared: APP_STATUS.NEEDS_REVIEW,
+  assist_started: APP_STATUS.APPROVED,
+  assist_blocked: APP_STATUS.BLOCKED,
+  ready_for_submit: APP_STATUS.READY_FOR_SUBMIT,
+  submit_unverified: APP_STATUS.SUBMIT_UNVERIFIED,
+  submitted: APP_STATUS.SUBMITTED,
+  skipped: APP_STATUS.SKIPPED,
+  cancelled: APP_STATUS.CANCELLED,
+  failed: APP_STATUS.FAILED,
+});
+
 // The sponsorship gate is a SCORING concept; it lives in scoring/explainScore.js
 // next to the rule that creates it. Re-exported here (alongside a real local
 // import, since `export … from` alone would not bind it for use below) so every
