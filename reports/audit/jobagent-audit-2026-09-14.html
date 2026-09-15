@@ -1,0 +1,1533 @@
+<title>JobAgent Audit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+
+<style>
+/* ── tokens ─────────────────────────────────────────────────────────── */
+:root{
+  --ground:#F6F7F6; --surface:#FFFFFF; --surface-2:#EEF2F1; --surface-3:#E6EBEA;
+  --ink:#14191A; --ink-2:#485557; --ink-3:#6F7D7F;
+  --rule:#DCE3E2; --rule-2:#C4D0CE;
+  --accent:#0E5C60; --accent-2:#1B8286; --accent-wash:#E2EFEE;
+  --crit:#A3251A;  --crit-bg:#FAEAE7;  --crit-edge:#E7BFB8;
+  --high:#8A4B00;  --high-bg:#FBF0E1;  --high-edge:#E8CFA5;
+  --med:#12576B;   --med-bg:#E3EFF3;   --med-edge:#B7D2DB;
+  --low:#4F5C60;   --low-bg:#E9EEEE;   --low-edge:#CBD5D5;
+  --good:#1D6A49;  --good-bg:#E5F1EA;  --good-edge:#B4D6C4;
+  --shadow:0 1px 2px rgba(14,40,40,.05), 0 8px 24px -16px rgba(14,40,40,.28);
+  --sans:"IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --serif:"Source Serif 4", Iowan Old Style, Georgia, "Times New Roman", serif;
+  --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0D1313; --surface:#141C1C; --surface-2:#1A2424; --surface-3:#222D2D;
+    --ink:#E7ECEB; --ink-2:#A9B7B6; --ink-3:#7F8E8D;
+    --rule:#243030; --rule-2:#334241;
+    --accent:#4FB3B6; --accent-2:#77CDCF; --accent-wash:#14302F;
+    --crit:#F0907F;  --crit-bg:#32130F;  --crit-edge:#5C2B23;
+    --high:#E3AC63;  --high-bg:#2C2008;  --high-edge:#4E3A14;
+    --med:#71C3DD;   --med-bg:#0C2730;   --med-edge:#1E4653;
+    --low:#9DABAE;   --low-bg:#1A2323;   --low-edge:#2C3838;
+    --good:#63C594;  --good-bg:#0D2920;  --good-edge:#1E4536;
+    --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0D1313; --surface:#141C1C; --surface-2:#1A2424; --surface-3:#222D2D;
+  --ink:#E7ECEB; --ink-2:#A9B7B6; --ink-3:#7F8E8D;
+  --rule:#243030; --rule-2:#334241;
+  --accent:#4FB3B6; --accent-2:#77CDCF; --accent-wash:#14302F;
+  --crit:#F0907F;  --crit-bg:#32130F;  --crit-edge:#5C2B23;
+  --high:#E3AC63;  --high-bg:#2C2008;  --high-edge:#4E3A14;
+  --med:#71C3DD;   --med-bg:#0C2730;   --med-edge:#1E4653;
+  --low:#9DABAE;   --low-bg:#1A2323;   --low-edge:#2C3838;
+  --good:#63C594;  --good-bg:#0D2920;  --good-edge:#1E4536;
+  --shadow:0 1px 2px rgba(0,0,0,.4), 0 10px 28px -18px rgba(0,0,0,.8);
+  color-scheme: dark;
+}
+
+/* ── base ───────────────────────────────────────────────────────────── */
+*{box-sizing:border-box}
+body{
+  background:var(--ground); color:var(--ink);
+  font-family:var(--serif); font-size:17px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1140px; margin:0 auto; padding-inline:22px; padding-block:0 96px}
+.prose{max-width:74ch}
+h1,h2,h3,h4{font-family:var(--sans); text-wrap:balance; margin:0}
+p{margin:0}
+a{color:var(--accent); text-underline-offset:3px; text-decoration-thickness:.06em}
+a:hover{color:var(--accent-2)}
+:focus-visible{outline:2px solid var(--accent-2); outline-offset:3px; border-radius:2px}
+code,.mono{font-family:var(--mono); font-size:.86em}
+code{background:var(--surface-2); padding:.08em .34em; border-radius:3px; word-break:break-word}
+.num{font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+
+/* ── masthead ───────────────────────────────────────────────────────── */
+.mast{border-bottom:1px solid var(--rule-2); padding-block:56px 30px; margin-bottom:38px}
+.eyebrow{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--accent); margin-bottom:18px; display:flex; flex-wrap:wrap; gap:6px 14px; align-items:baseline;
+}
+.eyebrow .sep{color:var(--rule-2)}
+.mast h1{font-size:clamp(34px,5.2vw,54px); line-height:1.04; letter-spacing:-.021em; font-weight:700}
+.mast .deck{font-size:20px; line-height:1.5; color:var(--ink-2); margin-top:16px; max-width:64ch}
+.meta{
+  display:flex; flex-wrap:wrap; gap:8px 26px; margin-top:26px;
+  font-family:var(--mono); font-size:12px; color:var(--ink-3);
+}
+.meta b{color:var(--ink-2); font-weight:500}
+
+/* ── verdict banner ─────────────────────────────────────────────────── */
+.verdict{
+  background:var(--surface); border:1px solid var(--rule); border-left:4px solid var(--crit);
+  border-radius:3px; padding:22px 24px; display:grid; gap:14px; box-shadow:var(--shadow);
+  margin-bottom:44px;
+}
+.verdict .vh{font-family:var(--sans); font-weight:600; font-size:15px; letter-spacing:-.005em}
+.verdict p{color:var(--ink-2); font-size:16.5px}
+.verdict .score-line{
+  display:flex; align-items:baseline; gap:12px; font-family:var(--sans);
+  padding-top:12px; border-top:1px solid var(--rule);
+}
+.verdict .big{font-size:40px; font-weight:700; letter-spacing:-.03em; line-height:1; font-variant-numeric:tabular-nums}
+.verdict .big span{font-size:20px; color:var(--ink-3); font-weight:500}
+
+/* ── sections ───────────────────────────────────────────────────────── */
+section{margin-block:0 58px; scroll-margin-top:16px}
+.sechead{display:flex; gap:16px; align-items:baseline; border-top:1px solid var(--rule-2);
+  padding-top:14px; margin-bottom:22px}
+.sechead .n{
+  font-family:var(--mono); font-size:12px; font-weight:500; color:var(--accent);
+  letter-spacing:.06em; flex:none; padding-top:6px; min-width:2.2em;
+}
+.sechead h2{font-size:clamp(23px,3vw,30px); letter-spacing:-.017em; font-weight:600; line-height:1.18}
+.sechead .sub{font-family:var(--sans); font-size:14px; color:var(--ink-3); margin-top:5px; font-weight:400}
+.body{display:grid; gap:18px}
+.body > p{max-width:74ch}
+h3{font-size:17.5px; font-weight:600; letter-spacing:-.008em; margin-top:10px}
+h4{font-size:14px; font-weight:600; font-family:var(--sans); color:var(--ink-2);
+  letter-spacing:.02em; text-transform:uppercase; font-size:12px; margin-top:6px}
+
+/* ── contents ───────────────────────────────────────────────────────── */
+.toc{
+  background:var(--surface-2); border:1px solid var(--rule); border-radius:3px;
+  padding:22px 24px; margin-bottom:48px;
+}
+.toc h2{font-family:var(--mono); font-size:11.5px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--ink-3); margin-bottom:14px; font-weight:500}
+.toc ol{margin:0; padding:0; list-style:none; columns:3; column-gap:30px; font-family:var(--sans); font-size:14px}
+.toc li{break-inside:avoid; margin-bottom:5px; display:flex; gap:9px}
+.toc li .i{font-family:var(--mono); font-size:11.5px; color:var(--ink-3); flex:none; width:1.6em;
+  text-align:right; padding-top:2px}
+.toc a{text-decoration:none; color:var(--ink-2)}
+.toc a:hover{color:var(--accent); text-decoration:underline}
+@media (max-width:820px){.toc ol{columns:2}}
+@media (max-width:520px){.toc ol{columns:1}}
+
+/* ── funnel ─────────────────────────────────────────────────────────── */
+.funnel{background:var(--surface); border:1px solid var(--rule); border-radius:3px;
+  padding:26px 26px 22px; box-shadow:var(--shadow); margin-bottom:44px}
+.funnel h2{font-size:19px; font-weight:600; letter-spacing:-.01em}
+.funnel .cap{font-family:var(--sans); font-size:13.5px; color:var(--ink-3); margin-top:6px; max-width:72ch}
+.fbars{display:grid; gap:2px; margin-top:22px}
+.frow{display:grid; grid-template-columns:minmax(150px,1.1fr) minmax(0,3fr) 96px 78px;
+  gap:14px; align-items:center; padding:7px 0; border-bottom:1px solid var(--rule)}
+.frow:last-child{border-bottom:0}
+.frow .lbl{font-family:var(--sans); font-size:13.5px; color:var(--ink-2); line-height:1.3}
+.frow .track{height:17px; background:var(--surface-2); border-radius:2px; overflow:hidden; position:relative}
+.frow .fill{height:100%; background:var(--accent); border-radius:2px 1px 1px 2px}
+.frow .fill.zero{background:var(--crit); min-width:3px}
+.frow .fill.warn{background:var(--high)}
+.frow .v{font-family:var(--mono); font-size:13.5px; font-variant-numeric:tabular-nums;
+  text-align:right; color:var(--ink)}
+.frow .pc{font-family:var(--mono); font-size:11.5px; font-variant-numeric:tabular-nums;
+  text-align:right; color:var(--ink-3)}
+.frow.term .v{color:var(--crit); font-weight:600}
+.fnote{font-family:var(--mono); font-size:11px; color:var(--ink-3); margin-top:14px;
+  padding-top:12px; border-top:1px solid var(--rule)}
+@media (max-width:640px){
+  .frow{grid-template-columns:1fr 78px 62px; grid-template-areas:"l v p" "t t t"; gap:4px 10px}
+  .frow .lbl{grid-area:l} .frow .track{grid-area:t; margin-bottom:4px} .frow .v{grid-area:v} .frow .pc{grid-area:p}
+}
+
+/* ── scorecard ──────────────────────────────────────────────────────── */
+.scores{display:grid; grid-template-columns:repeat(auto-fill,minmax(228px,1fr)); gap:1px;
+  background:var(--rule); border:1px solid var(--rule); border-radius:3px; overflow:hidden; margin-bottom:46px}
+.sc{background:var(--surface); padding:15px 16px 14px; display:grid; gap:8px}
+.sc .t{font-family:var(--sans); font-size:13px; font-weight:600; color:var(--ink-2);
+  display:flex; justify-content:space-between; align-items:baseline; gap:8px}
+.sc .t b{font-family:var(--mono); font-size:16px; font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums}
+.sc .bar{height:5px; background:var(--surface-3); border-radius:3px; overflow:hidden}
+.sc .bar i{display:block; height:100%; border-radius:3px; background:var(--accent)}
+.sc.r .bar i{background:var(--crit)} .sc.a .bar i{background:var(--high)} .sc.g .bar i{background:var(--good)}
+.sc .w{font-family:var(--sans); font-size:12px; color:var(--ink-3); line-height:1.42}
+
+/* ── tables ─────────────────────────────────────────────────────────── */
+.tw{overflow-x:auto; border:1px solid var(--rule); border-radius:3px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-family:var(--sans); font-size:13.5px; min-width:640px}
+thead th{
+  text-align:left; font-weight:600; font-size:11px; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--ink-3); padding:10px 13px; border-bottom:1px solid var(--rule-2); white-space:nowrap;
+  background:var(--surface-2);
+}
+tbody td{padding:10px 13px; border-bottom:1px solid var(--rule); vertical-align:top; line-height:1.45; color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+tbody td:first-child{color:var(--ink)}
+td.n,th.n{text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums; white-space:nowrap}
+td .path{font-family:var(--mono); font-size:11.5px; color:var(--ink-3); display:block; margin-top:3px; word-break:break-all}
+table.tight{min-width:520px}
+
+/* ── chips ──────────────────────────────────────────────────────────── */
+.chip{
+  display:inline-block; font-family:var(--mono); font-size:10.5px; font-weight:500; letter-spacing:.05em;
+  padding:2px 7px; border-radius:2px; white-space:nowrap; border:1px solid transparent; line-height:1.5;
+}
+.p0{color:var(--crit); background:var(--crit-bg); border-color:var(--crit-edge)}
+.p1{color:var(--high); background:var(--high-bg); border-color:var(--high-edge)}
+.p2{color:var(--med); background:var(--med-bg); border-color:var(--med-edge)}
+.p3{color:var(--low); background:var(--low-bg); border-color:var(--low-edge)}
+.ok{color:var(--good); background:var(--good-bg); border-color:var(--good-edge)}
+
+/* ── callout ────────────────────────────────────────────────────────── */
+.call{
+  background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--accent);
+  border-radius:2px; padding:15px 18px; display:grid; gap:7px;
+}
+.call.bad{border-left-color:var(--crit)}
+.call.warn{border-left-color:var(--high)}
+.call.good{border-left-color:var(--good)}
+.call .ct{font-family:var(--sans); font-size:12px; font-weight:600; text-transform:uppercase;
+  letter-spacing:.06em; color:var(--ink-3)}
+.call p{font-size:15.5px; color:var(--ink-2)}
+.call code{background:var(--surface-2)}
+
+/* ── finding block ──────────────────────────────────────────────────── */
+.find{border:1px solid var(--rule); border-radius:3px; background:var(--surface); overflow:hidden}
+.find > .fh{
+  display:flex; flex-wrap:wrap; gap:9px 12px; align-items:center; padding:12px 16px;
+  background:var(--surface-2); border-bottom:1px solid var(--rule);
+}
+.find > .fh h3{font-size:15.5px; font-weight:600; margin:0; flex:1 1 300px; letter-spacing:-.005em}
+.find dl{margin:0; padding:14px 16px; display:grid; grid-template-columns:auto 1fr; gap:7px 18px; font-size:14.5px}
+.find dt{
+  font-family:var(--sans); font-size:10.5px; font-weight:600; letter-spacing:.07em; text-transform:uppercase;
+  color:var(--ink-3); padding-top:4px; white-space:nowrap;
+}
+.find dd{margin:0; color:var(--ink-2); font-family:var(--sans); font-size:14px; line-height:1.5}
+.find dd .path{font-family:var(--mono); font-size:12px; color:var(--ink-3)}
+@media (max-width:560px){
+  .find dl{grid-template-columns:1fr; gap:2px}
+  .find dt{padding-top:9px}
+}
+
+/* ── list ───────────────────────────────────────────────────────────── */
+ul.dot{margin:0; padding-left:0; list-style:none; display:grid; gap:9px; max-width:74ch}
+ul.dot li{padding-left:19px; position:relative; color:var(--ink-2); font-size:16px}
+ul.dot li::before{
+  content:""; position:absolute; left:2px; top:.62em; width:5px; height:5px;
+  background:var(--accent); border-radius:50%;
+}
+ul.dot li b, ul.dot li strong{color:var(--ink); font-weight:600}
+ol.steps{margin:0; padding-left:0; list-style:none; counter-reset:s; display:grid; gap:14px}
+ol.steps li{counter-increment:s; padding-left:38px; position:relative; color:var(--ink-2); max-width:74ch}
+ol.steps li::before{
+  content:counter(s); position:absolute; left:0; top:1px; width:25px; height:25px;
+  display:grid; place-items:center; border:1px solid var(--rule-2); border-radius:50%;
+  font-family:var(--mono); font-size:11.5px; color:var(--accent); background:var(--surface);
+}
+ol.steps li b{color:var(--ink); font-weight:600; font-family:var(--sans); font-size:15.5px}
+
+/* ── arch diagram ───────────────────────────────────────────────────── */
+.arch{background:var(--surface); border:1px solid var(--rule); border-radius:3px; padding:20px; overflow-x:auto}
+.arch svg{display:block; min-width:660px; max-width:100%; height:auto}
+
+/* ── footer ─────────────────────────────────────────────────────────── */
+.foot{border-top:1px solid var(--rule-2); margin-top:20px; padding-top:22px;
+  font-family:var(--mono); font-size:11.5px; color:var(--ink-3); display:grid; gap:6px}
+
+/* ── remediation overlay (added 2026-09-15) ──────────────────────────── */
+.chip.fixed{background:var(--good-bg);color:var(--good);border-color:var(--good-edge)}
+.chip.partly{background:var(--med-bg);color:var(--med);border-color:var(--med-edge)}
+.chip.open{background:var(--low-bg);color:var(--low);border-color:var(--low-edge)}
+.fixnote{margin-top:.7rem;padding:.65rem .8rem;border:1px solid var(--good-edge);
+  border-left:3px solid var(--good);background:var(--good-bg);border-radius:6px;
+  font-size:.86rem;line-height:1.5}
+.fixnote.partly{border-color:var(--med-edge);border-left-color:var(--med);background:var(--med-bg)}
+.fixnote.open{border-color:var(--low-edge);border-left-color:var(--low);background:var(--low-bg)}
+.fixnote b{font-weight:600}
+.fixnote .who{display:block;font-family:var(--mono);font-size:.74rem;letter-spacing:.02em;
+  text-transform:uppercase;opacity:.75;margin-bottom:.25rem}
+.remed{margin:1.6rem 0;padding:1.1rem 1.25rem;border:1px solid var(--accent);
+  border-radius:10px;background:var(--accent-wash)}
+.remed h2{margin:.1rem 0 .5rem;font-size:1.15rem}
+.remed .stamp{font-family:var(--mono);font-size:.74rem;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--accent);margin-bottom:.35rem}
+.remed p{margin:.5rem 0}
+.tally{display:flex;flex-wrap:wrap;gap:.5rem;margin:.75rem 0 .2rem}
+.tally span{font-family:var(--mono);font-size:.78rem;padding:.3rem .6rem;border-radius:999px;
+  border:1px solid var(--rule-2);background:var(--surface)}
+.tally .done{background:var(--good-bg);color:var(--good);border-color:var(--good-edge)}
+.tally .part{background:var(--med-bg);color:var(--med);border-color:var(--med-edge)}
+.tally .todo{background:var(--low-bg);color:var(--low);border-color:var(--low-edge)}
+.wrong{margin:.9rem 0;padding:.7rem .85rem;border:1px solid var(--high-edge);
+  border-left:3px solid var(--high);background:var(--high-bg);border-radius:6px;font-size:.88rem}
+@media (max-width:560px){ .tally{gap:.35rem} .tally span{font-size:.72rem} }
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">
+    <span>Repository audit</span><span class="sep">/</span>
+    <span>AtreshSoma/JobAgent</span><span class="sep">/</span>
+    <span>main @ 7b97a2c</span><span class="sep">/</span><span>remediated @ <code>fix/audit-2026-09-14</code></span>
+  </div>
+  <h1>JobAgent: what actually works</h1>
+  <p class="deck">An evidence-based review of a local-first job-search agent — traced through the running code, the live 443&nbsp;MB job database, and both test suites, rather than through its README.</p>
+  <div class="meta">
+    <span><b>364</b> tracked files</span>
+    <span><b>101,857</b> jobs in store</span>
+    <span><b>1,363</b> &rarr; <b>1,434</b> Node tests · <b>91</b> Python</span>
+    <span><b>54</b> days of production data</span>
+    <span>audited 2026-09-14</span>
+  </div>
+</header>
+
+<div class="verdict">
+  <div class="vh">The headline</div>
+  <p>JobAgent is an unusually well-engineered <em>discovery and resume-tailoring</em> system wearing the label of an application system. The resume tailor is genuinely excellent — provably non-fabricating, with fail-closed invariants I verified by running it. The discovery layer really does reach eleven ATS platforms. But in 54 days of real operation the pipeline has produced <b>zero submitted applications</b>, and the two gaps that matter most are not polish items: a fresh clone of this repository <b>cannot run its own test suite</b>, and the shipped example configuration will type placeholder text into real employers' work-authorization fields.</p>
+  <p style="font-size:.9rem;color:var(--ink-2);border-left:3px solid var(--good);padding-left:.75rem;margin:.9rem 0 0">
+    <b>As of 2026-09-15, on branch <code>fix/audit-2026-09-14</code>:</b> both of those two gaps are
+    closed — a clean clone runs 97/97 files and 1,434 tests, and placeholder configuration now fails
+    preflight and refuses to build a packet. The first sentence still stands: the funnel still ends
+    at zero submissions. See the <a href="#s22">remediation log</a>.</p>
+  <div class="score-line">
+    <span class="big">6.5<span>&thinsp;/&thinsp;10</span></span>
+    <span style="font-family:var(--sans);font-size:14px;color:var(--ink-3);line-height:1.4">weighted across eleven dimensions <b style="color:var(--good)">(was 5.9)</b><br>Production readiness alone: <b style="color:var(--high)">5/10</b> <span style="color:var(--good)">(was 3)</span></span>
+  </div>
+</div>
+
+<!-- ── FUNNEL ─────────────────────────────────────────────────────── -->
+<div class="funnel">
+  <h2>54 days of measured throughput</h2>
+  <p class="cap">Every figure below is a live count from <code>data/applied_jobs.db</code>, not a projection. Bars are on a logarithmic scale because a linear one would render every stage after the first invisible — which is itself the finding.</p>
+  <div class="fbars">
+    <div class="frow">
+      <span class="lbl">Discovered</span>
+      <span class="track"><i class="fill" style="width:100%"></i></span>
+      <span class="v">101,857</span><span class="pc">100%</span>
+    </div>
+    <div class="frow">
+      <span class="lbl">Survived exclusions&nbsp;+ freshness</span>
+      <span class="track"><i class="fill" style="width:80.5%"></i></span>
+      <span class="v">11,625</span><span class="pc">11.4%</span>
+    </div>
+    <div class="frow">
+      <span class="lbl">Actually read <span style="color:var(--ink-3)">(JD&nbsp;&ge;&nbsp;200&nbsp;chars)</span></span>
+      <span class="track"><i class="fill warn" style="width:93.6%"></i></span>
+      <span class="v">48,498</span><span class="pc">47.6%</span>
+    </div>
+    <div class="frow">
+      <span class="lbl">Assigned a tier</span>
+      <span class="track"><i class="fill" style="width:76.2%"></i></span>
+      <span class="v">6,596</span><span class="pc">6.5%</span>
+    </div>
+    <div class="frow">
+      <span class="lbl">Open&nbsp;+ actionable on the board</span>
+      <span class="track"><i class="fill" style="width:43.5%"></i></span>
+      <span class="v">150</span><span class="pc">0.15%</span>
+    </div>
+    <div class="frow">
+      <span class="lbl">Packets prepared</span>
+      <span class="track"><i class="fill" style="width:12.0%"></i></span>
+      <span class="v">4</span><span class="pc">0.004%</span>
+    </div>
+    <div class="frow">
+      <span class="lbl">Human-approved</span>
+      <span class="track"><i class="fill" style="width:12.0%"></i></span>
+      <span class="v">4</span><span class="pc">0.004%</span>
+    </div>
+    <div class="frow term">
+      <span class="lbl">Submitted</span>
+      <span class="track"><i class="fill zero" style="width:0.6%"></i></span>
+      <span class="v">0</span><span class="pc">0%</span>
+    </div>
+  </div>
+  <p class="fnote">"Actually read" is measured independently of the funnel order: 53,359 rows carry a job description under 200 characters, and 51,378 are explicitly flagged <code>summary_only</code>. Roughly half the corpus was scored on a job title alone.</p>
+</div>
+
+<!-- ── SCORECARD ──────────────────────────────────────────────────── -->
+<div class="scores">
+  <div class="sc g"><div class="t">Resume tailoring <b>9</b></div><div class="bar"><i style="width:90%"></i></div><div class="w">Provably non-fabricating. Fail-closed invariants, verified live.</div></div>
+  <div class="sc"><div class="t">Architecture <b>7</b></div><div class="bar"><i style="width:70%"></i></div><div class="w">Clean boundaries and injectable deps; three competing state vocabularies.</div></div>
+  <div class="sc"><div class="t">Discovery <b>7</b></div><div class="bar"><i style="width:70%"></i></div><div class="w">Eleven live ATS platforms; coverage is a hand-curated board list.</div></div>
+  <div class="sc"><div class="t">UI / UX <b>7</b></div><div class="bar"><i style="width:70%"></i></div><div class="w">Real a11y, real data, no dead buttons. Several metrics mislabel their own rows.</div></div>
+  <div class="sc a"><div class="t">Automation <b>6</b></div><div class="bar"><i style="width:60%"></i></div><div class="w">Solid checkpointing and verification; never once reached a submission.</div></div>
+  <div class="sc"><div class="t">Security &amp; privacy <b>7</b> <span class="chip fixed">was 6</span></div><div class="bar"><i style="width:70%"></i></div><div class="w">Resume untracked, name purged from source and tests, dead credential vars deleted. Not 8: the resume is still in git history.</div></div>
+  <div class="sc a"><div class="t">Maintainability <b>6</b></div><div class="bar"><i style="width:60%"></i></div><div class="w">Best-in-class comments, offset by duplicated and drifted assets.</div></div>
+  <div class="sc a"><div class="t">Matching / scoring <b>5</b></div><div class="bar"><i style="width:50%"></i></div><div class="w">Explainable and deterministic, but saturates early and has no eligibility gates.</div></div>
+  <div class="sc a"><div class="t">Reliability <b>5</b></div><div class="bar"><i style="width:50%"></i></div><div class="w">Good retry/limiter work; run history is silently never recorded.</div></div>
+  <div class="sc"><div class="t">Testing <b>8</b> <span class="chip fixed">was 5</span></div><div class="bar"><i style="width:80%"></i></div><div class="w">1,434 tests, 97/97 files — <b>verified green on a fresh clone</b>. Loses points: still no end-to-end funnel test.</div></div>
+  <div class="sc a"><div class="t">Production readiness <b>5</b> <span class="chip fixed">was 3</span></div><div class="bar"><i style="width:50%"></i></div><div class="w">Clonable, testable, and safe to configure. Still single-profile, and <b>still zero applications delivered</b> — which caps this.</div></div>
+</div>
+
+<!-- ── REMEDIATION BANNER (added 2026-09-15) ──────────────────────── -->
+<div class="remed">
+  <div class="stamp">Remediation · 2026-09-15 · branch <code>fix/audit-2026-09-14</code></div>
+  <h2>Every P0 and P1 in this report has been addressed</h2>
+  <p>This audit was written against <code>main&nbsp;@&nbsp;7b97a2c</code>. The findings below are
+  preserved exactly as they were first reported — including the two the fixes proved wrong —
+  and each one now carries its remediation status inline. <a href="#s22">Section&nbsp;22</a> is
+  the full log.</p>
+  <div class="tally">
+    <span class="done">P0 · 8 of 8 addressed (7 fixed · 1 partial)</span>
+    <span class="done">P1 · 11 of 11 addressed (10 fixed · 1 partial)</span>
+    <span class="part">P2 · 3 of 13 (2 fixed · 1 partial)</span>
+    <span class="todo">P3 · 0 of 6 — deferred</span>
+    <span class="done">Quick wins · 10 of 10 (1 corrected)</span>
+  </div>
+  <p>The two measurements that defined the report are unchanged: <b>the funnel still terminates
+  at zero submissions</b>, and closing it is product work, not a defect fix. What has changed is
+  that the system can no longer misstate the candidate's experience, a fresh clone runs the full
+  suite (<b>97 files, 1,434 tests</b>, up from 9 failing files and 353 tests that never ran), and
+  every number on the dashboard now means what its label says.</p>
+</div>
+
+<!-- ── TOC ────────────────────────────────────────────────────────── -->
+<nav class="toc" aria-labelledby="tocH">
+  <h2 id="tocH">Contents</h2>
+  <ol>
+    <li><span class="i">1</span><a href="#s1">Executive assessment</a></li>
+    <li><span class="i">2</span><a href="#s2">What works well</a></li>
+    <li><span class="i">3</span><a href="#s3">Partial &amp; fragile</a></li>
+    <li><span class="i">4</span><a href="#s4">Broken &amp; misleading</a></li>
+    <li><span class="i">5</span><a href="#s5">Critical bugs</a></li>
+    <li><span class="i">6</span><a href="#s6">Hardcoded components</a></li>
+    <li><span class="i">7</span><a href="#s7">Discovery audit</a></li>
+    <li><span class="i">8</span><a href="#s8">Matching audit</a></li>
+    <li><span class="i">9</span><a href="#s9">Candidate &amp; resume</a></li>
+    <li><span class="i">10</span><a href="#s10">AI / LLM audit</a></li>
+    <li><span class="i">11</span><a href="#s11">Application workflow</a></li>
+    <li><span class="i">12</span><a href="#s12">UI / UX audit</a></li>
+    <li><span class="i">13</span><a href="#s13">Data, tests, security</a></li>
+    <li><span class="i">14</span><a href="#s14">Architecture issues</a></li>
+    <li><span class="i">15</span><a href="#s15">Missing capabilities</a></li>
+    <li><span class="i">16</span><a href="#s16">JobAgent vNext</a></li>
+    <li><span class="i">17</span><a href="#s17">P0–P3 roadmap</a></li>
+    <li><span class="i">18</span><a href="#s18">Quick wins</a></li>
+    <li><span class="i">19</span><a href="#s19">Refactor &amp; remove</a></li>
+    <li><span class="i">20</span><a href="#s20">Implementation sequence</a></li>
+    <li><span class="i">21</span><a href="#s21">Final verdict</a></li>
+    <li><span class="i">22</span><a href="#s22">Remediation log</a></li>
+  </ol>
+</nav>
+
+<!-- ═══ 1 ═══════════════════════════════════════════════════════════ -->
+<section id="s1">
+  <div class="sechead"><span class="n">01</span><div>
+    <h2>Executive assessment</h2>
+    <div class="sub">What this codebase is, versus what it presents itself as</div>
+  </div></div>
+  <div class="body">
+    <p>JobAgent is a 364-file, Node&nbsp;22&thinsp;+&thinsp;Python hybrid: fifteen job-source adapters, a deterministic scoring engine, a Python resume tailor driven over a stdio pipe, a Playwright form-filler, a local dashboard, and a Chromium extension. The engineering standard in the core is high and — unusually — the code comments explain <em>why</em> a decision was made, often citing the measurement that forced it. That is rare and valuable, and it made this audit faster.</p>
+
+    <p>The gap is between the system's two halves. The <b>read half</b> — discover, normalize, dedupe, score, tailor — is built, tested, and demonstrably running at scale. The <b>write half</b> — approve, fill, submit, track, learn — is built but has never completed a single cycle. Every application-side number in the database is 0 or 4.</p>
+
+    <p>Three structural facts shape everything below:</p>
+    <ul class="dot">
+      <li><b>It is a single-profile system, honestly labelled as one.</b> The README closes with "Built for a senior data engineer profile that requires visa sponsorship," and the code matches: scoring category names like <code>azureFabricStack</code> and <code>biSemanticDepth</code> are JavaScript identifiers in <code>src/scoring/scorer.js</code>, not config keys. A second user does not reconfigure this; they fork it.</li>
+      <li><b>The safety architecture is real but untested by use.</b> Sponsorship-polarity guards, submit verification, write-ahead duplicate protection, human approval gates — these are genuinely well designed and I verified their logic. None of them has ever fired in anger, because nothing has ever been submitted.</li>
+      <li><b>Documentation quality outruns documentation accuracy.</b> <code>docs/SUPPORT_MATRIX.md</code> is one of the better honesty documents I have read in an open-source repo, and it is stale: four shipped discovery adapters are missing from it, and one (iCIMS, 2,429 jobs found) is listed as unsupported.</li>
+    </ul>
+
+    <h3>Scores in context</h3>
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Dimension</th><th class="n">Score</th><th>What moves it</th></tr></thead>
+      <tbody>
+        <tr><td>Architecture</td><td class="n">7</td><td>Adapter registry, injectable deps, pure scoring, one dead module in ~90. Loses points for three overlapping state vocabularies and four mega-files.</td></tr>
+        <tr><td>Discovery</td><td class="n">7</td><td>Eleven platforms producing rows today; measured scheduling; polite host gating. Loses points for hand-curated coverage and a 52% description-miss rate.</td></tr>
+        <tr><td>Matching / scoring</td><td class="n">5</td><td>Deterministic and explained. No eligibility gates, no requirement extraction, category weights saturate at 1–3 keyword hits.</td></tr>
+        <tr><td>Resume tailoring</td><td class="n">9</td><td>Reorder-and-emphasize only, with invariants that raise <code>RuntimeError</code> before save. I ran it; every invariant passed.</td></tr>
+        <tr><td>Automation</td><td class="n">6</td><td>Real multi-step runner, checkpoints, confirmation verification. Six-ATS allowlist against eleven discovery sources; zero completions.</td></tr>
+        <tr><td>UI / UX</td><td class="n">7</td><td>Landmarks, skip link, focus-visible, 15 media queries, live regions, all metrics backed by queries. Several metrics are computed in the wrong timezone or mislabel their rows.</td></tr>
+        <tr><td>Reliability</td><td class="n">5</td><td>Backoff, rate limiting, atomic writes, WAL tuning. <code>run_log</code> holds 0 rows after six runs; five of seven log files are empty.</td></tr>
+        <tr><td>Testing</td><td class="n">5</td><td>1,363 substantive Node tests plus 91 Python. 27 of 96 files fail to load on a clean checkout; the README badge cites a number no one can reproduce.</td></tr>
+        <tr><td>Security &amp; privacy</td><td class="n">6</td><td>Loopback bind, origin + Fetch-Metadata checks, path containment, redaction. A real resume with name, phone and personal email is committed.</td></tr>
+        <tr><td>Maintainability</td><td class="n">6</td><td>Outstanding rationale comments. 13 unreferenced repair scripts, 360&nbsp;KB of duplicated content that has already drifted.</td></tr>
+        <tr><td>Production readiness</td><td class="n">3</td><td>Cannot be cloned and tested; cannot be safely configured by a new user; has never delivered its core outcome.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ═══ 2 ═══════════════════════════════════════════════════════════ -->
+<section id="s2">
+  <div class="sechead"><span class="n">02</span><div>
+    <h2>What works well</h2>
+    <div class="sub">Verified by execution, not by reading</div>
+  </div></div>
+  <div class="body">
+
+    <div class="call good">
+      <div class="ct">Verified live · resume tailoring</div>
+      <p>I ran <code>tailorResumeForJob</code> against a synthetic JD. It completed in 230&nbsp;ms and returned 21 invariants, all passing — <code>text_units_preserved</code>, <code>source_paragraphs_preserved_once</code>, <code>employment_chronology_unchanged</code>, <code>layout_added_no_content</code>. It reported <code>snowflake</code> as a gap with the reason "not added — no supporting experience in the master resume" and the exact JD excerpt as evidence. This is the strongest component in the repository.</p>
+    </div>
+
+    <h3>Confirmed working</h3>
+    <div class="tw"><table>
+      <thead><tr><th>Capability</th><th>Status</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Resume tailoring<span class="path">src/resume/tailor.py</span></td><td><span class="chip ok">Working</span></td><td>Reorder + emphasis only; <code>_verify_truth_invariants</code> raises before save if any claim, role order or paragraph style changed. Ran clean end-to-end.</td></tr>
+        <tr><td>Doctor / preflight<span class="path">src/cli/doctor.js</span></td><td><span class="chip ok">Working</span></td><td>13 checks, 11 pass / 2 warn on this machine, with actionable <code>fix:</code> lines. Correctly flagged missing Chromium.</td></tr>
+        <tr><td>Job discovery<span class="path">src/search/index.js</span></td><td><span class="chip ok">Working</span></td><td>11 sources with non-zero counts in the live DB: workday 39,521 · smartrecruiters 33,605 · greenhouse 14,437 · ashby 5,161 · lever 4,642 · icims 2,429 · careers 591 · amazonJobs 513 · rippling 512 · atsSearch 329 · themuse 117.</td></tr>
+        <tr><td>Dashboard data layer<span class="path">src/dashboard/data.js</span></td><td><span class="chip ok">Working</span></td><td>Every metric I probed traces to a real query. <code>/api/stats</code> returns in 30–500&nbsp;ms over 101k rows thanks to two covering indexes.</td></tr>
+        <tr><td>Sponsorship polarity<span class="path">src/utils/sponsorshipLanguage.js</span></td><td><span class="chip ok">Working</span></td><td>Negation-aware. A phrase like "not eligible for work visa sponsorship" is classified <code>Denied</code>, not <code>Confirmed</code> — a regression the comments record as having previously mis-scored six Humana rows.</td></tr>
+        <tr><td>Inverted-question refusal<span class="path">src/apply/screeningQA.js</span></td><td><span class="chip ok">Working</span></td><td><code>isInvertedSponsorshipQuestion</code> correctly defers "can you work without sponsorship?" to the human rather than inverting a stored answer.</td></tr>
+        <tr><td>Python test suite</td><td><span class="chip ok">Working</span></td><td>91 passed, 0 failed, on this machine. The tailor's quality tests are substantive, not smoke tests.</td></tr>
+        <tr><td>Dashboard accessibility<span class="path">public/index.html</span></td><td><span class="chip ok">Working</span></td><td>111 ARIA attributes, semantic landmarks, skip link, <code>:focus-visible</code>, <code>prefers-reduced-motion</code>, 15 breakpoints, 4 live regions.</td></tr>
+        <tr><td>Question-queue learning loop<span class="path">src/apply/questionQueue.js</span></td><td><span class="chip ok">Working</span></td><td>Stores questions, never answers; answers are written back through the validated screening-answers config so every truthfulness guard still applies.</td></tr>
+        <tr><td>Repo health gate<span class="path">scripts/verifyRepoHealth.js</span></td><td><span class="chip ok">Working</span></td><td><code>npm run verify</code> passes 6/6 and genuinely asserts the submit path stays opt-in.</td></tr>
+      </tbody>
+    </table></div>
+
+    <p>Two engineering habits deserve specific credit. First, the <b>measurement-backed comments</b>: the pipeline does not just say it skips summary-only rows, it records that 31,409 such rows were scored on under 200 characters and exactly 2 ever reached the board. Second, the <b>honest source taxonomy</b> in <code>src/search/sources.js</code>, which draws a machine-readable line between adapters that genuinely enumerate jobs and adapters that only parse URLs a human supplied. Most projects blur exactly that line.</p>
+  </div>
+</section>
+
+<!-- ═══ 3 ═══════════════════════════════════════════════════════════ -->
+<section id="s3">
+  <div class="sechead"><span class="n">03</span><div>
+    <h2>Partial and fragile</h2>
+    <div class="sub">Built, reachable, and not dependable</div>
+  </div></div>
+  <div class="body">
+    <div class="tw"><table>
+      <thead><tr><th>Capability</th><th>Classification</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>Browser-assisted apply</td><td><span class="chip p1">Fragile</span></td><td>The runner is well built, but Playwright Chromium is not installed by <code>npm install</code>, so <code>doctor</code> warns and assist is unavailable out of the box. Two E2E test files fail for exactly this reason on this machine.</td></tr>
+        <tr><td>PDF resume export</td><td><span class="chip p1">Partial</span></td><td><code>src/resume/pdfExport.py</code> requires <code>docx2pdf</code>, which requires <b>Microsoft Word</b>. On Linux/CI it can never succeed. <code>resumeExportPdf</code> defaults to on and fails silently.</td></tr>
+        <tr><td>Dashboard PDF preview</td><td><span class="chip p1">Fragile</span></td><td>The route has a clean 422 path for "conversion unavailable" but the failing test returns <b>500</b> — the graceful branch is not reached on macOS.</td></tr>
+        <tr><td>Apify sources</td><td><span class="chip p2">Partial</span></td><td>Both Apify sources are <code>enabled: true</code> despite commit <code>11827a8</code> titled "disable the Apify sources until the billing cycle resets." They rely entirely on a runtime quota preflight. LinkedIn/Indeed breadth is therefore billing-dependent and currently produces 0 rows in the live DB.</td></tr>
+        <tr><td>Watch / scheduling</td><td><span class="chip p2">Partial</span></td><td><code>src/cli/watch.js</code> is a foreground loop with no persistence, no daemon, and no dashboard surface. It dies with the terminal, and nothing records that it ran.</td></tr>
+        <tr><td>Cover letters</td><td><span class="chip p1">Fragile</span></td><td>Deterministic template fill. Falls back to the literal claim <code>'delivered production data pipelines'</code> when <code>workHistory[0].highlights</code> is empty — an ungrounded assertion in a document sent to an employer. Also hardcodes "10+ years" and an H-1B sentence in <code>config/cover_letter.json</code>.</td></tr>
+        <tr><td>Screening answers</td><td><span class="chip p0">Fragile</span></td><td>Literal whole-word pattern matching with no plural or synonym handling. See §5 — this is where the most serious defect lives.</td></tr>
+        <tr><td>Description enrichment</td><td><span class="chip p2">Partial</span></td><td>5,029 rows sit in <code>needs_description</code> waiting for <code>npm run enrich</code>. Nothing schedules it, and the dashboard reports those rows as "Scored."</td></tr>
+        <tr><td>Chromium extension</td><td><span class="chip p2">Partial</span></td><td>A real MV3 extension with a shared-key origin gate. Its E2E test cannot run without Chromium, so its actual behavior is currently unverified on this machine.</td></tr>
+        <tr><td>Interview prep</td><td><span class="chip p3">Disconnected</span></td><td>2,475 lines of hand-written Markdown about one person's data-engineering interviews. It takes no input from the JD, the resume, or the pipeline. It is content shipped inside an application.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ═══ 4 ═══════════════════════════════════════════════════════════ -->
+<section id="s4">
+  <div class="sechead"><span class="n">04</span><div>
+    <h2>Broken and misleading</h2>
+    <div class="sub">Where the code and its own claims disagree</div>
+  </div></div>
+  <div class="body">
+
+    <div class="find">
+      <div class="fh"><h3>A clean clone cannot run its own tests</h3><span class="chip p0">P0</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd>I cloned the repo to a scratch directory and ran the suite: <b>27 of 96 test files failed to load</b>, 353 tests never executed. <code>loadConfig()</code> throws <code>Config file not found: config/candidate.json (ENOENT)</code>.</dd>
+        <dt>Cause</dt><dd><code>config/candidate.json</code> and <code>config/screening_answers.json</code> are gitignored (correctly — they hold PII), but ~30 test files call <code>loadConfig()</code> at module scope and nothing copies the <code>.example</code> files first.</dd>
+        <dt>Impact</dt><dd><code>.github/workflows/ci.yml</code> runs <code>npm test</code> on a bare checkout, so <b>CI on <code>main</code> is red and has been for as long as this pattern has existed</b>. The README badge advertising "1,388 passed · 96 files" describes a state only the author's laptop has ever reached.</dd>
+        <dt>Fix</dt><dd>Add a vitest <code>globalSetup</code> that materializes the two example files into a fixture root, and point config-reading tests at that root instead of the repo.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span>A vitest <code>globalSetup</code> seeds <code>config/candidate.json</code>, <code>config/screening_answers.json</code> and the master resume from their tracked <code>.example</code> files when absent, and never overwrites a real local config (<code>scripts/setupLocalConfig.mjs</code>, also exposed as <code>npm run setup</code>). <b>Verified by cloning the branch to a scratch directory and running the suite: 96/96 files, 1,383 tests</b> — where the audit measured 27 files failing to load and 353 tests never running.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>Tests assert against the author's private configuration</h3><span class="chip p1">P1</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd><code>tests/node/loadConfig.test.js:8</code> asserts <code>config.candidate.identity.fullName === '&lt;the owner's real name&gt;'</code>. <code>tests/node/coverLetter.test.js</code> loads the live config and expects an H-1B sentence. <code>tests/node/discoveryCoverage.test.js:28</code> expects the target-title list to contain <code>'Data Analytics Engineer'</code>.</dd>
+        <dt>Impact</dt><dd>4 of the 7 currently failing tests fail only because the local config is now a placeholder. These tests cannot pass for any other user, and they encode personal data as an assertion.</dd>
+        <dt>Fix</dt><dd>Assert on fixture configs. Keep one integration test that asserts the <em>shape</em> of the real config, never its values.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span>21 test files now read a fictional profile from <code>tests/node/fixtures/config/</code> via <code>loadTestConfig()</code>, keeping the repository's shared config (scoring, exclusions, jobboards) under genuine test. <code>loadConfig.test.js</code> is the one place that still loads the real local config and it asserts <b>shape only</b> — types, presence and non-emptiness — never values.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>A regression guard is silently disabled by an import error</h3><span class="chip p1">P1</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd><code>tests/node/workdayJobUrl.test.js</code> fails to collect: <code>Failed to load url sqlite</code>. Root cause is <code>scripts/repairJobUrls.mjs:34</code> — a static <code>import { DatabaseSync } from 'node:sqlite'</code>, the exact thing <code>src/logging/db.js</code> deliberately avoids with <code>createRequire</code>.</dd>
+        <dt>Impact</dt><dd>The file guards a bug that once made <b>15,733 of 15,758 stored Workday URLs 404</b> — the largest source in the database. That guard has not run since the import was added, and the failure looks like unrelated tooling noise.</dd>
+        <dt>Fix</dt><dd>Switch <code>repairJobUrls.mjs</code> to the same <code>createRequire</code> pattern, or move <code>repairWorkdayUrl</code> into <code>src/</code> where it has no DB dependency.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>scripts/repairJobUrls.mjs</code> now loads <code>node:sqlite</code> through <code>createRequire</code>, matching <code>src/logging/db.js</code>. <b><code>workdayJobUrl.test.js</code> collects and passes again — 12 tests</b> that had been out of the suite entirely. Running the repaired script reports 2,787 rows still repairable in the live store. The same latent static import was fixed in <code>scripts/dbMaintenance.mjs</code>.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>Run history is never recorded</h3><span class="chip p1">P1</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd><code>SELECT COUNT(*) FROM run_log</code> → <b>0</b>, against 101,857 jobs and 26,132 application events including 6 <code>run_end</code> events.</dd>
+        <dt>Cause</dt><dd>The dashboard defines its own <code>startRun(phase)</code> at <code>src/dashboard/server.js:778</code> and never calls <code>logger.startRun()</code>. <code>endRun()</code> issues an <code>UPDATE run_log … WHERE run_id = ?</code> against a row that was never inserted, so every counter is discarded.</dd>
+        <dt>Impact</dt><dd>No run durations, no counter history, no per-run error record — from the primary UI. Nothing reads <code>run_log</code> either, so the table is write-only and empty: observability that looks present and is not.</dd>
+        <dt>Fix</dt><dd>Call <code>logger.startRun(mode)</code> in the dashboard's run path; make <code>endRun</code> upsert rather than update; add a runs view to the Activity drawer.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span>The dashboard's run path now opens a <code>run_log</code> row and closes it with the run's real counters and duration; <code>updateRunLog</code> upserts, so a missed opening insert costs the opening rather than the whole record. <code>GET /api/runs</code> serves the history that nothing previously read. Verified end to end: a run records mode, jobs_found, jobs_scored, jobs_discarded, both timestamps and a computed duration.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>The authoritative capability doc omits four shipped adapters</h3><span class="chip p2">P2</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd><code>docs/SUPPORT_MATRIX.md</code> has zero mentions of Rippling, Oracle Recruiting, or Amazon Jobs, all of which are enabled discovery sources. It lists iCIMS only as "Manual or direct URL workflows — ❌ Not in the allowlist," while <code>icims-portals</code> is an enabled discovery source across 54 boards that has found <b>2,429 jobs</b>.</dd>
+        <dt>Impact</dt><dd>The README names this file as the honest statement of what works. It is currently understating the product by four connectors and misclassifying one.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>docs/SUPPORT_MATRIX.md</code> gains rows for iCIMS (2,431 live rows / 54 portals), Rippling (512 / 29 boards), Amazon Jobs (513) and The Muse (117), and records Oracle Recruiting as <b>UNPROVEN</b> — 41 tenants configured, 0 rows produced. The apply-side iCIMS row that read as &ldquo;iCIMS is unsupported&rdquo; is now scoped to auto-fill, where the limitation is real.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>Contradictory statements about auto-submit</h3><span class="chip p2">P2</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd><code>src/index.js</code> header: "There is no auto-submit path and no bypass." <code>src/automation/applyRunner.js</code> implements <code>tryAutoSubmit</code>, and <code>POST /api/auto-submit-batch</code> exists. Meanwhile <b>no UI code calls that route</b> — grepping <code>public/assets/js/app.js</code> for <code>autoSubmit</code> returns nothing.</dd>
+        <dt>Impact</dt><dd>The one automated submission path is simultaneously denied by the CLI docs, documented in the README, and unreachable from the product. A reader cannot determine the truth from any single source.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>src/index.js</code> no longer claims &ldquo;there is no auto-submit path&rdquo;. It now states precisely what is true: no CLI command can submit; exactly one local route (<code>POST /api/auto-submit-batch</code>) can, behind an explicit per-run confirmation and a verification gate; and <b>no shipped UI code calls it</b>. The README says the same. The route was kept rather than deleted — removing a documented, guarded feature is a product decision, not a defect fix.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>5,029 unread jobs are displayed as "Scored"</h3><span class="chip p2">P2</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>Evidence</dt><dd>DB: <code>needs_description</code> = 5,029, <code>scored</code> = 146. Live <code>/api/stats</code>: <code>byStatus.scored</code> = <b>5,175</b> — exactly the sum. <code>deriveAppStatus</code> (<code>src/dashboard/data.js:65</code>) has no case for <code>needs_description</code>, so it falls through to line 81 (<code>score</code> is set, <code>tier</code> is null) and returns <code>SCORED</code>.</dd>
+        <dt>Impact</dt><dd>Directly contradicts the pipeline's own stated intent: those rows are recorded as unread precisely so they are <em>not</em> reported as judged. 97% of the "Scored" tile is jobs the system never read.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>deriveAppStatus</code> gains a <code>NEEDS_DESCRIPTION</code> case, with its own board label (&ldquo;Description not fetched&rdquo;) and an explanation pointing at <code>npm run enrich</code>. <b>Measured on the live store after the fix: <code>byStatus.scored</code> 133, <code>byStatus.needs_description</code> 4,732</b> — an exact split of what was previously one tile of 4,865.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 5 ═══════════════════════════════════════════════════════════ -->
+<section id="s5">
+  <div class="sechead"><span class="n">05</span><div>
+    <h2>Critical bugs and blockers</h2>
+    <div class="sub">Severity · file · problem · impact · root cause · fix</div>
+  </div></div>
+  <div class="body">
+
+    <div class="call bad">
+      <div class="ct">The most serious finding in this audit</div>
+      <p>The system will state a specific number of years of experience with a technology the candidate has never used, at confidence 1.0, on a real employer's application form — and its own truthfulness guard passes it.</p>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>Years-of-experience answers are fabricated for arbitrary skills</h3><span class="chip p0">P0</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">src/apply/screeningQA.js → src/apply/formPrefill.js:200</dd>
+        <dt>Problem</dt><dd>I called <code>answerScreeningQuestion</code> directly against the live config. Results:<br>
+          <code>"How many years of experience do you have with SAP ABAP?"</code> → <b>"10+ years"</b>, confidence 1<br>
+          <code>"How many years of management experience do you have?"</code> → <b>"10+ years"</b>, confidence 1<br>
+          <code>"How many years of experience do you have in clinical trials?"</code> → <b>"10+ years"</b>, confidence 1</dd>
+        <dt>Impact</dt><dd>Material misrepresentation to an employer, on a form the runner will fill and a human may then submit after a glance. It contradicts the module's own docstring ("nothing about the candidate is invented") and README safety rule 4.</dd>
+        <dt>Root cause</dt><dd>The <code>years_experience</code> entry matches the bare pattern <code>"how many years"</code>, which has no notion of <em>years of what</em>. The answer is a single career-total string with no subject binding.</dd>
+        <dt>Fix</dt><dd>Detect a skill/domain qualifier in the question. If one is present, resolve it against the candidate profile's per-skill experience; if there is no per-skill record, return <code>ask_user</code> and enqueue it. Never let an unqualified total answer a qualified question.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>answerScreeningQuestion</code> now detects whether a duration question names a <b>subject</b>. A qualified question resolves against a new optional <code>candidate.skillExperience</code> map or returns <code>ask_user</code> — and it reaches the human even when <code>defaults.unknownAction</code> is <code>skip</code>. An unqualified career-total question still answers normally. <b>All three questions from the Problem row now defer</b>; guarded by 11 tests in <code>tests/node/auditRegressions.test.js</code>.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>The shipped example config types placeholder text into work-authorization fields</h3><span class="chip p0">P0</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">config/screening_answers.example.json · config/candidate.example.json · src/cli/doctor.js</dd>
+        <dt>Problem</dt><dd>Copying the example files — the exact instruction <code>doctor</code> and the README give a new user — produces answers that pass every gate. I verified at runtime:<br>
+          <code>"Are you legally authorized to work in the United States?"</code> → <b>"YOUR truthful authorization status."</b><br>
+          <code>"Will you now or in the future require sponsorship?"</code> → <b>"YOUR truthful sponsorship answer (e.g. 'No.' or 'Yes, I will require sponsorship.')."</b><br>
+          <code>assertTruthfulSponsorship(...)</code> → <b><code>{ truthful: true, violations: [] }</code></b></dd>
+        <dt>Impact</dt><dd>A new user reaches "✓ Preflight passed — the pipeline is ready to run" with a profile named <b>Jane Doe</b>, email <b>you@example.com</b>, city <b>Your City</b>, and a work-authorization status literally reading <code>"US Citizen | Green Card | H-1B | OPT | ..."</code>. Doctor reports "all required fields present" because it checks presence, not plausibility.</dd>
+        <dt>Root cause</dt><dd>No placeholder detection anywhere. <code>requiredProfileGaps</code> tests for empty strings only; the JSON schema constrains types, not sentinel values.</dd>
+        <dt>Fix</dt><dd>Add a sentinel registry (the exact strings shipped in the <code>.example</code> files plus patterns like <code>/^YOUR /</code>, <code>you@example\.com</code>, <code>Your (City|State)</code>). Fail <code>quickPreflight</code> hard on any match, and refuse to build a packet. This is a five-line guard that closes the whole class.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>src/config/placeholders.js</code> adds a sentinel registry covering the exact strings the <code>.example</code> files ship plus their general shapes. It fails <code>quickPreflight</code>, adds a <b>failing</b> doctor check, and makes <code>preparePacket</code> throw — the one chokepoint every preparation path goes through. <b>Doctor now reports &ldquo;✗ Preflight failed&rdquo; with all 12 placeholders named, where it previously reported &ldquo;✓ ready to run&rdquo;.</b> Verified not to fire on realistic values.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>A real resume with PII is committed to a public repository</h3><span class="chip p0">P0</span><span class="chip partly">FIXED (history pending)</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">resumes/base/MASTER_RESUME.docx (tracked)</dd>
+        <dt>Problem</dt><dd>I read the tracked file. Line 3 contains a full name, a personal mobile number, a personal email, and a LinkedIn handle, followed by a complete 10-year employment history naming Microsoft, Assurant and Conduent.</dd>
+        <dt>Impact</dt><dd>Permanent public exposure of direct contact details, in git history, on a repository whose <code>.gitignore</code> is otherwise meticulous about exactly this ("Personal data (real name/contact/EEO/salary answers) — keep local only"). The file is also the only thing making the tailor testable, so it was probably never reconsidered after being added.</dd>
+        <dt>Root cause</dt><dd>The master resume is treated as a source artifact rather than user data.</dd>
+        <dt>Fix</dt><dd>Add <code>resumes/base/MASTER_RESUME.docx</code> to <code>.gitignore</code>; commit a synthetic <code>MASTER_RESUME.example.docx</code> for tests and first run; purge the real file from history and rotate nothing else (no credentials are exposed). Treat this as urgent only in the sense that the exposure is ongoing.</dd>
+      </dl>
+        <div class="fixnote partly"><span class="who">Remediation · 2026-09-15</span><code>resumes/base/MASTER_RESUME.docx</code> is untracked and gitignored, and a synthetic <code>MASTER_RESUME.example.docx</code> of identical structure ships in its place so the tailor and its tests still run. The sweep went further than the finding: <code>DEFAULT_CANDIDATE_NAME</code> in <code>src/utils/outputPaths.js</code> was the owner's real name, so any caller omitting <code>candidateName</code> named a <em>second</em> user's resume after the author; the name was also sample data in 15 test files and two scripts. All removed. <b>Still outstanding: the file remains in git history.</b> Purging it rewrites history and needs a force-push, so it is left to the repository owner.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>Common screening phrasings silently fall through</h3><span class="chip p1">P1</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">src/utils/textNormalize.js → wholeWordIn()</dd>
+        <dt>Problem</dt><dd>Patterns match as whole words with no stemming. Verified: <code>"What is your salary expectation?"</code> answers correctly, but <code>"What are your salary expectations?"</code> (plural — the far more common phrasing) returns <code>ask_user</code>. So does <code>"What is your expected compensation?"</code>.</dd>
+        <dt>Impact</dt><dd>Every such miss becomes a blocker that stops an assisted run. This is a plausible contributor to the zero-submission rate.</dd>
+        <dt>Fix</dt><dd>Normalize simple plurals before matching, and extend the shipped pattern lists. The question queue already captures these misses — mine it for the top 20 real labels and seed patterns from measurement rather than guesswork.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span>Matching now singularizes both sides through <code>normalizeForMatch</code>, conservatively (<code>class</code>, <code>status</code>, <code>analysis</code>, <code>bonus</code> are left alone), and the shipped salary patterns were extended with the compensation and requirement phrasings. <b>All of &ldquo;salary expectations&rdquo;, &ldquo;expected compensation&rdquo;, &ldquo;compensation expectations&rdquo;, &ldquo;salary requirements&rdquo; and &ldquo;pay expectations&rdquo; now answer</b>, where only the exact singular did before.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>"Today" metrics are computed in UTC</h3><span class="chip p1">P1</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">src/dashboard/data.js:390 (dayOf) and :631</dd>
+        <dt>Problem</dt><dd><code>dayOf()</code> is <code>String(value).slice(0,10)</code> over an ISO-8601 UTC timestamp. Live evidence from <code>/api/stats</code> at 00:07&nbsp;UTC: <code>discoveredToday: 0</code> alongside <code>discoveredLast24h: 15954</code> and <code>lastDiscoveryAt</code> 35 minutes earlier.</dd>
+        <dt>Impact</dt><dd>For a US Eastern user, "Discovered today", "Prepared today", "Submitted today" and "New qualified today" all reset to zero at 7–8&nbsp;pm local while work is still happening. The dashboard's daily narrative is wrong every evening.</dd>
+        <dt>Fix</dt><dd>Derive the day boundary from the candidate profile's <code>location.timezone</code> (already present in <code>candidate.json</code>) rather than from the UTC string.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>dayOf()</code> takes the day boundary from <code>candidate.location.timezone</code> via <code>Intl.DateTimeFormat</code>, threaded through every stats call site, with the zone in the cache key and a UTC fallback for an invalid zone. <b>Measured on the live store at the audit's own moment: <code>discoveredToday</code> 242 under UTC versus 16,196 in the candidate's timezone</b>, against <code>discoveredLast24h</code> of 16,196.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>Absolute-path stripping is platform-dependent</h3><span class="chip p2">P2</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">src/apply/applicationState.js:215</dd>
+        <dt>Problem</dt><dd>The checkpoint is documented to persist only a basename, "never the candidate's absolute path." It uses <code>basename()</code> from <code>node:path</code>, which is POSIX-only on macOS/Linux. The failing test shows <code>"C:\\private\\Candidate_Name_Resume.pdf"</code> surviving intact.</dd>
+        <dt>Impact</dt><dd>A stated privacy invariant that holds on one platform and not another. Narrow in practice, but it is asserted as absolute.</dd>
+        <dt>Fix</dt><dd>Strip on both separators explicitly: <code>String(p).split(/[\\/]/).pop()</code>.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>uploadCheckpoint</code> uses <code>String(p).split(/[\\/]/).pop()</code> instead of POSIX <code>basename()</code>. <code>C:\private\Candidate_Name_Resume.pdf</code> now reduces to the filename on a POSIX host, so the stated privacy invariant holds on every platform.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>A duplicate JSON key is silently dropped</h3><span class="chip p2">P2</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">config/scoring.json → evidenceAliases</dd>
+        <dt>Problem</dt><dd><code>"streaming"</code> is defined twice. <code>JSON.parse</code> keeps the last, discarding <code>["structured streaming","kafka","event hub","spark streaming"]</code>. Ajv never sees it — the key is gone before validation.</dd>
+        <dt>Fix</dt><dd>Add a duplicate-key check to <code>readJson()</code> (parse with a reviver that records seen keys), and to the config test.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span>The shadowed <code>streaming</code> key is removed (the surviving entry was a superset, so no aliases were actually lost), and <code>readJson()</code> now <b>refuses</b> any config with a repeated key. Detection needs a source-text scan — a <code>JSON.parse</code> reviver only ever sees the value that survived — and is verified not to misfire on colons or escaped quotes inside string values. All shipped config files scan clean.</div>
+    </div>
+
+    <div class="find">
+      <div class="fh"><h3>34 MB of unrelated projects sit untracked and un-ignored in the working tree</h3><span class="chip p2">P2</span><span class="chip fixed">FIXED</span></div>
+      <dl>
+        <dt>File</dt><dd class="path">PyProjects/ (quant trading, stock analysis, alphalens, a second job-search agent)</dd>
+        <dt>Problem</dt><dd><code>git check-ignore PyProjects</code> returns nothing: it is untracked and unmatched by any rule. A single <code>git add -A</code> commits all of it.</dd>
+        <dt>Fix</dt><dd>Move it out of the repository root, or add it to <code>.gitignore</code> today.</dd>
+      </dl>
+        <div class="fixnote "><span class="who">Remediation · 2026-09-15</span><code>PyProjects/</code> is in <code>.gitignore</code>; <code>git check-ignore</code> confirms it matches. It is no longer one <code>git add -A</code> from being committed.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 6 ═══════════════════════════════════════════════════════════ -->
+<section id="s6">
+  <div class="sechead"><span class="n">06</span><div>
+    <h2>Hardcoded and static components</h2>
+    <div class="sub">What would have to change for a second user</div>
+  </div></div>
+  <div class="body">
+    <p>The good news first: <b>most of the code is already profile-driven</b>. Search terms derive from <code>candidate.targetTitles</code> (<code>workday.js deriveSearchTerms</code>, <code>atsSearch</code>, <code>adzuna</code>, <code>amazonJobs</code>). Discovery relevance derives from the profile vocabulary (<code>discoveryFilter.js</code>, which explicitly replaced a hardcoded role regex). Exclusions, weights and thresholds are all config. A grep for hardcoded domain terms across <code>src/</code> returns exactly one line of code.</p>
+    <p>The lock-in is concentrated in three places, and they are the load-bearing ones.</p>
+
+    <div class="tw"><table>
+      <thead><tr><th>What is static</th><th>Where</th><th>Consequence for a different user</th><th>Move it to</th></tr></thead>
+      <tbody>
+        <tr><td><b>Scoring category names</b><br>azureFabricStack, biSemanticDepth, pythonSqlPyspark</td><td class="path">src/scoring/scorer.js:75–79</td><td>Blocking. These are JS identifiers reading fixed keys from <code>scoring.keywords</code>. A frontend or finance candidate cannot express their stack without editing source.</td><td>A declarative array of <code>{id, label, keywordSet, weight, fullAt}</code> the scorer iterates.</td></tr>
+        <tr><td><b>The keyword vocabulary</b><br>11 Azure terms, 13 DE terms, 8 BI terms, 6 domains</td><td class="path">config/scoring.json</td><td>Blocking. The entire semantic surface of matching is one profile's stack.</td><td>Derive from the parsed master resume + profile; keep config as an override.</td></tr>
+        <tr><td><b>The board list</b><br>72 Greenhouse · 226 Workday · 123 SmartRecruiters · 54 iCIMS · 49 Ashby · 41 Oracle · 29 Rippling · 8 careers</td><td class="path">config/jobboards.json (95 KB)</td><td>High. Coverage is a curated list of companies that hire data engineers. <code>harvestSources.mjs</code> grows it, but the seed is one person's world.</td><td>Query-first discovery as the primary path; company-first as a learned cache seeded from what query-first finds.</td></tr>
+        <tr><td><b>likelySponsors</b> — 21 named employers</td><td class="path">config/scoring.json</td><td>Medium. Worth up to 15 of 110 weighted points. Naming Deloitte or Infosys as "Likely" to sponsor is an unverified prior that materially reorders the board.</td><td>A learned signal from observed outcomes, or drop it and rely on JD evidence.</td></tr>
+        <tr><td><b>ROLE_SHAPED_RE</b> — data-role regex</td><td class="path">src/search/adapters/workday.js:110</td><td>Medium. Ranks which postings get a scarce detail fetch. On a non-data profile it ranks randomly.</td><td>Reuse <code>classifyTitleFit</code>, as <code>discoveryFilter</code> already does.</td></tr>
+        <tr><td><b>Cover-letter facts</b><br>"10+ years", the H-1B sentence, <code>'delivered production data pipelines'</code></td><td class="path">config/cover_letter.json · src/apply/coverLetter.js:67–71</td><td>High. The fallback highlight is an ungrounded claim; the years figure is duplicated from <code>screening_answers.json</code> and can drift.</td><td>Derive years and highlights from the profile; refuse to emit a paragraph with no grounding.</td></tr>
+        <tr><td><b>geography.usOnly</b>, security-clearance and junior/intern exclusions</td><td class="path">config/exclusions.json</td><td>Medium. Config, but defaults assume a US-based senior candidate. A junior user is excluded by <code>roleMismatch</code> from their own search.</td><td>Derive <code>roleMismatch</code> from <code>candidate.seniority</code>.</td></tr>
+        <tr><td><b>ATS allowlist</b> — 6 platforms</td><td class="path">src/apply/autoApplyEligibility.js:14</td><td>Medium. Discovery spans 11 platforms; auto-apply covers 6. iCIMS, Oracle, Rippling, Amazon and The Muse rows can be found but never auto-filled.</td><td>Fixture-test the remaining adapters, or surface the gap in the UI at discovery time.</td></tr>
+        <tr><td><b>Three freshness configs</b></td><td class="path">.env JOB_FRESHNESS_MODE · scoring.json freshness · exclusions.json staleness</td><td>Low, but confusing. <code>skipOlderThanDays</code> is 14 in one file and 45 in another, and a third control overrides both.</td><td>One freshness block, read once.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="call warn">
+      <div class="ct">Dead configuration surface</div>
+      <p><code>.env.example</code> declares 34 variables. <code>LINKEDIN_EMAIL</code>, <code>LINKEDIN_PASSWORD</code>, <code>DICE_*</code>, <code>INDEED_*</code>, <code>GLASSDOOR_*</code>, <code>SMTP_*</code>, <code>NOTIFY_TO</code>, <code>ANTHROPIC_API_KEY</code> and <code>OPENAI_API_KEY</code> are read by <b>zero lines of code</b> — I grepped all of <code>src/</code> and <code>scripts/</code>. The file invites a user to write four job-board passwords into plaintext for features that do not exist. Delete them.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 7 ═══════════════════════════════════════════════════════════ -->
+<section id="s7">
+  <div class="sechead"><span class="n">07</span><div>
+    <h2>Discovery audit</h2>
+    <div class="sub">Fifteen adapters, eleven producing rows</div>
+  </div></div>
+  <div class="body">
+    <p>Discovery is the most mature subsystem. The architecture already <em>is</em> a provider/adapter model: a registry in <code>src/search/index.js</code>, a source-kind taxonomy in <code>src/search/sources.js</code>, per-host concurrency gating, measured longest-first scheduling from <code>data/source_timings.json</code>, and a shared detail cache so descriptions bought by one run are reusable by any adapter in the next. I would not restructure it.</p>
+
+    <div class="tw"><table>
+      <thead><tr><th>Source</th><th>Mechanism</th><th class="n">Live rows</th><th>Assessment</th></tr></thead>
+      <tbody>
+        <tr><td>Workday</td><td>Public CXS JSON, per-tenant</td><td class="n">39,521</td><td><span class="chip ok">Working</span> 226 tenants. Search terms derived by set-cover over target titles — genuinely clever. Historic URL bug fixed; its guard is currently disabled (§4).</td></tr>
+        <tr><td>SmartRecruiters</td><td>Public company API + cross-company search</td><td class="n">33,605</td><td><span class="chip ok">Working</span> The doc notes the search endpoint ignores <code>offset</code> and every country param; both are enforced client-side.</td></tr>
+        <tr><td>Greenhouse</td><td>Public board API</td><td class="n">14,437</td><td><span class="chip ok">Working</span> 72 boards, <code>first_published</code> dates.</td></tr>
+        <tr><td>Ashby</td><td>Public posting API</td><td class="n">5,161</td><td><span class="chip ok">Working</span> 49 orgs.</td></tr>
+        <tr><td>Lever</td><td>Public postings API</td><td class="n">4,642</td><td><span class="chip ok">Working</span> 51 boards.</td></tr>
+        <tr><td>iCIMS</td><td>Server-rendered portals</td><td class="n">2,429</td><td><span class="chip p2">Undocumented</span> Works; absent from the support matrix, which lists iCIMS as unsupported.</td></tr>
+        <tr><td>Company careers</td><td>sitemap.xml / JSON-LD</td><td class="n">591</td><td><span class="chip p2">Partial</span> 8 companies. Cognizant's WAF 403s the honest User-Agent and is skipped rather than bypassed — correct behavior, documented.</td></tr>
+        <tr><td>Amazon Jobs</td><td>Public <code>search.json</code></td><td class="n">513</td><td><span class="chip ok">Working</span> Covers the whole amazon.jobs family; employer read per posting.</td></tr>
+        <tr><td>Rippling</td><td>Public board API</td><td class="n">512</td><td><span class="chip ok">Working</span> 29 boards. Undocumented.</td></tr>
+        <tr><td>atsSearch (Workable)</td><td>Cross-company vendor search</td><td class="n">329</td><td><span class="chip p1">Underperforming</span> The only true cross-employer keyless discovery, yet 0.3% of the corpus. This is the channel that finds companies you have never heard of.</td></tr>
+        <tr><td>The Muse</td><td>Cross-company board</td><td class="n">117</td><td><span class="chip p2">Partial</span> Aggregator URLs, correctly tagged so the UI asks for a direct link.</td></tr>
+        <tr><td>Oracle Recruiting</td><td>Public candidate REST API</td><td class="n">0</td><td><span class="chip p1">Unproven</span> 41 tenants configured, no rows in the DB. Either mis-tagged on write or not producing.</td></tr>
+        <tr><td>Adzuna</td><td>Official aggregator API</td><td class="n">0</td><td><span class="chip p1">Key-gated</span> <code>ADZUNA_APP_ID</code>/<code>_KEY</code> are empty in <code>.env</code>. Verified live 2026-08-01 per the doc; currently dark.</td></tr>
+        <tr><td>Apify (LinkedIn/Indeed)</td><td>Third-party actors</td><td class="n">0</td><td><span class="chip p1">Billing-gated</span> Enabled with a live quota preflight. The two largest job marketplaces in the US are contributing nothing.</td></tr>
+        <tr><td>Dice / LinkedIn / Indeed direct</td><td>URL readers</td><td class="n">—</td><td><span class="chip p3">By design</span> Disabled; query endpoints return 403/404 without evasion, which the project correctly refuses.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Coverage and quality problems</h3>
+    <ul class="dot">
+      <li><b>Half the corpus is unreadable.</b> 53,359 of 101,857 rows have a JD under 200 characters and 51,378 are flagged <code>summary_only</code>. The pipeline correctly refuses to judge these, but the detail-fetch budget (<code>maxDetailFetches</code>: 25 for atsSearch) is far too small relative to intake.</li>
+      <li><b>Freshness is doing most of the filtering.</b> 90,232 of 96,678 discards never reached scoring — they were dropped by exclusions or the freshness window. 2,229 were dropped purely for an unparseable date. That is a lot of potentially good roles discarded for metadata quality.</li>
+      <li><b>The dedupe key is lossy.</b> <code>keyFor()</code> is <code>company::title</code> only. Two genuinely different "Data Engineer" roles at the same company collapse in-batch, keeping whichever has the longer JD. Meanwhile identity in the DB is <code>job.id</code> and re-discovery suppression uses a third key (normalized URL). Three identity notions for one entity.</li>
+      <li><b>URL ambiguity is handled well.</b> The pipeline detects URLs owned by multiple active rows and refuses to use them for suppression — the comment cites one Deloitte apply-shim URL serving 26 distinct jobs. This is exactly right.</li>
+      <li><b>No expiry detection.</b> There is a <code>check-link</code> route and <code>linkHealth.js</code>, but nothing periodically revalidates the 150 open rows. A board full of dead links is the eventual steady state.</li>
+    </ul>
+
+    <div class="call">
+      <div class="ct">Recommendation</div>
+      <p>Do not rebuild the adapter architecture — it is already correct. Instead <b>rebalance the mix</b>: make query-first discovery (Workable, Adzuna, SmartRecruiters search) the primary channel, raise its detail budget, and let <code>harvestSources.mjs</code> feed company-first boards as a derived cache. That converts coverage from a curated list into a compounding one, and it is the single change that most improves recall for a second user.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 8 ═══════════════════════════════════════════════════════════ -->
+<section id="s8">
+  <div class="sechead"><span class="n">08</span><div>
+    <h2>Matching and scoring audit</h2>
+    <div class="sub">Reverse-engineered from src/scoring/</div>
+  </div></div>
+  <div class="body">
+    <h3>The current algorithm</h3>
+    <p>Thirteen weighted categories summing to 110 raw points, normalized to 0–100, then bucketed by threshold. Each keyword category scores <code>weight × min(1, matched / fullAt)</code>, where <code>fullAt</code> is 1, 2 or 3.</p>
+
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Category</th><th class="n">Weight</th><th class="n">Saturates at</th><th>Comment</th></tr></thead>
+      <tbody>
+        <tr><td>azureFabricStack</td><td class="n">14</td><td class="n">3 hits</td><td>Largest weight. Three of {azure, fabric, adf, synapse, databricks, …} earns full marks.</td></tr>
+        <tr><td>titleFit</td><td class="n">12</td><td class="n">1 hit</td><td>Binary in practice.</td></tr>
+        <tr><td>dataEngineeringStack</td><td class="n">12</td><td class="n">3 hits</td><td>Folds in devops, data-quality and genAI term sets.</td></tr>
+        <tr><td>pythonSqlPyspark</td><td class="n">12</td><td class="n">2 hits</td><td>"python" + "sql" in any JD earns all 12.</td></tr>
+        <tr><td>sponsorshipFeasibility</td><td class="n">10</td><td>—</td><td>Confirmed 1.0 · Likely 0.7 · Unconfirmed 0.35 · Denied 0.</td></tr>
+        <tr><td>resumeKeywordAlignment</td><td class="n">10</td><td class="n">≤8 terms</td><td>Falls back to profile stack terms when no resume keywords are supplied — which is the default path.</td></tr>
+        <tr><td>seniorityFit</td><td class="n">8</td><td>—</td><td>Title-first detection, asymmetric penalty, scope bonus. Well reasoned.</td></tr>
+        <tr><td>biSemanticDepth</td><td class="n">8</td><td class="n">2 hits</td><td></td></tr>
+        <tr><td>domainFit</td><td class="n">6</td><td class="n">1 hit</td><td>Six industries, hardcoded.</td></tr>
+        <tr><td>geographyFit</td><td class="n">6</td><td>—</td><td>remote/onsite/excluded only. No commute, no metro, no relocation modelling.</td></tr>
+        <tr><td>companySponsorshipLikelihood</td><td class="n">5</td><td>—</td><td>Driven by a 21-name list.</td></tr>
+        <tr><td>freshness</td><td class="n">4</td><td>—</td><td>≤7d full · ≤14d half · else 0.</td></tr>
+        <tr><td>directAtsAvailability</td><td class="n">3</td><td>—</td><td>Source-string membership.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>What the ranking does and does not consider</h3>
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Factor</th><th>Handled?</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>Mandatory eligibility</td><td><span class="chip p0">No</span></td><td>There is no gate for "requires 15 years", "requires active clearance in-hand", "requires a degree we don't have". Clearance is a blunt exclusion; years are never parsed.</td></tr>
+        <tr><td>Required vs preferred</td><td><span class="chip p1">Only with LLM on</span></td><td><code>jdRequirements.js</code> classifies importance, but it is opt-in, off by default, and feeds tailoring — not scoring.</td></tr>
+        <tr><td>Semantic similarity</td><td><span class="chip p1">No</span></td><td>Pure literal phrase matching plus a manual alias table. "Lakehouse" is understood; "medallion architecture on GCP" is not.</td></tr>
+        <tr><td>Title / seniority</td><td><span class="chip ok">Yes</span></td><td>Genuinely good. Title-first level detection with an asymmetric penalty — a step up is a full fit, a step down is not.</td></tr>
+        <tr><td>Years of experience</td><td><span class="chip p1">No</span></td><td>Never extracted from the JD, never compared to the profile.</td></tr>
+        <tr><td>Domain / industry</td><td><span class="chip p2">Weakly</span></td><td>6 points from a 6-word list.</td></tr>
+        <tr><td>Transferable skills</td><td><span class="chip p2">Via aliases</span></td><td><code>evidenceAliases</code> is a hand-maintained equivalence table — good design, does not scale.</td></tr>
+        <tr><td>Location / work mode</td><td><span class="chip p2">Coarse</span></td><td>remote / onsite / excluded.</td></tr>
+        <tr><td>Compensation</td><td><span class="chip p1">No</span></td><td><code>compensation_text</code> is stored and never scored, despite a <code>salaryPreference</code> in the profile.</td></tr>
+        <tr><td>Sponsorship</td><td><span class="chip ok">Yes</span></td><td>Best-in-class: polarity-aware, evidence-recorded, gate-enforced, and the gate is separated from fit so gated rows stay visible.</td></tr>
+        <tr><td>Freshness</td><td><span class="chip ok">Yes</span></td><td>Both as a filter and as 4 points.</td></tr>
+        <tr><td>Candidate preferences</td><td><span class="chip p2">Partly</span></td><td>Location and employment type only. Salary, travel, relocation and start date are collected and never used in ranking.</td></tr>
+        <tr><td>Missing must-haves</td><td><span class="chip p1">Reported, not gated</span></td><td><code>computeMissing</code> lists gaps for tailoring; nothing prevents a job with three missing must-haves from ranking Priority.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Systematic errors this design produces</h3>
+    <ul class="dot">
+      <li><b>Early saturation creates false positives.</b> A JD mentioning Azure, Databricks and Delta Lake once each scores identically to a perfect stack match. With <code>python</code> + <code>sql</code> (12) + three Azure words (14) + a title hit (12) + Unconfirmed sponsorship (3.5 + 1) + neutral geography (3) + fresh (4), a <em>mediocre</em> posting clears 55 before any real fit is established.</li>
+      <li><b>Unread jobs are structurally undecidable.</b> The pipeline comment states this precisely: with no description, the reachable maximum is ~44 against a 50 floor, so <em>every</em> summary-only row is a guaranteed Discard. Handling this via a <code>needs_description</code> bucket is the right call; leaving 5,029 of them unenriched and mislabelled is not.</li>
+      <li><b>The sponsorship prior distorts ranking.</b> 15 of 110 points turn on a 21-name list. A Deloitte posting starts 13 points ahead of an identical posting from an unlisted employer.</li>
+      <li><b>Explanations name contributors, not reasons.</b> <code>buildExplanation</code> emits "Top contributors: azureFabricStack 14/14, titleFit 12/12…". That is a score decomposition, not an answer to "why does this job match me?"</li>
+    </ul>
+
+    <div class="call">
+      <div class="ct">Recommended shape</div>
+      <p>Keep the deterministic core; add two stages in front and one behind it.<br>
+      <b>① Eligibility gates</b> (hard pass/fail: work authorization, clearance, years floor, degree requirement, location legality) → <b>② structured requirement extraction</b> (required vs preferred, with the LLM path already built in <code>jdRequirements.js</code> promoted from tailoring to scoring) → <b>③ the existing weighted fit</b> with saturation raised and compensation added → <b>④ embedding similarity</b> between the JD requirement set and the resume evidence map, as one additional weighted factor → <b>⑤ a written explanation</b> assembled from the gates and the top three matched requirements, naming the job's words and the resume's evidence.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 9 ═══════════════════════════════════════════════════════════ -->
+<section id="s9">
+  <div class="sechead"><span class="n">09</span><div>
+    <h2>Candidate profile and resume intelligence</h2>
+    <div class="sub">Where facts live, and where they are duplicated</div>
+  </div></div>
+  <div class="body">
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+      <tbody>
+        <tr><td>How is the master resume loaded?</td><td>Opened read-only as a <code>.docx</code> by <code>tailor.py</code> from a fixed path, <code>resumes/base/MASTER_RESUME.docx</code>. Timestamped copies are written before any edit. The path is not configurable.</td></tr>
+        <tr><td>Is the candidate profile dynamically extracted?</td><td><b>No.</b> <code>config/candidate.json</code> is hand-authored. The resume and the profile are two independent hand-maintained sources of the same facts.</td></tr>
+        <tr><td>Are skills / titles / education derived correctly?</td><td>They are not derived at all — they are declared. <code>candidateStackTerms()</code> flattens <code>technicalStack</code>; <code>certifications</code> and <code>domainExperience</code> are empty arrays in the shipped config and feed <code>computeMissing</code> directly.</td></tr>
+        <tr><td>Are preferences separated from facts?</td><td><b>Yes, cleanly.</b> Facts live in <code>identity</code>/<code>workHistory</code>/<code>education</code>/<code>technicalStack</code>; preferences in <code>locationPreferences</code>/<code>employmentPreferences</code>/<code>salaryPreference</code>/<code>travelPreference</code>. This is a good model.</td></tr>
+        <tr><td>Does discovery change when the profile changes?</td><td><b>Yes.</b> This is genuinely well done. Editing <code>targetTitles</code> changes Workday's set-cover search terms, atsSearch queries, Adzuna queries, Amazon queries, and <code>classifyTitleFit</code> — all from one field.</td></tr>
+        <tr><td>Does it change when the <em>resume</em> changes?</td><td><b>No.</b> Discovery reads the profile; the resume is only read at tailoring time. Replacing the master resume changes nothing upstream.</td></tr>
+        <tr><td>Are search terms dynamic?</td><td><b>Yes</b>, from <code>targetTitles</code>. One exception: <code>ROLE_SHAPED_RE</code> in the Workday adapter.</td></tr>
+        <tr><td>Multiple resume versions?</td><td><b>No.</b> One master. The dashboard can replace it (with a kept previous version) but there is no notion of variants per role family.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="call warn">
+      <div class="ct">The core structural problem</div>
+      <p>The same facts are stated in four places that can silently disagree: the master resume ("10+ years", the Azure stack), <code>candidate.json</code> (<code>technicalStack</code>, <code>seniority</code>), <code>screening_answers.json</code> (<code>years_experience: "10+ years"</code>), and <code>cover_letter.json</code> (<code>yearsOfExperience: "10+ years"</code>). Nothing reconciles them. The resume is the only one of the four that is actually evidence.</p>
+    </div>
+
+    <h3>Proposed Candidate Intelligence Profile</h3>
+    <p>Invert the direction: parse the resume into evidence, then let the profile carry only what a resume cannot say.</p>
+    <ol class="steps">
+      <li><b>Evidence layer — derived, never edited.</b> Parse the master resume into an evidence map: <code>{skill, first_seen, last_seen, months, employers[], bullet_ids[]}</code>. <code>tailor.py</code>'s <code>_resume_evidence</code> and <code>_audit_supported_keywords</code> already build most of this; it just never leaves Python. Persist it as <code>data/candidate_evidence.json</code>, regenerated on resume change.</li>
+      <li><b>Declared layer — facts a resume cannot carry.</b> Contact details, work authorization, EEO answers, start date. Small, explicit, sentinel-checked.</li>
+      <li><b>Preference layer — what you want.</b> Unchanged from today's model, which is already good.</li>
+      <li><b>Learned layer — what you actually do.</b> Approvals, rejections and their reasons, per-question answers from the question queue, and outcomes per source and per employer.</li>
+    </ol>
+    <p>Three things fall out for free. Per-skill years become answerable, which closes the P0 in §5. <code>scoring.keywords</code> becomes derivable rather than hand-written, which unlocks a second user. And "does this job match me" becomes a claim about evidence, not about a keyword list.</p>
+
+    <div class="call good">
+      <div class="ct">Do not change the tailor's grounding rules</div>
+      <p>The rule that resume output may only <em>reorder and emphasize</em> existing text, enforced by invariants that raise before save, is the single best decision in this codebase. Every fabrication risk found in this audit lives outside it — in cover letters, in screening answers, in the example config. Extend that discipline outward; do not relax it here.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 10 ═══════════════════════════════════════════════════════════ -->
+<section id="s10">
+  <div class="sechead"><span class="n">10</span><div>
+    <h2>AI / LLM audit</h2>
+    <div class="sub">One call site, off by default</div>
+  </div></div>
+  <div class="body">
+    <p>Despite the framing, JobAgent is <b>almost entirely deterministic</b>. The LLM has exactly one call site in the entire repository: <code>tailorRunner.js:156</code> calling <code>extractJdRequirements</code>. It is disabled unless <code>LLM_ASSIST=on</code> and a key is present, and nothing in the shipped <code>.env</code> enables it. Scoring, cover letters, screening answers and ranking use no model at all.</p>
+
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Concern</th><th>Assessment</th></tr></thead>
+      <tbody>
+        <tr><td>Provider abstraction</td><td><span class="chip ok">Good</span> OpenAI-compatible <code>/chat/completions</code> over bare <code>fetch</code>, no SDK. <code>LLM_BASE_URL</code> / <code>LLM_MODEL</code> override cleanly.</td></tr>
+        <tr><td>Hardcoded model</td><td><span class="chip p3">Minor</span> Default <code>nvidia/nemotron-3-ultra-550b-a55b</code> is a constant, but env-overridable.</td></tr>
+        <tr><td>Hallucination risk</td><td><span class="chip ok">Structurally eliminated</span> Every returned phrase must occur <em>literally</em> in the JD (<code>groundingForm</code> normalizes quotes/dashes, then verifies containment). An invented phrase cannot survive. This is the right way to use a model for extraction.</td></tr>
+        <tr><td>Prompt injection</td><td><span class="chip p2">Mitigated, not solved</span> A JD is untrusted input. The grounding check means injected instructions cannot introduce false claims, but a JD could still suppress real requirements. Low impact given the output is only used to reorder text.</td></tr>
+        <tr><td>Schema validation</td><td><span class="chip p2">Partial</span> <code>response_format: json_object</code> plus a tolerant parser and length bounds (2–60 chars, ≤40 items). No JSON Schema — the shape is checked by hand.</td></tr>
+        <tr><td>Context management</td><td><span class="chip p2">Blunt</span> Hard truncation at 24,000 chars. A long JD loses its tail, which is often where "Preferred qualifications" sits.</td></tr>
+        <tr><td>Cost / caching</td><td><span class="chip ok">Good</span> SHA-256 content-hash cache on disk, <code>temperature: 0</code> for reproducibility, <code>max_tokens</code> ceiling.</td></tr>
+        <tr><td>Retries / timeouts</td><td><span class="chip p2">Timeout yes, retry no</span> 30&nbsp;s <code>AbortController</code>. No retry on 429/5xx even though <code>retryHandler.js</code> exists and would handle it.</td></tr>
+        <tr><td>Fallback</td><td><span class="chip ok">Correct</span> Every failure returns <code>{ok:false}</code>; the deterministic tailor proceeds. A resume is always produced.</td></tr>
+        <tr><td>Privacy boundary</td><td><span class="chip ok">Explicit</span> Only the public JD and title are sent. Resume, profile, contact details, EEO answers and salary never leave the machine. Documented and true.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Where deterministic logic is better</h3>
+    <p>Keep as-is: sponsorship polarity (a model would be less predictable on a legally sensitive field), resume rewriting (the invariants are worth more than fluency), tier thresholds, dedupe, freshness.</p>
+
+    <h3>Where AI would materially improve the product</h3>
+    <ul class="dot">
+      <li><b>Requirement extraction promoted into scoring.</b> The module already exists and is already grounded. Feeding required-vs-preferred into the eligibility gate is the highest-value AI change available, and it needs no new safety work.</li>
+      <li><b>Embedding similarity for transferable skills.</b> A local embedding model over JD requirements and resume evidence would replace the hand-maintained <code>evidenceAliases</code> table with something that generalizes — and it is the mechanism that lets a non-data-engineer use this tool at all.</li>
+      <li><b>Screening-question classification.</b> Not answering — <em>classifying</em>. "Is this question asking about a specific skill's duration, total career experience, or something else?" would close the §5 P0 far more robustly than more regex patterns.</li>
+      <li><b>Cover-letter drafting under the tailor's rules.</b> Same discipline: the model may only assemble sentences whose factual content is verifiable against the evidence map. Today's template produces text that is safe but reads as a template.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ 11 ═══════════════════════════════════════════════════════════ -->
+<section id="s11">
+  <div class="sechead"><span class="n">11</span><div>
+    <h2>Application workflow audit</h2>
+    <div class="sub">The safety model is sound; the state model is not</div>
+  </div></div>
+  <div class="body">
+    <p>I traced each failure mode the brief asks about against the code. The results are better than expected on the dangerous ones and worse on the honest-reporting ones.</p>
+
+    <div class="tw"><table>
+      <thead><tr><th>Can the system…</th><th>Verdict</th><th>Evidence</th></tr></thead>
+      <tbody>
+        <tr><td>Submit without approval?</td><td><span class="chip ok">No</span></td><td>Submission requires <code>options.autoSubmit === true</code>, zero blockers, all required fields filled, truthful sponsorship, and a uniquely-resolved submit control. <code>POST /api/auto-submit-batch</code> additionally requires <code>confirmed: true</code>. <code>/api/assist-batch</code> hardcodes <code>autoSubmit: false</code> so a stray flag cannot escalate it.</td></tr>
+        <tr><td>Use the wrong resume?</td><td><span class="chip ok">Unlikely</span></td><td>Packet paths are per-job; <code>workspaceArtifact()</code> enforces containment; a <code>resumeWarning</code> blocks eligibility.</td></tr>
+        <tr><td>Answer screening questions incorrectly?</td><td><span class="chip p0">Yes</span></td><td>The §5 years-of-experience defect, at confidence 1.0.</td></tr>
+        <tr><td>Fabricate information?</td><td><span class="chip p0">Yes</span></td><td>Same defect, plus the cover-letter fallback highlight, plus placeholder answers passing the truthfulness gate.</td></tr>
+        <tr><td>Duplicate an application?</td><td><span class="chip ok">No</span></td><td>Three independent guards: <code>applied === 1</code> or <code>submit_unverified</code> blocks eligibility; a write-ahead <code>SUBMITTING</code> checkpoint survives a crash; retry after an unconfirmed click is explicitly disabled.</td></tr>
+        <tr><td>Mark a failed submission as successful?</td><td><span class="chip ok">No</span></td><td>The strongest part of the workflow. A click is not a submission — <code>verifySubmission()</code> must find confirmation evidence, otherwise the row lands in <code>submit_unverified</code> with an explicit "NOT recorded as submitted."</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>The state model is the real problem</h3>
+    <p>Five overlapping vocabularies describe one entity's position in one workflow:</p>
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Vocabulary</th><th>Where</th><th class="n">Values</th><th>Role</th></tr></thead>
+      <tbody>
+        <tr><td><code>LIFECYCLE</code></td><td class="path">src/lifecycle.js</td><td class="n">15</td><td>Written into artifacts and the jobs table</td></tr>
+        <tr><td><code>APPLICATION_PHASE</code></td><td class="path">src/apply/applicationState.js</td><td class="n">13</td><td>Browser-run checkpoints</td></tr>
+        <tr><td><code>APP_STATUS</code></td><td class="path">src/dashboard/data.js</td><td class="n">16</td><td>Derived board status</td></tr>
+        <tr><td><code>APPROVAL_STATUS</code></td><td class="path">src/apply/approvalQueue.js</td><td class="n">3</td><td>Separate table</td></tr>
+        <tr><td>raw <code>jobs.status</code></td><td class="path">SQLite column</td><td class="n">17 observed</td><td>Mixed — includes values in none of the above</td></tr>
+      </tbody>
+    </table></div>
+    <p>The concrete cost is already visible: <code>needs_description</code> is written to <code>jobs.status</code>, appears in no vocabulary, has no case in <code>deriveAppStatus</code>, and therefore surfaces as "Scored" for 5,029 rows. Transitions are implicit everywhere — no function owns "which states may follow this one", so a new status can be introduced by one writer and silently mishandled by three readers.</p>
+
+    <div class="call">
+      <div class="ct">Recommendation</div>
+      <p>Introduce one explicit machine in <code>src/lifecycle.js</code>: a <code>TRANSITIONS</code> map plus a <code>transition(row, next, reason)</code> function that is the <em>only</em> writer of <code>jobs.status</code>, records an <code>application_events</code> row for every move, and throws on an illegal transition. Keep <code>APPLICATION_PHASE</code> as the browser-run sub-state it genuinely is, and make <code>deriveAppStatus</code> a pure presentation mapping over the canonical status with an exhaustiveness check. This is a contained refactor — roughly four files — and it removes an entire class of the misreporting found in §4.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 12 ═══════════════════════════════════════════════════════════ -->
+<section id="s12">
+  <div class="sechead"><span class="n">12</span><div>
+    <h2>UI / UX audit</h2>
+    <div class="sub">A better-built local tool than most shipped SaaS</div>
+  </div></div>
+  <div class="body">
+    <p>I started the dashboard and probed every route. The craft here is real and I want to be specific about it, because the findings that follow are corrections, not a rebuild.</p>
+
+    <div class="call good">
+      <div class="ct">What is genuinely good</div>
+      <p>Semantic landmarks (<code>header</code>/<code>main</code>/<code>section aria-labelledby</code>/<code>aside</code>/<code>dialog</code>), 111 ARIA attributes, a skip link, <code>:focus-visible</code> throughout, <code>prefers-reduced-motion</code>, <code>prefers-color-scheme</code>, 15 breakpoints, 4 live regions, and a density toggle. <b>Every UI value I traced resolves to a real query</b> — I found no fake metrics, no placeholder rows and no dead buttons among the 33 wired actions. Performance is good too: <code>/api/stats</code> aggregates 101,857 rows in 500&nbsp;ms cold and 30&nbsp;ms warm, via two purpose-built covering indexes.</p>
+    </div>
+
+    <h3>Findings</h3>
+    <div class="tw"><table>
+      <thead><tr><th>Issue</th><th>Severity</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td>"Today" tiles are UTC</td><td><span class="chip p1">P1</span></td><td>Live: <code>discoveredToday: 0</code> beside <code>discoveredLast24h: 15954</code>, 35 minutes after a run. Affects four tiles nightly from ~7&nbsp;pm ET.</td></tr>
+        <tr><td>"Scored" includes unread jobs</td><td><span class="chip p2">P2</span></td><td>5,175 reported; 5,029 of them were never read. §4.</td></tr>
+        <tr><td>"Unclassified" sponsorship bucket</td><td><span class="chip p2">P2</span></td><td>87,530 of 101,857 rows (86%) appear in a sponsorship breakdown alongside real verdicts. It means "never evaluated" — <code>job.sponsorship</code> is NULL because the row was discarded pre-classification. Presenting absence as a category next to Confirmed/Likely/Denied is misleading.</td></tr>
+        <tr><td>A failed job leads "Today's Priorities"</td><td><span class="chip p2">P2</span></td><td>Live <code>/api/sections</code>: the first item has <code>"appStatus": "failed"</code>. A row that errored should not head the recommended-actions list.</td></tr>
+        <tr><td>Auto-submit is unreachable</td><td><span class="chip p2">P2</span></td><td>The route exists, is documented, requires explicit confirmation — and no UI calls it. Either surface it behind a real confirmation flow or remove the route.</td></tr>
+        <tr><td>No run history view</td><td><span class="chip p1">P1</span></td><td>Downstream of the empty <code>run_log</code>. A user cannot answer "what did last night's run do?"</td></tr>
+        <tr><td>PDF preview 500s without Word</td><td><span class="chip p1">P1</span></td><td>Should be a 422 with "PDF preview needs Microsoft Word — the DOCX is ready to download."</td></tr>
+        <tr><td>Interview prep is a second app</td><td><span class="chip p3">P3</span></td><td>Mounted at <code>/learn</code>, hash-routed, 360&nbsp;KB, unrelated to the workflow it sits inside.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Against the Discover → Evaluate → Tailor → Approve → Apply → Track → Learn arc</h3>
+    <p>Discover, Evaluate and Tailor are well served — the board, the filters, the fit tiles and the packet drawer all support them. <b>Approve and Apply are where the funnel dies</b>, and the UI reflects that: 4 packets prepared in 54 days against 150 actionable rows. The board answers "what did we find?" far better than it answers "what should I do in the next ten minutes?" Track exists as a 30&nbsp;MB CSV export. <b>Learn does not exist at all</b> — no outcome capture, no "why did you reject this", no per-source effectiveness view despite <code>bySource</code> already carrying found/strong/prepared/submitted.</p>
+
+    <div class="call">
+      <div class="ct">The one UX change I would make first</div>
+      <p>Replace the board-first landing with an <b>action queue</b>: the five to ten jobs where the next step is unambiguous, each with its blocking reason and a single primary button. The data for this already exists — <code>todaysPriorities</code>, the eligibility preview with its <code>reasons</code>/<code>warnings</code>/<code>nextAction</code> fields, and the question queue. Presenting 150 actionable rows and asking the user to choose is what produced 4 packets; presenting 8 and asking them to act is what produces applications.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 13 ═══════════════════════════════════════════════════════════ -->
+<section id="s13">
+  <div class="sechead"><span class="n">13</span><div>
+    <h2>Data, testing, security and reliability</h2>
+  </div></div>
+  <div class="body">
+
+    <h3>Data model</h3>
+    <p>Four tables: <code>jobs</code> (42 columns), <code>run_log</code> (24), <code>application_events</code> (6), <code>approval_queue</code> (7). Migrations are idempotent and additive with a sensible <code>PRAGMA table_info</code> guard. WAL, <code>synchronous=NORMAL</code>, a 5&nbsp;s busy timeout for the dashboard/CLI concurrency case, a 64&nbsp;MB page cache, and a truncating checkpoint on open — all deliberate and correct.</p>
+    <ul class="dot">
+      <li><b>443 MB for 101,857 rows.</b> <code>jd_text</code> is stored inline in the main table. The two covering indexes are a good mitigation, but the shape does not scale and there is no retention policy — 96,678 discarded rows keep their full descriptions forever.</li>
+      <li><b>No entities for the things the brief asks about.</b> There is no candidates table, no resumes table, no scores history, no interviews, no preferences, no errors table. Scores overwrite in place, so "did my scoring change help?" is unanswerable.</li>
+      <li><b>Event coverage is lopsided.</b> 26,132 events, of which 16,683 are <code>score_explained</code> and 9,398 <code>exclusion_matched</code>. Only 8 <code>assist_phases</code> and 7 <code>approval_required</code>. The audit trail is dense where nothing happens and thin where decisions are made.</li>
+      <li><b>Artifact sprawl.</b> <code>data/found_jobs.json</code> is 60&nbsp;MB, rewritten atomically every run. <code>data/job_tracker.csv</code> is 30&nbsp;MB, regenerated (debounced) whenever a user saves a note. <code>reports/</code> holds 5 generations totalling ~190&nbsp;MB. Roughly 725&nbsp;MB of state for one user in two months.</li>
+      <li><b>Uniqueness and timestamps are sound</b> — <code>id</code> primary key, <code>created_at</code>/<code>updated_at</code>/<code>prepared_at</code>/<code>applied_at</code>/<code>decided_at</code> all present and populated.</li>
+    </ul>
+
+    <h3>Testing</h3>
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Run</th><th class="n">Files</th><th class="n">Passed</th><th class="n">Failed</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>Node — author's machine</td><td class="n">96</td><td class="n">1,327</td><td class="n">7</td><td>9 files failed; 4 failures are config-coupling, 2 are missing Chromium, 1 is a broken import, 2 are real defects.</td></tr>
+        <tr><td>Node — clean clone (= CI)</td><td class="n">96</td><td class="n">979</td><td class="n">5</td><td><b>27 files could not load.</b> 353 tests never ran.</td></tr>
+        <tr><td>Python</td><td class="n">10</td><td class="n">91</td><td class="n">0</td><td>Substantive; the tailor quality tests are the best in the repo.</td></tr>
+      </tbody>
+    </table></div>
+    <p>The tests themselves are good — behavioral, fixture-driven, and several encode a specific past regression with the measurement that motivated it. The defect is entirely in how they are wired to configuration. Meaningful gaps: no test asserts the <b>end-to-end funnel</b> (discover → packet → approve → assist on fixtures); no test asserts <b>state-transition legality</b>; no test asserts <b>metric honesty</b> (that a tile's count equals the rows its own filter returns — a property the code comments show has broken repeatedly); no test covers <b>screening-answer correctness for qualified questions</b>, which is why the §5 P0 is live.</p>
+
+    <h3>Security and privacy</h3>
+    <div class="tw"><table class="tight">
+      <thead><tr><th>Area</th><th>Assessment</th></tr></thead>
+      <tbody>
+        <tr><td>Network exposure</td><td><span class="chip ok">Good</span> <code>server.listen(port, '127.0.0.1')</code>, plus an <code>Origin</code> check on state-changing requests and a <code>Sec-Fetch-Site: cross-site</code> rejection that also covers GETs. The extension gets a narrower exception behind a 32-byte shared key.</td></tr>
+        <tr><td>CSRF</td><td><span class="chip p2">Adequate</span> Origin-based, no token. An absent <code>Origin</code> is treated as a non-browser client, which is correct for modern browsers but leaves any local process on the machine able to drive the API.</td></tr>
+        <tr><td>Path traversal</td><td><span class="chip ok">Good</span> <code>realpathSync</code> on both sides plus <code>path.relative</code> semantics in <code>pathSafe.js</code>, with a well-explained Windows drive-letter fix.</td></tr>
+        <tr><td>Secrets in git</td><td><span class="chip ok">Clean</span> <code>.gitignore</code> is unusually thorough — it even covers SQLite sidecars of timestamped backups, with the reasoning recorded.</td></tr>
+        <tr><td>PII in git</td><td><span class="chip p0">Violated</span> The tracked master resume. §5.</td></tr>
+        <tr><td>Credential surface</td><td><span class="chip p1">Excessive</span> Four job-board password pairs plus SMTP credentials in <code>.env.example</code>, read by no code.</td></tr>
+        <tr><td>Logs</td><td><span class="chip p2">Verbose</span> 1.6&nbsp;MB JSONL per real run with full job records. No rotation, no retention. Secrets are redacted; job data is not.</td></tr>
+        <tr><td>Browser session</td><td><span class="chip ok">Correct</span> <code>.browser-profile/</code> is gitignored and mode 700.</td></tr>
+        <tr><td>Error sanitization</td><td><span class="chip ok">Good</span> <code>sanitizeErrorMessage</code> on every dashboard error path; provider replies are never echoed.</td></tr>
+      </tbody>
+    </table></div>
+
+    <h3>Observability</h3>
+    <p>Structured pino logging, per-source RCA with retryability classification, a 13-check health endpoint, and per-source timings on disk. Against that: <code>run_log</code> is empty, five of seven log files are 0 bytes, and nothing surfaces run history. The instrumentation was built and then bypassed by the UI that became primary.</p>
+  </div>
+</section>
+
+<!-- ═══ 14 ═══════════════════════════════════════════════════════════ -->
+<section id="s14">
+  <div class="sechead"><span class="n">14</span><div>
+    <h2>Architecture issues</h2>
+  </div></div>
+  <div class="body">
+    <ul class="dot">
+      <li><b>Four mega-files.</b> <code>public/assets/js/app.js</code> 3,938 lines · <code>resume/tailor.py</code> 2,262 · <code>dashboard/server.js</code> 1,989 · <code>dashboard/data.js</code> 1,862. The tailor earns its size (it is one cohesive algorithm with invariants). <code>app.js</code> and <code>server.js</code> do not — both mix routing, business logic, rendering and formatting.</li>
+      <li><b>A layering inversion.</b> <code>src/reports/jobTracker.js</code> imports <code>deriveAppStatus</code> and <code>APP_STATUS</code> from <code>src/dashboard/data.js</code>. A reporting module depending on the presentation layer means status derivation is not where it belongs — it belongs in <code>lifecycle.js</code>.</li>
+      <li><b>Config sprawl.</b> Eight JSON files plus <code>.env</code>, with genuinely overlapping semantics: three freshness controls, two staleness thresholds that disagree (14 vs 45 days), and years-of-experience stated in three places. <code>jobboards.json</code> is 95&nbsp;KB, most of it prose <code>note</code> fields — valuable rationale in a file that is also a runtime input.</li>
+      <li><b>Five state vocabularies.</b> §11.</li>
+      <li><b>Three identity notions.</b> <code>job.id</code> (source + company + title + sourceJobId), the dedupe key (company + title), and the normalized URL key. Each is defensible alone; together they mean "is this the same job?" has three answers.</li>
+      <li><b>Duplicated assets that have drifted.</b> <code>interview-prep/site/assets/js/</code> and <code>src/dashboard/public/learn/assets/js/</code> are 360&nbsp;KB copies of each other — and <b>5 of 12 files already differ</b>. This is not a theoretical duplication cost; the two copies now serve different content.</li>
+      <li><b>13 unreferenced scripts.</b> One-off repairs (<code>repair-applied-status</code>, <code>repairMojibakePaths</code>, <code>backfillEmployment</code>, <code>strip_focus_line*.py</code>) with no entry point and no documentation. Migration debt left in place.</li>
+    </ul>
+
+    <h3>Performance</h3>
+    <p>Most of the obvious problems have already been fixed, with the measurements recorded: covering indexes took board queries from 15.3&nbsp;s to 39&nbsp;ms and stats from 25.7&nbsp;s to 663&nbsp;ms; per-row values in the stats loop are computed once instead of six times; the detail cache stops re-buying descriptions; source scheduling is longest-first from measured timings. Remaining: the 60&nbsp;MB and 30&nbsp;MB whole-file rewrites, unbounded log and report growth, and the absence of any pruning for 96,678 discarded rows with full descriptions.</p>
+
+    <div class="call">
+      <div class="ct">What I would not do</div>
+      <p>Do not rewrite. Do not add a framework to the dashboard. Do not replace SQLite. Do not restructure the adapter registry. The module boundaries are largely right and the dependency graph is nearly acyclic — one dead module in about ninety is an excellent result. The work here is consolidation of state and configuration, not redesign.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 15 ═══════════════════════════════════════════════════════════ -->
+<section id="s15">
+  <div class="sechead"><span class="n">15</span><div>
+    <h2>Missing capabilities</h2>
+    <div class="sub">Ranked by value, after validating what exists</div>
+  </div></div>
+  <div class="body">
+    <div class="tw"><table>
+      <thead><tr><th>Capability</th><th>Why it matters here</th><th class="n">Value</th></tr></thead>
+      <tbody>
+        <tr><td><b>Outcome capture &amp; learning</b></td><td>Nothing records why a job was rejected. 0 of 101,857 rows have a <code>user_decision</code>. Without this there is no learning loop, and every other intelligence feature below is unfeedable.</td><td class="n">Highest</td></tr>
+        <tr><td><b>Explainable ranking</b></td><td>"Top contributors: azureFabricStack 14/14" is a score decomposition. A user needs "matches 6 of 8 required skills; missing dbt and Snowflake; employer sponsorship unverified."</td><td class="n">Highest</td></tr>
+        <tr><td><b>Skill-gap analysis</b></td><td>The data already exists — every packet carries gaps with JD evidence — and it is thrown away per job. Aggregated across 150 actionable roles it becomes a ranked learning plan, and it is the one thing that would legitimately connect the interview-prep content to the pipeline.</td><td class="n">High</td></tr>
+        <tr><td><b>Source effectiveness</b></td><td><code>bySource</code> already tracks found/strong/prepared/submitted. Surfacing it would show that Workday supplies 39% of rows and 6 strong fits while atsSearch supplies 0.3% of rows and 1 strong fit — a 40× difference in yield that should drive where budget goes.</td><td class="n">High</td></tr>
+        <tr><td><b>Application analytics</b></td><td>No funnel view, no time-to-decision, no response rate. The chart at the top of this report cannot be produced by the product itself.</td><td class="n">High</td></tr>
+        <tr><td><b>Sponsorship intelligence</b></td><td>86% of rows are unclassified and the prior is a 21-name list. A persistent per-employer sponsorship record, accumulated from JD evidence and user-confirmed outcomes, would replace a guess with a fact.</td><td class="n">High</td></tr>
+        <tr><td><b>Salary intelligence</b></td><td><code>compensation_text</code> is captured and never parsed or scored, while <code>salaryPreference</code> sits unused in the profile.</td><td class="n">Medium</td></tr>
+        <tr><td><b>Natural-language search</b></td><td>"Remote senior roles at companies that sponsor, posted this week, no clearance" — the filters exist individually; the query surface does not.</td><td class="n">Medium</td></tr>
+        <tr><td><b>Follow-up automation</b></td><td>No reminders, no thread tracking. Applications with no follow-up convert worse.</td><td class="n">Medium</td></tr>
+        <tr><td><b>Company intelligence</b></td><td>Size, funding, stack, sponsorship history. Genuinely useful, but it needs a data source and is the most expensive item here.</td><td class="n">Medium</td></tr>
+        <tr><td><b>Interview prep from JD + resume</b></td><td>The static content is already written. Selecting from it per job using the gap analysis is a small change with a visible payoff.</td><td class="n">Medium</td></tr>
+        <tr><td><b>Recruiter / networking</b></td><td>Out of scope given the project's stated LinkedIn policy. Skip.</td><td class="n">Low</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ═══ 16 ═══════════════════════════════════════════════════════════ -->
+<section id="s16">
+  <div class="sechead"><span class="n">16</span><div>
+    <h2>JobAgent vNext</h2>
+    <div class="sub">Four new components; everything else stays</div>
+  </div></div>
+  <div class="body">
+    <p>The target architecture is mostly what exists. Green boxes below are already built and working. Amber boxes exist but need the fixes in §17. Red boxes are new.</p>
+
+    <div class="arch">
+      <svg viewBox="0 0 900 430" role="img" aria-labelledby="archT archD">
+        <title id="archT">JobAgent vNext pipeline</title>
+        <desc id="archD">A left-to-right pipeline from candidate intelligence through source adapters, normalization, requirement extraction, an eligibility engine, ranking, tailoring, human approval, the application assistant, lifecycle tracking, and an analytics and learning loop that feeds back into candidate intelligence.</desc>
+        <defs>
+          <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0,1 L9,5 L0,9 z" fill="currentColor"/>
+          </marker>
+        </defs>
+        <g font-family="IBM Plex Sans, sans-serif" font-size="11.5" color="var(--rule-2)">
+
+          <!-- row 1 -->
+          <g>
+            <rect x="8" y="22" width="150" height="62" rx="3" fill="var(--crit-bg)" stroke="var(--crit-edge)"/>
+            <text x="83" y="46" text-anchor="middle" fill="var(--crit)" font-weight="600">Candidate</text>
+            <text x="83" y="61" text-anchor="middle" fill="var(--crit)" font-weight="600">Intelligence</text>
+            <text x="83" y="75" text-anchor="middle" fill="var(--ink-3)" font-size="10">evidence from resume</text>
+          </g>
+          <line x1="160" y1="53" x2="196" y2="53" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="200" y="22" width="150" height="62" rx="3" fill="var(--good-bg)" stroke="var(--good-edge)"/>
+            <text x="275" y="46" text-anchor="middle" fill="var(--good)" font-weight="600">Source Adapters</text>
+            <text x="275" y="61" text-anchor="middle" fill="var(--ink-3)" font-size="10">15 built · 11 live</text>
+            <text x="275" y="75" text-anchor="middle" fill="var(--ink-3)" font-size="10">rebalance to query-first</text>
+          </g>
+          <line x1="352" y1="53" x2="388" y2="53" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="392" y="22" width="150" height="62" rx="3" fill="var(--good-bg)" stroke="var(--good-edge)"/>
+            <text x="467" y="46" text-anchor="middle" fill="var(--good)" font-weight="600">Normalize / Dedupe</text>
+            <text x="467" y="61" text-anchor="middle" fill="var(--ink-3)" font-size="10">unify 3 identity keys</text>
+          </g>
+          <line x1="544" y1="53" x2="580" y2="53" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="584" y="22" width="150" height="62" rx="3" fill="var(--high-bg)" stroke="var(--high-edge)"/>
+            <text x="659" y="46" text-anchor="middle" fill="var(--high)" font-weight="600">Requirement</text>
+            <text x="659" y="61" text-anchor="middle" fill="var(--high)" font-weight="600">Extraction</text>
+            <text x="659" y="75" text-anchor="middle" fill="var(--ink-3)" font-size="10">built, promote from tailor</text>
+          </g>
+          <path d="M736 53 L 782 53 L 782 118" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+
+          <!-- row 2 (right to left) -->
+          <g>
+            <rect x="584" y="138" width="150" height="62" rx="3" fill="var(--crit-bg)" stroke="var(--crit-edge)"/>
+            <text x="659" y="162" text-anchor="middle" fill="var(--crit)" font-weight="600">Eligibility Engine</text>
+            <text x="659" y="177" text-anchor="middle" fill="var(--ink-3)" font-size="10">hard pass / fail gates</text>
+            <text x="659" y="191" text-anchor="middle" fill="var(--ink-3)" font-size="10">authorization · years · clearance</text>
+          </g>
+          <line x1="582" y1="169" x2="546" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="392" y="138" width="150" height="62" rx="3" fill="var(--high-bg)" stroke="var(--high-edge)"/>
+            <text x="467" y="162" text-anchor="middle" fill="var(--high)" font-weight="600">Ranking</text>
+            <text x="467" y="177" text-anchor="middle" fill="var(--ink-3)" font-size="10">declarative categories</text>
+            <text x="467" y="191" text-anchor="middle" fill="var(--ink-3)" font-size="10">+ semantic similarity</text>
+          </g>
+          <line x1="390" y1="169" x2="354" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="200" y="138" width="150" height="62" rx="3" fill="var(--good-bg)" stroke="var(--good-edge)"/>
+            <text x="275" y="162" text-anchor="middle" fill="var(--good)" font-weight="600">Resume Tailoring</text>
+            <text x="275" y="177" text-anchor="middle" fill="var(--ink-3)" font-size="10">invariant-verified</text>
+            <text x="275" y="191" text-anchor="middle" fill="var(--ink-3)" font-size="10">do not touch</text>
+          </g>
+          <line x1="198" y1="169" x2="162" y2="169" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="8" y="138" width="150" height="62" rx="3" fill="var(--good-bg)" stroke="var(--good-edge)"/>
+            <text x="83" y="162" text-anchor="middle" fill="var(--good)" font-weight="600">Human Approval</text>
+            <text x="83" y="177" text-anchor="middle" fill="var(--ink-3)" font-size="10">action queue, not board</text>
+          </g>
+          <path d="M83 202 L 83 254" fill="none" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+
+          <!-- row 3 -->
+          <g>
+            <rect x="8" y="258" width="150" height="62" rx="3" fill="var(--high-bg)" stroke="var(--high-edge)"/>
+            <text x="83" y="282" text-anchor="middle" fill="var(--high)" font-weight="600">Application</text>
+            <text x="83" y="297" text-anchor="middle" fill="var(--high)" font-weight="600">Assistant</text>
+            <text x="83" y="311" text-anchor="middle" fill="var(--ink-3)" font-size="10">fix answers · widen ATS</text>
+          </g>
+          <line x1="160" y1="289" x2="196" y2="289" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="200" y="258" width="150" height="62" rx="3" fill="var(--crit-bg)" stroke="var(--crit-edge)"/>
+            <text x="275" y="282" text-anchor="middle" fill="var(--crit)" font-weight="600">Lifecycle Machine</text>
+            <text x="275" y="297" text-anchor="middle" fill="var(--ink-3)" font-size="10">one vocabulary</text>
+            <text x="275" y="311" text-anchor="middle" fill="var(--ink-3)" font-size="10">legal transitions only</text>
+          </g>
+          <line x1="352" y1="289" x2="388" y2="289" stroke="currentColor" stroke-width="1.4" marker-end="url(#ah)"/>
+          <g>
+            <rect x="392" y="258" width="150" height="62" rx="3" fill="var(--crit-bg)" stroke="var(--crit-edge)"/>
+            <text x="467" y="282" text-anchor="middle" fill="var(--crit)" font-weight="600">Analytics &amp; Learning</text>
+            <text x="467" y="297" text-anchor="middle" fill="var(--ink-3)" font-size="10">outcomes · source yield</text>
+            <text x="467" y="311" text-anchor="middle" fill="var(--ink-3)" font-size="10">skill gaps</text>
+          </g>
+
+          <!-- feedback -->
+          <path d="M467 322 L 467 372 L 83 372 L 83 88" fill="none" stroke="var(--accent)" stroke-width="1.4"
+                stroke-dasharray="5 4" marker-end="url(#ah)" color="var(--accent)"/>
+          <text x="275" y="390" text-anchor="middle" fill="var(--accent)" font-size="10.5" font-style="italic">learned preferences feed back into candidate intelligence</text>
+
+          <!-- legend -->
+          <g transform="translate(600,352)">
+            <rect x="0" y="0" width="11" height="11" rx="2" fill="var(--good-bg)" stroke="var(--good-edge)"/>
+            <text x="17" y="9" fill="var(--ink-3)" font-size="10">built &amp; working</text>
+            <rect x="0" y="18" width="11" height="11" rx="2" fill="var(--high-bg)" stroke="var(--high-edge)"/>
+            <text x="17" y="27" fill="var(--ink-3)" font-size="10">built, needs fixes</text>
+            <rect x="0" y="36" width="11" height="11" rx="2" fill="var(--crit-bg)" stroke="var(--crit-edge)"/>
+            <text x="17" y="45" fill="var(--ink-3)" font-size="10">new</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+
+    <p style="margin-top:18px">Only four components are genuinely new: the <b>candidate intelligence layer</b> (§9), the <b>eligibility engine</b> (§8), the <b>lifecycle machine</b> (§11), and the <b>analytics and learning loop</b> (§15). Everything else is an existing module with defined fixes. That is the argument against a rewrite: four additions and roughly a dozen targeted repairs reach the target architecture from where the code already stands.</p>
+  </div>
+</section>
+
+<!-- ═══ 17 ═══════════════════════════════════════════════════════════ -->
+<section id="s17">
+  <div class="sechead"><span class="n">17</span><div>
+    <h2>P0–P3 roadmap</h2>
+    <div class="sub">Priority · impact · effort · dependency · files</div>
+  </div></div>
+  <div class="body">
+
+    <h4>P0 — correctness, safety and data risk</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Item</th><th class="n">Effort</th><th>Dependency</th><th>Files</th><th>Recommendation</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Stop fabricating per-skill years</td><td class="n">S</td><td>none</td><td class="path">apply/screeningQA.js</td><td>Detect a skill/domain qualifier; resolve against the profile or return <code>ask_user</code>. Add a test matrix of qualified questions.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Reject placeholder profile values</td><td class="n">XS</td><td>none</td><td class="path">cli/doctor.js · cli/preflight.js</td><td>Sentinel registry + hard preflight failure + refuse to build packets. Closes the whole class.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Untrack the real master resume</td><td class="n">S</td><td>none</td><td class="path">.gitignore · resumes/base/</td><td>Ship a synthetic example; purge the real file from history.</td><td><span class="chip partly">Partial</span></td></tr>
+        <tr><td>Make a clean clone testable</td><td class="n">S</td><td>none</td><td class="path">vitest.config.js · tests/</td><td><code>globalSetup</code> materializes example configs into a fixture root; tests read that root.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Decouple tests from private config</td><td class="n">M</td><td>above</td><td class="path">~30 test files</td><td>Assert shape, never the author's values.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Fix the <code>node:sqlite</code> import</td><td class="n">XS</td><td>none</td><td class="path">scripts/repairJobUrls.mjs:34</td><td>Use <code>createRequire</code>; re-enable the Workday URL regression guard.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Remove unused credential vars</td><td class="n">XS</td><td>none</td><td class="path">.env.example · .env</td><td>Delete the 9 variables no code reads.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Ignore or relocate <code>PyProjects/</code></td><td class="n">XS</td><td>none</td><td class="path">.gitignore</td><td>34&nbsp;MB one <code>git add -A</code> away from the repo.</td><td><span class="chip fixed">Fixed</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h4 style="margin-top:26px">P1 — required for production reliability</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Item</th><th class="n">Effort</th><th>Dependency</th><th>Files</th><th>Recommendation</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Timezone-correct "today"</td><td class="n">XS</td><td>none</td><td class="path">dashboard/data.js:390</td><td>Use <code>candidate.location.timezone</code> for day boundaries.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Record run history</td><td class="n">S</td><td>none</td><td class="path">dashboard/server.js:778 · logging/db.js</td><td>Call <code>logger.startRun</code>; make <code>endRun</code> upsert; add a runs view.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Report unread jobs honestly</td><td class="n">XS</td><td>none</td><td class="path">dashboard/data.js:65</td><td>Add a <code>NEEDS_DESCRIPTION</code> app status with its own tile and an "Enrich" action.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Fix plural/variant question matching</td><td class="n">S</td><td>none</td><td class="path">utils/textNormalize.js · config/screening_answers</td><td>Normalize simple plurals; seed patterns from the question queue's real labels.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Graceful PDF degradation</td><td class="n">S</td><td>none</td><td class="path">resume/pdfPreview.js · dashboard/server.js</td><td>Detect Word/LibreOffice at startup; report it in <code>doctor</code>; return 422 with a DOCX fallback.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>One lifecycle state machine</td><td class="n">M</td><td>none</td><td class="path">lifecycle.js · dashboard/data.js · pipeline · apply</td><td>Single vocabulary, legal-transition map, sole writer of <code>jobs.status</code>, event per transition.</td><td><span class="chip partly">Partial</span></td></tr>
+        <tr><td>Data retention</td><td class="n">S</td><td>none</td><td class="path">scripts/dbMaintenance.mjs</td><td>Null out <code>jd_text</code> on discarded rows older than N days; rotate logs and reports; cap <code>found_jobs.json</code>.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Cross-platform basename</td><td class="n">XS</td><td>none</td><td class="path">apply/applicationState.js:215</td><td><code>split(/[\\/]/).pop()</code>.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Refresh the support matrix</td><td class="n">S</td><td>none</td><td class="path">docs/SUPPORT_MATRIX.md · README.md</td><td>Add Rippling, Oracle, Amazon; reclassify iCIMS; replace the test badge with a CI-generated one.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Reconcile auto-submit claims</td><td class="n">XS</td><td>none</td><td class="path">src/index.js · README.md</td><td>Either expose the route behind a confirmation flow or delete it — then say so once, in one place.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Duplicate-key detection in configs</td><td class="n">XS</td><td>none</td><td class="path">config/loadConfig.js</td><td>Catch the silently-dropped <code>streaming</code> alias and any future one.</td><td><span class="chip fixed">Fixed</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h4 style="margin-top:26px">P2 — product, UX and intelligence</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Item</th><th class="n">Effort</th><th>Dependency</th><th>Files</th><th>Recommendation</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td>Candidate evidence layer</td><td class="n">L</td><td>P0 profile work</td><td class="path">resume/tailor.py · new config/profileStore</td><td>Export <code>_resume_evidence</code> as <code>data/candidate_evidence.json</code>; per-skill months and employers.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Eligibility gates</td><td class="n">M</td><td>requirement extraction</td><td class="path">new scoring/eligibility.js</td><td>Hard pass/fail before weighted scoring: authorization, clearance, years floor, degree, location legality.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Declarative scoring categories</td><td class="n">M</td><td>evidence layer</td><td class="path">scoring/scorer.js · config/scoring.json</td><td>Replace fixed identifiers with an iterated array. This is what unlocks a second user.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Promote requirement extraction into scoring</td><td class="n">M</td><td>none</td><td class="path">llm/jdRequirements.js · pipeline</td><td>Already grounded and cached; feed required/preferred into gates and ranking.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Raise keyword saturation</td><td class="n">XS</td><td>none</td><td class="path">scoring/scorer.js</td><td>Increase <code>fullAt</code> so depth is rewarded over presence.</td><td><span class="chip fixed">Fixed</span></td></tr>
+        <tr><td>Action queue landing</td><td class="n">M</td><td>eligibility</td><td class="path">dashboard/public/</td><td>8 jobs with an unambiguous next step, not 150 rows. The highest-leverage UX change available.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Outcome capture</td><td class="n">S</td><td>lifecycle machine</td><td class="path">dashboard · logging/db.js</td><td>Ask "why?" on every reject. Nothing else in the learning loop works without it.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Source effectiveness view</td><td class="n">S</td><td>run history</td><td class="path">dashboard/data.js</td><td>Data already computed in <code>bySource</code>; surface yield per source.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Aggregate skill-gap analysis</td><td class="n">M</td><td>evidence layer</td><td class="path">new reports/skillGaps.js</td><td>Roll up per-packet gaps into a ranked learning plan; link it to the interview-prep content.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Rebalance discovery to query-first</td><td class="n">M</td><td>none</td><td class="path">config/jobboards.json · atsSearch</td><td>Raise detail budgets; let <code>harvestSources</code> derive company-first boards.</td><td><span class="chip partly">Partial</span></td></tr>
+        <tr><td>Compensation scoring</td><td class="n">S</td><td>none</td><td class="path">scoring/scorer.js</td><td>Parse <code>compensation_text</code>; compare to <code>salaryPreference</code>.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Widen the auto-fill ATS allowlist</td><td class="n">M</td><td>none</td><td class="path">apply/platforms/ · tests/fixtures</td><td>Add iCIMS, Oracle, Rippling fixtures so found jobs are also fillable.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Deduplicate interview-prep assets</td><td class="n">S</td><td>none</td><td class="path">interview-prep/site · public/learn</td><td>One source, one build step. Five files have already drifted.</td><td><span class="chip fixed">Fixed</span></td></tr>
+      </tbody>
+    </table></div>
+
+    <h4 style="margin-top:26px">P3 — future</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Item</th><th class="n">Effort</th><th>Note</th></tr></thead>
+      <tbody>
+        <tr><td>Semantic similarity via local embeddings</td><td class="n">L</td><td>Replaces the hand-maintained alias table; the real path to multi-profile support.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Learned per-employer sponsorship record</td><td class="n">M</td><td>Replaces the 21-name prior with accumulated evidence.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Natural-language search</td><td class="n">M</td><td>Filters exist; only the query surface is missing.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Follow-up automation</td><td class="n">M</td><td>Needs a durable scheduler — <code>watch</code> is a foreground loop today.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Per-role-family resume variants</td><td class="n">L</td><td>Depends on the evidence layer.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Company intelligence</td><td class="n">XL</td><td>Needs an external data source; highest cost, least certain payoff.</td><td><span class="chip open">Deferred</span></td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ═══ 18 ═══════════════════════════════════════════════════════════ -->
+<section id="s18">
+  <div class="sechead"><span class="n">18</span><div>
+    <h2>Quick wins</h2>
+    <div class="sub">Under an hour each, disproportionate payoff</div>
+  </div></div>
+  <div class="body">
+    <ul class="dot">
+      <li><b>Placeholder sentinel check</b> — a list of the strings shipped in the <code>.example</code> files plus <code>/^YOUR /</code>, failing <code>quickPreflight</code>. Closes a P0 in roughly five lines. <span class="chip fixed">Done</span></li>
+      <li><b>One-character-class fix</b> in <code>applicationState.js:215</code> restores a stated privacy invariant on every platform. <span class="chip fixed">Done</span></li>
+      <li><b><code>createRequire</code> in <code>repairJobUrls.mjs</code></b> re-enables a regression guard protecting 15,733 stored URLs. <span class="chip fixed">Done</span></li>
+      <li><b>Nine deletions from <code>.env.example</code></b> remove an invitation to store job-board passwords in plaintext. <span class="chip fixed">Done</span></li>
+      <li><b><code>echo "PyProjects/" &gt;&gt; .gitignore</code></b> — 34&nbsp;MB of unrelated code, one command. <span class="chip fixed">Done</span></li>
+      <li><b>Timezone-aware <code>dayOf()</code></b> fixes four dashboard tiles at once. <span class="chip fixed">Done</span></li>
+      <li><b>A <code>NEEDS_DESCRIPTION</code> case in <code>deriveAppStatus</code></b> stops 5,029 unread jobs claiming to be scored. <span class="chip fixed">Done</span></li>
+      <li><b>Raise <code>maxDetailFetches</code> for atsSearch</b> from 25. The cheapest available improvement to match quality, given 52% of rows arrive unreadable. <span class="chip partly">Corrected</span><div class="wrong"><b>This one was wrong, and the fix measured it.</b> atsSearch has <b>0 of 331</b> rows under 200 characters — Workable returns the full JD inline, so its detail budget was never the constraint and raising it would have bought nothing. The unreadable rows are almost entirely Workday (27,254 of 39,599, 69%) and SmartRecruiters (23,773 of 33,738, 70%). Those budgets were raised instead — 20&nbsp;&rarr;&nbsp;40 and 40&nbsp;&rarr;&nbsp;80 — and atsSearch was left at 25 with the reasoning recorded in <code>config/jobboards.json</code>. Its real limitation is volume (0.3% of the corpus), which is a coverage problem, not a detail-fetch one.</div></li>
+      <li><b>Delete the duplicate <code>"streaming"</code> key</b> in <code>scoring.json</code> and keep the union of both alias lists. <span class="chip fixed">Done</span></li>
+      <li><b>Replace the README test badge</b> with a CI-generated one, or remove it. It currently advertises a state that does not exist. <span class="chip fixed">Done</span></li>
+    </ul>
+  </div>
+</section>
+
+<!-- ═══ 19 ═══════════════════════════════════════════════════════════ -->
+<section id="s19">
+  <div class="sechead"><span class="n">19</span><div>
+    <h2>Files and modules to refactor or remove</h2>
+  </div></div>
+  <div class="body">
+    <div class="tw"><table>
+      <thead><tr><th>Target</th><th>Action</th><th>Reason</th></tr></thead>
+      <tbody>
+        <tr><td class="path">src/utils/notifier.js</td><td><span class="chip p3">Remove</span></td><td>The only module in ~90 with no production importer. Referenced by its own test and nothing else.</td></tr>
+        <tr><td class="path">scripts/ — 13 files</td><td><span class="chip p3">Archive</span></td><td><code>repair-applied-status</code>, <code>repairMojibakePaths</code>, <code>backfillEmployment</code>, <code>cleanJobDescriptions</code>, <code>strip_focus_line*.py</code>, <code>audit.mjs</code>, <code>demo-browser</code>, <code>edge-profile-smoke</code>, <code>find-resume</code>, <code>guard-probe</code>, <code>inspect-applied</code>, <code>apify-check</code>. No entry point, no documentation, one-off migrations.</td></tr>
+        <tr><td class="path">src/dashboard/public/learn/ ↔ interview-prep/site/</td><td><span class="chip p2">Deduplicate</span></td><td>360&nbsp;KB duplicated; 5 of 12 content files have already diverged.</td></tr>
+        <tr><td class="path">src/dashboard/public/assets/js/app.js</td><td><span class="chip p2">Split</span></td><td>3,938 lines mixing state, routing, rendering and formatting. Extract board rendering, the detail drawer, filters and API client.</td></tr>
+        <tr><td class="path">src/dashboard/server.js</td><td><span class="chip p2">Split</span></td><td>1,989 lines. Separate routing from run orchestration, artifact serving and the extension bridge.</td></tr>
+        <tr><td class="path">src/dashboard/data.js</td><td><span class="chip p1">Re-layer</span></td><td>Move <code>deriveAppStatus</code>/<code>APP_STATUS</code> into <code>lifecycle.js</code>; <code>reports/jobTracker.js</code> currently imports presentation code.</td></tr>
+        <tr><td class="path">config/jobboards.json</td><td><span class="chip p2">Split</span></td><td>95&nbsp;KB, mostly prose. Separate rationale (docs) from runtime input (board lists), and generate the lists from harvest output.</td></tr>
+        <tr><td class="path">.env.example</td><td><span class="chip p0">Prune</span></td><td>9 of 34 variables are read by no code, four of them password pairs.</td></tr>
+        <tr><td class="path">resumes/base/MASTER_RESUME.docx</td><td><span class="chip p0">Untrack</span></td><td>Real PII in a public repository.</td></tr>
+        <tr><td class="path">interview-prep/</td><td><span class="chip p3">Extract or integrate</span></td><td>Either make it consume the skill-gap output — which would make it genuinely valuable — or move it to its own repository.</td></tr>
+        <tr><td class="path">src/scoring/scorer.js</td><td><span class="chip p2">Generalize</span></td><td>Category identifiers → declarative config. The prerequisite for any second user.</td></tr>
+      </tbody>
+    </table></div>
+  </div>
+</section>
+
+<!-- ═══ 20 ═══════════════════════════════════════════════════════════ -->
+<section id="s20">
+  <div class="sechead"><span class="n">20</span><div>
+    <h2>Recommended implementation sequence</h2>
+    <div class="sub">Five stages, each independently shippable</div>
+  </div></div>
+  <div class="body">
+    <ol class="steps">
+      <li><b>Stage 1 — Stop the bleeding <span style="color:var(--ink-3);font-weight:400">(~1 week)</span></b><br>
+        Every P0. Sentinel checks, the per-skill years fix, untrack the resume, make a clean clone testable, fix the sqlite import, prune <code>.env.example</code>, ignore <code>PyProjects/</code>.<br>
+        <em>Exit criterion: a fresh clone runs green CI, and a new user cannot submit a placeholder answer.</em></li>
+
+      <li><b>Stage 2 — Make it honest <span style="color:var(--ink-3);font-weight:400">(~1 week)</span></b><br>
+        The lifecycle state machine, run-history recording, the timezone fix, the <code>NEEDS_DESCRIPTION</code> status, graceful PDF degradation, and a refreshed support matrix and README.<br>
+        <em>Exit criterion: every number on the dashboard means what its label says, and every run leaves a record.</em></li>
+
+      <li><b>Stage 3 — Close the funnel <span style="color:var(--ink-3);font-weight:400">(~2 weeks)</span></b><br>
+        This is the stage that matters most. Fix screening-answer matching from the real question-queue labels, widen the ATS allowlist, build the action-queue landing, add outcome capture, and drive one application through to <code>submitted</code> end to end.<br>
+        <em>Exit criterion: the funnel in this report no longer terminates at zero.</em></li>
+
+      <li><b>Stage 4 — Make matching intelligent <span style="color:var(--ink-3);font-weight:400">(~3 weeks)</span></b><br>
+        The candidate evidence layer, eligibility gates, requirement extraction promoted into scoring, declarative scoring categories, raised saturation, compensation scoring, and written explanations.<br>
+        <em>Exit criterion: a second person with a different resume gets sensible results without editing JavaScript.</em></li>
+
+      <li><b>Stage 5 — Make it learn <span style="color:var(--ink-3);font-weight:400">(ongoing)</span></b><br>
+        Application analytics, source effectiveness, skill-gap rollup, learned sponsorship, embedding similarity, and interview prep generated from the gap analysis.<br>
+        <em>Exit criterion: last month's outcomes measurably change this month's ranking.</em></li>
+    </ol>
+
+    <div class="call">
+      <div class="ct">Sequencing rationale</div>
+      <p>Stages 1 and 2 are prerequisites for trusting any measurement, and nothing after them can be evaluated without them. Stage 3 is placed before the intelligence work deliberately: better ranking on a funnel that terminates at zero produces better-ranked jobs nobody applies to. Prove one end-to-end submission before improving what feeds it.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 21 ═══════════════════════════════════════════════════════════ -->
+<section id="s21">
+  <div class="sechead"><span class="n">21</span><div>
+    <h2>Final verdict</h2>
+  </div></div>
+  <div class="body">
+    <p>JobAgent is <b>a strong engineering project and an incomplete product</b>, and the gap between those two things is unusually clean — which is good news, because it means the remedy is specific rather than architectural.</p>
+
+    <p>The engineering deserves real credit. The resume tailor is the best-designed component I examined: it refuses to write prose at all, and proves it with invariants that abort the save. The sponsorship handling is careful in exactly the places where carelessness would be harmful. The discovery layer reaches eleven ATS platforms without a single act of evasion, and documents its refusals. The comments explain <em>why</em>, with the measurement that forced the decision, more consistently than any codebase I have read recently. None of that is common.</p>
+
+    <p>The product is not finished, and two facts define the gap. First, <b>the funnel terminates at zero</b>: 101,857 jobs discovered, 4 packets prepared, 0 applications submitted in 54 days. The write half of the system has never completed a cycle, so its considerable safety machinery is untested by use. Second, <b>the system is not yet safe for a second person</b>: a fresh clone cannot run its own tests, and the configuration a new user is told to copy will type template text into an employer's work-authorization field while every guard reports success.</p>
+
+    <p>Those two facts are also why the scores land where they do. Nothing here needs rewriting. The four missing components in §16 are additions, not replacements, and the P0 list is short enough to finish in a week. The order matters more than the content: make it correct, make it honest, then close the funnel — and only then make it smart. Improving the ranking of jobs nobody applies to is the most expensive way to change nothing.</p>
+
+    <p>Get one application submitted end to end. Everything else in this report is easier to judge once that has happened.</p>
+
+    <div class="foot">
+      <span>Audit method — static reading of all 364 tracked files; both test suites executed; the dashboard started and its API probed live; the resume tailor executed against a synthetic JD; the screening-answer engine executed against the shipped configuration; the 443 MB SQLite store queried directly; a clean clone created and tested.</span>
+      <span>Not validated — no live job-board request was issued during this audit, and no browser automation was run (Playwright Chromium is not installed on this machine). Claims about live ATS form behavior, Apify billing, and Adzuna connectivity rest on the repository's own recorded verification dates, not on my own observation.</span>
+      <span>AtreshSoma/JobAgent · main @ 7b97a2c · audited 2026-09-14</span>
+    </div>
+  </div>
+</section>
+<!-- ── 22 · REMEDIATION LOG (added 2026-09-15) ─────────────────────── -->
+<section id="s22">
+  <div class="sechead"><span class="n">22</span><div>
+    <h2>Remediation log</h2>
+    <div class="sub">What was fixed · what the audit got wrong · what is deliberately left</div>
+  </div></div>
+  <div class="body">
+
+    <p>All work landed on <code>fix/audit-2026-09-14</code>, branched from <code>main&nbsp;@&nbsp;7b97a2c</code>.
+    <code>main</code> was not touched. Six commits, each scoped to one class of finding.</p>
+
+    <div class="call good">
+      <div class="ct">Verification, not assertion</div>
+      <p>Every claim below was checked by running something: the suites, the doctor, the dashboard
+      API against the live 443&nbsp;MB store, and — for the finding that mattered most — a fresh
+      <code>git clone</code> of the branch into a scratch directory.</p>
+    </div>
+
+    <h4>Measured before and after</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Measurement</th><th class="n">At audit</th><th class="n">Now</th><th>How it was checked</th></tr></thead>
+      <tbody>
+        <tr><td>Node suite, author's machine</td><td class="n">9 files failing · 1,327 passed</td><td class="n">97/97 files · 1,434 passed</td><td><code>npx vitest run</code></td></tr>
+        <tr><td>Node suite, <b>clean clone</b></td><td class="n">27 files could not load · 353 never ran</td><td class="n">96/96 files · 1,383 passed</td><td><code>git clone</code> to a scratch dir, then <code>npx vitest run</code></td></tr>
+        <tr><td>Python suite</td><td class="n">91 passed</td><td class="n">91 passed</td><td><code>python -m pytest</code></td></tr>
+        <tr><td><code>npm run verify</code></td><td class="n">6/6</td><td class="n">6/6</td><td>unchanged; the submit-path safety assertions still hold</td></tr>
+        <tr><td>Doctor on the shipped example config</td><td class="n">✓ &ldquo;ready to run&rdquo;</td><td class="n">✗ fails, naming 12 placeholders</td><td><code>node src/index.js doctor</code></td></tr>
+        <tr><td>&ldquo;How many years … with SAP ABAP?&rdquo;</td><td class="n">&ldquo;10+ years&rdquo; @ conf 1.0</td><td class="n">deferred to the human</td><td><code>answerScreeningQuestion</code> against the live config</td></tr>
+        <tr><td><code>discoveredToday</code> at 00:07 UTC</td><td class="n">242 (UTC day)</td><td class="n">16,196 (candidate's day)</td><td><code>dashboardStats</code> against the live store</td></tr>
+        <tr><td>&ldquo;Scored&rdquo; tile composition</td><td class="n">4,865, of which 4,732 unread</td><td class="n">133 scored · 4,732 needs_description</td><td><code>/api/stats</code> <code>byStatus</code></td></tr>
+        <tr><td><code>run_log</code> rows after a run</td><td class="n">0</td><td class="n">1, with counters + duration</td><td>drove a run through the dashboard, read <code>/api/runs</code></td></tr>
+        <tr><td>Workday URL regression guard</td><td class="n">not collected (import error)</td><td class="n">12 tests passing</td><td><code>workdayJobUrl.test.js</code></td></tr>
+        <tr><td>Owner's name in the working tree</td><td class="n">tracked resume + 17 files</td><td class="n">none outside their own study notes</td><td><code>grep</code> over a fresh clone</td></tr>
+      </tbody>
+    </table></div>
+
+    <h4>Two things this report got wrong</h4>
+    <p>Both were found by measuring rather than re-reading, and both are recorded in the sections
+    above rather than quietly amended.</p>
+
+    <div class="wrong">
+      <b>1. The atsSearch detail budget was the wrong lever.</b> §18 proposed raising
+      <code>maxDetailFetches</code> for atsSearch &ldquo;given 52% of rows arrive unreadable&rdquo;.
+      Per source, atsSearch has <b>0 of 331</b> rows under 200 characters — Workable returns the
+      full JD inline. The unreadable rows are Workday (69%) and SmartRecruiters (70%), which
+      together are essentially the entire gap. Those two budgets were raised; atsSearch was left
+      alone with the measurement recorded next to it.
+    </div>
+
+    <div class="wrong">
+      <b>2. The duplicated study site was not merely drifted — one copy was broken.</b> §19 noted
+      that 5 of 12 interview-prep content files had diverged. The divergence was that four files
+      under <code>interview-prep/site/</code> contained literal newlines inside double-quoted
+      JavaScript strings, which is a <b>syntax error</b>: <code>npm run learn</code> was serving a
+      site where a third of the curriculum never loaded, while the dashboard's copy was fine and a
+      CSS fix ahead. Deleting the broken copy fixed a live bug, not just duplication.
+    </div>
+
+    <p>One finding also understated its own scope. §5 flagged the committed master resume; the
+    same personal data was additionally hardcoded as <code>DEFAULT_CANDIDATE_NAME</code> in
+    <code>src/utils/outputPaths.js</code>, so any caller that omitted <code>candidateName</code>
+    named a <em>second</em> user's resume and cover letter after the author — in the documents sent
+    to employers.</p>
+
+    <h4>Deliberately not done</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Item</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td><b>Purging the master resume from git history</b></td><td>The ongoing exposure is stopped — the file is untracked and ignored — but rewriting history requires a force-push that invalidates every existing clone and any open work. That is the repository owner's call, not a defect fix. Until it is done, the file remains reachable in history.</td></tr>
+        <tr><td><b>Making <code>transition()</code> the sole writer of <code>jobs.status</code></b></td><td>The vocabulary, the transition map and the exhaustiveness guard are in place, and the guard is what actually prevents the <code>needs_description</code> class of defect from recurring. Routing all 15 <code>upsertJob</code> call sites through a validating writer is a separate change: several sit inside live assist flows, and one wrong entry in the map would throw mid-run on a real application.</td></tr>
+        <tr><td><b>Applying the description retention pass</b></td><td><code>npm run db:prune</code> reports 14,871 eligible rows holding 67.8&nbsp;MB, and <code>--apply</code> clears them. It was left as a dry run: it mutates the owner's live data, and nothing about it is urgent.</td></tr>
+        <tr><td><b>The P2 intelligence work</b> — candidate evidence layer, eligibility gates, declarative scoring categories, action-queue landing, outcome capture, source-effectiveness and skill-gap views</td><td>These are the product build-out in §16, not repairs: roughly the three weeks §20 allocates to Stage&nbsp;4, and they depend on each other. Two cheap ones were taken (keyword saturation, asset deduplication).</td></tr>
+        <tr><td><b>All of P3</b></td><td>Embeddings, learned sponsorship, natural-language search, follow-up automation, resume variants, company intelligence. Unchanged from §17.</td></tr>
+      </tbody>
+    </table></div>
+
+    <div class="call warn">
+      <div class="ct">The finding that has not moved</div>
+      <p><b>The funnel still terminates at zero submissions.</b> Nothing in this remediation closes
+      it, and nothing could: §20 places that work in Stage&nbsp;3 precisely because it is product
+      work, not defect work. What has changed is that the two conditions which made an application
+      <em>unsafe</em> to attempt are gone — the system can no longer state a fabricated number of
+      years to an employer, and it can no longer type template text into a work-authorization
+      field. The report's closing advice is unchanged and now unblocked: <b>get one application
+      submitted end to end.</b></p>
+    </div>
+
+    <h4>Commits</h4>
+    <div class="tw"><table>
+      <thead><tr><th>Commit</th><th>Covers</th></tr></thead>
+      <tbody>
+        <tr><td class="path">fix(safety)</td><td>All eight P0s: per-skill years, placeholder sentinels, resume untracking, clean-clone testability, test/config decoupling, the <code>node:sqlite</code> import, dead credential vars, <code>PyProjects/</code>.</td></tr>
+        <tr><td class="path">fix(privacy)</td><td>The hardcoded default name, the name as test data across 17 files, and the 13 unreferenced one-off scripts (archived; one deleted for embedded real paths).</td></tr>
+        <tr><td class="path">fix(honesty)</td><td>Timezone-correct &ldquo;today&rdquo;, <code>NEEDS_DESCRIPTION</code>, run-history recording and <code>/api/runs</code>, plural question matching, graceful PDF degradation, duplicate-key detection, and 41 new regression tests.</td></tr>
+        <tr><td class="path">docs+perf</td><td>Support matrix, the auto-submit statement, the CI-generated badge, detail budgets, and description retention.</td></tr>
+        <tr><td class="path">refactor(lifecycle)</td><td>One status vocabulary, the transitions map, and the exhaustive lifecycle&nbsp;&rarr;&nbsp;board-status mapping with its completeness test.</td></tr>
+        <tr><td class="path">fix(scoring,learn)</td><td>Configurable keyword saturation raised to 5/5/3/3, and one study site instead of two.</td></tr>
+      </tbody>
+    </table></div>
+
+  </div>
+</section>
+
+
+</div>

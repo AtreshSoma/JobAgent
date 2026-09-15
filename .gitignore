@@ -88,7 +88,14 @@ logs/*
 !logs/README.md
 
 # --- Reports (generated output at the repo root ONLY — never src/reports/) ---
-/reports/
+# Contents, not the directory itself: git cannot re-include anything inside an
+# excluded DIRECTORY, so `/reports/` would make the negation below dead.
+/reports/*
+# ...except hand-authored review documents. `reports/` is ignored because the
+# pipeline regenerates it (five generations, ~190 MB at last count), but the
+# audit write-ups under reports/audit/ are written by a person, are referenced
+# by commit messages, and would be lost on any clean checkout.
+!/reports/audit/
 
 # --- Playwright ---
 playwright-report/
