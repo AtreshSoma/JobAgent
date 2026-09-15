@@ -1291,7 +1291,7 @@ ol.steps li b{color:var(--ink); font-weight:600; font-family:var(--sans); font-s
       <tbody>
         <tr><td>Candidate evidence layer</td><td class="n">L</td><td>P0 profile work</td><td class="path">resume/tailor.py · new config/profileStore</td><td>Export <code>_resume_evidence</code> as <code>data/candidate_evidence.json</code>; per-skill months and employers.</td><td><span class="chip open">Deferred</span></td></tr>
         <tr><td>Eligibility gates</td><td class="n">M</td><td>requirement extraction</td><td class="path">new scoring/eligibility.js</td><td>Hard pass/fail before weighted scoring: authorization, clearance, years floor, degree, location legality.</td><td><span class="chip open">Deferred</span></td></tr>
-        <tr><td>Declarative scoring categories</td><td class="n">M</td><td>evidence layer</td><td class="path">scoring/scorer.js · config/scoring.json</td><td>Replace fixed identifiers with an iterated array. This is what unlocks a second user.</td><td><span class="chip open">Deferred</span></td></tr>
+        <tr><td>Declarative scoring categories</td><td class="n">M</td><td>evidence layer</td><td class="path">scoring/scorer.js · config/scoring.json</td><td>Replace fixed identifiers with an iterated array. This is what unlocks a second user.</td><td><span class="chip fixed">Fixed</span></td></tr>
         <tr><td>Promote requirement extraction into scoring</td><td class="n">M</td><td>none</td><td class="path">llm/jdRequirements.js · pipeline</td><td>Already grounded and cached; feed required/preferred into gates and ranking.</td><td><span class="chip open">Deferred</span></td></tr>
         <tr><td>Raise keyword saturation</td><td class="n">XS</td><td>none</td><td class="path">scoring/scorer.js</td><td>Increase <code>fullAt</code> so depth is rewarded over presence.</td><td><span class="chip fixed">Fixed</span></td></tr>
         <tr><td>Action queue landing</td><td class="n">M</td><td>eligibility</td><td class="path">dashboard/public/</td><td>8 jobs with an unambiguous next step, not 150 rows. The highest-leverage UX change available.</td><td><span class="chip open">Deferred</span></td></tr>
@@ -1497,10 +1497,39 @@ ol.steps li b{color:var(--ink); font-weight:600; font-family:var(--sans); font-s
         <tr><td><b>Purging the master resume from git history</b></td><td>The ongoing exposure is stopped — the file is untracked and ignored — but rewriting history requires a force-push that invalidates every existing clone and any open work. That is the repository owner's call, not a defect fix. Until it is done, the file remains reachable in history.</td></tr>
         <tr><td><b>Making <code>transition()</code> the sole writer of <code>jobs.status</code></b></td><td>The vocabulary, the transition map and the exhaustiveness guard are in place, and the guard is what actually prevents the <code>needs_description</code> class of defect from recurring. Routing all 15 <code>upsertJob</code> call sites through a validating writer is a separate change: several sit inside live assist flows, and one wrong entry in the map would throw mid-run on a real application.</td></tr>
         <tr><td><b>Applying the description retention pass</b></td><td><code>npm run db:prune</code> reports 14,871 eligible rows holding 67.8&nbsp;MB, and <code>--apply</code> clears them. It was left as a dry run: it mutates the owner's live data, and nothing about it is urgent.</td></tr>
-        <tr><td><b>The P2 intelligence work</b> — candidate evidence layer, eligibility gates, declarative scoring categories, action-queue landing, outcome capture, source-effectiveness and skill-gap views</td><td>These are the product build-out in §16, not repairs: roughly the three weeks §20 allocates to Stage&nbsp;4, and they depend on each other. Two cheap ones were taken (keyword saturation, asset deduplication).</td></tr>
+        <tr><td><b>The remaining P2 intelligence work</b> — candidate evidence layer, eligibility gates, action-queue landing, outcome capture, source-effectiveness and skill-gap views (declarative scoring categories are now done, see below)</td><td>These are the product build-out in §16, not repairs: roughly the three weeks §20 allocates to Stage&nbsp;4, and they depend on each other. Two cheap ones were taken (keyword saturation, asset deduplication).</td></tr>
         <tr><td><b>All of P3</b></td><td>Embeddings, learned sponsorship, natural-language search, follow-up automation, resume variants, company intelligence. Unchanged from §17.</td></tr>
       </tbody>
     </table></div>
+
+    <h4>Follow-up: does this work for anyone else? (2026-09-15)</h4>
+    <p>§6 called the scoring category names &ldquo;blocking&rdquo; for a second user. Measured against
+    <em>perfectly matching</em> postings, with a discard floor of 50, it was worse than blocking &mdash;
+    it was silent:</p>
+    <div class="tw"><table>
+      <thead><tr><th>Candidate</th><th class="n">Perfect-match job</th><th>Outcome</th><th>Discovery said</th></tr></thead>
+      <tbody>
+        <tr><td>Data engineer <em>(the built-for profile)</em></td><td class="n">78</td><td>Apply</td><td>strong</td></tr>
+        <tr><td>Registered nurse</td><td class="n">21</td><td>discarded</td><td>strong</td></tr>
+        <tr><td>Frontend engineer</td><td class="n">26</td><td>discarded</td><td>strong</td></tr>
+        <tr><td>Staff accountant</td><td class="n">27</td><td>discarded</td><td>strong</td></tr>
+        <tr><td>Marketing manager</td><td class="n">27</td><td>discarded</td><td>strong</td></tr>
+      </tbody>
+    </table></div>
+    <p>Six hardcoded categories own <b>64 of 110 points</b>, so the ceiling for anyone outside that
+    stack was 53. Discovery already worked for all five; scoring threw four of them away.
+    <code>scoring.categories</code> is now a declarative array whose terms can bind to the profile
+    (<code>from: 'targetTitles'</code>, <code>from: 'technicalStack'</code>), written by
+    <code>npm run scoring:init</code>. The same five personas now score <b>72&ndash;84</b> on their own
+    field&rsquo;s jobs while every mismatched pairing stays at <b>14&ndash;21</b> &mdash; the
+    discrimination is preserved, not traded away. A config without <code>categories</code> scores
+    identically to before, proven by an equivalence test rather than asserted.</p>
+    <p>Two further single-profile defects fell out of the same review: the cover-letter generator
+    asserted <code>'delivered production data pipelines'</code> and the title &ldquo;data engineer&rdquo;
+    for candidates who were neither, and <code>config/cover_letter.json</code> was <em>tracked</em>, so
+    every clone shipped one person&rsquo;s &ldquo;10+ years&rdquo; and H-1B sentence into letters
+    addressed to employers. Both fixed; the file is now gitignored personal config under the same
+    sentinel guard as the rest.</p>
 
     <div class="call warn">
       <div class="ct">The finding that has not moved</div>
