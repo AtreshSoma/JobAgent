@@ -18,9 +18,9 @@ import {
 import { classifySponsorship, SPONSORSHIP } from '../../src/scoring/sponsorshipClassifier.js';
 import { applyExclusions } from '../../src/scoring/exclusionFilter.js';
 import { scoreJob } from '../../src/scoring/scorer.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
-const { exclusions, scoring, candidate } = loadConfig({ loadEnv: false, env: {} });
+const { exclusions, scoring, candidate } = loadTestConfig({ loadEnv: false, env: {} });
 const AFFIRMATIVE = scoring.sponsorship.affirmativePhrases;
 
 /** Refusals taken verbatim (modulo trimming) from stored postings. */

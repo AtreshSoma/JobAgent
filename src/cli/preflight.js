@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { requiredProfileGaps } from './doctor.js';
+import { findPlaceholders } from '../config/placeholders.js';
 
 /**
  * Minimal hard-requirement gate: required candidate fields and the master
@@ -22,6 +23,12 @@ export function quickPreflight(config) {
   for (const gap of requiredProfileGaps(config.candidate)) {
     problems.push(`Candidate profile is missing ${gap.label} — add "${gap.path}" to config/candidate.json (true information only).`);
   }
+  // A field can be PRESENT and still be the shipped template text. Copying the
+  // .example files is the documented first step, and every gate used to pass
+  // them: doctor reported "ready to run" for a profile whose work-authorization
+  // status literally read "US Citizen | Green Card | H-1B | OPT | ...". Presence
+  // is not plausibility — see src/config/placeholders.js.
+  problems.push(...findPlaceholders(config).problems);
   const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
   if (!existsSync(master)) {
     problems.push('Master resume not found at resumes/base/MASTER_RESUME.docx — it is the read-only source for tailoring.');

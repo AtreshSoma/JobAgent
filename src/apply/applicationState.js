@@ -13,7 +13,7 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
 
@@ -60,6 +60,23 @@ function isoNow(now) {
 function cleanText(value, max = 240) {
   const text = String(value ?? '').replace(/\s+/g, ' ').trim();
   return text ? text.slice(0, max) : null;
+}
+
+/**
+ * Last path segment, on BOTH separators, regardless of host platform.
+ *
+ * `node:path`'s `basename()` is the POSIX implementation on macOS/Linux, where
+ * a backslash is an ordinary filename character — so a Windows-style path such
+ * as `C:\\private\\Candidate_Name_Resume.pdf` survived it intact and the
+ * candidate's full absolute path (and their name) was written into the
+ * checkpoint. This module documents "never the candidate's absolute path" as an
+ * invariant, so the stripping must not depend on which OS is running.
+ *
+ * @param {unknown} value a path from either platform
+ * @returns {string} the final segment
+ */
+function baseNameAnyPlatform(value) {
+  return String(value ?? '').split(/[\\/]/).pop();
 }
 
 function persistentUrl(value) {
@@ -212,7 +229,7 @@ export function unresolvedQuestionCheckpoint(question = {}, { step } = {}) {
 export function uploadCheckpoint(upload = {}, { step, at } = {}) {
   return {
     type: cleanText(upload.type, 80) ?? 'upload',
-    fileName: upload.path ? cleanText(basename(upload.path), 240) : cleanText(upload.fileName, 240),
+    fileName: upload.path ? cleanText(baseNameAnyPlatform(upload.path), 240) : cleanText(upload.fileName, 240),
     attached: upload.attached !== false,
     verified: upload.verified === true,
     verificationMethod: cleanText(upload.verificationMethod, 120),

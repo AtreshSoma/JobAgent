@@ -7,9 +7,9 @@
 import { describe, it, expect } from 'vitest';
 
 import { classifyDiscovery } from '../../src/search/discoveryFilter.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
-const config = loadConfig({ loadEnv: false, env: {} });
+const config = loadTestConfig({ loadEnv: false, env: {} });
 
 /** A JD with enough of the candidate's real stack to carry the stack signal. */
 const STACK_JD = 'Build pipelines with Azure Data Factory, Azure Databricks, PySpark, '

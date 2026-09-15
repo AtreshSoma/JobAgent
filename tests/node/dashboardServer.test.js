@@ -3,7 +3,7 @@
  * the JSON API end to end against an in-memory db. No network beyond loopback.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -206,7 +206,12 @@ describe('dashboard server API', () => {
         deps: {
           now: () => NOW,
           ensureResumePdfFn: async (path) => {
-            expect(path).toBe(docx);
+            // Compare REALPATHS. The server hands the converter the resolved
+            // path, and on macOS mkdtemp returns /var/... while realpath returns
+            // /private/var/... — so a literal comparison threw inside the mock,
+            // surfaced as a bare 500, and read as "the graceful 422 branch is
+            // broken" when the route was fine all along.
+            expect(realpathSync(path)).toBe(realpathSync(docx));
             writeFileSync(pdf, '%PDF-1.4\n% generated preview');
             return { exported: true, pdfPath: pdf, reason: 'ok' };
           },
@@ -215,7 +220,8 @@ describe('dashboard server API', () => {
       const generated = await post('/api/jobs/j1/resume-preview');
       expect(generated.status).toBe(200);
       expect(generated.body).toMatchObject({ ready: true, generated: true });
-      expect(db.getJob('j1').resume_pdf_path).toBe(pdf);
+      // Realpath again: the server persists the resolved path (see above).
+      expect(realpathSync(db.getJob('j1').resume_pdf_path)).toBe(realpathSync(pdf));
       expect((await fetch(dash.url + generated.body.url)).status).toBe(200);
     } finally {
       rmSync(root, { recursive: true, force: true });

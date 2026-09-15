@@ -13,9 +13,9 @@ import { buildApplicationPacket, writePacket } from '../../src/apply/application
 import {
   enqueueForApproval, listPending, approve, reject, isClearedForAssist, APPROVAL_STATUS,
 } from '../../src/apply/approvalQueue.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
-const { candidate, screeningAnswers } = loadConfig({ loadEnv: false, env: {} });
+const { candidate, screeningAnswers } = loadTestConfig({ loadEnv: false, env: {} });
 
 describe('screeningQA', () => {
   it('answers a matched question from config', () => {

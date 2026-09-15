@@ -36,6 +36,7 @@ import {
 
 import { loadConfig, PROJECT_ROOT } from '../config/loadConfig.js';
 import { ui } from './ui.js';
+import { findPlaceholders } from '../config/placeholders.js';
 
 export const SEVERITY = Object.freeze({ PASS: 'pass', WARN: 'warn', FAIL: 'fail' });
 
@@ -224,6 +225,25 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
         'Add the missing value(s) to config/candidate.json. Never guess — only enter true information.'));
     }
 
+    // Presence is not plausibility. Every required field can be filled and every
+    // value can still be the template text shipped in the .example files — which
+    // is exactly what a new user gets by following the documented first step.
+    // This check is a FAIL, not a warning: these strings are typed verbatim into
+    // an employer's work-authorization and sponsorship fields.
+    const templated = findPlaceholders(config);
+    if (templated.ok) {
+      checks.push(makeCheck('profile-placeholders', 'Candidate profile (real values, not template text)',
+        SEVERITY.PASS, 'no placeholder values found'));
+    } else {
+      checks.push(makeCheck('profile-placeholders', 'Candidate profile (real values, not template text)',
+        SEVERITY.FAIL,
+        `${templated.placeholders.length} field(s) still hold example text: `
+        + templated.placeholders.map((p) => `${p.label} = "${p.value}"`).join('; '),
+        'Replace these with your own truthful values in config/candidate.json and '
+        + 'config/screening_answers.json. Until you do, the pipeline will not prepare '
+        + 'or submit an application — these values go verbatim onto employers\' forms.'));
+    }
+
     const optional = optionalProfileGaps(config.candidate);
     if (optional.length === 0) {
       checks.push(makeCheck('profile-optional', 'Candidate profile (optional fields)', SEVERITY.PASS,
@@ -267,6 +287,27 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
         'not importable — resume tailoring will fall back to the untailored master resume',
         `Run: ${pythonExe} -m pip install -r requirements.txt`));
     }
+    // PDF export defaults to ON, and on a machine with neither Word nor
+    // LibreOffice it can never succeed — which used to fail silently per job and
+    // surface later as an unexplained dashboard preview error. Report the
+    // capability here, once, up front. WARN not FAIL: the DOCX is the
+    // deliverable and is always produced; only the preview degrades.
+    const pdfProbe = tryRun(spawnImpl, pythonExe, ['-c',
+      'import sys, json; sys.path.insert(0, "src/resume"); '
+      + 'from pdfExport import converter_availability; print(json.dumps(converter_availability()))']);
+    let pdfInfo = null;
+    try { pdfInfo = JSON.parse(pdfProbe.stdout.trim().split('\n').pop()); } catch { /* reported below */ }
+    if (pdfInfo?.available) {
+      const via = pdfInfo.word ? 'Microsoft Word (docx2pdf)' : `LibreOffice (${pdfInfo.libreoffice})`;
+      checks.push(makeCheck('pdf-converter', 'DOCX to PDF converter', SEVERITY.PASS, `available via ${via}`));
+    } else {
+      checks.push(makeCheck('pdf-converter', 'DOCX to PDF converter', SEVERITY.WARN,
+        `none available${pdfInfo?.word_reason ? ` — ${pdfInfo.word_reason}` : ''}`
+        + ' — tailored resumes are still produced as DOCX; only the PDF preview is unavailable',
+        'Install LibreOffice (works everywhere, including Linux/CI) or Microsoft Word, '
+        + 'or set resumeExportPdf=false to stop attempting the conversion.'));
+    }
+
     const pytest = tryRun(spawnImpl, pythonExe, ['-m', 'pytest', '--version']);
     checks.push(pytest.ok
       ? makeCheck('pytest', 'pytest', SEVERITY.PASS, pytest.stdout.split('\n')[0])

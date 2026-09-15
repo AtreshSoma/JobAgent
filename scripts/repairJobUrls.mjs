@@ -31,7 +31,15 @@
 import { readFileSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
+
+// Load the built-in `node:sqlite` via createRequire, the same way src/logging/db.js
+// does. A static `import { DatabaseSync } from 'node:sqlite'` is resolved eagerly by
+// bundlers and test runners, which do not know the builtin and fail the whole module
+// with "Failed to load url sqlite". That took tests/node/workdayJobUrl.test.js — the
+// regression guard for the 15,733 broken Workday URLs this script repairs — out of the
+// suite entirely, and the failure read as unrelated tooling noise.
+const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_PATH = join(ROOT, 'config', 'jobboards.json');

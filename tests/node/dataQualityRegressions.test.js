@@ -27,14 +27,14 @@ import { applyFreshnessFilter } from '../../src/search/freshnessFilter.js';
 import { runPipeline } from '../../src/pipeline/index.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import {
   fitBucket, isSponsorshipGated, dashboardStats, listBoardJobs, buildNextActions,
 } from '../../src/dashboard/data.js';
 import { normalizeJob } from '../../src/search/normalize.js';
 import * as F from './fixtures/jobs.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 
 describe('skill-alias evidence (matched vs missing contradiction)', () => {
   const candidate = {

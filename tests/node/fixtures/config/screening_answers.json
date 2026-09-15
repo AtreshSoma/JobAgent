@@ -1,0 +1,93 @@
+{
+  "_note": "TEST FIXTURE — realistic, entirely FICTIONAL screening answers for the fixture candidate in ./candidate.json. Tests read this instead of config/screening_answers.json so the suite never depends on (or asserts) the repository owner's salary, authorization or EEO answers. Values are specific enough to pass the placeholder sentinel guard.",
+  "defaults": {
+    "unknownAction": "ask_user",
+    "salaryFallback": "Open / Negotiable"
+  },
+  "answers": [
+    {
+      "id": "years_experience",
+      "patterns": ["years of experience", "how many years", "total experience"],
+      "answer": "10+ years",
+      "type": "text"
+    },
+    {
+      "id": "work_authorization",
+      "patterns": ["work authorization", "authorized to work", "legally authorized", "right to work"],
+      "answer": "Authorized to work in the United States on an H-1B visa.",
+      "type": "text"
+    },
+    {
+      "id": "require_sponsorship",
+      "patterns": ["require sponsorship", "need sponsorship", "visa sponsorship", "will you require", "now or in the future require sponsorship", "sponsor you for a visa", "need an employer to sponsor", "employer to sponsor you", "require an employer to sponsor", "sponsorship to work", "sponsor you for an immigration", "need visa sponsorship"],
+      "answer": "Yes, I will require sponsorship (H-1B transfer).",
+      "type": "text"
+    },
+    {
+      "id": "salary_expectation_monthly",
+      "patterns": ["salary expectation per month", "per month", "monthly salary", "monthly rate", "monthly compensation"],
+      "answer": "Around $12,500 per month (negotiable based on total compensation)",
+      "type": "text"
+    },
+    {
+      "id": "salary_expectation",
+      "patterns": ["salary expectation", "salary expectations", "desired salary", "compensation expectation", "compensation expectations", "expected compensation", "expected pay", "expected salary", "salary requirement", "salary requirements"],
+      "answer": "Around $150,000 per year (negotiable based on total compensation)",
+      "type": "text"
+    },
+    {
+      "id": "start_date",
+      "patterns": ["start date", "when can you start", "availability to start", "notice period"],
+      "answer": "Two weeks from offer",
+      "type": "text"
+    },
+    {
+      "id": "relocation",
+      "patterns": ["willing to relocate", "open to relocation", "relocate for this role"],
+      "answer": "Yes, open to relocation within the United States.",
+      "type": "text"
+    },
+    {
+      "id": "background_check",
+      "patterns": ["background check", "consent to background", "drug screen"],
+      "answer": "Yes, willing to complete a standard background check.",
+      "type": "boolean_yes"
+    },
+    {
+      "id": "data_pipelines_built",
+      "patterns": ["data pipelines have you built", "pipelines have you built", "what tools you used to build them", "describe the data pipelines"],
+      "answer": "I build batch and streaming pipelines on Azure: Data Factory for orchestration, Databricks and PySpark for transformation, and Delta Lake in a bronze/silver/gold medallion layout. Recent work cut a nightly load from four hours to thirty-five minutes by repartitioning the silver layer.",
+      "type": "text"
+    },
+    {
+      "id": "cloud_warehouse_experience",
+      "patterns": ["snowflake redshift or bigquery", "snowflake, redshift, or bigquery", "cloud data warehouse experience", "experience with snowflake"],
+      "answer": "My warehouse work is on Azure Synapse Analytics and Microsoft Fabric rather than Snowflake, Redshift or BigQuery. The modelling is the same — Kimball dimensional models, star schemas and semantic layers — but I would be learning those three products on the job.",
+      "type": "text"
+    },
+    {
+      "id": "monitor_pipeline_failures",
+      "patterns": ["monitor and resolve pipeline failures", "pipeline failures", "how do you monitor", "handle pipeline errors"],
+      "answer": "Data Factory alerts on failed activity runs, Databricks job metrics feed a Log Analytics workspace, and each medallion layer carries row-count and freshness checks that fail the run rather than publishing bad data. On call, I triage from the failing activity's input snapshot.",
+      "type": "text"
+    },
+    {
+      "id": "dbt_experience",
+      "patterns": ["used dbt", "dbt or a similar", "data transformation framework", "experience with dbt"],
+      "answer": "I have not used dbt in production. My transformation layer is PySpark and Delta Live Tables, which covers the same ground — versioned models, tests and lineage — so the concepts transfer, but dbt itself would be new to me.",
+      "type": "text"
+    },
+    {
+      "id": "streaming_experience",
+      "patterns": ["real-time streaming data experience", "streaming data experience", "real time streaming", "describe your streaming"],
+      "answer": "I run Structured Streaming jobs on Databricks reading from Event Hub into Delta tables, with watermarking for late arrivals and checkpointed exactly-once writes. Latency targets have been in the one-to-five minute range rather than sub-second.",
+      "type": "text"
+    },
+    {
+      "id": "data_quality_compliance",
+      "patterns": ["data quality and compliance", "ensure data quality", "compliance with regulations", "data quality standards"],
+      "answer": "Quality is enforced in the pipeline, not after it: schema contracts at ingestion, row-count and referential checks between medallion layers, and a scorecard published per layer. For compliance I have worked under SOX and HIPAA, using row-level security, data classification and retained audit trails.",
+      "type": "text"
+    }
+  ]
+}

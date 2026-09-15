@@ -12,10 +12,10 @@ import { tmpdir } from 'node:os';
 import { runPipeline } from '../../src/pipeline/index.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 
 describe('incremental discovery (skip materially-unchanged jobs)', () => {
   let root;

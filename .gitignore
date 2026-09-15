@@ -67,10 +67,19 @@ data/application-state/
 resumes/output/*
 !resumes/output/.gitkeep
 # Timestamped copies the tailoring step writes before touching the master.
-# Generated artifacts, not sources — the master itself stays tracked.
+# Generated artifacts, not sources.
 resumes/base/history/
-# A PDF rendered FROM the tracked MASTER_RESUME.docx. Derived, regenerated on
-# demand, and a binary that would churn on every export.
+# THE MASTER RESUME IS PERSONAL DATA, NOT A SOURCE ARTIFACT.
+# It was tracked for years because it is the only thing that makes the tailor
+# testable — which put a real full name, personal mobile number, personal email,
+# LinkedIn handle and a complete 10-year employment history into every clone of
+# this repository. `MASTER_RESUME.example.docx` is a synthetic stand-in with the
+# same structure; `npm run setup` copies it into place, and the tailor and its
+# tests run against it unchanged.
+resumes/base/MASTER_RESUME.docx
+!resumes/base/MASTER_RESUME.example.docx
+# A PDF rendered FROM the master. Derived, regenerated on demand, and a binary
+# that would churn on every export.
 resumes/base/MASTER_RESUME.pdf
 applications/output/*
 !applications/output/.gitkeep
@@ -89,6 +98,12 @@ test-results/
 # --- Browser profile (saved logins/cookies — never commit) ---
 .browser-profile/
 .browser-profile-*/
+
+# --- Unrelated projects that happen to live under this checkout ---
+# `git check-ignore PyProjects` matched nothing, so 34 MB of unrelated work
+# (quant trading, stock analysis, a second job-search agent) sat untracked and
+# un-ignored: one `git add -A` away from being committed here.
+PyProjects/
 
 # --- OS / Editor ---
 .DS_Store

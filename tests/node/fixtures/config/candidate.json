@@ -1,0 +1,163 @@
+{
+  "_note": "TEST FIXTURE — a complete, realistic, entirely FICTIONAL candidate profile. Tests read this instead of config/candidate.json so the suite never depends on (or asserts) the repository owner's personal data, and so a fresh clone behaves identically to the author's machine. Values are deliberately specific enough to pass the placeholder sentinel guard.",
+  "identity": {
+    "fullName": "Priya Raghunathan",
+    "preferredName": "Priya",
+    "headline": "Senior Data Engineer",
+    "links": {
+      "linkedin": "https://www.linkedin.com/in/praghunathan-de/",
+      "github": "https://github.com/praghunathan",
+      "portfolio": ""
+    }
+  },
+  "contact": {
+    "email": "priya.raghunathan@fastmail.com",
+    "phone": "9843127760"
+  },
+  "location": {
+    "street": "418 Hillsborough Street",
+    "street2": "",
+    "city": "Durham",
+    "state": "North Carolina",
+    "zip": "27701",
+    "country": "United States",
+    "timezone": "America/New_York"
+  },
+  "workAuthorization": {
+    "status": "H-1B",
+    "requiresSponsorship": true,
+    "details": "Currently on H-1B; requires transfer and continued sponsorship."
+  },
+  "sponsorshipRequired": true,
+  "targetTitles": [
+    "Senior Data Engineer",
+    "Data Engineer",
+    "Analytics Engineer",
+    "Data Analytics Engineer",
+    "BI Engineer",
+    "ETL Developer",
+    "Azure Data Engineer",
+    "Data Platform Engineer",
+    "Data Warehouse Engineer",
+    "Power BI Developer"
+  ],
+  "seniority": "senior",
+  "employmentPreferences": {
+    "types": [
+      "W2",
+      "fulltime",
+      "contract-to-hire"
+    ],
+    "minContractMonths": 12,
+    "requiresW2": true
+  },
+  "locationPreferences": {
+    "remote": true,
+    "onsite": false,
+    "hybrid": true,
+    "preferredRegions": [
+      "United States"
+    ],
+    "excludedLocations": [],
+    "excludedTimezones": []
+  },
+  "technicalStack": {
+    "cloud": [
+      "Azure",
+      "Microsoft Fabric",
+      "Azure Synapse Analytics"
+    ],
+    "dataEngineering": [
+      "Azure Data Factory",
+      "Databricks",
+      "PySpark",
+      "Delta Lake",
+      "Structured Streaming"
+    ],
+    "languages": [
+      "Python",
+      "SQL",
+      "T-SQL"
+    ],
+    "biAndModeling": [
+      "Power BI",
+      "DAX",
+      "Semantic Models",
+      "Dimensional Modeling"
+    ],
+    "orchestration": [
+      "Azure DevOps",
+      "GitHub Actions"
+    ],
+    "other": [
+      "Data Quality Testing",
+      "Medallion Architecture"
+    ]
+  },
+  "skillExperience": {
+    "python": "8 years",
+    "sql": "10 years",
+    "azure data factory": "6 years",
+    "databricks": "5 years",
+    "power bi": "7 years",
+    "pyspark": "5 years"
+  },
+  "certifications": [
+    "Microsoft Certified: Azure Data Engineer Associate (DP-203)"
+  ],
+  "domainExperience": [
+    "Healthcare",
+    "Financial Services"
+  ],
+  "workHistory": [
+    {
+      "employer": "Northwind Analytics",
+      "title": "Senior Data Engineer",
+      "location": "Durham, NC (Remote)",
+      "startDate": "March 2021",
+      "endDate": "",
+      "current": true,
+      "highlights": [
+        "Cut nightly pipeline runtime from 4 hours to 35 minutes by repartitioning the Delta Lake silver layer."
+      ]
+    },
+    {
+      "employer": "Tailspin Services",
+      "title": "BI Developer",
+      "location": "Raleigh, NC",
+      "startDate": "June 2017",
+      "endDate": "February 2021",
+      "current": false,
+      "highlights": [
+        "Built a Power BI semantic model serving 400 analysts across three business units."
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "North Carolina State University",
+      "degree": "Master of Science",
+      "field": "Computer Science",
+      "graduationYear": "2016"
+    }
+  ],
+  "salaryPreference": {
+    "display": "Around $150,000 (negotiable)",
+    "minAnnualUSD": 150000,
+    "targetAnnualUSD": 165000,
+    "currency": "USD"
+  },
+  "relocationPreference": {
+    "willing": true,
+    "notes": "Open to relocation within the United States."
+  },
+  "travelPreference": {
+    "maxPercent": 25,
+    "notes": ""
+  },
+  "startDate": "Two weeks from offer",
+  "prohibited": {
+    "employers": [],
+    "terms": []
+  }
+}

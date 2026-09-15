@@ -19,12 +19,12 @@ import { join } from 'node:path';
 import { createBrowserSession, openApplicationPage } from '../../src/automation/browser.js';
 import { scanFields, resolveFormScope } from '../../src/automation/domScanner.js';
 import { fillScannedFields } from '../../src/automation/fieldFiller.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const FORM_URL = pathToFileURL(join(FIXTURES, 'workday_style_form.html')).href;
 
-const { candidate, screeningAnswers } = loadConfig({ loadEnv: false, env: {} });
+const { candidate, screeningAnswers } = loadTestConfig({ loadEnv: false, env: {} });
 
 describe('Workday-style form filling (real browser)', () => {
   let session;

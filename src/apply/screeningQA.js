@@ -113,10 +113,129 @@ export function assertTruthfulSponsorship(answers = []) {
 }
 
 /**
+ * Questions asking for a DURATION of experience.
+ *
+ * "10+ years" is a career total. Answering a question that qualifies its
+ * subject ("...with SAP ABAP", "...in clinical trials") with a career total
+ * states a specific number of years of experience with a technology the
+ * candidate may never have touched. Verified against the shipped config before
+ * this guard existed — all three returned "10+ years" at confidence 1.0:
+ *
+ *   "How many years of experience do you have with SAP ABAP?"
+ *   "How many years of management experience do you have?"
+ *   "How many years of experience do you have in clinical trials?"
+ *
+ * The `years_experience` entry matches the bare pattern "how many years", which
+ * has no notion of years OF WHAT. See `experienceSubject`.
+ */
+const YEARS_QUESTION_RE = /\b(?:how\s+many\s+years|years?\s+of\s+experience|years?\s+experience|total\s+experience|length\s+of\s+experience)\b/i;
+
+/**
+ * Words that modify "experience" without naming a SUBJECT. "Professional",
+ * "total" and "relevant" all still mean the candidate's career, so a career
+ * total answers them honestly; "SAP ABAP" and "management" do not.
+ */
+const GENERIC_EXPERIENCE_MODIFIERS = new Set([
+  'professional', 'total', 'overall', 'work', 'working', 'industry', 'relevant',
+  'related', 'full', 'time', 'fulltime', 'full-time', 'paid', 'combined',
+  'cumulative', 'applicable', 'direct', 'hands', 'on', 'hands-on', 'recent',
+  'prior', 'previous', 'similar', 'equivalent', 'post', 'graduate', 'career',
+  'your', 'you', 'have', 'do', 'the', 'a', 'an', 'of', 'in', 'with', 'and',
+  'or', 'any', 'general', 'overall', 'real', 'world', 'real-world', 'years',
+  'year', 'experience', 'please', 'specify', 'enter',
+]);
+
+/**
+ * Patterns that expose the SUBJECT of a years-of-experience question.
+ * Each must capture the subject in group 1.
+ */
+const SUBJECT_PATTERNS = [
+  // "...years of experience [do you have] with|in|using|on|of <SUBJECT>".
+  // The optional "do you have" clause matters: without it,
+  // "How many years of experience do you have with SAP ABAP?" — the single most
+  // common phrasing on real forms — read as unqualified and took the career total.
+  /years?\s+(?:of\s+)?experience\s+(?:(?:do|does|did|have|has)\s+you\s+(?:have|had|got)?\s*)?(?:with|in|using|on|of|developing|supporting|administering|working\s+with|working\s+in)\s+(.+)/i,
+  // "...how many years of <SUBJECT> experience"
+  /how\s+many\s+years?\s+(?:of\s+)?(.+?)\s+experience\b/i,
+  // "years of <SUBJECT> experience"
+  /years?\s+of\s+(.+?)\s+experience\b/i,
+  // "how many years have you worked with|in|on <SUBJECT>"
+  /how\s+many\s+years?\s+have\s+you\s+(?:worked|used|spent|been)\s+(?:with|in|on|using)\s+(.+)/i,
+  // "<SUBJECT> - years of experience" / "<SUBJECT>: years of experience"
+  /^(.+?)\s*[-–—:]\s*(?:how\s+many\s+)?years?\s+of\s+experience/i,
+];
+
+/** Strip trailing question marks, parentheticals and filler. */
+function tidySubject(raw) {
+  return String(raw ?? '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[?.!]+\s*$/, '')
+    .replace(/\b(?:do|does|did)\s+you\s+have\b/gi, ' ')
+    .replace(/\byou\s+have\b/gi, ' ')
+    .replace(/[*]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * The thing a years-of-experience question is asking ABOUT, or null when it
+ * asks about the candidate's career as a whole.
+ *
+ * @param {string} question raw question text
+ * @returns {string|null} normalized subject, or null when unqualified
+ */
+export function experienceSubject(question) {
+  const text = String(question ?? '');
+  if (!YEARS_QUESTION_RE.test(text)) return null;
+
+  for (const re of SUBJECT_PATTERNS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const subject = tidySubject(m[1]);
+    if (!subject) continue;
+    // A subject made only of generic modifiers ("professional", "total work")
+    // is not a subject at all — the question is about the career.
+    const words = normalizeText(subject).split(/[^a-z0-9+#.]+/).filter(Boolean);
+    const meaningful = words.filter((w) => !GENERIC_EXPERIENCE_MODIFIERS.has(w));
+    if (meaningful.length === 0) continue;
+    return meaningful.join(' ');
+  }
+  return null;
+}
+
+/**
+ * Look a subject up in the candidate's per-skill experience record.
+ *
+ * `candidate.skillExperience` is an OPTIONAL map of skill -> duration string
+ * ({"python": "8 years"}). It is the only thing that can honestly answer a
+ * qualified duration question. When it has no entry for the subject, the
+ * question goes to the human — a career total must never stand in for it.
+ *
+ * @param {string} subject normalized subject from `experienceSubject`
+ * @param {object} [candidate] parsed config/candidate.json
+ * @returns {string|null} the recorded duration, or null
+ */
+export function lookupSkillExperience(subject, candidate) {
+  const map = candidate?.skillExperience;
+  if (!map || typeof map !== 'object' || !subject) return null;
+  const want = normalizeText(subject);
+  for (const [skill, years] of Object.entries(map)) {
+    const key = normalizeText(skill);
+    if (!key || !years) continue;
+    // Exact, or the question's subject names the skill as a whole word
+    // ("experience with azure databricks" -> "databricks").
+    if (key === want || wholeWordIn(want, key)) return String(years);
+  }
+  return null;
+}
+
+/**
  * @param {string} question raw screening question text
  * @param {object} screeningAnswers parsed config/screening_answers.json
  * @param {object} [options]
  * @param {string[]} [options.choices] available options for choice questions
+ * @param {object} [options.candidate] parsed config/candidate.json — supplies
+ *   `skillExperience` for qualified duration questions
  * @returns {{
  *   answered: boolean,
  *   action: 'answer'|'ask_user',
@@ -126,10 +245,41 @@ export function assertTruthfulSponsorship(answers = []) {
  *   confidence: number
  * }}
  */
-export function answerScreeningQuestion(question, screeningAnswers, { choices } = {}) {
+export function answerScreeningQuestion(question, screeningAnswers, { choices, candidate } = {}) {
   const text = normalizeText(question);
   const answers = screeningAnswers.answers ?? [];
   const defaults = screeningAnswers.defaults ?? {};
+
+  // A QUALIFIED duration question ("years of experience with SAP ABAP") can only
+  // be answered from a per-skill record. The stored `years_experience` answer is
+  // a career total with no subject binding, and letting it match here stated a
+  // specific number of years with a technology the candidate may never have used
+  // — at confidence 1.0, on a real employer's form. Never let an unqualified
+  // total answer a qualified question.
+  const subject = experienceSubject(question);
+  if (subject) {
+    const recorded = lookupSkillExperience(subject, candidate);
+    if (recorded) {
+      return {
+        answered: true,
+        action: 'answer',
+        matchedId: 'skill_experience',
+        answer: recorded,
+        type: 'text',
+        confidence: 1,
+        subject,
+      };
+    }
+    return {
+      ...askUser(defaults),
+      // Like the inverted sponsorship case, this must reach the human even when
+      // defaults.unknownAction is 'skip': a blank is honest, a guess is not.
+      action: 'ask_user',
+      subject,
+      reason: `asks how long you have worked with "${subject}" — add it to `
+        + 'candidate.skillExperience or answer it yourself; your career total does not apply',
+    };
+  }
 
   // An inverted sponsorship question ("…work WITHOUT sponsorship?", "…will you
   // NOT require…?") asks for the opposite of what the stored answer states.

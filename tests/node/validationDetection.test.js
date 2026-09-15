@@ -18,12 +18,12 @@ import { join } from 'node:path';
 import { createBrowserSession, openApplicationPage } from '../../src/automation/browser.js';
 import { detectValidationErrors } from '../../src/automation/domScanner.js';
 import { assistApply } from '../../src/automation/applyRunner.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const FORM_URL = pathToFileURL(join(FIXTURES, 'validation_error_form.html')).href;
 
-const config = loadConfig({ loadEnv: false, env: {} });
+const config = loadTestConfig({ loadEnv: false, env: {} });
 
 describe('validation-error detection (real browser)', () => {
   let session;

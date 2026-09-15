@@ -16,9 +16,9 @@ import {
 import { rawTier, TIERS } from '../../src/scoring/explainScore.js';
 import { makeTitleGate } from '../../src/search/adapters/atsSearch.js';
 import { scoreJob } from '../../src/scoring/scorer.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
-const config = loadConfig({ loadEnv: false, env: {} });
+const config = loadTestConfig({ loadEnv: false, env: {} });
 const vocab = buildProfileVocabulary(config.candidate);
 const verdict = (t) => classifyTitleFit(t, vocab).verdict;
 const kept = (t) => verdict(t) !== 'reject';

@@ -2,10 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { classifySponsorship } from '../../src/scoring/sponsorshipClassifier.js';
 import { scoreJob } from '../../src/scoring/scorer.js';
 import { explainScore, rawTier, TIERS } from '../../src/scoring/explainScore.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const { scoring, candidate } = loadConfig({ loadEnv: false, env: {} });
+const { scoring, candidate } = loadTestConfig({ loadEnv: false, env: {} });
 const sponConfig = scoring.sponsorship;
 
 describe('sponsorshipClassifier', () => {

@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { applyExclusions } from '../../src/scoring/exclusionFilter.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const { exclusions } = loadConfig({ loadEnv: false, env: {} });
+const { exclusions } = loadTestConfig({ loadEnv: false, env: {} });
 const opts = { now: F.NOW };
 
 describe('exclusionFilter', () => {
@@ -176,7 +176,7 @@ describe('exclusionFilter', () => {
 });
 
 describe('US-only gate: offshore postings reaching the dashboard', () => {
-  const config = loadConfig({ loadEnv: false, env: {} });
+  const config = loadTestConfig({ loadEnv: false, env: {} });
   const check = (location) => applyExclusions(
     { title: 'Data Engineer', jdText: 'Build data pipelines.', location, postedAt: new Date().toISOString() },
     config.exclusions,
@@ -228,7 +228,7 @@ describe('US-only gate: offshore postings reaching the dashboard', () => {
 });
 
 describe('multi-location placeholders must not hide an offshore role', () => {
-  const config2 = loadConfig({ loadEnv: false, env: {} });
+  const config2 = loadTestConfig({ loadEnv: false, env: {} });
   const check = (job) => applyExclusions(
     { title: 'Data Engineer', jdText: 'Build pipelines.', postedAt: new Date().toISOString(), ...job },
     config2.exclusions,
@@ -267,7 +267,7 @@ describe('multi-location placeholders must not hide an offshore role', () => {
 });
 
 describe('ISO country codes from structured ATS fields', () => {
-  const cfg3 = loadConfig({ loadEnv: false, env: {} });
+  const cfg3 = loadTestConfig({ loadEnv: false, env: {} });
   const g = (location, country) => applyExclusions(
     { title: 'Data Engineer', jdText: 'x', location, rawMetadata: { country } },
     cfg3.exclusions,

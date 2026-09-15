@@ -25,10 +25,10 @@ import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
 import { listPending, approve } from '../../src/apply/approvalQueue.js';
 import { writeJobTracker } from '../../src/reports/jobTracker.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 
 /** A strong job carrying real ATS form fields so prefill/ATS mapping runs. */
 const greenhouseJob = {

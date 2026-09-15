@@ -8,9 +8,10 @@ import {
   REQUIRED_PROFILE_FIELDS, SEVERITY,
 } from '../../src/cli/doctor.js';
 import { quickPreflight } from '../../src/index.js';
-import { loadConfig, PROJECT_ROOT } from '../../src/config/loadConfig.js';
+import { PROJECT_ROOT } from '../../src/config/loadConfig.js';
+import { loadTestConfig, FIXTURE_CONFIG_DIR } from './helpers/testConfig.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 
 /** Candidate with every required field present. */
 const fullCandidate = {
@@ -81,8 +82,17 @@ describe('runDoctor', () => {
   let root;
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'doctor-'));
-    // Minimal healthy workspace: real configs + a non-empty master resume.
+    // Minimal healthy workspace: the repo's shared configs, the FIXTURE profile,
+    // and a non-empty master resume.
+    //
+    // The profile has to be the fixture, not config/candidate.json. The shipped
+    // config is the .example template, and a healthy workspace is precisely one
+    // where the user has replaced that template with their own details — so
+    // copying it here would assert that doctor passes on exactly the state
+    // doctor now exists to reject.
     cpSync(join(PROJECT_ROOT, 'config'), join(root, 'config'), { recursive: true });
+    cpSync(join(FIXTURE_CONFIG_DIR, 'candidate.json'), join(root, 'config', 'candidate.json'));
+    cpSync(join(FIXTURE_CONFIG_DIR, 'screening_answers.json'), join(root, 'config', 'screening_answers.json'));
     mkdirSync(join(root, 'resumes', 'base'), { recursive: true });
     writeFileSync(join(root, 'resumes', 'base', 'MASTER_RESUME.docx'), 'stub docx bytes', 'utf8');
   });
@@ -106,6 +116,30 @@ describe('runDoctor', () => {
     expect(byId.config.status).toBe(SEVERITY.PASS);
     expect(byId.profile.status).toBe(SEVERITY.PASS);
     expect(byId.resume.status).toBe(SEVERITY.PASS);
+  });
+
+  // REGRESSION GUARD (P0). Copying the .example files is the exact first step
+  // doctor and the README tell a new user to take, and every gate used to pass
+  // the result: doctor reported "✓ Preflight passed — the pipeline is ready to
+  // run" for a profile named Jane Doe whose work-authorization status read
+  // "US Citizen | Green Card | H-1B | OPT | ...". Those strings are typed
+  // verbatim into an employer's work-authorization field.
+  it('FAILS when the profile is still the shipped example template', async () => {
+    cpSync(join(PROJECT_ROOT, 'config', 'candidate.example.json'), join(root, 'config', 'candidate.json'));
+    cpSync(join(PROJECT_ROOT, 'config', 'screening_answers.example.json'),
+      join(root, 'config', 'screening_answers.json'));
+
+    const result = await runDoctor({ root, env: {}, deps: { spawnImpl: spawnOk } });
+
+    expect(result.ok).toBe(false);
+    const check = result.checks.find((c) => c.id === 'profile-placeholders');
+    expect(check.status).toBe(SEVERITY.FAIL);
+    // The legally material ones specifically.
+    expect(check.detail).toMatch(/work authorization status/i);
+    expect(check.detail).toMatch(/require_sponsorship/i);
+    // Presence-only checks still pass — which is exactly why this one is needed.
+    const byId = Object.fromEntries(result.checks.map((c) => [c.id, c]));
+    expect(byId.profile.status).toBe(SEVERITY.PASS);
   });
 
   it('fails on an old Node version with an actionable message', async () => {
@@ -148,8 +182,10 @@ describe('runDoctor', () => {
   it('warns about empty optional profile fields without failing', async () => {
     const result = await runDoctor({ root, env: {}, deps: { spawnImpl: spawnOk } });
     const opt = result.checks.find((c) => c.id === 'profile-optional');
-    // The repo profile has truthful gaps (street/github/portfolio) -> warn.
+    // The fixture profile leaves `portfolio` empty — a truthful gap, which must
+    // WARN rather than fail. An empty optional field is honest; the system must
+    // never invent one to make the check go green.
     expect(opt.status).toBe(SEVERITY.WARN);
-    expect(opt.detail).toContain('location.street');
+    expect(opt.detail).toContain('identity.links.portfolio');
   });
 });

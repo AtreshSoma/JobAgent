@@ -9,13 +9,13 @@
  */
 import { describe, it, expect } from 'vitest';
 
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import { applyExclusions } from '../../src/scoring/exclusionFilter.js';
 import {
   US_STATES, US_STATE_COUNT, matchUsState, usLocationSignal, leadingForeignCountry,
 } from '../../src/utils/usGeography.js';
 
-const config = loadConfig({ loadEnv: false, env: {} });
+const config = loadTestConfig({ loadEnv: false, env: {} });
 const keeps = (location) => !applyExclusions(
   { title: 'Data Engineer', jdText: 'Build pipelines.', location },
   config.exclusions,

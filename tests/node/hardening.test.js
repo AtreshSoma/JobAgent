@@ -24,7 +24,7 @@ import { startDashboard, isLoopbackHost, isAllowedOrigin } from '../../src/dashb
 import { recordAssistResult, runRescore, ingestUrl } from '../../src/cli/commands.js';
 import { runPipeline } from '../../src/pipeline/index.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import { answerScreeningQuestion } from '../../src/apply/screeningQA.js';
 import { findAdvanceControl, ADVANCE_RE, APPLY_START_RE } from '../../src/automation/navigator.js';
 import { deduplicate, urlKeyFor } from '../../src/search/deduplicator.js';
@@ -35,7 +35,7 @@ import { submitStatus } from '../../src/reports/jobTracker.js';
 import { isProtectedJobRow } from '../../src/lifecycle.js';
 import * as F from './fixtures/jobs.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 const NOW = new Date('2026-06-04T12:00:00Z');
 
 /* ───────────────────── server: cross-site defense + totals ───────────────── */

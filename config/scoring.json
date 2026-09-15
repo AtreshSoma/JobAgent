@@ -173,7 +173,6 @@
     "data warehouse": ["azure synapse", "synapse", "snowflake", "dimensional modeling", "star schema", "ssas"],
     "etl": ["azure data factory", "adf", "ssis", "elt", "data pipeline"],
     "elt": ["etl", "azure data factory", "adf", "adf pipelines", "delta live tables", "medallion architecture", "dbt"],
-    "streaming": ["structured streaming", "kafka", "event hub", "spark streaming"],
     "batch processing": ["azure data factory", "databricks", "etl", "data pipeline"],
     "data pipeline": ["azure data factory", "adf pipelines", "etl", "databricks"],
     "data engineering": ["data engineer"],

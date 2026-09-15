@@ -7,10 +7,10 @@ import { runGuided, parseSelection } from '../../src/cli/guided.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
 import { listPending } from '../../src/apply/approvalQueue.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 
 function makeCtx(root) {
   const db = openDatabase({ path: ':memory:' });

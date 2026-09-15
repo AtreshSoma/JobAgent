@@ -45,6 +45,7 @@ import { buildJobPaths } from '../utils/outputPaths.js';
 import { tailorResumeForJob } from '../resume/tailorRunner.js';
 import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '../lifecycle.js';
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
+import { findPlaceholders } from '../config/placeholders.js';
 
 /**
  * Tiers that warrant AUTO-building an application packet in PREPARE/LIVE_ASSIST.
@@ -476,6 +477,24 @@ function reportRow(job, discovery, extra = {}) {
  * human chose, not only the tiers the pipeline auto-selects.
  */
 export async function preparePacket({ config, db, logger, job, score, tier, deps, counters }) {
+  // Last line of defence before template text becomes a document addressed to a
+  // real employer. A packet carries the candidate's name, contact details and
+  // screening answers into a cover letter and a form-prefill payload, so a
+  // profile that is still the shipped example must never reach this far. The
+  // CLI and dashboard both gate on quickPreflight, but preparePacket is the one
+  // chokepoint every path goes through — including "Prepare selected".
+  const templated = findPlaceholders(config);
+  if (!templated.ok) {
+    const detail = templated.placeholders.map((t) => `${t.label} ("${t.value}")`).join(', ');
+    logger?.warn?.({ job: job.id, placeholders: templated.placeholders.length },
+      'refusing to prepare a packet from placeholder profile values');
+    throw new Error(
+      'Refusing to prepare an application packet: the candidate profile still holds '
+      + `template text — ${detail}. Replace these with your real values in `
+      + 'config/candidate.json and config/screening_answers.json, then run `npm run doctor`.',
+    );
+  }
+
   const now = deps.now ?? new Date();
   // Professional, recruiter-friendly output location for every artifact:
   //   applications/output/{Company}/{Title}_{Date}/...

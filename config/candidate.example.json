@@ -56,6 +56,8 @@
     "orchestration": ["Azure DevOps"],
     "other": []
   },
+  "_skillExperienceNote": "OPTIONAL. Per-skill years, used ONLY to answer questions that name a skill (\"How many years of experience do you have with X?\"). Anything not listed here is deferred to you rather than answered from your career total — that is deliberate: a total is not experience with a named tool. Example: { \"python\": \"8 years\", \"sap abap\": \"None\" }",
+  "skillExperience": {},
   "certifications": [],
   "domainExperience": [],
   "workHistory": [

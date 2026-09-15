@@ -8,14 +8,14 @@ import { describe, it, expect } from 'vitest';
 import { runPipeline } from '../../src/pipeline/index.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import { normalizeJob } from '../../src/search/normalize.js';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import * as F from './fixtures/jobs.js';
 
-const base = loadConfig({ loadEnv: false, env: {} });
+const base = loadTestConfig({ loadEnv: false, env: {} });
 
 const noSponsorship = F.noSponsorship; // "US citizens only; we are unable to sponsor visas"
 

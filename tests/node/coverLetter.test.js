@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { generateCoverLetter } from '../../src/apply/coverLetter.js';
 import { humanize, hasBannedContent } from '../../src/apply/humanizer.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 
-const { coverLetter, candidate, humanizerPatterns } = loadConfig({ loadEnv: false, env: {} });
+const { coverLetter, candidate, humanizerPatterns } = loadTestConfig({ loadEnv: false, env: {} });
 
 const job = { company: 'Acme Analytics', title: 'Senior Data Engineer' };
 const highScore = { total: 88, matchedKeywords: ['azure', 'pyspark', 'delta lake', 'power bi', 'python'] };

@@ -41,6 +41,8 @@
     "audit:resumes": "node scripts/auditTailoredResumes.js --limit=3",
     "verify": "node scripts/verifyRepoHealth.js",
     "db:maintenance": "node scripts/dbMaintenance.mjs",
+    "setup": "node scripts/setupLocalConfig.mjs",
+    "setup:check": "node scripts/setupLocalConfig.mjs --check",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:py": "python -m pytest",

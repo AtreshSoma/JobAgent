@@ -9,7 +9,7 @@ import {
   runDiscover, runAssist, listApprovalQueue, approvePacket, rejectPacket,
   listPackets, getPacket, loadPacket, ingestUrl,
 } from '../../src/cli/commands.js';
-import { loadConfig } from '../../src/config/loadConfig.js';
+import { loadTestConfig } from './helpers/testConfig.js';
 import { LIFECYCLE } from '../../src/lifecycle.js';
 
 function writePacketFile(dir, id, packet) {
@@ -98,7 +98,7 @@ describe('runDiscover', () => {
 
 describe('ingestUrl (add a job by URL)', () => {
   let db;
-  const config = loadConfig({ loadEnv: false, env: {} });
+  const config = loadTestConfig({ loadEnv: false, env: {} });
   beforeEach(() => { db = openDatabase({ path: ':memory:' }); });
   afterEach(() => db.close());
 

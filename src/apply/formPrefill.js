@@ -197,7 +197,9 @@ export function buildPrefillPlan(fields = [], { candidate, screeningAnswers } = 
     }
 
     // Otherwise treat it as a screening question.
-    const qa = answerScreeningQuestion(field.label, screeningAnswers, { choices: field.choices });
+    // `candidate` supplies skillExperience, the only honest source for a
+    // qualified duration question ("years of experience with X").
+    const qa = answerScreeningQuestion(field.label, screeningAnswers, { choices: field.choices, candidate });
     if (qa.answered) {
       plan.push({ label: field.label, selector: field.selector ?? null, field: qa.matchedId, value: qa.answer, source: 'screening' });
     } else if (qa.action !== 'skip') {

@@ -553,7 +553,15 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       const convert = deps.ensureResumePdfFn ?? ensureResumePdf;
       const result = await convert(docxPath, deps);
       if (!result?.exported || !result.pdfPath) {
-        throw Object.assign(new Error(`PDF preview could not be generated: ${result?.reason ?? 'unknown conversion error'}`), { statusCode: 422 });
+        // 422, not 500: this is a known, explainable limitation of the machine,
+        // not a server fault. The DOCX always exists — say so, so the user
+        // downloads it instead of concluding the resume failed to generate.
+        const reason = result?.reason ?? 'unknown conversion error';
+        throw Object.assign(
+          new Error(`PDF preview is unavailable on this machine (${reason}). `
+            + 'The tailored DOCX is ready to download.'),
+          { statusCode: 422, docxAvailable: true },
+        );
       }
       pdfPath = result.pdfPath;
       generated = true;
