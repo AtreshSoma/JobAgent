@@ -76,6 +76,11 @@ resumes/base/history/
 # this repository. `MASTER_RESUME.example.docx` is a synthetic stand-in with the
 # same structure; `npm run setup` copies it into place, and the tailor and its
 # tests run against it unchanged.
+# Carries YOUR facts into documents sent to employers: total years of
+# experience, and the work-authorization sentence. It was tracked, so every
+# clone shipped one person's "10+ years" and their H-1B wording.
+config/cover_letter.json
+
 resumes/base/MASTER_RESUME.docx
 !resumes/base/MASTER_RESUME.example.docx
 # A PDF rendered FROM the master. Derived, regenerated on demand, and a binary

@@ -41,6 +41,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 export const SEEDED_FILES = [
   { target: ['config', 'candidate.json'], example: ['config', 'candidate.example.json'] },
   { target: ['config', 'screening_answers.json'], example: ['config', 'screening_answers.example.json'] },
+  { target: ['config', 'cover_letter.json'], example: ['config', 'cover_letter.example.json'] },
   {
     target: ['resumes', 'base', 'MASTER_RESUME.docx'],
     example: ['resumes', 'base', 'MASTER_RESUME.example.docx'],

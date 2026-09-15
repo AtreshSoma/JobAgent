@@ -61,14 +61,34 @@ export function generateCoverLetter(job, scoreResult, {
 function buildContext(job, scoreResult, candidate, coverLetter) {
   const matched = (scoreResult?.matchedKeywords ?? []);
   const skills = matched.slice(0, coverLetter.maxSkillBullets ?? 5);
-  const highlights = candidate?.workHistory?.[0]?.highlights ?? [];
-  const topHighlight = lowerFirst(stripTrailingPeriod(highlights[0] ?? 'delivered production data pipelines'));
-  const domains = (candidate?.domainExperience ?? []).slice(0, 3).join(', ') || 'multiple industries';
-  const focusAreas = skills.length ? skills.slice(0, 3).join(', ') : 'data engineering';
+  // NO UNGROUNDED CLAIMS, AND NO BORROWED PROFESSION.
+  //
+  // `topHighlight` used to fall back to the literal string 'delivered production
+  // data pipelines'. With an empty workHistory[0].highlights the letter asserted
+  // a specific accomplishment the candidate had never described — in a document
+  // sent to an employer — and for anyone outside data engineering it asserted a
+  // job they had never done. `headline` and `focusAreas` defaulted to
+  // 'data engineer' the same way.
+  //
+  // A missing highlight is now null, and `composeDefault` omits that paragraph
+  // rather than inventing one. This mirrors the rule the resume tailor enforces
+  // with invariants: emit only what the profile evidences.
+  const highlights = (candidate?.workHistory?.[0]?.highlights ?? [])
+    .filter((h) => typeof h === 'string' && h.trim());
+  const topHighlight = highlights.length
+    ? lowerFirst(stripTrailingPeriod(highlights[0]))
+    : null;
+  const domains = (candidate?.domainExperience ?? []).slice(0, 3).join(', ') || null;
+  const stackTerms = Object.values(candidate?.technicalStack ?? {}).flat().filter(Boolean);
+  const focusAreas = skills.length
+    ? skills.slice(0, 3).join(', ')
+    : (stackTerms.slice(0, 3).join(', ') || null);
   return {
-    title: job?.title ?? 'Data Engineer',
+    title: job?.title ?? 'this role',
     company: job?.company ?? 'your company',
-    headline: candidate?.identity?.headline ?? 'data engineer',
+    headline: candidate?.identity?.headline
+      ?? candidate?.targetTitles?.[0]
+      ?? 'candidate',
     years: coverLetter.yearsOfExperience ?? 'several years',
     skills,
     topHighlight,
@@ -89,8 +109,11 @@ function composeDefault(ctx, coverLetter) {
     paragraphs.push(`${t.skillsLead}\n${bullets}`);
   }
 
-  paragraphs.push(fill(t.experience, ctx));
-  paragraphs.push(fill(t.fitNote, ctx));
+  // Both of these are omitted rather than filled with a placeholder when the
+  // profile does not evidence them. A shorter, true letter beats a complete,
+  // invented one.
+  if (ctx.topHighlight) paragraphs.push(fill(t.experience, ctx));
+  if (ctx.focusAreas) paragraphs.push(fill(t.fitNote, ctx));
 
   if (ctx.includeSponsorshipNote) {
     paragraphs.push(fill(t.sponsorshipNote, ctx));

@@ -1,0 +1,23 @@
+{
+  "_note": "TEMPLATE — copy to config/cover_letter.json and replace the placeholder values. cover_letter.json is gitignored because it carries YOUR facts (years of experience, work-authorization wording) into documents sent to employers. This file used to be tracked, so every clone shipped one person’s \"10+ years\" and their H-1B sentence.",
+  "enabled": true,
+  "minScoreToGenerate": 75,
+  "wordCount": {
+    "min": 180,
+    "max": 260
+  },
+  "greeting": "Dear Hiring Team,",
+  "closing": "Sincerely,",
+  "template": {
+    "opening": "I am applying for the {title} role at {company}. As a {headline} with {years} of experience, I am confident my background maps closely to what you are looking for.",
+    "skillsLead": "My core strengths align with your requirements:",
+    "experience": "In my current role I {topHighlight}.",
+    "fitNote": "I focus on {focusAreas}, which appear central to this position.",
+    "sponsorshipNote": "YOUR truthful sponsorship sentence, or set includeSponsorshipNote to false.",
+    "closingParagraph": "I would welcome the chance to discuss how I can contribute to {company}. Thank you for your consideration.",
+    "_note": "Templates are yours to edit. The shipped wording is deliberately profession-neutral: it previously asserted \"building data platforms\" for every candidate. Placeholders that the profile cannot evidence cause their paragraph to be OMITTED, never filled with a guess."
+  },
+  "yearsOfExperience": "YOUR total years of experience (e.g. '8 years')",
+  "includeSponsorshipNote": true,
+  "maxSkillBullets": 5
+}

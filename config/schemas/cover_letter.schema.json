@@ -3,37 +3,110 @@
   "title": "Cover letter config",
   "type": "object",
   "additionalProperties": false,
-  "required": ["enabled", "minScoreToGenerate", "wordCount", "greeting", "closing", "template"],
+  "required": [
+    "enabled",
+    "minScoreToGenerate",
+    "wordCount",
+    "greeting",
+    "closing",
+    "template"
+  ],
   "properties": {
-    "_note": { "type": "string" },
-    "enabled": { "type": "boolean" },
-    "minScoreToGenerate": { "type": "number", "minimum": 0, "maximum": 100 },
+    "_note": {
+      "type": "string"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "minScoreToGenerate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
     "wordCount": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["min", "max"],
+      "required": [
+        "min",
+        "max"
+      ],
       "properties": {
-        "min": { "type": "integer", "minimum": 50 },
-        "max": { "type": "integer", "minimum": 60 }
+        "min": {
+          "type": "integer",
+          "minimum": 50
+        },
+        "max": {
+          "type": "integer",
+          "minimum": 60
+        }
       }
     },
-    "greeting": { "type": "string", "minLength": 1 },
-    "closing": { "type": "string", "minLength": 1 },
+    "greeting": {
+      "type": "string",
+      "minLength": 1
+    },
+    "closing": {
+      "type": "string",
+      "minLength": 1
+    },
     "template": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["opening", "skillsLead", "experience", "fitNote", "sponsorshipNote", "closingParagraph"],
+      "required": [
+        "opening",
+        "skillsLead",
+        "experience",
+        "fitNote",
+        "sponsorshipNote",
+        "closingParagraph"
+      ],
       "properties": {
-        "opening": { "type": "string", "minLength": 1 },
-        "skillsLead": { "type": "string", "minLength": 1 },
-        "experience": { "type": "string", "minLength": 1 },
-        "fitNote": { "type": "string", "minLength": 1 },
-        "sponsorshipNote": { "type": "string", "minLength": 1 },
-        "closingParagraph": { "type": "string", "minLength": 1 }
+        "opening": {
+          "type": "string",
+          "minLength": 1
+        },
+        "skillsLead": {
+          "type": "string",
+          "minLength": 1
+        },
+        "experience": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fitNote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sponsorshipNote": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closingParagraph": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "patternProperties": {
+        "^_": {
+          "type": "string"
+        }
       }
     },
-    "yearsOfExperience": { "type": "string" },
-    "includeSponsorshipNote": { "type": "boolean" },
-    "maxSkillBullets": { "type": "integer", "minimum": 1, "maximum": 12 }
+    "yearsOfExperience": {
+      "type": "string"
+    },
+    "includeSponsorshipNote": {
+      "type": "boolean"
+    },
+    "maxSkillBullets": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 12
+    }
+  },
+  "patternProperties": {
+    "^_": {
+      "type": "string"
+    }
   }
 }

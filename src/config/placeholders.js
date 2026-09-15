@@ -40,6 +40,7 @@
 export const PLACEHOLDER_PATTERNS = [
   // The "YOUR ..." instruction form used throughout the example answers.
   /^your\b/i,
+  /^your\s+total\b/i,
   /\byour truthful\b/i,
   // Example-domain contact details (RFC 2606 reserves example.com for exactly this).
   /@example\.(com|org|net)$/i,
@@ -145,6 +146,38 @@ export function screeningAnswerPlaceholders(screeningAnswers = {}) {
 }
 
 /**
+ * Cover-letter values still holding template text.
+ *
+ * `config/cover_letter.json` used to be TRACKED, so every clone shipped one
+ * person's "10+ years" and their H-1B sentence — and both go verbatim into a
+ * letter addressed to an employer. It is now gitignored with an example like
+ * the other personal configs, which means it needs the same sentinel guard.
+ *
+ * @param {object} coverLetter parsed config/cover_letter.json
+ * @returns {Array<{path: string, label: string, value: string}>}
+ */
+export function coverLetterPlaceholders(coverLetter = {}) {
+  const found = [];
+  if (isPlaceholderValue(coverLetter.yearsOfExperience)) {
+    found.push({
+      path: 'yearsOfExperience',
+      label: 'years of experience (used in the cover letter)',
+      value: String(coverLetter.yearsOfExperience).trim(),
+    });
+  }
+  // Only material when the note is actually emitted.
+  const note = coverLetter?.template?.sponsorshipNote;
+  if (coverLetter.includeSponsorshipNote !== false && isPlaceholderValue(note)) {
+    found.push({
+      path: 'template.sponsorshipNote',
+      label: 'cover-letter sponsorship sentence',
+      value: String(note).trim(),
+    });
+  }
+  return found;
+}
+
+/**
  * Every placeholder across the whole configuration bundle.
  *
  * @param {{candidate?: object, screeningAnswers?: object}} config loadConfig() bundle
@@ -159,6 +192,8 @@ export function findPlaceholders(config = {}) {
     ...candidatePlaceholders(config.candidate).map((p) => ({ ...p, file: 'config/candidate.json' })),
     ...screeningAnswerPlaceholders(config.screeningAnswers)
       .map((p) => ({ ...p, file: 'config/screening_answers.json' })),
+    ...coverLetterPlaceholders(config.coverLetter)
+      .map((p) => ({ ...p, file: 'config/cover_letter.json' })),
   ];
 
   const problems = placeholders.map(
