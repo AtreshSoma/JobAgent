@@ -54,45 +54,37 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   const breakdown = {};
   const matchedAll = new Set();
 
-  // Keyword-coverage categories.
+  // KEYWORD CATEGORIES ARE DECLARATIVE.
   //
-  // dataEngineeringStack folds in devopsInfra/dataQuality/genAI rather than
-  // giving each its own weighted category: CI/CD, Kubernetes, data-quality
-  // tooling, and LLM/RAG work are all measured as real, common asks on modern
-  // data-platform postings (verified against 20k stored JDs: data quality in
-  // 34%, CI/CD in 21%, observability 14%, LLM 11%, Kubernetes 10%), and the
-  // candidate profile already lists this exact stack. Folding them into the
-  // existing 12-point/3-match cap widens which real terms can satisfy it
-  // without touching the weight allocation itself — a job full of modern
-  // platform-engineering terms can now legitimately earn the same credit a
-  // classic ETL/Spark/Kafka job always could, instead of scoring zero here for
-  // not mentioning last decade's tool names.
-  const dataEngineeringTerms = [
-    ...(kw.dataEngineering ?? []), ...(kw.devopsInfra ?? []),
-    ...(kw.dataQuality ?? []), ...(kw.genAI ?? []),
-  ];
-  // SATURATION: how many distinct keyword hits earn full marks for a category.
+  // These were six hardcoded JavaScript identifiers — azureFabricStack,
+  // dataEngineeringStack, biSemanticDepth, pythonSqlPyspark, domainFit and a
+  // titleFit that read a fixed keyword list. Together they own 64 of the 110
+  // available points, so any candidate outside that one stack could not reach
+  // them at all. Measured against perfectly-matching postings, with a floor of
+  // 50: a registered nurse scored 21, a frontend engineer 26, an accountant 27
+  // and a marketing manager 27, while the profile the vocabulary was written
+  // for scored 78. Their theoretical ceiling was 53 — a flawless match barely
+  // cleared the discard line. Discovery already worked for all of them; only
+  // scoring did not.
   //
-  // These were hardcoded literals, and they saturated early enough that depth
-  // was not rewarded over presence: a JD mentioning Azure, Databricks and Delta
-  // Lake once each scored identically to a perfect stack match, and a mediocre
-  // posting cleared 55 before any real fit was established. They are now config
-  // (scoring.saturation), so a different candidate can tune matching without
-  // editing JavaScript — the same argument as the declarative-categories work.
+  // `scoring.categories` replaces them with an iterated array, so a second user
+  // expresses their own field in config instead of editing this file. A
+  // category draws its terms from one of three places:
   //
-  // titleFit stays at 1 deliberately: a title either names the role or it does
-  // not, and that is genuinely binary.
-  const sat = scoring.saturation ?? {};
-  const fullAt = (key, fallback) => {
-    const v = Number(sat[key]);
-    return Number.isFinite(v) && v >= 1 ? v : fallback;
-  };
-  breakdown.titleFit = keywordCategory(titleText, kw.titles, weights.titleFit, fullAt('titleFit', 1), matchedAll);
-  breakdown.azureFabricStack = keywordCategory(text, kw.azureFabric, weights.azureFabricStack, fullAt('azureFabricStack', 3), matchedAll);
-  breakdown.dataEngineeringStack = keywordCategory(text, dataEngineeringTerms, weights.dataEngineeringStack, fullAt('dataEngineeringStack', 3), matchedAll);
-  breakdown.biSemanticDepth = keywordCategory(text, kw.biSemantic, weights.biSemanticDepth, fullAt('biSemanticDepth', 2), matchedAll);
-  breakdown.pythonSqlPyspark = keywordCategory(text, kw.languages, weights.pythonSqlPyspark, fullAt('pythonSqlPyspark', 2), matchedAll);
-  breakdown.domainFit = keywordCategory(text, kw.domains, weights.domainFit, fullAt('domainFit', 1), matchedAll);
+  //   from: 'targetTitles'    -> candidate.targetTitles   (follows the profile)
+  //   from: 'technicalStack'  -> candidate.technicalStack (follows the profile)
+  //   keywords / keywordSet   -> an explicit list in scoring.json
+  //
+  // The first two matter as much as the array does: titleFit used to read
+  // `scoring.keywords.titles`, so adding a target title changed what was
+  // SEARCHED for but not what was SCORED, and the two silently disagreed.
+  const categories = resolveCategories(scoring, candidate);
+  for (const category of categories) {
+    breakdown[category.id] = keywordCategory(
+      category.match === 'title' ? titleText : text,
+      category.terms, category.weight, category.fullAt, matchedAll,
+    );
+  }
 
   // Seniority fit.
   breakdown.seniorityFit = scoreSeniority(job, text, candidate.seniority, weights.seniorityFit);
@@ -120,11 +112,17 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   );
 
   const raw = Object.values(breakdown).reduce((s, b) => s + b.points, 0);
-  const max = Object.values(weights).reduce((s, w) => s + w, 0);
+  // The denominator is the STRUCTURAL weights plus whatever categories were
+  // declared. It cannot be `Object.values(weights)`: on a legacy config the
+  // categories derive their weights from that same object, so summing both
+  // counted every keyword category twice and deflated every score (a strong
+  // match fell from 78 to 52 against an unchanged 75 threshold).
+  const max = STRUCTURAL_WEIGHTS.reduce((s, k) => s + (Number(weights[k]) || 0), 0)
+    + categories.reduce((s, c) => s + c.weight, 0);
   const total = max > 0 ? Math.round((raw / max) * 100) : 0;
 
   const matchedKeywords = [...matchedAll];
-  const missingKeywords = computeMissing(text, candidate, kw, scoring.evidenceAliases);
+  const missingKeywords = computeMissing(text, candidate, kw, scoring.evidenceAliases, categories);
 
   return {
     total,
@@ -135,6 +133,93 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
     missingKeywords,
     sponsorship: sponsorship?.status ?? 'Unconfirmed',
   };
+}
+
+/** Fixed, non-keyword categories. Their weights stay in `scoring.weights`. */
+export const STRUCTURAL_WEIGHTS = Object.freeze([
+  'seniorityFit', 'sponsorshipFeasibility', 'companySponsorshipLikelihood',
+  'geographyFit', 'freshness', 'directAtsAvailability', 'resumeKeywordAlignment',
+]);
+
+/** Flatten `candidate.technicalStack` into a term list. */
+function stackTerms(candidate) {
+  const stack = candidate?.technicalStack ?? {};
+  return Object.values(stack).flat().filter((t) => typeof t === 'string' && t.trim());
+}
+
+/**
+ * Resolve a category's match terms.
+ *
+ * `from` binds a category to the PROFILE so editing the profile changes
+ * scoring; `keywords` / `keywordSet` keep it an explicit vocabulary in
+ * scoring.json. Both are supported because some categories are genuinely about
+ * the candidate (their titles, their stack) and some are about the market
+ * (domains, compliance words) which no profile field carries.
+ */
+function categoryTerms(category, scoring, candidate) {
+  if (category.from === 'targetTitles') {
+    return (candidate?.targetTitles ?? []).filter(Boolean);
+  }
+  if (category.from === 'technicalStack') {
+    return stackTerms(candidate);
+  }
+  if (Array.isArray(category.keywords)) return category.keywords;
+  // `keywordSet` may name one set or several, which is how the legacy
+  // dataEngineeringStack folded four lists into one category.
+  const sets = [].concat(category.keywordSet ?? []);
+  return sets.flatMap((name) => scoring?.keywords?.[name] ?? []);
+}
+
+/**
+ * The keyword categories to score, declarative if configured and otherwise
+ * synthesized from the legacy shape.
+ *
+ * The fallback is not politeness: `scoring.json` files predating
+ * `categories` must keep scoring IDENTICALLY, or every stored score in a
+ * 100k-row database silently changes meaning on upgrade.
+ *
+ * @param {object} scoring parsed config/scoring.json
+ * @param {object} candidate parsed config/candidate.json
+ * @returns {Array<{id, label, weight, fullAt, match, terms}>}
+ */
+export function resolveCategories(scoring = {}, candidate = {}) {
+  const sat = scoring.saturation ?? {};
+  const fullAt = (key, fallback) => {
+    const v = Number(sat[key]);
+    return Number.isFinite(v) && v >= 1 ? v : fallback;
+  };
+
+  if (Array.isArray(scoring.categories) && scoring.categories.length) {
+    return scoring.categories
+      .filter((c) => c && c.id && Number(c.weight) > 0)
+      .map((c) => ({
+        id: String(c.id),
+        label: c.label ?? c.id,
+        weight: Number(c.weight),
+        fullAt: Math.max(1, Number(c.fullAt) || 1),
+        match: c.match === 'title' ? 'title' : 'text',
+        terms: categoryTerms(c, scoring, candidate),
+      }));
+  }
+
+  // ── legacy shape ──────────────────────────────────────────────────────
+  const w = scoring.weights ?? {};
+  const kw = scoring.keywords ?? {};
+  return [
+    { id: 'titleFit', label: 'Title fit', weight: w.titleFit ?? 0, fullAt: fullAt('titleFit', 1), match: 'title', terms: kw.titles ?? [] },
+    { id: 'azureFabricStack', label: 'Azure / Fabric stack', weight: w.azureFabricStack ?? 0, fullAt: fullAt('azureFabricStack', 3), match: 'text', terms: kw.azureFabric ?? [] },
+    {
+      id: 'dataEngineeringStack',
+      label: 'Data engineering stack',
+      weight: w.dataEngineeringStack ?? 0,
+      fullAt: fullAt('dataEngineeringStack', 3),
+      match: 'text',
+      terms: [...(kw.dataEngineering ?? []), ...(kw.devopsInfra ?? []), ...(kw.dataQuality ?? []), ...(kw.genAI ?? [])],
+    },
+    { id: 'biSemanticDepth', label: 'BI / semantic depth', weight: w.biSemanticDepth ?? 0, fullAt: fullAt('biSemanticDepth', 2), match: 'text', terms: kw.biSemantic ?? [] },
+    { id: 'pythonSqlPyspark', label: 'Languages', weight: w.pythonSqlPyspark ?? 0, fullAt: fullAt('pythonSqlPyspark', 2), match: 'text', terms: kw.languages ?? [] },
+    { id: 'domainFit', label: 'Domain fit', weight: w.domainFit ?? 0, fullAt: fullAt('domainFit', 1), match: 'text', terms: kw.domains ?? [] },
+  ].filter((c) => c.weight > 0);
 }
 
 /** Points = weight * min(1, matched/fullAt). */
@@ -298,12 +383,37 @@ export function candidateStackTerms(candidate = {}) {
  * and missingKeywords (alias not substring-matched in the profile), which
  * reads as a contradiction on the dashboard.
  */
-export function computeMissing(text, candidate, kw, evidenceAliases = {}) {
-  const important = [
-    ...(kw.azureFabric ?? []), ...(kw.dataEngineering ?? []),
-    ...(kw.languages ?? []), ...(kw.biSemantic ?? []),
-    ...(kw.devopsInfra ?? []), ...(kw.dataQuality ?? []), ...(kw.genAI ?? []),
-  ];
+export function computeMissing(text, candidate, kw, evidenceAliases = {}, categories = null) {
+  // A GAP NEEDS A VOCABULARY THE CANDIDATE DOES NOT OWN.
+  //
+  // "Missing" means: this JD asks for something you cannot evidence. Finding
+  // those requires a candidate-INDEPENDENT list of skill terms to look for. The
+  // candidate's own stack cannot supply it — every term found that way is by
+  // definition one they already have, so the answer is always "no gaps". (That
+  // circularity was briefly introduced here while making scoring profile-driven,
+  // and is the reason this comment exists.)
+  //
+  // So the vocabulary is the market one: every list under `scoring.keywords`,
+  // plus any category that declares an explicit vocabulary rather than binding
+  // to the profile. A category bound to `targetTitles` or `technicalStack` is
+  // deliberately excluded.
+  //
+  // CONSEQUENCE, stated plainly: gap analysis is only as good as
+  // `scoring.keywords`. A user in another field who leaves those lists as the
+  // shipped data-engineering vocabulary will see few or no gaps — not because
+  // they have none, but because nothing is looking for theirs.
+  // `titles` and `domains` are excluded on principle: a job title is not a skill
+  // you can be missing, and neither is an industry. Including them reported
+  // "data engineer" as a gap on a data-engineering role.
+  const NOT_SKILLS = new Set(['titles', 'domains']);
+  const marketVocabulary = Object.entries(kw ?? {})
+    .filter(([name]) => !NOT_SKILLS.has(name))
+    .flatMap(([, list]) => list ?? []);
+  const declaredVocabulary = (categories ?? [])
+    .filter((c) => c.match !== 'title' && !c.from)
+    .flatMap((c) => c.terms ?? []);
+  const important = [...marketVocabulary, ...declaredVocabulary]
+    .filter((t) => typeof t === 'string' && t.trim());
   const inJd = new Set(matchedPhrases(text, important).map((p) => normalizeText(p)));
   const profileText = normalizeText([
     ...candidateStackTerms(candidate),

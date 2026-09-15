@@ -364,6 +364,73 @@ Phrases now get derived from `candidate.targetTitles` by `deriveSearchTerms`. Gi
 > [!NOTE]
 > **Two tokens, not longer**, because Workday's search *narrows* as words get added. Measured on one tenant: `data` gave 115 hits, `data engineer` gave 51, and a nine-word phrase gave **0**. Override with `searchTexts`, or cap cost with `maxSearchTerms`.
 
+### Using this for a different field
+
+The scoring engine is configurable, but it did not start that way. Six keyword
+categories were hardcoded JavaScript identifiers written for one
+data-engineering profile, and together they own **64 of the 110 available
+points**. Measured against *perfectly matching* postings, with a discard floor
+of 50:
+
+| Candidate | Perfect-match job scored | Outcome |
+| --- | --- | --- |
+| Data engineer *(the built-for profile)* | **78** | Apply |
+| Registered nurse | 21 | ❌ discarded |
+| Frontend engineer | 26 | ❌ discarded |
+| Staff accountant | 27 | ❌ discarded |
+| Marketing manager | 27 | ❌ discarded |
+
+Discovery classified every one of those as a **strong** match — it reads your
+profile and always did. Scoring then threw them away, because the points that
+decide a score could only be earned by naming Azure, Databricks and Power BI.
+Their theoretical ceiling was 53, so a flawless match barely cleared the line.
+
+**`scoring.categories` replaces those six identifiers with an iterated array**,
+and a category can read your profile instead of a fixed list:
+
+```jsonc
+"categories": [
+  { "id": "titleFit",   "weight": 18, "fullAt": 1, "match": "title",
+    "from": "targetTitles" },      // follows candidate.targetTitles
+  { "id": "coreSkills", "weight": 30, "fullAt": 6,
+    "from": "technicalStack" },    // follows candidate.technicalStack
+  { "id": "domainFit",  "weight": 6,  "fullAt": 1, "keywordSet": "domains" }
+]
+```
+
+One command writes that for you, reading your own resume for the skill list:
+
+```bash
+npm run scoring:init                          # dry run — shows what would change
+npm run scoring:init -- --apply --from-resume # write it, keeping a .bak
+npm run score                                 # re-score the board
+```
+
+With it, the same five personas score **72–84** on their own field's jobs — and
+every *mismatched* pairing still scores **14–21**, well under the floor. It is
+not "score everything highly"; it is the same discrimination, applied to
+whoever is actually using the tool.
+
+> [!NOTE]
+> **Nothing breaks if you ignore this.** Omit the `categories` array and the
+> scorer falls back to the legacy `weights` + `keywords` shape, scoring
+> identically — asserted by an equivalence test, because otherwise every stored
+> score in a 100k-row database would silently change meaning on upgrade.
+
+> [!IMPORTANT]
+> `coreSkills` is 30 points and reads `candidate.technicalStack`. Switching with
+> an empty stack makes matching **worse**, not better, so `scoring:init` refuses
+> to apply until the profile has at least five skill terms. `--from-resume`
+> fills them from your resume's skills section. Your skills do not have to be
+> software — `ACLS`, `GAAP`, `Month-End Close` and `Epic EHR` all work.
+
+**One honest limit.** Gap analysis ("skills this job wants that you lack") needs
+a vocabulary you do *not* own — your own stack cannot supply it, or the answer
+is always "no gaps". It reads `scoring.keywords`, which ships as a
+data-engineering vocabulary. Until you replace those lists with your field's
+terms, gaps will be sparse: not because you have none, but because nothing is
+looking for yours. Scoring and discovery are unaffected.
+
 ### Changing your resume does not change your search — on purpose
 
 Discovery follows `candidate.targetTitles`. The master resume is not read until tailoring time, so **uploading a new resume does not, by itself, change a single search**. That used to be silent: swap in a resume for a different role and the pipeline kept searching the old one indefinitely.

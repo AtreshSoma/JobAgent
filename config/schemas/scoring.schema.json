@@ -265,6 +265,74 @@
         "type": "integer",
         "minimum": 1
       }
+    },
+    "categories": {
+      "type": "array",
+      "description": "Declarative keyword-scoring categories. Replaces the six hardcoded ones, which owned 64 of 110 points and could only be earned by one data-engineering vocabulary. Omit this array entirely to fall back to the legacy weights/keywords shape unchanged.",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "weight"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0
+          },
+          "fullAt": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Distinct term hits that earn full marks. Higher rewards depth over presence."
+          },
+          "match": {
+            "enum": [
+              "title",
+              "text"
+            ],
+            "description": "'title' matches the job title only; 'text' matches title + description."
+          },
+          "from": {
+            "enum": [
+              "targetTitles",
+              "technicalStack"
+            ],
+            "description": "Draw terms from the PROFILE, so editing candidate.json changes scoring."
+          },
+          "keywords": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "An explicit inline term list."
+          },
+          "keywordSet": {
+            "description": "Name (or names) of a list under scoring.keywords.",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          }
+        }
+      }
     }
   },
   "patternProperties": {
