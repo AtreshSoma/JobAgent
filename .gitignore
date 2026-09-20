@@ -15,6 +15,13 @@ config/screening_answers.json
 !config/candidate.example.json
 !config/screening_answers.example.json
 
+# Saved search profiles. These hold the same personal data candidate.json does
+# -- name, contact details, work authorization, pay expectations -- and more of
+# it, since a profile also stores the background parsed out of a resume. The
+# taxonomy they are matched against (config/role_families.json) is shared,
+# impersonal data and IS tracked.
+config/profiles/
+
 # Timestamped backups written by scripts/harvestSources.mjs --apply
 config/*.bak
 
@@ -128,3 +135,9 @@ Thumbs.db
 # which holds real git worktrees. A worktree is a checkout, never a thing to
 # commit into the repo it belongs to.
 .claude/
+
+# Design skills vendored by `npx skills add` (third-party Markdown, ~324 KB).
+# Ignored like node_modules: the content is someone else's, reinstallable in one
+# command, and skills-lock.json records exactly which ones and at what hash.
+# Delete this line if you would rather version them with the project.
+.agents/

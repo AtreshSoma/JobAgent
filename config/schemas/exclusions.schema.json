@@ -21,68 +21,140 @@
     "sponsorshipDenial": {
       "type": "array",
       "description": "Phrases that indicate sponsorship will not be provided. Any match discards the job. Matched IN ADDITION to the generic negation-aware detector in utils/sponsorshipLanguage.js, which catches refusal constructions no fixed list can enumerate.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "securityClearance": {
       "type": "array",
       "description": "Phrases indicating a clearance requirement.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "roleMismatch": {
       "type": "array",
       "description": "Phrases indicating the role does not match the target profile. Matched against the TITLE (plus employmentType) only, since a role's identity is stated in its title -- matching them against the JD body made senior roles disqualify themselves for saying 'mentor junior engineers'.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "roleMismatchBody": {
       "type": "array",
       "description": "Role-mismatch phrases that are genuine statements about scope in the JD body ('frontend only') and so are matched against the FULL text rather than the title.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "employmentMismatch": {
       "type": "array",
       "description": "Phrases indicating an unacceptable employment arrangement.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "geographyMismatch": {
       "type": "array",
       "description": "Phrases indicating an unacceptable location/timezone.",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "geography": {
       "type": "object",
       "additionalProperties": true,
       "description": "Optional US-only location gate. Discards jobs whose location field names a non-US country/city with no US signal.",
       "properties": {
-        "usOnly": { "type": "boolean" },
-        "usLocationMarkers": { "type": "array", "items": { "type": "string" } },
-        "nonUsLocationMarkers": { "type": "array", "items": { "type": "string" } }
+        "usOnly": {
+          "type": "boolean"
+        },
+        "usLocationMarkers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "nonUsLocationMarkers": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "staleness": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["skipOlderThanDays", "flagOlderThanDays", "highApplicantThreshold"],
+      "required": [
+        "skipOlderThanDays",
+        "flagOlderThanDays",
+        "highApplicantThreshold"
+      ],
       "properties": {
-        "skipOlderThanDays": { "type": "integer", "minimum": 1 },
-        "flagOlderThanDays": { "type": "integer", "minimum": 1 },
-        "highApplicantThreshold": { "type": "integer", "minimum": 1 }
+        "skipOlderThanDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "flagOlderThanDays": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "highApplicantThreshold": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "clearanceAllowance": {
       "type": "array",
       "description": "Phrases that, if present, keep a clearance-tagged role (e.g. explicitly open to visa holders).",
-      "items": { "type": "string" }
+      "items": {
+        "type": "string"
+      }
     },
     "employmentTypes": {
       "type": "object",
       "additionalProperties": true,
       "description": "Config-driven markers for Full-time vs Contract categorization (does not discard; see employmentMismatch for exclusions).",
       "properties": {
-        "defaultToFullTime": { "type": "boolean" },
-        "contract": { "type": "array", "items": { "type": "string" } },
-        "contractToHire": { "type": "array", "items": { "type": "string" } },
-        "partTime": { "type": "array", "items": { "type": "string" } },
-        "fullTime": { "type": "array", "items": { "type": "string" } }
+        "defaultToFullTime": {
+          "type": "boolean"
+        },
+        "contract": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "contractToHire": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "partTime": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "fullTime": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "_generatedFrom": {
+      "type": "string",
+      "description": "Set when the seniority and geography rules here were derived from the active search profile."
+    },
+    "roleMismatchDerived": {
+      "type": "array",
+      "description": "Seniority exclusions derived from the active profile's DESIRED level. Kept separate from the hand-written roleMismatch list so activating a different profile never silently edits the user's own rules. A candidate targeting entry level gets an EMPTY list here, where the shipped file hardcoded \"junior\"/\"entry level\"/\"intern\".",
+      "items": {
+        "type": "string"
       }
     }
   }

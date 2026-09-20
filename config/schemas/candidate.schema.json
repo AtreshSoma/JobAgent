@@ -71,8 +71,17 @@
       ],
       "properties": {
         "email": {
-          "type": "string",
-          "format": "email"
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "email"
+            },
+            {
+              "type": "string",
+              "maxLength": 0
+            }
+          ],
+          "description": "May be empty on a freshly created search profile. Required before applying \u2014 doctor enforces that; the schema only has to stay loadable."
         },
         "phone": {
           "type": "string"
@@ -124,7 +133,11 @@
           "minLength": 1
         },
         "requiresSponsorship": {
-          "type": "boolean"
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "true / false, or null when the candidate has not stated it. Null is NOT \"no\": an unstated requirement must never be answered on a form, so it stays unstated all the way down and doctor reports it as a missing required field."
         },
         "details": {
           "type": "string"
@@ -132,7 +145,11 @@
       }
     },
     "sponsorshipRequired": {
-      "type": "boolean"
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "Mirror of workAuthorization.requiresSponsorship; null when unstated."
     },
     "targetTitles": {
       "type": "array",
@@ -144,14 +161,20 @@
     "seniority": {
       "type": "string",
       "enum": [
+        "intern",
+        "entry",
         "junior",
+        "associate",
         "mid",
         "senior",
         "lead",
-        "principal",
         "staff",
-        "manager"
-      ]
+        "principal",
+        "manager",
+        "director",
+        "executive"
+      ],
+      "description": "Desired level. Extended from the original seven values, which had no rung below \"junior\" and none above \"principal\" \u2014 an intern, a new graduate, a director and a VP could not state their own level at all."
     },
     "employmentPreferences": {
       "type": "object",
@@ -174,7 +197,8 @@
               "contract-to-hire"
             ]
           },
-          "minItems": 1
+          "minItems": 0,
+          "description": "May be empty, meaning \"no employment-type preference\". The previous minimum of 1 made an empty preference unrepresentable, so a profile created from a resume could not be saved."
         },
         "minContractMonths": {
           "type": "integer",
@@ -401,7 +425,7 @@
     },
     "startDate": {
       "type": "string",
-      "minLength": 1
+      "description": "Availability, e.g. \"Two weeks from offer\". May be empty until stated: discovery does not use it, and `npm run doctor` reports it as a gap before applying."
     },
     "prohibited": {
       "type": "object",
@@ -427,8 +451,41 @@
     },
     "skillExperience": {
       "type": "object",
-      "description": "OPTIONAL per-skill durations: the only honest source for a qualified \"how many years of experience with X?\" question. Without an entry the question is deferred to you — a career total must never stand in for a specific skill. Keys are skill names as an ATS would write them; values are free text (\"8 years\", \"None\").",
+      "description": "OPTIONAL per-skill durations: the only honest source for a qualified \"how many years of experience with X?\" question. Without an entry the question is deferred to you \u2014 a career total must never stand in for a specific skill. Keys are skill names as an ATS would write them; values are free text (\"8 years\", \"None\").",
       "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "_generatedFrom": {
+      "type": "string",
+      "description": "Set when this file was DERIVED from a stored search profile (config/profiles/*.json). Edit the profile, not this file \u2014 activating a profile overwrites it."
+    },
+    "searchPhrases": {
+      "type": "array",
+      "description": "The few free-text phrases discovery actually SENDS to job boards, as opposed to targetTitles which is what it RECOGNIZES and SCORES. Boards narrow as tokens are added, so a small set cover of the target roles finds more than a long list of literal titles would \u2014 and costs one request per phrase instead of one per title. Derived by activating a search profile; adapters fall back to targetTitles when it is absent.",
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 12
+    },
+    "yearsExperience": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "Total years of professional experience, from the active profile's background. Read by the cover-letter writer so the sentence \"As a {headline} with {years} of experience\" follows whoever is applying, instead of the one value that used to live in cover_letter.json for everybody."
+    },
+    "anchorTitles": {
+      "type": "array",
+      "description": "The roles the candidate actually stated, plus level variations of them. These are DECISIVE: a posting whose title contains one is accepted outright. Kept separate from adjacentTitles because a decisive match must only ever be something the candidate asked for.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "adjacentTitles": {
+      "type": "array",
+      "description": "Role-family siblings judged to be the same work under a name the candidate did not state (e.g. BI Engineer for an Analytics Engineer). Recognized and scored, but never decisive and never sent to a job board \u2014 so they widen recall without widening the search.",
+      "items": {
         "type": "string"
       }
     }

@@ -16,6 +16,7 @@ import dotenv from 'dotenv';
 import { SCHEMA_FILES, createValidator, assertValidConfig } from './validateConfig.js';
 import { getRuntimeSettings } from '../utils/credentialManager.js';
 import { configureGateThreshold } from '../scoring/explainScore.js';
+import { normalizeProfile } from '../profile/model.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -172,6 +173,21 @@ export function loadConfig({ root = PROJECT_ROOT, loadEnv = true, env = process.
   bundle.runtime = getRuntimeSettings(env);
   bundle.root = root;
 
+  // The ACTIVE SEARCH PROFILE, when one has been activated.
+  //
+  // Nothing in the pipeline reads this: candidate.json, scoring.json and
+  // exclusions.json are REGENERATED from the profile at activation time
+  // (src/profile/store.js), which is what lets every existing consumer stay
+  // unchanged. It is surfaced here so the dashboard and the CLI can say WHOSE
+  // search is running and offer to switch it — a run that silently uses the
+  // previous candidate's titles is the failure this whole model exists to
+  // prevent, and it can only be reported if the answer is loaded.
+  //
+  // Read inline rather than through src/profile/store.js, which imports this
+  // module for `readJson` and would form a cycle. Never fatal: a missing or
+  // corrupt profile leaves the pipeline running on the config files as written.
+  bundle.profile = readActiveProfile(root);
+
   // Consumers that only ever see a DB row (the dashboard data layer, the
   // auto-apply precheck) derive "was this downgraded by the sponsorship gate?"
   // from tier + score, because the flag is not a stored column. They need the
@@ -182,4 +198,21 @@ export function loadConfig({ root = PROJECT_ROOT, loadEnv = true, env = process.
   configureGateThreshold(bundle.scoring?.tiers?.apply);
 
   return Object.freeze(bundle);
+}
+
+/**
+ * The active profile, or null. Best effort by design — see `loadConfig`.
+ *
+ * @param {string} root project root
+ * @returns {object|null} normalized profile
+ */
+export function readActiveProfile(root) {
+  try {
+    const pointer = join(root, 'config', 'profiles', '_active.json');
+    const id = readJson(pointer)?.id;
+    if (!id || !/^[a-z0-9][a-z0-9-]*$/.test(String(id))) return null;
+    return normalizeProfile(readJson(join(root, 'config', 'profiles', `${id}.json`)));
+  } catch {
+    return null;
+  }
 }
