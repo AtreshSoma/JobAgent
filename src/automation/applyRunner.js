@@ -197,7 +197,13 @@ export async function assistApply({
   // Packet-level truthfulness. Plan entries carry their question `label`, so
   // this also catches an affirmative answer to an INVERTED sponsorship question
   // (a bare "Yes" whose text looks innocent but whose meaning is false).
-  const truthCheck = assertTruthfulSponsorship(packet?.screeningPlan?.answered ?? []);
+  // Judged against the candidate's OWN requirement: the same sentence is a lie
+  // for one person and the truth for another, and the packet is built from a
+  // profile that states which.
+  const truthCheck = assertTruthfulSponsorship(packet?.screeningPlan?.answered ?? [], {
+    requiresSponsorship: config?.candidate?.workAuthorization?.requiresSponsorship
+      ?? config?.candidate?.sponsorshipRequired,
+  });
   result.sponsorshipTruthful = truthCheck.truthful;
   if (!truthCheck.truthful) {
     result.blockers.push(`sponsorship answer not truthful: ${truthCheck.violations.join('; ')}`);
@@ -851,6 +857,72 @@ function currentUrlOf(page) {
 }
 
 /**
+ * Text an ERROR page shows. Matched against the page's visible text and title,
+ * never the raw HTML — every large site ships these same strings inside its
+ * JavaScript bundles as templates for errors that have not happened.
+ */
+const SUBMIT_FAILURE_RE = new RegExp([
+  '\\b[45]\\d{2}\\b[^.]{0,20}\\b(error|forbidden|not found|unavailable|bad gateway|timeout)',
+  '\\binternal server error\\b',
+  '\\bservice (?:is )?(?:temporarily )?unavailable\\b',
+  '\\bbad gateway\\b',
+  '\\bgateway time-?out\\b',
+  '\\bpage (?:not found|cannot be found|is unavailable)\\b',
+  '\\bsomething went wrong\\b',
+  '\\ban? (?:unexpected |unknown )?error (?:has )?occurred\\b',
+  '\\bwe(?:\'|’)?re having (?:some )?(?:technical )?(?:trouble|difficulties)\\b',
+  '\\byour session (?:has )?expired\\b',
+  '\\bapplication error\\b',
+  '\\brequest (?:has )?failed\\b',
+].join('|'), 'i');
+
+/**
+ * Visible-ish text of an HTML document: scripts, styles and markup removed.
+ *
+ * Confirmation and failure phrases both appear verbatim inside bundled
+ * JavaScript on most ATSes, so matching raw HTML reports whichever template the
+ * page happens to ship rather than what it is actually showing a human.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+export function visibleText(html = '') {
+  return String(html ?? '')
+    .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Does this page say the request FAILED?
+ *
+ * Verification treated "the URL changed and the form is gone" as proof of
+ * submission, and both of those are equally true of a redirect to an error
+ * page. Reproduced against a mock: a redirect to an HTTP 500 page returned
+ * `status: "submitted", submitted: true`, on the evidence "page navigated,
+ * form gone" — and because the tracker then counts the job as applied, the
+ * duplicate guard discourages the retry that would have actually submitted it.
+ *
+ * So the absence of a form is no longer read as success on its own. An error
+ * page vetoes verification outright, including over a confirmation phrase: a
+ * page showing both is ambiguous, and the cost of being wrong here is a human
+ * checking their email, against an application the user believes they sent and
+ * did not.
+ *
+ * @param {{status?: number|null, html?: string}} page
+ * @returns {string|null} the reason, or null when nothing says failure
+ */
+export function submissionFailureSignal({ status = null, html = '' } = {}) {
+  if (Number.isFinite(status) && status >= 400) return `server responded ${status}`;
+  const text = visibleText(html);
+  const title = (String(html ?? '').match(/<title[^>]*>([\s\S]*?)<\/title>/i) ?? [])[1] ?? '';
+  const hit = SUBMIT_FAILURE_RE.exec(title) ?? SUBMIT_FAILURE_RE.exec(text.slice(0, 4000));
+  return hit ? `error page (${hit[0].trim().slice(0, 60)})` : null;
+}
+
+/**
  * Verify that a clicked Submit actually submitted.
  *
  * Evidence accepted (guard must not be blocked — a post-submit CAPTCHA is not
@@ -883,7 +955,22 @@ async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
     formGone = Array.isArray(fields) && fields.length === 0;
   } catch { formGone = false; }
 
-  if (SUBMIT_CONFIRMATION_RE.test(html)) signals.push('confirmation message');
+  // NEGATIVE EVIDENCE FIRST. A failed submission looks exactly like a
+  // successful one to the two weaker signals below — it navigates somewhere new
+  // and it has no form on it. See `submissionFailureSignal`.
+  const failure = submissionFailureSignal({ status: after.status ?? null, html });
+  if (failure) {
+    return {
+      verified: false,
+      signals: [failure],
+      lastUrl: after.url ?? currentUrlOf(page) ?? beforeUrl,
+    };
+  }
+
+  // Matched against visible text, not raw HTML: "thank you for applying" ships
+  // inside the JavaScript bundle of many ATSes as the template for a page the
+  // applicant has not reached yet.
+  if (SUBMIT_CONFIRMATION_RE.test(visibleText(html))) signals.push('confirmation message');
   const urlChanged = Boolean(after.url && beforeUrl && after.url !== beforeUrl);
   if (urlChanged) signals.push('page navigated');
   if (formGone) signals.push('form gone');

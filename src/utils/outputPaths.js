@@ -3,7 +3,7 @@
  *
  * Every generated application artifact lives under:
  *
- *   applications/output/{Company Name}/{Job Title}_{JobID-or-PostedDate}/
+ *   applications/output/{Company Name}/{Job Title}_{Date}_{JobID hash}/
  *     {Candidate_Name}_Resume_{Job_Title}.docx
  *     {Candidate_Name}_Resume_{Job_Title}.pdf
  *     {Candidate_Name}_Cover_Letter_{Job_Title}.(pdf|txt)
@@ -18,6 +18,7 @@
  * so the two can never drift apart.
  */
 
+import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
 
 /** Candidate name fallback if config is unavailable. */
@@ -126,6 +127,32 @@ export function candidatePrefix(fullName = DEFAULT_CANDIDATE_NAME) {
  * @param {unknown} value
  * @returns {string}
  */
+/**
+ * Short, stable, filename-safe discriminator for one job id.
+ *
+ * WHY A FOLDER NEEDS ONE. The folder was `{Company}/{Title}_{Date}`, which is
+ * not unique: two different requisitions at the same company with the same
+ * title, prepared on the same day, resolved to the SAME folder — so the second
+ * one's tailored resume, cover letter and packet overwrote the first one's.
+ * Reproduced. The first job's approval then pointed at a packet describing the
+ * second job, which breaks the approval boundary outright: the human reviewed
+ * one posting and the documents on disk were for another.
+ *
+ * A hash rather than the raw id because ids are source-specific and can be
+ * long, URL-ish or contain characters no filesystem wants. Eight hex characters
+ * is 4 billion values against a handful of same-company-same-title-same-day
+ * collisions, and it is deterministic, so re-preparing a job reuses its folder
+ * instead of littering a new one.
+ *
+ * @param {unknown} jobId
+ * @returns {string} 8 hex characters, or '' when there is no id
+ */
+export function jobDiscriminator(jobId) {
+  const id = String(jobId ?? '').trim();
+  if (!id) return '';
+  return createHash('sha1').update(id).digest('hex').slice(0, 8);
+}
+
 export function folderDateOrId(value) {
   const s = String(value ?? '').trim();
   if (!s) return 'undated';
@@ -154,13 +181,20 @@ export function folderDateOrId(value) {
  * }}
  */
 export function buildJobPaths({
-  root, company, title, dateOrId, candidateName = DEFAULT_CANDIDATE_NAME, fromSlug = false,
+  root, company, title, dateOrId, jobId = '', candidateName = DEFAULT_CANDIDATE_NAME, fromSlug = false,
 }) {
   const companyName = fromSlug ? deslug(company) : fsSafeSegment(company);
   const titleName = fromSlug ? deslug(title) : fsSafeSegment(title);
   const companyFolder = fsSafeSegment(companyName) || 'Unknown Company';
   const titleFolder = fsSafeSegment(titleName) || 'Untitled Role';
-  const jobFolder = `${titleFolder}_${folderDateOrId(dateOrId)}`;
+  // The job discriminator is what makes this path identify ONE requisition.
+  // Omitted (migration script, legacy callers) the name is unchanged, so
+  // existing folders keep resolving; supplied, two same-titled roles at the
+  // same employer on the same day can no longer overwrite each other.
+  const discriminator = jobDiscriminator(jobId);
+  const jobFolder = discriminator
+    ? `${titleFolder}_${folderDateOrId(dateOrId)}_${discriminator}`
+    : `${titleFolder}_${folderDateOrId(dateOrId)}`;
 
   const relFolder = join('applications', 'output', companyFolder, jobFolder);
   const folder = join(root, relFolder);

@@ -6,6 +6,7 @@ import { realpathSync, readFileSync, statSync } from 'node:fs';
 import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { isInsideDirectory } from '../utils/pathSafe.js';
 import { loadPacket } from '../cli/commands.js';
+import { effectiveAnswers } from '../apply/screeningQA.js';
 
 // Chrome uses chrome-extension://<id>; current Edge builds may expose the
 // equivalent extension://<id> origin to a loopback server. Chromium extension
@@ -63,7 +64,12 @@ export function buildExtensionPayload({ db, config, jobId, loadPacketImpl = load
     },
     approval: { approved: true, stopBeforeSubmit: true },
     profile: extensionProfile(config?.candidate),
-    screeningAnswers: (config?.screeningAnswers?.answers ?? []).map((item) => ({
+    // `effectiveAnswers`, not `.answers` — the browser extension is a SECOND
+    // fill path, and reading the raw array here bypassed the profile-derived
+    // answers entirely. After switching profiles it would have handed the
+    // previous candidate's work authorization, pay expectation and years of
+    // experience to the browser while the CLI filler used the right ones.
+    screeningAnswers: effectiveAnswers(config?.screeningAnswers).map((item) => ({
       id: item.id, patterns: item.patterns ?? [], answer: item.answer, type: item.type ?? 'text',
     })),
     artifacts: {

@@ -1,5 +1,5 @@
 {
-  "_note": "TEMPLATE — copy to config/candidate.json and fill in with YOUR real details. candidate.json is gitignored because it contains personal data. Never fabricate skills, history, certifications, or authorization.",
+  "_note": "TEMPLATE \u2014 copy to config/candidate.json and fill in with YOUR real details. candidate.json is gitignored because it contains personal data. Never fabricate skills, history, certifications, or authorization.",
   "identity": {
     "fullName": "Jane Doe",
     "preferredName": "Jane",
@@ -26,7 +26,7 @@
   "workAuthorization": {
     "status": "US Citizen | Green Card | H-1B | OPT | ...",
     "requiresSponsorship": false,
-    "details": "Describe your authorization truthfully — this is used verbatim in screening answers."
+    "details": "Describe your authorization truthfully \u2014 this is used verbatim in screening answers."
   },
   "sponsorshipRequired": false,
   "targetTitles": [
@@ -36,7 +36,11 @@
   ],
   "seniority": "senior",
   "employmentPreferences": {
-    "types": ["W2", "fulltime", "contract-to-hire"],
+    "types": [
+      "W2",
+      "fulltime",
+      "contract-to-hire"
+    ],
     "minContractMonths": 12,
     "requiresW2": true
   },
@@ -44,19 +48,34 @@
     "remote": true,
     "onsite": false,
     "hybrid": true,
-    "preferredRegions": ["United States"],
+    "preferredRegions": [
+      "United States"
+    ],
     "excludedLocations": [],
     "excludedTimezones": []
   },
   "technicalStack": {
-    "cloud": ["Azure"],
-    "dataEngineering": ["Azure Data Factory", "Databricks", "PySpark"],
-    "languages": ["Python", "SQL"],
-    "biAndModeling": ["Power BI"],
-    "orchestration": ["Azure DevOps"],
+    "cloud": [
+      "Azure"
+    ],
+    "dataEngineering": [
+      "Azure Data Factory",
+      "Databricks",
+      "PySpark"
+    ],
+    "languages": [
+      "Python",
+      "SQL"
+    ],
+    "biAndModeling": [
+      "Power BI"
+    ],
+    "orchestration": [
+      "Azure DevOps"
+    ],
     "other": []
   },
-  "_skillExperienceNote": "OPTIONAL. Per-skill years, used ONLY to answer questions that name a skill (\"How many years of experience do you have with X?\"). Anything not listed here is deferred to you rather than answered from your career total — that is deliberate: a total is not experience with a named tool. Example: { \"python\": \"8 years\", \"sap abap\": \"None\" }",
+  "_skillExperienceNote": "OPTIONAL. Per-skill years, used ONLY to answer questions that name a skill (\"How many years of experience do you have with X?\"). Anything not listed here is deferred to you rather than answered from your career total \u2014 that is deliberate: a total is not experience with a named tool. Example: { \"python\": \"8 years\", \"sap abap\": \"None\" }",
   "skillExperience": {},
   "certifications": [],
   "domainExperience": [],
@@ -82,9 +101,9 @@
     }
   ],
   "salaryPreference": {
-    "display": "Around $150,000 (negotiable)",
-    "minAnnualUSD": 150000,
-    "targetAnnualUSD": 150000,
+    "display": "",
+    "minAnnualUSD": null,
+    "targetAnnualUSD": null,
     "currency": "USD"
   },
   "relocationPreference": {

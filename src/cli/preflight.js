@@ -9,6 +9,15 @@ import { join } from 'node:path';
 
 import { requiredProfileGaps } from './doctor.js';
 import { findPlaceholders } from '../config/placeholders.js';
+import { resumeProfileMismatch } from '../profile/resumeIdentity.js';
+
+/**
+ * Re-exported so existing callers and tests keep importing it from here. The
+ * implementation moved to src/profile/resumeIdentity.js so that
+ * `preparePacket` — the chokepoint every preparation path goes through — can
+ * run the same check without pulling a CLI module into the core pipeline.
+ */
+export { resumeProfileMismatch };
 
 /**
  * Minimal hard-requirement gate: required candidate fields and the master
@@ -32,6 +41,8 @@ export function quickPreflight(config) {
   const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
   if (!existsSync(master)) {
     problems.push('Master resume not found at resumes/base/MASTER_RESUME.docx — it is the read-only source for tailoring.');
+  } else {
+    problems.push(...resumeProfileMismatch(config, master));
   }
   return { ok: problems.length === 0, problems };
 }

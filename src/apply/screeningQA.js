@@ -13,8 +13,31 @@
 
 import { normalizeText, normalizeForMatch, wholeWordIn } from '../utils/textNormalize.js';
 
-/** Phrases an answer must never contain (would misrepresent the candidate). */
-const FORBIDDEN_ANSWER_FRAGMENTS = [
+/**
+ * SPONSORSHIP TRUTH IS A PROPERTY OF THE PERSON, NOT A CONSTANT.
+ *
+ * This used to be one absolute blocklist of phrases an answer must never
+ * contain. Every phrase on it claimed the candidate needs NO sponsorship, which
+ * is a lie for someone on an H-1B — and the plain truth for a US citizen.
+ *
+ * Measured, before this change, for a candidate whose profile says
+ * `requiresSponsorship: false`:
+ *
+ *   answer  "No, I do not require sponsorship to work in the United States."
+ *   ->  assertTruthfulSponsorship  : { truthful: false }
+ *   ->  validateAnswerEntry        : refused to SAVE it
+ *   ->  answerScreeningQuestion    : refused to USE it -> ask_user, every time
+ *
+ * So the one machine in this repo built to stop a false statement reaching an
+ * employer was preventing a truthful one instead, and sending every sponsorship
+ * question to manual handling for anyone who does not need sponsorship.
+ *
+ * The rule is now symmetric and reads the profile: a claim is forbidden when it
+ * CONTRADICTS the candidate's stated requirement, in whichever direction.
+ */
+
+/** Claims the candidate needs NO sponsorship. Untrue when they do. */
+const NO_SPONSORSHIP_CLAIMS = [
   'no sponsorship required',
   'do not require sponsorship',
   'does not require sponsorship',
@@ -22,7 +45,30 @@ const FORBIDDEN_ANSWER_FRAGMENTS = [
   'no visa sponsorship needed',
 ];
 
-export { FORBIDDEN_ANSWER_FRAGMENTS };
+/**
+ * Claims the candidate DOES need sponsorship. Untrue when they do not.
+ *
+ * Matched only when stated AFFIRMATIVELY (see `claimsAffirmatively`): the
+ * truthful answer "No, I do not require sponsorship" contains the substring
+ * "require sponsorship", so a plain `includes` test here would forbid exactly
+ * the sentence this change exists to permit.
+ */
+const NEEDS_SPONSORSHIP_CLAIMS = [
+  'require sponsorship', 'requires sponsorship', 'will require sponsorship',
+  'need sponsorship', 'needs sponsorship', 'will need sponsorship',
+  'require visa sponsorship', 'need visa sponsorship',
+  'require an employer to sponsor', 'need an employer to sponsor',
+  'requires an employer to sponsor', 'seeking sponsorship',
+  'h-1b transfer', 'h1b transfer', 'require a visa', 'need a visa',
+];
+
+/**
+ * Kept for the callers and tests that import it, and still exactly the set of
+ * claims forbidden when the candidate's requirement is unknown.
+ */
+const FORBIDDEN_ANSWER_FRAGMENTS = NO_SPONSORSHIP_CLAIMS;
+
+export { FORBIDDEN_ANSWER_FRAGMENTS, NO_SPONSORSHIP_CLAIMS, NEEDS_SPONSORSHIP_CLAIMS };
 
 /**
  * Questions about sponsorship / visa / work authorization. An answer here is a
@@ -91,18 +137,25 @@ export function isInvertedSponsorshipQuestion(question) {
  *      pure phrase blocklist can never catch.
  *
  * @param {Array<{answer?: string, value?: string, label?: string, question?: string}>} answers
+ * @param {object} [options]
+ * @param {boolean} [options.requiresSponsorship] the candidate's real requirement.
+ *   Omitted means unknown — see `contradictingSponsorshipClaim`.
  * @returns {{ truthful: boolean, violations: string[] }}
  */
-export function assertTruthfulSponsorship(answers = []) {
+export function assertTruthfulSponsorship(answers = [], { requiresSponsorship } = {}) {
   const violations = [];
   for (const a of answers) {
     const text = String(a?.answer ?? a?.value ?? '');
-    if (isForbidden(text)) {
+    if (isForbidden(text, requiresSponsorship)) {
       violations.push(text);
       continue;
     }
     const question = String(a?.label ?? a?.question ?? '');
-    if (question && isInvertedSponsorshipQuestion(question) && AFFIRMATIVE_RE.test(text)) {
+    // "Yes" to "can you work WITHOUT sponsorship?" is a misrepresentation only
+    // for someone who needs sponsorship. For a candidate who does not, it is
+    // simply the right answer, and flagging it would block the truth again.
+    if (requiresSponsorship !== false
+      && question && isInvertedSponsorshipQuestion(question) && AFFIRMATIVE_RE.test(text)) {
       violations.push(
         `"${text.trim()}" answers an inverted sponsorship question ("${question.trim()}") `
         + 'as if no sponsorship were needed',
@@ -247,7 +300,7 @@ export function lookupSkillExperience(subject, candidate) {
  */
 export function answerScreeningQuestion(question, screeningAnswers, { choices, candidate } = {}) {
   const text = normalizeText(question);
-  const answers = screeningAnswers.answers ?? [];
+  const answers = effectiveAnswers(screeningAnswers);
   const defaults = screeningAnswers.defaults ?? {};
 
   // A QUALIFIED duration question ("years of experience with SAP ABAP") can only
@@ -311,8 +364,9 @@ export function answerScreeningQuestion(question, screeningAnswers, { choices, c
   }
 
   const answer = String(best.answer ?? '');
-  // Safety net: refuse to emit any forbidden (misrepresenting) answer.
-  if (isForbidden(answer)) {
+  // Safety net: refuse to emit any answer that CONTRADICTS the candidate's own
+  // stated work authorization — in either direction.
+  if (isForbidden(answer, candidate?.workAuthorization?.requiresSponsorship)) {
     return askUser(defaults);
   }
 
@@ -324,6 +378,60 @@ export function answerScreeningQuestion(question, screeningAnswers, { choices, c
   }
 
   return { answered: true, action: 'answer', matchedId: best.id, answer, type: best.type ?? 'text', confidence: bestScore };
+}
+
+/**
+ * The answers to match against: the active profile's DERIVED answers, then the
+ * user's own.
+ *
+ * Derived entries replace a stored entry with the same id and are listed first,
+ * so on an equal match they win. That precedence is the point: the stored
+ * `require_sponsorship` and `work_authorization` entries state a person's
+ * immigration status, and after switching profiles they describe the WRONG
+ * person. A generated answer cannot disagree with the profile it came from.
+ *
+ * Everything the profile does not state is left entirely alone, so hand-written
+ * answers to questions only the user can answer survive untouched.
+ *
+ * @param {object} screeningAnswers parsed config/screening_answers.json
+ * @returns {object[]} entries to match, highest precedence first
+ */
+export function effectiveAnswers(screeningAnswers = {}) {
+  const stored = Array.isArray(screeningAnswers.answers) ? screeningAnswers.answers : [];
+  const derived = Array.isArray(screeningAnswers.derivedAnswers) ? screeningAnswers.derivedAnswers : [];
+  // Questions the ACTIVE PROFILE owns, whether or not it could answer them.
+  //
+  // Shadowing by derived id alone left a hole exactly where it mattered most.
+  // A profile that states its salary replaces the previous person's salary
+  // answer; a profile that states NOTHING derives nothing, shadows nothing,
+  // and the previous person's answer remains the best match for the question.
+  // Measured: a profile with no stated experience and no stated salary
+  // answered "12+ years" and "180,000 USD", both somebody else's.
+  //
+  // So silence shadows too. An owned question the profile cannot answer is
+  // withheld entirely and falls through to the human, which is the honest
+  // outcome — the alternative is a confident statement about a person that
+  // nobody made about them.
+  const owned = new Set(
+    (Array.isArray(screeningAnswers.profileOwnedAnswerIds) ? screeningAnswers.profileOwnedAnswerIds : [])
+      .map((id) => String(id ?? '').toLowerCase()).filter(Boolean),
+  );
+  const derivedIds = new Set(derived.map((e) => String(e?.id ?? '').toLowerCase()).filter(Boolean));
+  if (!derived.length && !owned.size) return stored;
+
+  // An owned question the user answered THEMSELVES, under the profile that is
+  // active now, is still their answer and is still used. `profileId` is stamped
+  // when the answer is saved (see `upsertScreeningAnswer`); an answer with no
+  // stamp predates profiles, so it cannot be shown to belong to this candidate
+  // and is withheld.
+  const activeProfileId = String(screeningAnswers.profileId ?? '');
+  const keep = (entry) => {
+    const id = String(entry?.id ?? '').toLowerCase();
+    if (derivedIds.has(id)) return false;       // the profile answered it itself
+    if (!owned.has(id)) return true;            // not a profile-owned question
+    return Boolean(activeProfileId) && String(entry?.profileId ?? '') === activeProfileId;
+  };
+  return [...derived, ...stored.filter(keep)];
 }
 
 /**
@@ -390,9 +498,60 @@ function mapToChoice(answer, type, choices) {
   return partial ?? null;
 }
 
-function isForbidden(answer) {
-  const a = answer.toLowerCase();
-  return FORBIDDEN_ANSWER_FRAGMENTS.some((f) => a.includes(f));
+/**
+ * Framings that MENTION a requirement without asserting it: questions,
+ * conditionals, and the second-person instructions used in template text.
+ *
+ * Needed because a phrase test alone cannot tell a claim from a prompt. The
+ * shipped placeholder "state whether you need visa sponsorship now or in the
+ * future" contains the phrase and no negation, and was read as the candidate
+ * asserting they need sponsorship — which then refused to save an unrelated
+ * answer in the same file.
+ */
+const NON_ASSERTION_RE =
+  /\b(whether|if\s+you|do\s+you|does\s+the|are\s+you|will\s+you|would\s+you|can\s+you|please|state\s+|e\.?g\.?|for\s+example|your\s+truthful)\b/i;
+
+/**
+ * Does `text` assert `phrase` rather than merely mention or deny it?
+ *
+ * Clause-scoped on purpose. "No, I do not require sponsorship" and "I require
+ * sponsorship" both contain the phrase; only the second one claims it. Splitting
+ * on clause boundaries keeps a negation attached to the clause it governs, so a
+ * "not" elsewhere in a long answer cannot silently excuse a real claim.
+ */
+function claimsAffirmatively(text, phrase) {
+  const lower = String(text ?? '').toLowerCase();
+  if (!lower.includes(phrase)) return false;
+  for (const clause of lower.split(/[.;!?\n,]/)) {
+    if (!clause.includes(phrase)) continue;
+    if (NEGATION_RE.test(clause)) continue;
+    if (NON_ASSERTION_RE.test(clause)) continue;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The claim in `answer` that contradicts the candidate's real status, or null.
+ *
+ * @param {string} answer
+ * @param {boolean|null|undefined} requiresSponsorship from the candidate profile.
+ *   `undefined`/`null` means UNKNOWN, which keeps the historical behaviour: only
+ *   "I need no sponsorship" claims are forbidden. Unknown is never treated as
+ *   "does not require", because that would forbid a sponsorship-needing
+ *   candidate's truthful answer whenever the profile failed to load.
+ * @returns {string|null}
+ */
+export function contradictingSponsorshipClaim(answer, requiresSponsorship) {
+  const text = String(answer ?? '').toLowerCase();
+  if (requiresSponsorship === false) {
+    return NEEDS_SPONSORSHIP_CLAIMS.find((f) => claimsAffirmatively(text, f)) ?? null;
+  }
+  return NO_SPONSORSHIP_CLAIMS.find((f) => text.includes(f)) ?? null;
+}
+
+function isForbidden(answer, requiresSponsorship) {
+  return contradictingSponsorshipClaim(answer, requiresSponsorship) !== null;
 }
 
 /**

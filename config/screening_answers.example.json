@@ -1,5 +1,5 @@
 {
-  "_note": "TEMPLATE — copy to config/screening_answers.json and fill in YOUR truthful answers. screening_answers.json is gitignored because it contains personal data (salary, EEO, authorization). If no high-confidence match exists, the system PAUSES and asks the user. Never answer 'no sponsorship required' unless it is true. All answers must be truthful.",
+  "_note": "TEMPLATE \u2014 copy to config/screening_answers.json and fill in YOUR truthful answers. screening_answers.json is gitignored because it contains personal data (salary, EEO, authorization). If no high-confidence match exists, the system PAUSES and asks the user. Never answer 'no sponsorship required' unless it is true. All answers must be truthful.",
   "defaults": {
     "unknownAction": "ask_user",
     "salaryFallback": "Open / Negotiable"
@@ -12,7 +12,7 @@
         "how many years",
         "total experience"
       ],
-      "answer": "10+ years",
+      "answer": "YOUR total years of professional experience.",
       "type": "text"
     },
     {
@@ -42,7 +42,7 @@
         "sponsor you for an immigration",
         "need visa sponsorship"
       ],
-      "answer": "YOUR truthful sponsorship answer (e.g. 'No.' or 'Yes, I will require sponsorship.').",
+      "answer": "YOUR truthful sponsorship answer \u2014 state whether you need visa sponsorship now or in the future.",
       "type": "text"
     },
     {
@@ -64,7 +64,7 @@
         "base salary expectation",
         "what salary"
       ],
-      "answer": "Around $150,000 per year (negotiable based on total compensation)",
+      "answer": "YOUR salary expectation, or the range you would accept.",
       "type": "text"
     },
     {
@@ -75,7 +75,7 @@
         "availability to start",
         "notice period"
       ],
-      "answer": "Two weeks from offer",
+      "answer": "YOUR availability, e.g. how much notice you need.",
       "type": "text"
     },
     {

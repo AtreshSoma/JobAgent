@@ -79,22 +79,61 @@ function buildContext(job, scoreResult, candidate, coverLetter) {
     ? lowerFirst(stripTrailingPeriod(highlights[0]))
     : null;
   const domains = (candidate?.domainExperience ?? []).slice(0, 3).join(', ') || null;
-  const stackTerms = Object.values(candidate?.technicalStack ?? {}).flat().filter(Boolean);
+  // EVIDENCED SKILLS ONLY. `technicalStack.growth` is what the candidate wants
+  // to LEARN, and flattening the whole stack put those terms into a sentence
+  // introduced by "My core strengths align with your requirements" — a letter
+  // sent to an employer claiming skills the person had explicitly marked as
+  // ones they do not yet have.
+  // Every bucket EXCEPT growth, rather than a fixed list of bucket names: a
+  // legacy flat stack names its buckets freely (`cloud`, `languages`, …) and
+  // an allow-list would silently drop all of them.
+  const stack = candidate?.technicalStack ?? {};
+  const evidencedTerms = Object.entries(stack)
+    .filter(([bucket]) => bucket !== 'growth')
+    .flatMap(([, terms]) => (Array.isArray(terms) ? terms : [terms]))
+    .filter((t) => typeof t === 'string' && t.trim());
   const focusAreas = skills.length
     ? skills.slice(0, 3).join(', ')
-    : (stackTerms.slice(0, 3).join(', ') || null);
+    : (evidencedTerms.slice(0, 3).join(', ') || null);
+  // PERSONAL FACTS COME FROM THE PROFILE, NOT FROM THE TEMPLATE FILE.
+  //
+  // `cover_letter.json` is one shared file, and two of its values are facts
+  // about a specific human: `yearsOfExperience` ("10+ years") and a
+  // `sponsorshipNote` naming a specific visa ("...on an H-1B visa"). Switching
+  // profiles left both in place, so a second candidate's letter — a document
+  // sent to an employer — stated another person's experience and immigration
+  // status. The template stays configurable; the facts it interpolates now
+  // follow whoever is actually applying.
+  // `=== true`, not truthiness: the requirement is tri-state and an UNSTATED
+  // one must not produce a sentence about sponsorship in either direction.
+  const requiresSponsorship = (candidate?.workAuthorization?.requiresSponsorship
+    ?? candidate?.sponsorshipRequired) === true;
+  const authStatus = String(candidate?.workAuthorization?.status ?? '').trim();
   return {
     title: job?.title ?? 'this role',
     company: job?.company ?? 'your company',
     headline: candidate?.identity?.headline
       ?? candidate?.targetTitles?.[0]
       ?? 'candidate',
-    years: coverLetter.yearsOfExperience ?? 'several years',
+    // NO BORROWED TENURE. The fallbacks here were `cover_letter.json`'s
+    // `yearsOfExperience` — one person's number in a file everyone shares, so
+    // a second candidate's letter opened by claiming the first one's career —
+    // and failing that the literal string "several years", which is a claim
+    // about a stranger's career made by a template. When the profile cannot
+    // evidence a number, the sentence that needs one is dropped instead (see
+    // `composeDefault`).
+    years: candidateYears(candidate),
     skills,
     topHighlight,
     domains,
     focusAreas,
-    includeSponsorshipNote: coverLetter.includeSponsorshipNote && candidate?.workAuthorization?.requiresSponsorship,
+    authStatus: authStatus || 'authorized to work',
+    includeSponsorshipNote: coverLetter.includeSponsorshipNote && requiresSponsorship,
+    // A sentence generated from THIS candidate's stated status, used in place of
+    // the configured one whenever the two would disagree about the visa.
+    sponsorshipSentence: authStatus
+      ? `I am currently ${authStatus} and am seeking an employer able to support continued sponsorship.`
+      : null,
   };
 }
 
@@ -102,7 +141,11 @@ function composeDefault(ctx, coverLetter) {
   const t = coverLetter.template;
   const paragraphs = [];
 
-  paragraphs.push(fill(t.opening, ctx));
+  // `fill` can return nothing at all when every sentence needed an unstated
+  // fact, so each paragraph is pushed only when it still says something.
+  const add = (text) => { if (text && text.trim()) paragraphs.push(text); };
+
+  add(fill(t.opening, ctx));
 
   if (ctx.skills.length) {
     const bullets = ctx.skills.map((s) => `- ${s}`).join('\n');
@@ -112,15 +155,47 @@ function composeDefault(ctx, coverLetter) {
   // Both of these are omitted rather than filled with a placeholder when the
   // profile does not evidence them. A shorter, true letter beats a complete,
   // invented one.
-  if (ctx.topHighlight) paragraphs.push(fill(t.experience, ctx));
-  if (ctx.focusAreas) paragraphs.push(fill(t.fitNote, ctx));
+  if (ctx.topHighlight) add(fill(t.experience, ctx));
+  if (ctx.focusAreas) add(fill(t.fitNote, ctx));
 
   if (ctx.includeSponsorshipNote) {
-    paragraphs.push(fill(t.sponsorshipNote, ctx));
+    // The configured sentence is used only when it does not name a DIFFERENT
+    // status than this candidate's. A template saying "on an H-1B visa" is
+    // correct for the person who wrote it and false for the next one.
+    add(
+      ctx.sponsorshipSentence && namesAnotherStatus(t.sponsorshipNote, ctx.authStatus)
+        ? ctx.sponsorshipSentence
+        : fill(t.sponsorshipNote, ctx),
+    );
   }
 
-  paragraphs.push(fill(t.closingParagraph, ctx));
+  add(fill(t.closingParagraph, ctx));
   return paragraphs.join('\n\n');
+}
+
+/**
+ * Years of professional experience this candidate can actually evidence.
+ *
+ * Read from the profile's background (via the generated candidate config) so it
+ * follows whoever is applying. Returns null when unknown, and the caller falls
+ * back to the configured value rather than inventing a number.
+ */
+function candidateYears(candidate) {
+  const years = candidate?.background?.yearsExperience ?? candidate?.yearsExperience;
+  return Number.isFinite(Number(years)) && Number(years) > 0 ? `${Number(years)}+ years` : null;
+}
+
+/** Visa and status words a template might name explicitly. */
+const STATUS_WORDS = /\b(h-?1-?b|h-?4|l-?1|o-?1|tn|e-?3|f-?1|opt|cpt|j-?1|green\s+card|permanent\s+resident|us\s+citizen|citizen)\b/i;
+
+/**
+ * Does the configured sentence name a work-authorization status OTHER than this
+ * candidate's? If so it cannot be used for them.
+ */
+function namesAnotherStatus(template, authStatus) {
+  const named = String(template ?? '').match(STATUS_WORDS);
+  if (!named) return false;
+  return !new RegExp(named[0].replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').test(String(authStatus ?? ''));
 }
 
 /** Drop optional trailing paragraphs (then sentences) to satisfy max words. */
@@ -147,8 +222,44 @@ function enforceWordCount(body, wordCount = {}) {
   return trimmed;
 }
 
+/**
+ * Fill a template, DROPPING any sentence whose facts the profile cannot supply.
+ *
+ * A missing value used to interpolate as an empty string, which is how the
+ * opening read "As a Data Engineer with  of experience" — and, worse, why the
+ * generator reached for a shared template number and then the phrase "several
+ * years" to avoid that gap. Both were claims about a career nobody had
+ * described.
+ *
+ * Removing the sentence keeps the letter grammatical and keeps every remaining
+ * claim grounded, which is the same rule the resume tailor enforces with
+ * invariants: emit only what the profile evidences. A `null` context value
+ * means "not stated"; an empty string is still a deliberate value and fills.
+ *
+ * @param {string} template
+ * @param {object} ctx
+ * @returns {string} the filled text, possibly shorter, possibly empty
+ */
 function fill(template, ctx) {
-  return template.replace(/\{(\w+)\}/g, (_, key) => (ctx[key] !== undefined ? String(ctx[key]) : ''));
+  const TOKEN = /\{(\w+)\}/g;
+  const unresolved = (text) => {
+    TOKEN.lastIndex = 0;
+    let m;
+    while ((m = TOKEN.exec(text)) !== null) {
+      const value = ctx[m[1]];
+      if (value === undefined || value === null) return true;
+    }
+    return false;
+  };
+  const substitute = (text) => text.replace(TOKEN, (_, key) => String(ctx[key] ?? ''));
+
+  const source = String(template ?? '');
+  if (!unresolved(source)) return substitute(source);
+
+  // Split on sentence ends, keeping the terminator with its sentence.
+  const sentences = source.match(/[^.!?]+[.!?]*\s*/g) ?? [source];
+  const kept = sentences.filter((s) => s.trim() && !unresolved(s));
+  return kept.join('').replace(/\s+/g, ' ').trim();
 }
 
 function countWords(s) {

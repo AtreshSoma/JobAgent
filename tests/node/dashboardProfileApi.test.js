@@ -11,7 +11,7 @@
  *      fills the new values instead of the ones loaded at boot.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -174,15 +174,55 @@ describe('dashboard application profile API', () => {
     expect(body.questions.openCount).toBe(1);
   });
 
+  /**
+   * Set the stated work authorization in the temp root.
+   *
+   * Sponsorship truthfulness is judged against the candidate's OWN requirement,
+   * so a test about a false claim has to say whose claim it is. The same
+   * sentence is a misrepresentation for one person and the plain truth for
+   * another, and asserting either without fixing this value tests nothing.
+   */
+  function setSponsorshipRequirement(requiresSponsorship) {
+    const file = join(root, 'config', 'candidate.json');
+    const candidate = JSON.parse(readFileSync(file, 'utf8'));
+    candidate.workAuthorization.requiresSponsorship = requiresSponsorship;
+    candidate.sponsorshipRequired = requiresSponsorship;
+    writeFileSync(file, `${JSON.stringify(candidate, null, 2)}\n`);
+  }
+
   it('refuses an answer that would misstate work authorization', async () => {
+    setSponsorshipRequirement(true);
     const { status, body } = await post('/api/profile/questions/answer', {
       id: 'sponsor_claim', patterns: ['visa sponsorship needed'], answer: 'No sponsorship required',
     });
     expect(status).toBe(400);
-    expect(body.error).toMatch(/misstate your work authorization/i);
+    expect(body.error).toMatch(/contradicts the work authorization in your profile/i);
+  });
+
+  it('accepts that same answer for a candidate who needs no sponsorship', async () => {
+    // The mirror case, and the one that used to be impossible: an absolute
+    // blocklist refused to save a US citizen's truthful answer.
+    setSponsorshipRequirement(false);
+    const { status } = await post('/api/profile/questions/answer', {
+      id: 'sponsor_claim', patterns: ['visa sponsorship needed'], answer: 'No sponsorship required',
+    });
+    expect(status).toBe(200);
+  });
+
+  it('refuses an inherited claim that contradicts the current profile', async () => {
+    // The leak a profile switch would otherwise carry: the previous candidate's
+    // H-1B answer, still on file, under a profile that needs no sponsorship.
+    setSponsorshipRequirement(false);
+    const { status, body } = await post('/api/profile/questions/answer', {
+      id: 'sponsor_claim', patterns: ['visa sponsorship needed'],
+      answer: 'Yes, I will require sponsorship (H-1B transfer).',
+    });
+    expect(status).toBe(400);
+    expect(body.error).toMatch(/contradicts/i);
   });
 
   it('refuses an affirmative answer to a reversed sponsorship question', async () => {
+    setSponsorshipRequirement(true);
     const { status, body } = await post('/api/profile/questions/answer', {
       id: 'auth_ok', patterns: ['legally authorized'], answer: 'Yes',
       question: 'Can you work in the United States without sponsorship?',

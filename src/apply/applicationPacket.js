@@ -24,6 +24,83 @@ import { buildUploadPlan } from './fileUpload.js';
 import { nowIso } from '../utils/dates.js';
 
 /**
+ * Who a packet belongs to.
+ *
+ * WHY A PACKET NEEDS AN OWNER. There is one master resume, one job store and
+ * one approvals table, and packets carried nothing identifying the candidate
+ * they were built for. So after switching profiles, "Auto-fill" reused an
+ * existing approval and packet without ever asking whose they were: the new
+ * candidate's application was filled from documents, screening answers and a
+ * cover letter prepared for the previous one.
+ *
+ * The stamp is deliberately more than a name. Two profiles can describe the
+ * same person searching in two directions, with different target roles,
+ * screening answers and tailored resumes, so identity alone would wave through
+ * a packet built under different search intent.
+ *
+ * @param {object} [config] loadConfig() bundle
+ * @returns {{profileId: string|null, profileLabel: string|null, candidateName: string,
+ *            candidateEmail: string, resumeFingerprint: string|null}}
+ */
+export function packetOwner(config = {}) {
+  const identity = config.candidate?.identity ?? {};
+  return {
+    profileId: config.profile?.id ?? null,
+    profileLabel: config.profile?.label ?? null,
+    candidateName: String(identity.fullName ?? '').trim(),
+    candidateEmail: String(config.candidate?.contact?.email ?? '').trim().toLowerCase(),
+    resumeFingerprint: config.resumeFingerprint ?? null,
+  };
+}
+
+/** Compare two owner-ish values the way a human would: trimmed, case-insensitive. */
+const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+
+/**
+ * Does this packet belong to the candidate the config currently describes?
+ *
+ * Returns the REASON when it does not, so the caller can tell the user which
+ * mismatch it found rather than silently rebuilding.
+ *
+ * A packet from before this field existed has no owner recorded. That is
+ * treated as unknown-but-usable rather than foreign: refusing every historical
+ * packet would strand work the user already reviewed and approved, and the
+ * profile-switch leak this guards against is a going-forward problem. The
+ * packet does carry the candidate name in its documents, so a legacy packet
+ * whose name disagrees is still caught below.
+ *
+ * @param {object} packet loaded application packet
+ * @param {object} config loadConfig() bundle
+ * @returns {{ok: boolean, reason: string|null}}
+ */
+export function packetOwnershipCheck(packet, config = {}) {
+  const current = packetOwner(config);
+  const owner = packet?.owner ?? null;
+  if (!owner) {
+    // Legacy packet: fall back to the one identity it has always carried.
+    const named = String(packet?.candidateName ?? '').trim();
+    if (named && current.candidateName && !sameText(named, current.candidateName)) {
+      return { ok: false, reason: `it was prepared for ${named}, not ${current.candidateName}` };
+    }
+    return { ok: true, reason: null };
+  }
+  if (owner.candidateName && current.candidateName && !sameText(owner.candidateName, current.candidateName)) {
+    return { ok: false, reason: `it was prepared for ${owner.candidateName}, not ${current.candidateName}` };
+  }
+  if (owner.candidateEmail && current.candidateEmail && owner.candidateEmail !== current.candidateEmail) {
+    return { ok: false, reason: `it was prepared for ${owner.candidateEmail}, not ${current.candidateEmail}` };
+  }
+  if (owner.profileId && current.profileId && owner.profileId !== current.profileId) {
+    return {
+      ok: false,
+      reason: `it was prepared under the "${owner.profileLabel ?? owner.profileId}" search profile, `
+        + `and "${current.profileLabel ?? current.profileId}" is active now`,
+    };
+  }
+  return { ok: true, reason: null };
+}
+
+/**
  * @param {object} args
  * @param {object} args.job normalized job
  * @param {object} args.score scoreJob result
@@ -43,7 +120,7 @@ export function buildApplicationPacket({
   job, score, tier, candidate, screeningAnswers,
   resumePath, resumeTailored = false, resumeWarning = null,
   resumePdfPath = null, resumePreviewWarning = null, resumeValidation = null, atsReport = null,
-  tailoring = null,
+  tailoring = null, owner = null,
   coverLetter, coverLetterPath, formFields = [], html = '',
 }) {
   const ats = detectAts({ url: job.url, html });
@@ -74,6 +151,16 @@ export function buildApplicationPacket({
   return {
     id: randomUUID(),
     createdAt: nowIso(),
+    // WHOSE APPLICATION THIS IS. Read back by `packetOwnershipCheck` before any
+    // path reuses a stored packet, so a packet built for one candidate can
+    // never be filled onto another candidate's application. See `packetOwner`.
+    owner: owner ?? {
+      profileId: null,
+      profileLabel: null,
+      candidateName: String(candidate?.identity?.fullName ?? '').trim(),
+      candidateEmail: String(candidate?.contact?.email ?? '').trim().toLowerCase(),
+      resumeFingerprint: null,
+    },
     job: {
       id: job.id, company: job.company, title: job.title, url: job.url,
       source: job.source, location: job.location,

@@ -23,16 +23,17 @@
  *      phrase blocklist alone cannot catch.
  */
 
-import { copyFileSync, existsSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
 import { readJson, CONFIG_FILES } from './loadConfig.js';
 import { SCHEMA_FILES, createValidator, validateConfig } from './validateConfig.js';
 import {
-  FORBIDDEN_ANSWER_FRAGMENTS, assertTruthfulSponsorship, isInvertedSponsorshipQuestion,
-} from '../apply/screeningQA.js';
+  validateAnswerEntry, MAX_ANSWER_CHARS, MAX_ANSWER_ENTRIES,
+} from './screeningAnswerRules.js';
 import { valueForField } from '../apply/formPrefill.js';
+import { readActiveProfile, saveProfile } from '../profile/store.js';
 
 /**
  * The fields the form filler can actually put on an application, each mapped to
@@ -68,15 +69,34 @@ const PROFILE_PATHS = new Set(PROFILE_FIELDS.map((f) => f.path));
 /** Longest value accepted in a profile box — these are form fields, not essays. */
 const MAX_PROFILE_VALUE_CHARS = 300;
 
-/** Longest screening answer. Some ATSes take a paragraph; none take a book. */
-const MAX_ANSWER_CHARS = 2000;
-
-/** Most screening-answer entries. Well past a complete real-world set. */
-const MAX_ANSWER_ENTRIES = 400;
-
 const candidatePath = (root) => join(root, 'config', CONFIG_FILES.candidate);
 const screeningPath = (root) => join(root, 'config', CONFIG_FILES.screeningAnswers);
 const candidateSchemaPath = (root) => join(root, 'config', 'schemas', SCHEMA_FILES.candidate);
+
+/**
+ * The candidate's real sponsorship requirement, read from candidate.json.
+ *
+ * Returns `undefined` when it cannot be determined, which the truthfulness
+ * checks treat as UNKNOWN rather than as "does not require" — guessing the
+ * permissive answer is the one mistake that could let a false claim through.
+ *
+ * @param {string} root
+ * @returns {boolean|undefined}
+ */
+export function sponsorshipRequirement(root) {
+  try {
+    const candidate = readJson(candidatePath(root));
+    const value = candidate?.workAuthorization?.requiresSponsorship ?? candidate?.sponsorshipRequired;
+    return typeof value === 'boolean' ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The active search profile's id, or null. Never throws. */
+function activeProfileId(root) {
+  try { return readActiveProfile(root)?.id ?? null; } catch { return null; }
+}
 
 /** Read a dotted path out of an object. */
 function getPath(object, path) {
@@ -169,8 +189,56 @@ export function writeProfile(root, values = {}) {
   assertCandidateValid(root, candidate);
   const backup = keepPreviousVersion(path);
   writeFileAtomic(path, `${JSON.stringify(candidate, null, 2)}\n`);
-  return { path, backup, changed };
+  // candidate.json is a GENERATED VIEW when a search profile is active, so
+  // writing only here is a save that quietly expires. See `writeThroughToProfile`.
+  const profile = changed.length ? writeThroughToProfile(root, values) : null;
+  return { path, backup, changed, profile };
 }
+
+/**
+ * Mirror an edit back into the active SEARCH PROFILE.
+ *
+ * WHY A SECOND WRITE. Activating a profile REGENERATES candidate.json from
+ * `config/profiles/<id>.json` — that is the seam that makes profiles work. This
+ * editor wrote only candidate.json, so a save looked successful, survived until
+ * the next activation, and was then silently replaced by the profile's older
+ * value. Reproduced: saving a changed email and reactivating the same profile
+ * brought the old email back. A save the user is told succeeded has to be a
+ * save that lasts.
+ *
+ * Only the identity / contact / location fields this editor owns are written,
+ * and they live at the same paths in both shapes, so the mirror is a direct
+ * copy rather than a mapping that could drift. A failure here must NOT fail the
+ * save: candidate.json is already correct on disk and is what the filler reads;
+ * the profile is reported back so the caller can surface the discrepancy.
+ *
+ * @param {string} root
+ * @param {Record<string, string>} values the same dotted paths writeProfile took
+ * @returns {{id: string, written: boolean, error?: string}|null} null when no
+ *   profile is active (candidate.json is then the source of truth already)
+ */
+function writeThroughToProfile(root, values) {
+  let active = null;
+  try {
+    active = readActiveProfile(root);
+  } catch {
+    return null;
+  }
+  if (!active) return null;
+  try {
+    const next = JSON.parse(JSON.stringify(active));
+    for (const [key, raw] of Object.entries(values)) {
+      if (!PROFILE_PATHS.has(key)) continue;
+      setPath(next, key, String(raw ?? '').replace(/\s+/g, ' ').trim());
+    }
+    const saved = saveProfile(root, next);
+    return { id: saved.id, written: true };
+  } catch (err) {
+    return { id: active.id, written: false, error: err.message };
+  }
+}
+
+
 
 /** Most target titles worth searching. Each one costs requests on every run. */
 const MAX_TARGET_TITLES = 40;
@@ -243,6 +311,37 @@ export function adoptResumeEvidence(root, { titles = [], skills = [] } = {}) {
   }
 
   candidate.targetTitles = currentTitles;
+  /*
+   * AN ADOPTED TITLE IS A STATED TITLE.
+   *
+   * `targetTitles` is the union of two tiers, and only `anchorTitles` is
+   * DECISIVE in the title gate (src/scoring/profileFit.js). Writing the union
+   * alone left a title the user had just explicitly chosen sitting outside the
+   * decisive tier: "Lakehouse Developer" adopted from their own resume scored a
+   * title priority of 1 — the same as any unrecognized in-family title — rather
+   * than the 4 a stated role gets, and would have been DEFERRED entirely had it
+   * fallen outside the family vocabulary.
+   *
+   * Only maintained when the tiers already exist. A candidate.json written by
+   * hand has neither key, and there everything is an anchor already.
+   */
+  if (Array.isArray(candidate.anchorTitles)) {
+    const anchors = [...candidate.anchorTitles];
+    const haveAnchors = new Set(anchors.map(keyOf));
+    for (const title of addedTitles) {
+      if (haveAnchors.has(keyOf(title))) continue;
+      haveAnchors.add(keyOf(title));
+      anchors.push(title);
+    }
+    candidate.anchorTitles = anchors;
+    // An adopted title outranks a guess: if the expansion had previously
+    // offered the same role as merely adjacent, promote it rather than letting
+    // it sit in both tiers saying two different things.
+    if (Array.isArray(candidate.adjacentTitles)) {
+      candidate.adjacentTitles = candidate.adjacentTitles
+        .filter((t) => !haveAnchors.has(keyOf(t)));
+    }
+  }
   candidate.technicalStack = { ...stack, other };
   // Once the user has adopted anything, the profile is theirs, not a template.
   delete candidate._note;
@@ -311,6 +410,7 @@ export function readScreeningAnswers(root) {
       exists: false,
       defaults: { unknownAction: 'ask_user' },
       answers: [],
+      derivedAnswers: [],
       error: 'config/screening_answers.json does not exist yet — copy config/screening_answers.example.json, or save an answer here to create it.',
     };
   }
@@ -321,75 +421,29 @@ export function readScreeningAnswers(root) {
       exists: true,
       defaults: doc.defaults ?? { unknownAction: 'ask_user' },
       answers: Array.isArray(doc.answers) ? doc.answers : [],
+      // Surfaced separately, never merged into `answers`: the editor must show
+      // the user their own file, and show what the profile is overriding.
+      derivedAnswers: Array.isArray(doc.derivedAnswers) ? doc.derivedAnswers : [],
     };
   } catch (err) {
-    return { path, exists: true, defaults: {}, answers: [], error: err.message };
+    return { path, exists: true, defaults: {}, answers: [], derivedAnswers: [], error: err.message };
   }
 }
 
 /**
- * Validate one screening-answer entry.
- *
- * `question` is the ORIGINAL form label when the entry is being created from a
- * queued question. It matters: an affirmative answer to an inverted sponsorship
- * question ("Can you work without sponsorship?" -> "Yes") reads as innocuous
- * text but asserts something false, and only the question reveals that. The
- * runner already refuses to auto-answer those; refusing to store one keeps the
- * two consistent.
- *
- * @param {object} entry {id, patterns, answer, type}
- * @param {{question?: string}} [context]
- * @returns {{valid: boolean, error: string|null}}
+ * Re-exported from `./screeningAnswerRules.js`, where it now lives so that
+ * `src/profile/store.js` can validate derived answers without importing this
+ * module (which must import IT, to write an edit back into the active search
+ * profile). Callers and tests keep importing it from here.
  */
-export function validateAnswerEntry(entry, { question } = {}) {
-  const fail = (error) => ({ valid: false, error });
-  if (!entry || typeof entry !== 'object') return fail('an answer entry must be an object');
-
-  const id = String(entry.id ?? '').trim();
-  if (!id) return fail('give the answer an id (a short name like "years_experience")');
-  if (!/^[a-z0-9][a-z0-9_-]*$/i.test(id)) {
-    return fail('the id may only contain letters, numbers, hyphens and underscores');
-  }
-
-  const patterns = Array.isArray(entry.patterns)
-    ? entry.patterns.map((p) => String(p ?? '').trim()).filter(Boolean)
-    : [];
-  if (patterns.length === 0) return fail('add at least one pattern — the phrase that identifies this question on a form');
-  for (const pattern of patterns) {
-    if (!/[a-z0-9]$/i.test(pattern)) {
-      // The matcher wraps a pattern in word boundaries, so one ending in "?" or
-      // ":" can never match anything. Failing loudly here beats saving an
-      // answer that silently never fires.
-      return fail(`the pattern "${pattern}" ends in punctuation — it would never match. Remove the trailing character.`);
-    }
-    if (isInvertedSponsorshipQuestion(pattern)) {
-      return fail(`"${pattern}" is a reversed sponsorship question. Those are always left for you to answer by hand, `
-        + 'so an answer saved for it would never be used.');
-    }
-  }
-
-  const answer = String(entry.answer ?? '');
-  if (!answer.trim()) return fail('the answer cannot be empty');
-  if (answer.length > MAX_ANSWER_CHARS) {
-    return fail(`that answer is ${answer.length} characters — the limit is ${MAX_ANSWER_CHARS}`);
-  }
-  const forbidden = FORBIDDEN_ANSWER_FRAGMENTS.find((f) => answer.toLowerCase().includes(f));
-  if (forbidden) {
-    return fail(`that answer contains "${forbidden}", which would misstate your work authorization. `
-      + 'State your real status instead.');
-  }
-  const truth = assertTruthfulSponsorship([{ answer, label: question ?? '' }]);
-  if (!truth.truthful) return fail(truth.violations[0]);
-
-  return { valid: true, error: null };
-}
+export { validateAnswerEntry, MAX_ANSWER_CHARS, MAX_ANSWER_ENTRIES };
 
 /**
  * Validate a whole screening-answers document.
  * @param {object} doc
  * @returns {{valid: boolean, error: string|null}}
  */
-export function validateScreeningAnswers(doc) {
+export function validateScreeningAnswers(doc, { requiresSponsorship } = {}) {
   if (!doc || typeof doc !== 'object') return { valid: false, error: 'the screening answers must be an object' };
   const unknownAction = doc.defaults?.unknownAction ?? 'ask_user';
   if (!['ask_user', 'skip'].includes(unknownAction)) {
@@ -402,7 +456,7 @@ export function validateScreeningAnswers(doc) {
   }
   const seen = new Set();
   for (const entry of answers) {
-    const check = validateAnswerEntry(entry);
+    const check = validateAnswerEntry(entry, { requiresSponsorship });
     if (!check.valid) return { valid: false, error: `answer "${entry?.id ?? '(no id)'}": ${check.error}` };
     const id = String(entry.id).trim().toLowerCase();
     if (seen.has(id)) return { valid: false, error: `two answers share the id "${entry.id}" — ids must be unique` };
@@ -417,14 +471,21 @@ export function validateScreeningAnswers(doc) {
  * @param {object} doc
  * @returns {{path: string, backup: string|null, count: number}}
  */
-export function writeScreeningAnswers(root, doc) {
-  const check = validateScreeningAnswers(doc);
+export function writeScreeningAnswers(root, doc, { requiresSponsorship = sponsorshipRequirement(root) } = {}) {
+  const check = validateScreeningAnswers(doc, { requiresSponsorship });
   if (!check.valid) throw new Error(check.error);
   const path = screeningPath(root);
   const next = {
     defaults: { unknownAction: 'ask_user', ...(doc.defaults ?? {}) },
     answers: doc.answers,
   };
+  // Generated by activating a search profile, and NOT the user's to edit here.
+  // This writer rebuilds the document from scratch, so without carrying them
+  // through, saving one hand-written answer would silently delete every derived
+  // one and put the previous candidate's stored facts back in play.
+  const derived = doc.derivedAnswers ?? readScreeningAnswers(root).derivedAnswers;
+  if (Array.isArray(derived) && derived.length) next.derivedAnswers = derived;
+  if (doc._derivedNote) next._derivedNote = doc._derivedNote;
   if (doc._note) next._note = doc._note;
   const backup = keepPreviousVersion(path);
   writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`);
@@ -442,7 +503,8 @@ export function writeScreeningAnswers(root, doc) {
  * @returns {{path: string, backup: string|null, id: string, replaced: boolean, count: number}}
  */
 export function upsertScreeningAnswer(root, entry, { question, replace = false } = {}) {
-  const check = validateAnswerEntry(entry, { question });
+  const requiresSponsorship = sponsorshipRequirement(root);
+  const check = validateAnswerEntry(entry, { question, requiresSponsorship });
   if (!check.valid) throw new Error(check.error);
 
   const current = readScreeningAnswers(root);
@@ -453,6 +515,21 @@ export function upsertScreeningAnswer(root, entry, { question, replace = false }
     patterns: entry.patterns.map((p) => String(p).trim()).filter(Boolean),
     answer: String(entry.answer),
     type: String(entry.type ?? 'text').trim() || 'text',
+    // WHOSE ANSWER THIS IS.
+    //
+    // The screening-answers file is shared by every profile, and six of its
+    // question ids are personal facts the active profile owns (years of
+    // experience, salary, start date, work authorization, sponsorship,
+    // relocation). `effectiveAnswers` withholds a stored answer for one of
+    // those unless it was written under the profile that is active now —
+    // otherwise switching candidate leaves the previous person's number on the
+    // new person's application whenever the new profile cannot state its own.
+    //
+    // Stamping it here is what lets that rule distinguish "this user typed this
+    // about themselves, under this profile" from "this is left over from
+    // somebody else". An answer with no stamp predates profiles, so it is
+    // treated as the second kind.
+    ...(activeProfileId(root) ? { profileId: activeProfileId(root) } : {}),
   };
   const answers = [...current.answers];
   const index = answers.findIndex((a) => String(a?.id ?? '').toLowerCase() === clean.id.toLowerCase());
@@ -461,6 +538,6 @@ export function upsertScreeningAnswer(root, entry, { question, replace = false }
   }
   if (index >= 0) answers[index] = clean; else answers.push(clean);
 
-  const saved = writeScreeningAnswers(root, { defaults: current.defaults, answers });
+  const saved = writeScreeningAnswers(root, { defaults: current.defaults, answers }, { requiresSponsorship });
   return { ...saved, id: clean.id, replaced: index >= 0 };
 }

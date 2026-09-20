@@ -106,11 +106,35 @@ describe('screening answer validation', () => {
   });
 
   it('rejects an answer that would misstate work authorization', () => {
+    // Judged against a candidate who DOES require sponsorship, so "No
+    // sponsorship required" is a false claim about them.
     const check = validateAnswerEntry({
       id: 'sponsorship', patterns: ['require sponsorship'], answer: 'No sponsorship required',
-    });
+    }, { requiresSponsorship: true });
     expect(check.valid).toBe(false);
-    expect(check.error).toMatch(/misstate your work authorization/i);
+    expect(check.error).toMatch(/contradicts the work authorization in your profile/i);
+  });
+
+  it('accepts the SAME answer for a candidate who genuinely needs no sponsorship', () => {
+    // The other half of the rule. With one absolute blocklist this was refused,
+    // so a US citizen could not save the single most common screening answer
+    // there is — and every sponsorship question fell through to manual.
+    const check = validateAnswerEntry({
+      id: 'sponsorship', patterns: ['require sponsorship'],
+      answer: 'No, I do not require sponsorship to work in the United States.',
+    }, { requiresSponsorship: false });
+    expect(check.valid).toBe(true);
+  });
+
+  it('rejects the previous candidate\'s answer after a profile switch', () => {
+    // The leak this exists to close: profile says no sponsorship is needed,
+    // while an inherited answer still claims an H-1B transfer.
+    const check = validateAnswerEntry({
+      id: 'sponsorship', patterns: ['require sponsorship'],
+      answer: 'Yes, I will require sponsorship (H-1B transfer).',
+    }, { requiresSponsorship: false });
+    expect(check.valid).toBe(false);
+    expect(check.error).toMatch(/contradicts/i);
   });
 
   it('rejects an affirmative answer to a REVERSED sponsorship question', () => {
