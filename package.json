@@ -14,6 +14,7 @@
     "dashboard": "node src/index.js dashboard",
     "ui": "node src/index.js dashboard",
     "doctor": "node src/index.js doctor",
+    "profiles": "node src/index.js profiles",
     "preflight": "node src/index.js doctor",
     "find": "node src/index.js prepare-apps",
     "discover": "node src/index.js discover",

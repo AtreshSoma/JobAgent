@@ -537,7 +537,23 @@ describe('run state and recovery', () => {
     expect(css).toContain('.runline.indeterminate i');
     // A bar must not imply a fraction the server never reported.
     expect(app).toContain("line.classList.add('indeterminate')");
-    expect(app).toContain('Math.min(100, Math.round((done / total) * 100))');
+    // The fraction is clamped to the real ratio and cleared when there is none.
+    expect(app).toContain('Math.min(1, done / total)');
+    expect(app).toContain("removeProperty('--progress')");
+  });
+
+  it('animates the progress bar on the compositor, not by relayout', () => {
+    // A run can span minutes, and the bar was transitioning `width` — which
+    // relayouts the element on every frame. `transform` is composited, so the
+    // element stays full width and is scaled instead.
+    expect(css).toContain('transform: scaleX(var(--progress, 0))');
+    expect(css).toContain('transition: transform .3s ease');
+    expect(css).not.toMatch(/\.runline i \{[^}]*transition: width/);
+    // The indeterminate keyframes must carry the scale themselves: an
+    // animation's `transform` replaces the static one outright, so animating
+    // translateX alone would slide a FULL-width bar across.
+    const slide = css.match(/@keyframes slide \{[\s\S]*?\n\}/)[0];
+    expect(slide).toContain('scaleX(.3)');
   });
 
   it('shows elapsed time and progress against the real total', () => {

@@ -24,7 +24,7 @@ const COLUMNS = [
   'Company', 'Job Role', 'Posted On', 'Applied On', 'Job URL', 'Source',
   'Score', 'Tier', 'Sponsorship Confidence', 'Submit Status',
   'Resume Generated', 'Fields Filled', 'Blockers', 'Notes/Comments',
-  'Location', 'ATS', 'Resume Used', 'Cover Letter', 'Job ID',
+  'Location', 'ATS', 'Resume Used', 'Cover Letter', 'Found Via', 'Job ID',
 ];
 
 /** Spreadsheet label for every derived board status. */
@@ -79,7 +79,21 @@ export function writeJobTracker(db, root) {
   // on each rewrite (this runs after every mutating dashboard action, where it
   // measured ~520 ms of pure waste per click). Falls back for test stubs that
   // only implement listJobs.
-  const jobs = typeof db.listJobsSummary === 'function' ? db.listJobsSummary() : db.listJobs({});
+  /*
+   * THE TRACKER IS A RECORD, NOT A RECOMMENDATION.
+   *
+   * `listJobsSummary` defaults to the PERSONALIZED board, which is right for
+   * the job board — an ad-hoc role search must never push rows into what the
+   * agent is recommending. It is wrong here. This file is the user's own record
+   * of what they prepared and applied to, and a job they applied to belongs in
+   * it however they found it; scoping this read to 'profile' silently dropped
+   * role-search rows out of their application history. `mode: 'all'` restores
+   * that, and the "Found Via" column below keeps the two distinguishable
+   * instead of blending them back together.
+   */
+  const jobs = typeof db.listJobsSummary === 'function'
+    ? db.listJobsSummary({ mode: 'all' })
+    : db.listJobs({ mode: 'all' });
   const approvals = approvalsByJob(db);
 
   let prepared = 0;
@@ -108,7 +122,11 @@ export function writeJobTracker(db, root) {
       [job.notes, job.discard_reason ? `Discarded: ${job.discard_reason}` : '']
         .filter(Boolean).join(' | '),
       job.location, job.ats_platform ?? '', job.resume_path ?? '',
-      job.cover_letter_path ?? '', job.id,
+      job.cover_letter_path ?? '',
+      job.discovery_mode === 'role_search'
+        ? `Role search: ${job.search_query ?? 'unnamed'}`
+        : 'My profile',
+      job.id,
     ].map(csvField).join(',');
   });
 

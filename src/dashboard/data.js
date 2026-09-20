@@ -405,11 +405,41 @@ function cached(db, kind, now, compute) {
   return val;
 }
 
+/**
+ * The discovery scope a board read is about.
+ *
+ * Every row source below is scoped, and the cache key carries the scope with
+ * it: a cached personalized board must never be handed back to a role-search
+ * read, or the two modes would show each other's rows through the cache even
+ * though the SQL kept them apart.
+ *
+ * @param {object} filters
+ * @returns {{mode: string, query: string|null, key: string}}
+ */
+function discoveryScope(filters = {}) {
+  const mode = filters.discoveryMode === 'role_search' ? 'role_search'
+    : filters.discoveryMode === 'all' ? 'all' : 'profile';
+  const query = mode === 'role_search' && filters.searchQuery
+    ? String(filters.searchQuery) : null;
+  return { mode, query, key: `${mode}:${query ?? ''}` };
+}
+
+/**
+ * Every row, whichever search found it.
+ *
+ * The scoped default (`profile`) is right for anything that RECOMMENDS — the
+ * board, the stats, the next-actions rail. It is wrong for anything that is a
+ * RECORD of what the user has produced or done: an export, a documents list, a
+ * staleness count. A packet built, or a job applied to, belongs in those
+ * however it was found, so they ask for this scope explicitly.
+ */
+const EVERY_MODE = Object.freeze({ mode: 'all', query: null, key: 'all:' });
+
 /** All jobs decorated as board rows (cached — see above). */
-function allBoardRows(db, now) {
-  return cached(db, 'rows', now, () => {
+function allBoardRows(db, now, scope = discoveryScope()) {
+  return cached(db, `rows:${scope.key}`, now, () => {
     const approvals = approvalsByJob(db);
-    return listSummaryRows(db).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+    return listSummaryRows(db, scope).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
   });
 }
 
@@ -421,11 +451,12 @@ function allBoardRows(db, now) {
  *
  * Falls back to the full set when the db has no such method (test stubs).
  */
-function openBoardRows(db, now) {
-  if (typeof db.listOpenJobsSummary !== 'function') return allBoardRows(db, now);
-  return cached(db, 'openRows', now, () => {
+function openBoardRows(db, now, scope = discoveryScope()) {
+  if (typeof db.listOpenJobsSummary !== 'function') return allBoardRows(db, now, scope);
+  return cached(db, `openRows:${scope.key}`, now, () => {
     const approvals = approvalsByJob(db);
-    return db.listOpenJobsSummary().map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+    return db.listOpenJobsSummary({ mode: scope.mode, query: scope.query })
+      .map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
   });
 }
 
@@ -433,8 +464,9 @@ function openBoardRows(db, now) {
  * All jobs without jd_text (board rows never render it; detail loads it via
  * getJob). Falls back to listJobs for test stubs that only implement that.
  */
-function listSummaryRows(db) {
-  return typeof db.listJobsSummary === 'function' ? db.listJobsSummary() : db.listJobs({});
+function listSummaryRows(db, scope = discoveryScope()) {
+  const args = { mode: scope.mode, query: scope.query };
+  return typeof db.listJobsSummary === 'function' ? db.listJobsSummary(args) : db.listJobs(args);
 }
 
 /**
@@ -688,6 +720,10 @@ function boardRow(job, approval, now) {
     resumePdfPath: job.resume_pdf_path ?? null,
     coverLetterPath: job.cover_letter_path ?? null,
     notes: job.notes ?? null,
+    // Which search produced this row. Present on every row so the UI can label
+    // a role-search result rather than letting it pass as a personalized match.
+    discoveryMode: job.discovery_mode ?? 'profile',
+    searchQuery: job.search_query ?? null,
     submittedConfirmation: job.submitted_confirmation ?? null,
     appliedAt: job.applied_at ?? null,
     createdAt: job.created_at ?? null,
@@ -1062,18 +1098,34 @@ export function buildNextActions(totals, strongUntriaged = 0) {
 }
 
 /** Allowed sort keys -> comparators (descending by default where sensible). */
+/**
+ * EVERY SORT ENDS IN `id`.
+ *
+ * Without a tiebreaker these comparators leave rows with equal keys in
+ * whatever order the underlying query happened to return — and on real data
+ * ties are the norm, not the exception: 111,108 rows share a few dozen distinct
+ * scores. A stable sort over an unstable input is not a stable order, so two
+ * requests for consecutive pages could return the same row twice and never show
+ * another. It also has to match the ORDER BY that SQLite applies on the paged
+ * fast path (SUMMARY_PAGE_ORDERS in src/logging/db.js), or the same view would
+ * show different rows depending on which path served it — caught by a
+ * differential check between the two paths.
+ */
+const byId = (a, b) => String(a.id ?? '').localeCompare(String(b.id ?? ''));
+const thenById = (compare) => (a, b) => compare(a, b) || byId(a, b);
+
 const SORTS = {
-  score: (a, b) => (b.score ?? -1) - (a.score ?? -1),
-  posted: (a, b) => String(b.postedAt ?? '').localeCompare(String(a.postedAt ?? '')),
-  company: (a, b) => String(a.company ?? '').localeCompare(String(b.company ?? '')),
-  updated: (a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? '')),
+  score: thenById((a, b) => (b.score ?? -1) - (a.score ?? -1)),
+  posted: thenById((a, b) => String(b.postedAt ?? '').localeCompare(String(a.postedAt ?? ''))),
+  company: thenById((a, b) => String(a.company ?? '').localeCompare(String(b.company ?? ''))),
+  updated: thenById((a, b) => String(b.updatedAt ?? '').localeCompare(String(a.updatedAt ?? ''))),
   // WHEN WE FIRST SAW IT, which is not the same question as when it was posted.
   // Without this there was no way to answer "what did the last run actually
   // find?": new rows were interleaved by score across ~100k others, so a run
   // that added thousands of postings looked identical to one that added none.
   // `createdAt` is set on insert and deliberately never updated on
   // re-discovery, so it is a true first-seen timestamp.
-  discovered: (a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')),
+  discovered: thenById((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
 };
 
 /**
@@ -1116,6 +1168,73 @@ export function listBoardJobs(db, filters = {}) {
  * @param {object} [filters] see listBoardJobs
  * @returns {{ jobs: object[], total: number, limit: number }}
  */
+
+/**
+ * Every filter key that narrows the board. Listed exhaustively and checked
+ * against the request, because the fast path below is only sound when NONE of
+ * them is present — a key omitted here would be silently ignored on that path
+ * and the user would get an unfiltered board under an active filter chip,
+ * which is the exact failure the `postedWithinHours` note warns about.
+ */
+const BOARD_FILTER_KEYS = Object.freeze([
+  'q', 'fit', 'appStatus', 'source', 'sponsorship', 'employmentType', 'ats',
+  'resumeStatus', 'sponsorshipGated', 'qualifiedToday', 'submittedThisWeek',
+  'undated', 'state', 'city', 'remote', 'last24h', 'postedWithinHours', 'view',
+]);
+
+/**
+ * The whole table, one page, no predicates — served straight from SQLite.
+ *
+ * Returns null whenever the full in-memory pipeline is needed, which is any of:
+ *   - a filter or section view is active (a predicate could reject a row);
+ *   - closed rows are being hidden (that predicate reads a DERIVED field, so
+ *     the rows have to be decorated before it can run);
+ *   - tab badges were asked for (counted across the whole filtered set);
+ *   - the sort is one SQLite cannot reproduce exactly (see SUMMARY_PAGE_ORDERS);
+ *   - the db is a stub without the paged read (tests).
+ *
+ * @returns {{jobs: object[], total: number, limit: number, offset: number,
+ *            page: number, pages: number}|null}
+ */
+function unfilteredWholeTablePage(db, filters, now, { closedPossible, scope = discoveryScope() }) {
+  if (!closedPossible) return null; // the hide-closed pass needs decorated rows
+  if (filters.withViewCounts === true || filters.withViewCounts === 'true') return null;
+  for (const key of BOARD_FILTER_KEYS) {
+    const value = filters[key];
+    if (value !== undefined && value !== '' && value !== false && value !== 'false') return null;
+  }
+  if (typeof db.listJobsSummaryPage !== 'function' || typeof db.countJobs !== 'function') return null;
+
+  const sort = filters.sort ?? 'score';
+  const { limit, offset } = pageWindow(filters);
+  let page;
+  try { page = db.listJobsSummaryPage({ orderBy: sort, limit, offset, mode: scope.mode, query: scope.query }); }
+  catch { return null; } // unsupported sort (e.g. company) — use the full path
+  const total = db.countJobs({ mode: scope.mode, query: scope.query });
+  const approvals = approvalsByJob(db);
+  return {
+    jobs: page.map((job) => boardRow(job, approvals.get(job.id) ?? null, now)),
+    total,
+    limit,
+    offset,
+    page: Math.floor(offset / limit) + 1,
+    pages: Math.max(1, Math.ceil(total / limit)),
+  };
+}
+
+/** The requested page window, from `limit` plus either `offset` or `page`. */
+function pageWindow(filters) {
+  const limit = Number(filters.limit) > 0 ? Number(filters.limit) : 200;
+  const requestedOffset = Number(filters.offset);
+  const requestedPage = Number(filters.page);
+  const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0
+    ? Math.floor(requestedOffset)
+    : (Number.isFinite(requestedPage) && requestedPage > 1
+      ? (Math.floor(requestedPage) - 1) * limit
+      : 0);
+  return { limit, offset };
+}
+
 export function boardPage(db, filters = {}) {
   const now = filters.now ?? new Date();
   // REGRESSION GUARD. The "tracked" stat tile's own declared filter is
@@ -1157,7 +1276,31 @@ export function boardPage(db, filters = {}) {
   const viewExcludesClosed = Boolean(filters.view) && OPEN_ONLY_VIEWS.has(filters.view);
   const closedPossible = !willHideClosed && !appStatusExcludesClosed && !viewExcludesClosed;
 
-  let rows = closedPossible ? allBoardRows(db, now) : openBoardRows(db, now);
+  /*
+   * THE UNFILTERED WHOLE-TABLE PAGE, ANSWERED BY SQLITE.
+   *
+   * Everything below this point reads DECORATED rows, so it needs every row
+   * decorated before it can drop any — and on the "all jobs" view there is
+   * nothing to drop. Measured on a 111,108-row table: 5.8 s of blocked event
+   * loop and ~640 MB resident to return 100 rows, of which 0.8 s was the read
+   * and the rest was decorating 111,008 rows that were then thrown away. This
+   * server is single-threaded, so for those seconds it answers nothing else —
+   * including the request that cancels a run.
+   *
+   * When no predicate below can reject a row, the page is just ORDER BY +
+   * LIMIT, which SQLite does from an index. Only the rows actually returned are
+   * decorated. Anything with a filter, a view, or tab badges falls through to
+   * the full pipeline unchanged.
+   */
+  // WHICH SEARCH'S ROWS THIS PAGE IS ABOUT. Defaults to the personalized board,
+  // so every existing caller — and every request that says nothing — keeps
+  // seeing exactly what "Find New Jobs" produced and nothing a role search did.
+  const scope = discoveryScope(filters);
+
+  const fastPage = unfilteredWholeTablePage(db, filters, now, { closedPossible, scope });
+  if (fastPage) return fastPage;
+
+  let rows = closedPossible ? allBoardRows(db, now, scope) : openBoardRows(db, now, scope);
 
   if (filters.q) {
     const q = String(filters.q).toLowerCase();
@@ -1285,14 +1428,9 @@ export function boardPage(db, filters = {}) {
   // sort a copy so this doesn't reorder the cached value out from under every
   // other request sharing it until the next invalidation.
   rows = rows.slice().sort(SORTS[filters.sort] ?? SORTS.score);
-  const limit = Number(filters.limit) > 0 ? Number(filters.limit) : 200;
-  const requestedOffset = Number(filters.offset);
-  const requestedPage = Number(filters.page);
-  const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0
-    ? Math.floor(requestedOffset)
-    : (Number.isFinite(requestedPage) && requestedPage > 1
-      ? (Math.floor(requestedPage) - 1) * limit
-      : 0);
+  // Shared with the fast path above, so the two can never disagree about what
+  // page the caller asked for.
+  const { limit, offset } = pageWindow(filters);
   const total = rows.length;
   return {
     jobs: rows.slice(offset, offset + limit),
@@ -1632,6 +1770,7 @@ export const EXPORT_COLUMNS = Object.freeze([
   ['atsPlatform', 'ATS'], ['matched', 'Matched skills'], ['missing', 'Missing skills'],
   ['blockers', 'Blockers'], ['notes', 'Notes'], ['url', 'URL'],
   ['appliedAt', 'Submitted at'], ['createdAt', 'Discovered at'], ['updatedAt', 'Last updated'],
+  ['foundVia', 'Found via'],
 ]);
 
 /**
@@ -1644,7 +1783,10 @@ export const EXPORT_COLUMNS = Object.freeze([
  * @returns {object[]}
  */
 export function buildExportRows(db, { now = new Date(), includeClosed = true } = {}) {
-  let rows = allBoardRows(db, now);
+  // An export is a RECORD. Scoping it to the personalized board silently left a
+  // job the user had applied to out of their own spreadsheet because they found
+  // it through a role search; `foundVia` below keeps the two distinguishable.
+  let rows = allBoardRows(db, now, EVERY_MODE);
   if (!includeClosed) {
     const closed = [APP_STATUS.ARCHIVED, APP_STATUS.DISCARDED];
     rows = rows.filter((r) => !closed.includes(r.appStatus));
@@ -1676,6 +1818,9 @@ export function buildExportRows(db, { now = new Date(), includeClosed = true } =
     appliedAt: r.appliedAt ?? '',
     createdAt: r.createdAt ?? '',
     updatedAt: r.updatedAt ?? '',
+    foundVia: r.discoveryMode === 'role_search'
+      ? `Role search: ${r.searchQuery ?? 'unnamed'}`
+      : 'My profile',
   }));
 }
 
@@ -1793,7 +1938,10 @@ export function buildDocuments(db, {
   const approvals = approvalsByJob(db);
   const readPacket = readFileImpl ?? ((p) => readFileSync(p, 'utf8'));
   const fileInfo = (path) => (path ? { path, ...stat(path) } : null);
-  const rows = listSummaryRows(db)
+  // Documents on disk belong to whoever made them, not to a search mode: a
+  // packet prepared from a role-search job is still the user's document and
+  // must be findable here.
+  const rows = listSummaryRows(db, EVERY_MODE)
     .filter((j) => j.resume_docx_path || j.resume_path || j.resume_pdf_path
       || j.cover_letter_path || j.application_packet_path)
     .map((j) => {
@@ -1927,7 +2075,7 @@ export function buildMasterResume(db, {
 
   // Tailored resumes generated BEFORE the current master no longer reflect it.
   const stalePackets = info.modifiedAt
-    ? listSummaryRows(db).filter((j) => {
+    ? listSummaryRows(db, EVERY_MODE).filter((j) => {
       const preparedAt = preparedAtOf(j);
       return (j.resume_docx_path || j.resume_path) && preparedAt
         && preparedAt < info.modifiedAt;

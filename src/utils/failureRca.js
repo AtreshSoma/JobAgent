@@ -14,7 +14,8 @@
 export const RCA_CATEGORIES = Object.freeze([
   'timeout', 'network', 'dns', 'auth', 'rate_limit', 'quota_exhausted',
   'provider_error', 'invalid_json', 'schema_changed', 'empty_response',
-  'db_busy', 'missing_config', 'missing_resume', 'browser_launch', 'unknown',
+  'db_busy', 'missing_config', 'missing_resume', 'browser_launch',
+  'budget_exhausted', 'unknown',
 ]);
 
 /** Human guidance per category — actionable, never alarmist. */
@@ -33,6 +34,7 @@ const GUIDANCE = Object.freeze({
   missing_config: 'A required configuration file or field is missing. Run "npm run doctor" for the exact fix.',
   missing_resume: 'The master resume is missing at resumes/base/MASTER_RESUME.docx — tailoring cannot run without it.',
   browser_launch: 'The browser could not be started. Close other automation windows using the same profile, or run "npx playwright install chromium".',
+  budget_exhausted: 'Nothing failed. A per-source ceiling on how many descriptions to fetch was reached, so the postings past it were kept WITHOUT their description and stored as needs_description rather than being judged. Run "npm run enrich" to read and score them, or raise maxDetailFetches for that source in config/jobboards.json.',
   unknown: 'Unrecognized failure. Open the technical details; if it repeats, the message usually names the failing component.',
 });
 
@@ -132,7 +134,21 @@ export function classifyFailure(err, context = {}) {
     category = 'db_busy';
   } else if (/master resume|MASTER_RESUME/i.test(message)) {
     category = 'missing_resume';
-  } else if (/candidate\.json|screening_answers\.json|jobboards\.json|configuration|missing .*(token|config)|no `options\.actors`/i.test(message)) {
+  } else if (/detail budget|maxDetailFetches|went unread|without a description/i.test(message)) {
+    // NOT A FAILURE. A detail-fetch ceiling was hit, which is a deliberate cost
+    // control: the postings past it are kept and recoverable with `npm run
+    // enrich`. It reached the panel as "unknown" -> "Unrecognized failure",
+    // which is both wrong and, at tens of thousands of counts, the loudest
+    // thing in it — burying the entries that WERE real failures.
+    category = 'budget_exhausted';
+  } else if (/candidate\.json|screening_answers\.json|jobboards\.json|configuration|no `options\.actors`/i.test(message)
+      || /missing\s+\S*\s*(token|config|credential|api[\s_-]?key)/i.test(message)
+      || /\bset\s+[A-Z][A-Z0-9_]{3,}\b.*\.env\b/i.test(message)) {
+    // "Missing Adzuna credentials … set ADZUNA_APP_ID and ADZUNA_APP_KEY in
+    // .env" is the clearest possible statement of a configuration gap, and the
+    // old pattern (`missing .*(token|config)`) matched neither word, so the one
+    // error that already told the user exactly what to do was labelled
+    // "Unrecognized failure".
     category = 'missing_config';
   } else if (/browser|playwright|chromium|executable doesn't exist|could not start browser/i.test(message)) {
     category = 'browser_launch';

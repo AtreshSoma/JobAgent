@@ -136,6 +136,77 @@ function tryRun(spawnImpl, cmd, args) {
   }
 }
 
+/**
+ * Checks about the ACTIVE SEARCH PROFILE.
+ *
+ * Three questions, in the order they can hurt:
+ *   1. Is a profile active at all, or is the pipeline running on a
+ *      hand-written candidate.json nobody has reviewed?
+ *   2. Has the generated config DRIFTED from the profile — i.e. did someone
+ *      hand-edit candidate.json after activating, so the next activation will
+ *      silently discard their edit?
+ *   3. Does the profile actually produce a usable search?
+ *
+ * @param {string} root
+ * @param {object} config loaded bundle
+ * @returns {Array<object>} checks
+ */
+export function profileChecks(root, config) {
+  const checks = [];
+  const profile = config.profile ?? null;
+  const generatedFrom = config.candidate?._generatedFrom ?? null;
+
+  if (!profile) {
+    checks.push(makeCheck('profile-active', 'Active search profile', SEVERITY.WARN,
+      'no search profile is active — discovery is running on config/candidate.json exactly as written',
+      'Run `npm run profiles migrate` to import it as a profile. You then get switching, '
+      + 'role-family title expansion, and profile-derived scoring, and `npm run profiles show` '
+      + 'will tell you exactly what the agent is searching for.'));
+    return checks;
+  }
+
+  const roles = profile.searchIntent?.targetRoles ?? [];
+  const phrases = config.candidate?.searchPhrases ?? [];
+  checks.push(makeCheck('profile-active', 'Active search profile', SEVERITY.PASS,
+    `"${profile.label}" — targeting ${roles.slice(0, 3).join(', ')}`
+    + `${roles.length > 3 ? ` +${roles.length - 3} more` : ''}`
+    + `${phrases.length ? `; boards searched for ${phrases.map((p) => `"${p}"`).join(', ')}` : ''}`));
+
+  // DRIFT. candidate.json is a GENERATED view of the profile. A hand edit to it
+  // survives until the next activation and then vanishes without warning, which
+  // is exactly the kind of silent loss this tool must not have.
+  if (generatedFrom) {
+    const configured = (config.candidate?.targetTitles ?? []).map((t) => String(t).toLowerCase());
+    const missing = roles.filter((r) => !configured.includes(String(r).toLowerCase()));
+    checks.push(missing.length === 0
+      ? makeCheck('profile-sync', 'Profile and generated config agree', SEVERITY.PASS,
+        `config/candidate.json was generated from ${generatedFrom}`)
+      : makeCheck('profile-sync', 'Profile and generated config agree', SEVERITY.WARN,
+        `config/candidate.json no longer contains ${missing.length} of the profile's target role(s): ${missing.join(', ')}`,
+        'config/candidate.json is GENERATED from the profile. Edit the profile and re-run '
+        + '`npm run profiles activate <id>`, or your next activation will overwrite the change.'));
+  }
+
+  if (!roles.length) {
+    checks.push(makeCheck('profile-targets', 'Search profile targets a role', SEVERITY.FAIL,
+      'the active profile names no target roles, so discovery would search for nothing',
+      'Add at least one role to the profile searchIntent.targetRoles, then re-activate it.'));
+  }
+
+  // A profile with no skills scores 0 on the 30-point coreSkills category, so
+  // every posting looks mediocre and nothing clears the Apply bar. Worth saying
+  // plainly rather than letting the board look empty for no visible reason.
+  const skillCount = (profile.searchIntent?.skillsToKeep ?? []).length
+    + (profile.background?.skills ?? []).length;
+  if (skillCount < 5) {
+    checks.push(makeCheck('profile-skills', 'Search profile has enough skills to score with', SEVERITY.WARN,
+      `only ${skillCount} skill term(s) — coreSkills is 30 of 100 points and would score near zero`,
+      'Add the tools, methods, systems and credentials your field actually uses to the profile. '
+      + 'They do not have to be software. `npm run profiles from-resume` can read them off your resume.'));
+  }
+  return checks;
+}
+
 function makeCheck(id, label, severity, detail, fix = null) {
   return { id, label, status: severity, detail, ...(fix ? { fix } : {}) };
 }
@@ -253,6 +324,15 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
         `empty: ${optional.map((g) => `${g.label} (${g.path})`).join(', ')}`,
         'These are left blank on forms (surfaced as blockers when an ATS requires them). Fill them in config/candidate.json only if real.'));
     }
+
+    /* ── Active search profile ──────────────────────────────────────────
+     *
+     * WHOSE SEARCH IS THIS? The single most expensive silent failure in this
+     * tool was a run that kept using one person's target titles after another
+     * person's resume had been uploaded — nothing anywhere said so. These
+     * checks make the answer visible before a run, not after it.
+     */
+    checks.push(...profileChecks(root, config));
   }
 
   /* ── Master resume (read-only source material) ───────────────────────── */

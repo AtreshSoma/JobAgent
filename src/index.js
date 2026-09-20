@@ -105,8 +105,14 @@ const COMMANDS = new Set([
   'approvals', 'approve', 'reject', 'packets', 'packet', 'report',
 ]);
 
-/** Commands that must work even when config/db are broken (they diagnose them). */
-const STANDALONE_COMMANDS = new Set(['doctor', 'preflight']);
+/**
+ * Commands that must work even when config/db are broken.
+ *
+ * `doctor`/`preflight` diagnose those files; `profiles` REWRITES them, and the
+ * config it is about to replace may be exactly what is wrong — so requiring a
+ * healthy load first would lock a user out of the one command that fixes it.
+ */
+const STANDALONE_COMMANDS = new Set(['doctor', 'preflight', 'profiles']);
 
 /** Parse `--key=value` / `--flag` / positional args into an object. */
 export function parseArgs(argv = []) {
@@ -145,6 +151,13 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
 
   // doctor/preflight must not assume config or the DB are healthy — they are
   // the tools that diagnose those — so they bypass the normal command setup.
+  if (command === 'profiles') {
+    const { runProfiles } = await import('./cli/profiles.js');
+    const result = await runProfiles({ parsed, env });
+    process.exitCode = result.ok ? 0 : 1;
+    return result;
+  }
+
   if (command && STANDALONE_COMMANDS.has(command)) {
     const result = await runDoctor({ env });
     if (parsed.flags.has('json')) {
@@ -203,14 +216,26 @@ async function runCommand(command, parsed, env) {
       }
       case 'dashboard':
       case 'ui': {
+        // SETUP GAPS WARN; THEY DO NOT LOCK THE DOOR.
+        //
+        // This refused to start while `npm run app` — the other launcher for
+        // the same dashboard — started with warnings, so whether an incomplete
+        // profile was recoverable depended on which command the user happened
+        // to type. Refusing was also the less helpful half of that pair: the
+        // dashboard is WHERE a user fixes a profile, so a gate on it sent them
+        // back to hand-editing JSON to earn the right to use the editor.
+        //
+        // Nothing unsafe is unlocked by starting. Preparation is gated
+        // independently and unconditionally inside `preparePacket` — on
+        // placeholder profile values and on a resume that belongs to somebody
+        // else — so a workspace with gaps can be inspected and repaired but
+        // cannot produce a document.
         const gate = quickPreflight(config);
         if (!gate.ok) {
-          ui.heading('Cannot start the dashboard — preflight failed');
-          for (const problem of gate.problems) ui.fail(problem);
+          ui.warn('Setup gaps found (the dashboard will start, but fix these before preparing applications):');
+          for (const problem of gate.problems) ui.note(`  • ${problem}`);
           ui.blank();
           ui.next([{ text: 'See the full checklist:', cmd: 'npm run doctor' }]);
-          process.exitCode = 1;
-          return { command, preflight: gate };
         }
         const { startDashboard, installProcessSafetyNet } = await import('./dashboard/server.js');
         const port = parseDashboardPort(parsed.options.port ?? env.DASHBOARD_PORT, 4646);
@@ -401,7 +426,10 @@ async function runCommand(command, parsed, env) {
       }
       case 'report': {
         ui.heading('Report');
-        const jobs = db.listJobs({});
+        // The report answers "how is MY search going", so it reads the
+        // personalized rows only. Blending in an ad-hoc role search would put
+        // roles the user never targeted into their own fit statistics.
+        const jobs = db.listJobs({ mode: 'profile' });
         const report = generateReport({ jobs, outDir: join(config.root, 'reports') });
         pino.info({ files: report.files }, `Report regenerated for ${jobs.length} jobs`);
         ui.success(`Regenerated report for ${ui.c.bold(jobs.length)} jobs.`);
@@ -432,7 +460,7 @@ async function runLegacyMode(parsed, env) {
 
   try {
     if (mode === 'REPORT') {
-      const jobs = db.listJobs({});
+      const jobs = db.listJobs({ mode: 'profile' });
       const report = generateReport({ jobs, outDir: join(config.root, 'reports') });
       pino.info({ files: report.files }, `Report regenerated for ${jobs.length} jobs`);
       return { mode, report };

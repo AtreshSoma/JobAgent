@@ -10,6 +10,16 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>JobAgent — Dashboard</title>
+<meta name="description" content="Local-first job discovery, scoring and application triage. Runs on your machine; nothing is submitted without your review.">
+<meta name="color-scheme" content="dark light">
+<!-- Favicon as an inline SVG data URI, not a file request.
+     The dashboard is local-first and must work with no network at all, and the
+     page's CSP allows `img-src 'self' data:` — so the mark ships in the markup
+     rather than as an asset that could 404 or be fetched remotely. It is the
+     same gradient as the header's brand chip (--sig-a/-b/-c), so the tab and
+     the app read as one thing. A blank tab icon was the last obviously
+     unfinished edge of the UI. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Cdefs%3E%3ClinearGradient%20id=%22g%22%20x1=%220%22%20y1=%220%22%20x2=%221%22%20y2=%221%22%3E%3Cstop%20offset=%220%22%20stop-color=%22#4d9fff%22/%3E%3Cstop%20offset=%2255%25%22%20stop-color=%22#7cc7ff%22/%3E%3Cstop%20offset=%22100%25%22%20stop-color=%22#3ecf8e%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width=%2264%22%20height=%2264%22%20rx=%2215%22%20fill=%22url(#g)%22/%3E%3Cpath%20d=%22M20%2044%20L32%2018%20L44%2044%22%20fill=%22none%22%20stroke=%22#05121f%22%20stroke-width=%227%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/assets/css/app.css">
 </head>
 <body>
@@ -60,6 +70,8 @@
       title="Search every configured job board, score each match against your profile, and update the board.">Find new jobs</button>
     <button id="btnPrepare" class="runBtn primary" data-action="run" data-phase="prepare"
       title="Full pass: find new jobs, score them, and tailor a resume packet for every strong match.">Find &amp; prepare</button>
+    <button id="btnRoleSearch" data-action="open-job-search"
+      title="Search the boards for any job title, independently of your profile. Results are kept separate and never change what 'Find new jobs' returns.">🔎 Search by job role</button>
     <button id="btnAddUrl" data-action="open-add-url"
       title="Add a specific posting from any public job URL — it is read, scored, and tracked like a discovered job.">＋ Add by URL</button>
     <span class="menu">
@@ -103,17 +115,60 @@
 <main class="layout">
   <section aria-labelledby="boardHeading">
     <h2 id="boardHeading" class="sr-only">Job board</h2>
+    <!-- WHICH LIST AM I LOOKING AT?
+         The board can show two entirely separate things: the personalized
+         results of "Find new jobs", and the results of one ad-hoc "Search by
+         job role". They are stored apart and must never be mistaken for each
+         other, so the banner is shown whenever the board is NOT showing the
+         personalized list. It is hidden in the default (personalized) state,
+         because a banner that is always present stops being read. -->
+    <div class="mode-banner" id="modeBanner" role="status" hidden>
+      <span class="mode-banner-tag">Role search</span>
+      <span id="modeBannerText"></span>
+      <span class="spacer"></span>
+      <button type="button" class="small ghost" data-action="clear-role-search"
+        title="Discard the results of this role search. Your personalized board is not touched.">Clear results</button>
+      <button type="button" class="small primary" data-action="exit-role-search">← Back to my jobs</button>
+    </div>
     <div class="filterbar" id="filterbar" aria-label="Job filters" data-collapsed="true">
       <div class="filters">
-        <input type="search" id="q" class="grow" placeholder="Filter this board by company, role, or location…"
-          aria-label="Filter this board by company, role, or location">
-        <!-- Distinct from the filter on its left, and labelled to say so. That
-             box narrows rows ALREADY discovered; this one asks the job boards a
-             new question. Before it existed, every run searched
-             candidate.targetTitles and nothing else, so trying a different role
-             meant editing the profile and waiting for a full discovery pass. -->
-        <button type="button" class="small ghost" id="btnFindJobs" data-action="open-job-search"
-          title="Search job boards for a role that is not in your profile yet">🔎 Search job boards</button>
+        <!-- ONE QUESTION, TWO SCOPES.
+             "Search job boards" used to be a ghost button with an emoji, wedged
+             between this input and the first <select> — a VERB in a row of
+             NOUNS. Everything else on this bar narrows what is already on
+             screen; that one control left to fetch new postings off the
+             internet, and sitting among the filters it read as another one of
+             them. Clicking it also opened an EMPTY modal, so whatever you had
+             just typed had to be typed again.
+
+             It is now the same field. You type once; the field filters the
+             board live, and the trailing action escalates that exact query to
+             the job boards. The action only exists once there is something to
+             search for, so it can no longer be clicked into an empty dialog,
+             and the zero-results state offers the same escalation at the moment
+             it is actually wanted. -->
+        <div class="searchfield">
+          <svg class="searchfield-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <circle cx="7" cy="7" r="4.5"></circle>
+            <line x1="10.4" y1="10.4" x2="14" y2="14"></line>
+          </svg>
+          <input type="search" id="q" placeholder="Company, role or location…"
+            aria-label="Filter this board by company, role, or location"
+            aria-describedby="qScopeHint" autocomplete="off">
+          <button type="button" class="searchfield-scope" id="btnFindJobs"
+            data-action="open-job-search" hidden
+            aria-label="Search the job boards for this text"
+            title="Ask the job boards for this role — it does not have to be in your profile">
+            <span>Search boards</span>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <line x1="4" y1="12" x2="12" y2="4"></line>
+              <polyline points="6,4 12,4 12,10"></polyline>
+            </svg>
+          </button>
+        </div>
+        <span id="qScopeHint" class="sr-only">Filters the jobs already on this board.
+          To search external job boards for this text instead, use the "Search boards"
+          button that appears in this field once you type.</span>
         <!-- Phones only (see .filter-toggle in the stylesheet). Search stays
              visible; everything else folds behind this. -->
         <button type="button" class="small ghost filter-toggle" id="btnFilterSheet"
@@ -502,14 +557,17 @@
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
   <div class="dlg-body">
-    <p class="muted mt0">Ask the job boards for a role that is not in your profile yet.
-      Normal runs search only the target titles in your profile, so this is how you try a
-      different role without committing to it — nothing about your profile changes.</p>
-    <label for="jobSearchInput">Role or phrase</label>
+    <p class="muted mt0">Search the job boards for <strong>any</strong> role, whether or not it
+      has anything to do with your profile.</p>
+    <label for="jobSearchInput">Role or title</label>
     <input id="jobSearchInput" type="search" placeholder="Senior Product Manager, payments" autocomplete="off">
-    <p class="muted small">Searches the query-first sources only (Workable, and Adzuna if you
-      have a key), which answer in seconds. Results are scored for information and added to the
-      board — a role outside your usual stack will score low, and is kept visible anyway.</p>
+    <p class="muted small">Results are kept in their own list, labelled with the role you
+      searched for. They never appear on your personalized board, and running this can never
+      change what <em>Find new jobs</em> returns — your profile, target titles and scoring are
+      left exactly as they are.</p>
+    <p class="muted small">Uses the query-first sources only (Workable, and Adzuna if you have a
+      key), which answer in seconds rather than the ~14 minutes a full profile run takes.</p>
+    <div id="jobSearchRecent" class="muted small" hidden></div>
     <div id="jobSearchMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">

@@ -46,6 +46,17 @@ const state = {
   filteredViewCounts: null,
   /** finishedAt of a result the user dismissed; a newer run reappears. */
   runDismissedAt: null,
+  /*
+   * WHICH SEARCH THE BOARD IS SHOWING — 'profile' or 'role_search'.
+   *
+   * 'profile' is the personalized board and the default everywhere. A role
+   * search never changes it; it opens its OWN list, scoped to one query, which
+   * is why the query is held alongside the mode rather than in the text filter.
+   * Using the text filter for this was the original leak: it made role-search
+   * rows look like personalized rows that happened to match a string.
+   */
+  discoveryMode: 'profile',
+  roleQuery: null,
 };
 
 const FILTER_IDS = [
@@ -234,13 +245,29 @@ function filterParams({ forCount = false } = {}) {
   // The API speaks hideClosed; the UI asks the question the positive way round.
   p.set('hideClosed', String(!$('includeClosed').checked));
   p.set('sort', state.sort);
+  // Scope every board read to the active mode. Omitted for 'profile' because
+  // that is the server's default too, so an older client and a newer server
+  // agree on what an unscoped request means.
+  if (state.discoveryMode === 'role_search') {
+    p.set('discoveryMode', 'role_search');
+    if (state.roleQuery) p.set('searchQuery', state.roleQuery);
+  }
   if (!forCount) {
     p.set('limit', String(state.pageSize));
     p.set('page', String(state.page));
-    // Only worth computing when a filter is narrowing the board — with no
-    // filters the tab counts in /api/stats are already exactly right, and this
-    // would be eight predicate passes over the corpus for the same answer.
-    if (hasActiveFilters()) p.set('withViewCounts', 'true');
+    // Only worth computing when the tab counts in /api/stats would NOT already
+    // be exactly right — otherwise this is eight predicate passes over the
+    // corpus for an answer we already have.
+    //
+    // Two cases need them. A filter narrowing the board is the obvious one. The
+    // other is role-search mode: /api/stats describes the PERSONALIZED board,
+    // so while the board is showing a role search the badges were counting a
+    // different set of rows than the tabs would open — the same
+    // "count doesn't match what clicking it opens" fault the board's own
+    // filters were built to prevent.
+    if (hasActiveFilters() || state.discoveryMode === 'role_search') {
+      p.set('withViewCounts', 'true');
+    }
   }
   return p;
 }
@@ -315,6 +342,11 @@ function renderActiveFilters() {
   }
 
   syncFilterSheetCount();
+  // Every path that writes the query without an `input` event lands here —
+  // Reset, "Clear all", dismissing the search chip, a restored URL, a metric
+  // tile applying a filter object. One call at the single point they all share
+  // beats remembering to add one to each of them.
+  syncBoardSearchAction();
 
   for (const [id, label] of chips) {
     host.append(el('span', { class: 'pill' }, label,
@@ -325,7 +357,7 @@ function renderActiveFilters() {
   }
 }
 
-function resetFilters({ keepTab = false } = {}) {
+function resetFilters({ keepTab = false, silent = false } = {}) {
   if (!keepTab) state.activeTab = 'all';
   for (const id of [...FILTER_IDS, ...TOGGLE_IDS]) clearFilter(id);
   state.sort = 'score';
@@ -333,7 +365,10 @@ function resetFilters({ keepTab = false } = {}) {
   syncSortIndicator();
   state.page = 1;
   renderTabs();
-  refreshAll();
+  // `silent` is for callers that are mid-transition and will refresh once
+  // themselves — switching board modes clears filters AND changes scope, and
+  // refreshing here would fetch the old scope with the new filters first.
+  if (!silent) refreshAll();
 }
 
 /** Apply a metric/next-action filter object. Honors EVERY key it is given. */
@@ -986,7 +1021,21 @@ function renderRows(jobs) {
     if (tracked === 0) {
       box.append('Run ', el('b', { text: 'Find new jobs' }), ' to discover and score postings.');
     } else {
-      box.append(el('button', { class: 'small', 'data-action': 'reset-filters', text: 'Reset filters' }));
+      const actions = el('div', { class: 'row-gap empty-actions' });
+      actions.append(el('button', { class: 'small', 'data-action': 'reset-filters', text: 'Reset filters' }));
+      // THE MOMENT THE ESCALATION IS ACTUALLY WANTED. "Nothing here matches
+      // what I typed" is precisely when someone wants to ask the job boards
+      // for it, and the only thing offered was to clear the search that had
+      // just failed them. `data-query` carries the phrase, so the dialog opens
+      // on it rather than empty.
+      const query = $('q').value.trim();
+      if (query) {
+        actions.append(el('button', {
+          class: 'small primary', 'data-action': 'open-job-search', 'data-query': query,
+          text: `Search job boards for “${query}”`,
+        }));
+      }
+      box.append(actions);
     }
     cell.append(box);
     body.append(el('tr', {}, cell));
@@ -2593,6 +2642,239 @@ async function adoptResumeSelection({ titles = [], skills = [] } = {}) {
   }
 }
 
+/**
+ * "Whose search is this, and does this resume belong to them?"
+ *
+ * The single most expensive silent failure this tool had was a run that kept
+ * using one person's target titles after another person's resume was uploaded,
+ * with nothing anywhere saying so. This panel is the answer: it names the
+ * active search profile, says plainly what that profile makes the agent look
+ * for, and — when the resume does not match — offers the three things a person
+ * may actually want to do about it.
+ *
+ * It never decides. A resume says what someone has DONE; a search profile says
+ * what they WANT, and those diverge exactly when somebody is changing
+ * direction. So the choice is always theirs.
+ */
+async function renderSearchProfiles(body) {
+  let listing;
+  try { listing = await api('/api/search-profiles'); }
+  catch { return null; } // never let this panel break the drawer it sits in
+
+  const wrap = el('div', { class: 'evidence-note' });
+
+  if (!listing.profiles?.length) {
+    wrap.append(el('div', {}, el('b', { text: 'No saved search profile. ' }),
+      'Discovery is running on config/candidate.json exactly as written, so uploading a '
+      + 'different resume will not change what is searched for.'));
+    wrap.append(el('div', { class: 'row-gap' },
+      el('button', {
+        class: 'small primary', 'data-action': 'migrate-search-profile',
+        text: 'Import my current setup as a profile',
+        title: 'Reads config/candidate.json and saves it as your first search profile. Nothing about your search changes.',
+      })));
+    body.append(wrap);
+    return null;
+  }
+
+  // WHAT THE ACTIVE PROFILE MAKES THE AGENT DO. Stated as consequences, because
+  // a list of stored fields does not tell anyone what will actually happen.
+  const active = listing.active;
+  if (active) {
+    const e = active.effect;
+    wrap.append(el('div', {}, el('b', { text: 'Searching as: ' }), active.profile.label));
+    wrap.append(el('div', { class: 'muted small' },
+      `Asks the boards for ${e.searchPhrases.map((q) => `"${q}"`).join(', ') || '(nothing)'} · `
+      + `recognizes ${e.targetTitles.length} title(s) · `
+      + `role famil${e.families.length === 1 ? 'y' : 'ies'}: ${e.families.map((f) => f.label).join(', ') || 'none inferred'}`));
+    if (e.expandedRoles.length) {
+      wrap.append(el('div', { class: 'muted small' },
+        `You stated ${e.statedRoles.length} role(s); role-family expansion also looks for `
+        + `${e.expandedRoles.slice(0, 6).join(' · ')}${e.expandedRoles.length > 6 ? ` +${e.expandedRoles.length - 6} more` : ''}.`));
+    }
+  }
+
+  // The switcher. Every other profile is one click away.
+  const others = listing.profiles.filter((p) => !p.active);
+  if (others.length) {
+    const row = el('div', { class: 'row-gap' });
+    for (const p of others) {
+      row.append(el('button', {
+        class: 'small ghost', 'data-action': 'activate-search-profile', 'data-profile-id': p.id,
+        text: `Switch to ${p.label}`,
+        title: `Regenerates candidate.json, scoring.json and exclusions.json from "${p.id}". `
+          + 'Every previous version is kept as .bak.',
+      }));
+    }
+    wrap.append(el('div', { class: 'muted small', text: `${others.length} other saved profile(s):` }));
+    wrap.append(row);
+  }
+  body.append(wrap);
+
+  // ── does the uploaded resume belong to this profile? ────────────────────
+  let proposal;
+  try { proposal = await api('/api/search-profiles/from-resume/preview'); }
+  catch (err) {
+    // SAY SO. This swallowed every failure and returned null, so a broken
+    // comparison was indistinguishable from a resume that matches perfectly —
+    // the panel simply showed nothing, and the user had no way to know the
+    // check had not run. It still must not break the drawer it sits in, so the
+    // error is rendered in place rather than thrown.
+    body.append(el('div', { class: 'evidence-note st-blocked small' },
+      el('b', { text: 'Could not compare your resume to this profile. ' }), err.message));
+    return null;
+  }
+  if (!proposal?.available) return null;
+
+  const { comparison, preview, choices } = proposal;
+  if (comparison.relation === 'same') {
+    body.append(el('div', { class: 'evidence-note muted small', text: comparison.summary }));
+    return comparison.relation;
+  }
+  // Already answered for this exact resume — "Keep my current goals" is a
+  // decision, and re-asking it every render is not respecting it.
+  if (proposal.acknowledged) {
+    body.append(el('div', { class: 'evidence-note muted small' },
+      'You chose to keep your current search goals for this resume. ',
+      el('button', {
+        class: 'small ghost', 'data-action': 'profile-from-resume-reconsider',
+        text: 'Reconsider',
+      })));
+    return comparison.relation;
+  }
+
+  const box = el('div', { class: comparison.relation === 'different' ? 'attention' : 'evidence-note' });
+  if (comparison.relation === 'different') box.append(el('span', { class: 'mark', text: '!' }));
+  const inner = el('div');
+  inner.append(el('div', {}, el('b', {
+    text: comparison.relation === 'different'
+      ? 'This looks like a different candidate. ' : 'This resume has moved on. ',
+  }), comparison.summary));
+  for (const reason of comparison.reasons.slice(0, 3)) {
+    inner.append(el('div', { class: 'muted small', text: `· ${reason}` }));
+  }
+  inner.append(el('div', { class: 'muted small' },
+    `A profile built from this resume would ask the boards for `
+    + `${preview.searchPhrases.map((q) => `"${q}"`).join(', ') || '(nothing)'} and recognize `
+    + `${preview.targetTitles.length} title(s) across `
+    + `${preview.families.map((f) => f.label).join(', ') || 'no recognized family'}.`));
+
+  // THE THREE CHOICES, named by the server so the CLI and the board agree.
+  const actions = el('div', { class: 'row-gap' });
+  const buttonFor = {
+    create: { class: 'small primary', action: 'profile-from-resume-create' },
+    keep: { class: 'small ghost', action: 'profile-from-resume-keep' },
+    merge: { class: 'small ghost', action: 'profile-from-resume-merge' },
+  };
+  for (const choice of choices) {
+    const spec = buttonFor[choice.id];
+    if (!spec) continue;
+    actions.append(el('button', {
+      class: spec.class, 'data-action': spec.action, text: choice.label, title: choice.detail,
+    }));
+  }
+  inner.append(actions);
+  // SAY WHAT THE BUTTON ACTUALLY DOES. This line used to read "it only takes
+  // over the search when you activate it", while the button passed
+  // `activate: true` — so the copy told the user the opposite of what would
+  // happen the moment they pressed it.
+  inner.append(el('div', { class: 'muted small' },
+    'Nothing has changed yet. Creating a profile from this resume also makes it the active search — '
+    + 'your current profile is saved and you can switch back at any time.'));
+  box.append(inner);
+  body.append(box);
+  return comparison.relation;
+}
+
+/**
+ * Let the user choose exactly what to merge from the resume.
+ *
+ * "Merge" previously posted every proposed role, skill and industry — the whole
+ * proposal — while presenting itself as the middle option between adopting the
+ * resume wholesale and keeping the current search. Adding 40 titles to a search
+ * because a resume mentions them is the thing a merge is supposed to avoid, so
+ * the choice is now actually offered.
+ *
+ * Everything starts ticked, because the proposal is still the recommendation;
+ * the point is that the user can see it and untick.
+ */
+async function openMergePicker() {
+  const host = $('masterBody');
+  let data;
+  try { data = await api('/api/search-profiles/from-resume/preview'); }
+  catch (err) { toast(err.message, 'bad'); return; }
+  if (!data?.available) { toast('No resume to merge from.', 'bad'); return; }
+
+  const intent = data.proposal.searchIntent;
+  const box = el('div', { class: 'evidence-note', id: 'mergePicker' });
+  box.append(el('div', {}, el('b', { text: 'Choose what to add to your current search. ' }),
+    'Nothing is removed — merging only adds.'));
+
+  const group = (title, kind, items) => {
+    if (!items.length) return;
+    box.append(el('div', { class: 'muted small', text: title }));
+    const list = el('div', { class: 'row-gap' });
+    for (const [i, value] of items.entries()) {
+      const id = `merge-${kind}-${i}`;
+      // `chipbox` is the existing tickable-suggestion style in this drawer.
+      const label = el('label', { class: 'chipbox', for: id });
+      label.append(el('input', {
+        type: 'checkbox', id, checked: true, 'data-merge-kind': kind, value,
+      }));
+      label.append(el('span', { text: value }));
+      list.append(label);
+    }
+    box.append(list);
+  };
+  group('Roles to search for', 'roles', intent.targetRoles ?? []);
+  group('Skills to match on', 'skills', intent.skillsToKeep ?? []);
+  group('Industries', 'industries', intent.industries ?? []);
+
+  box.append(el('div', { class: 'row-gap' },
+    el('button', { class: 'small primary', 'data-action': 'confirm-merge-selection', text: 'Merge what I ticked' }),
+    el('button', { class: 'small ghost', 'data-action': 'cancel-merge-selection', text: 'Cancel' })));
+  host.append(box);
+  box.scrollIntoView?.({ block: 'nearest' });
+}
+
+/** Post only the ticked roles/skills/industries. */
+async function submitMergeSelection() {
+  const picker = $('mergePicker');
+  if (!picker) return;
+  const ticked = (kind) => [...picker.querySelectorAll(`[data-merge-kind="${kind}"]`)]
+    .filter((box) => box.checked).map((box) => box.value);
+  const roles = ticked('roles');
+  const skills = ticked('skills');
+  const industries = ticked('industries');
+  if (!roles.length && !skills.length && !industries.length) {
+    toast('Tick at least one thing to merge.', 'bad');
+    return;
+  }
+  await chooseResumeProfile('merge', { roles, skills, industries });
+}
+
+/** Re-open the resume question the user had previously settled. */
+async function reconsiderResumeChoice() {
+  try {
+    await postJson('/api/search-profiles/acknowledge-resume', { clear: true });
+    await renderMasterResume();
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+/** POST one of the three resume choices, then re-render the drawer. */
+async function chooseResumeProfile(choice, extra = {}) {
+  try {
+    const result = await postJson('/api/search-profiles/from-resume', { choice, ...extra });
+    if (!result.changed) { toast(result.message ?? 'Nothing changed.', ''); return; }
+    toast(result.activated
+      ? `Now searching as "${result.activated.label}".`
+      : `Saved profile "${result.id}". Activate it to start searching with it.`, 'ok');
+    await renderMasterResume();
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+}
+
 async function renderMasterResume() {
   const body = $('masterBody');
   let master;
@@ -2650,7 +2932,17 @@ async function renderMasterResume() {
         el('br'), 'Tailoring would copy it through verbatim. Re-save it from Word as .docx and upload it again.')));
   }
 
-  if (master.exists) await renderResumeSuggestions(body);
+  // Whose search is running, and does this resume belong to them? This comes
+  // FIRST: it is the question that decides whether anything below it matters.
+  const relation = await renderSearchProfiles(body);
+
+  // The role-level diff below compares TITLES; the panel above compares WHOSE
+  // RESUME THIS IS. When the two disagree the screen contradicted itself —
+  // "This looks like a different candidate" sat directly above "your current
+  // role is already being searched for". The identity question is the bigger
+  // one and it already offers the right actions, so the title diff is left out
+  // until the resume and the profile are agreed to be the same person.
+  if (master.exists && relation !== 'different') await renderResumeSuggestions(body);
 
   body.append(el('div', { class: 'evidence-note' },
     'Tailoring opens this document read-only and writes a separate resume per job — '
@@ -2942,13 +3234,60 @@ function renderSavedAnswers(screening) {
     wrap.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }),
       el('div', { text: screening.error })));
   }
+
+  // ANSWERS THE ACTIVE PROFILE STATES ON YOUR BEHALF.
+  //
+  // These are generated from the profile and take precedence over an entry of
+  // the same name below, so that switching profiles cannot leave one person's
+  // work authorization or pay expectation on another person's application.
+  // Without showing them, editing the entry below would appear to do nothing
+  // and there would be no way to find out why.
+  const derived = screening.derivedAnswers ?? [];
+  let overridden = new Set();
+  if (derived.length) {
+    const shadowed = new Set(derived.map((d) => String(d.id).toLowerCase()));
+    const note = el('div', { class: 'evidence-note' });
+    note.append(el('div', {}, el('b', { text: 'From your search profile. ' }),
+      `${derived.length} answer(s) are filled in from the active profile and used instead of `
+      + 'anything with the same name below. Change them by editing the profile.'));
+    // A real definition list: these are question -> answer pairs, and a screen
+    // reader should hear them as pairs rather than as one run-on line.
+    const list = el('dl', { class: 'kv' });
+    for (const entry of derived) {
+      list.append(el('dt', { text: entry.id }));
+      list.append(el('dd', { text: entry.answer }));
+    }
+    note.append(list);
+    wrap.append(note);
+    overridden = shadowed;
+  }
+
   for (const entry of screening.answers ?? []) {
     const row = el('div', { class: 'pf-answer', 'data-answer-id': entry.id });
+    // Marked from a local set rather than by tagging the entry: these objects
+    // come from the cached API response, and a flag written onto them would
+    // survive into later renders after the override had gone away.
+    if (overridden.has(String(entry.id).toLowerCase())) {
+      row.append(el('div', { class: 'muted small' },
+        'Not in use — your search profile answers this one.'));
+    }
+    // LABELS ARE WIRED TO THEIR CONTROLS, not merely placed above them.
+    //
+    // These were bare <label> elements with no `for`, so a screen reader
+    // announced each box as an unlabelled edit field and clicking the caption
+    // did not focus anything. `id` is derived from the answer id, which is
+    // already unique within the document and constrained to
+    // [a-z0-9_-] by validateAnswerEntry — so it is safe in an id attribute.
+    const patternsId = `answer-patterns-${entry.id}`;
+    const answerId = `answer-text-${entry.id}`;
     row.append(el('div', { class: 'pf-answer-id' }, el('b', { text: entry.id })));
-    row.append(el('label', { text: 'Matches questions containing' }));
-    row.append(el('input', { type: 'text', 'data-a-patterns': entry.id, value: (entry.patterns ?? []).join(' | ') }));
-    row.append(el('label', { text: 'Answer' }));
-    row.append(el('textarea', { rows: '2', 'data-a-answer': entry.id }, entry.answer ?? ''));
+    row.append(el('label', { text: 'Matches questions containing', for: patternsId }));
+    row.append(el('input', {
+      type: 'text', id: patternsId, 'data-a-patterns': entry.id,
+      value: (entry.patterns ?? []).join(' | '),
+    }));
+    row.append(el('label', { text: 'Answer', for: answerId }));
+    row.append(el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id }, entry.answer ?? ''));
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
       text: '✕ Delete this answer',
@@ -3334,10 +3673,11 @@ function applyRunGate(status) {
     line.hidden = false;
     if (Number.isFinite(total) && total > 0) {
       line.classList.remove('indeterminate');
-      $('runlineFill').style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
+      // `--progress` drives a composited scaleX; see `.runline i` in app.css.
+      $('runlineFill').style.setProperty('--progress', String(Math.min(1, done / total)));
     } else {
       line.classList.add('indeterminate');
-      $('runlineFill').style.width = '';
+      $('runlineFill').style.removeProperty('--progress');
     }
   } else if (status?.lastError && !dismissed) {
     box.dataset.state = 'error';
@@ -3470,6 +3810,35 @@ const ACTIONS = {
     closeDialog(target?.closest?.('dialog'));
     openMasterResume();
   },
+  'migrate-search-profile': async () => {
+    try {
+      const r = await postJson('/api/search-profiles/migrate', {});
+      toast(r.migrated ? `Imported as profile "${r.id}".` : `Nothing to import — ${r.reason}.`, r.migrated ? 'ok' : '');
+      await renderMasterResume();
+    } catch (err) { toast(err.message, 'bad'); }
+  },
+  'activate-search-profile': async (target) => {
+    const id = target?.dataset?.profileId;
+    if (!id) return;
+    try {
+      const r = await postJson('/api/search-profiles/activate', { id });
+      toast(`Now searching as "${r.label}" — asks for ${r.searchPhrases.map((q) => `"${q}"`).join(', ')}.`, 'ok');
+      await renderMasterResume();
+    } catch (err) { toast(err.message, 'bad'); }
+  },
+  // Creating and activating in one step is deliberate here: the user has just
+  // been shown exactly what this profile will search for and pressed the button
+  // that says so. The API keeps them separable for every other caller.
+  'profile-from-resume-create': () => chooseResumeProfile('create', { activate: true }),
+  'profile-from-resume-keep': () => chooseResumeProfile('keep'),
+  // Merge opens the PICKER rather than submitting everything the resume
+  // proposed. The button's own copy offers a choice of what to bring across,
+  // and sending the full list was not that choice — it was the "create"
+  // outcome with the current profile's roles left on the end.
+  'profile-from-resume-merge': () => openMergePicker(),
+  'confirm-merge-selection': () => submitMergeSelection(),
+  'cancel-merge-selection': () => renderMasterResume(),
+  'profile-from-resume-reconsider': () => reconsiderResumeChoice(),
   'adopt-resume-titles': () => adoptResumeSelection({ titles: selectedAdoptTitles() }),
   'adopt-resume-skills': async () => {
     const data = await api('/api/master-resume/suggestions').catch(() => null);
@@ -3482,12 +3851,13 @@ const ACTIONS = {
     $('jobSearchInput').value = first;
     openDialog($('dlgJobSearch'));
   },
-  'open-job-search': () => {
-    $('jobSearchMsg').textContent = '';
-    $('jobSearchInput').value = '';
-    openDialog($('dlgJobSearch'));
-  },
+  // Carries whatever is in the board filter. The old handler blanked the
+  // dialog's input every time, so the phrase you had just typed — the reason
+  // you were reaching for this at all — had to be typed a second time.
+  'open-job-search': (target) => openBoardSearch(target?.dataset?.query ?? $('q').value),
   'submit-job-search': () => runJobSearch(),
+  'exit-role-search': () => exitRoleSearch(),
+  'clear-role-search': () => clearRoleSearch(),
   'pick-master-file': () => {
     // Reset first so re-picking the SAME file still fires 'change'.
     $('masterFile').value = '';
@@ -3657,6 +4027,44 @@ async function submitAddUrl() {
  * which answer in seconds. A full discovery pass spans 226 Workday tenants for
  * ~14 minutes and is driven from the Run controls instead.
  */
+/**
+ * Open the job-board search, seeded with the text the user already typed.
+ *
+ * Pre-selecting the seeded text matters: it is a starting point, not a
+ * commitment. "Engineer" typed to filter the board is often too broad to send
+ * to a job board, and selected text is edited by typing rather than by
+ * clearing first.
+ *
+ * @param {string} [seed] query to prefill
+ */
+function openBoardSearch(seed = '') {
+  const input = $('jobSearchInput');
+  $('jobSearchMsg').textContent = '';
+  $('jobSearchMsg').className = 'muted';
+  input.value = String(seed ?? '').trim();
+  openDialog($('dlgJobSearch'));
+  // After the dialog paints, or focus lands on the dialog itself.
+  requestAnimationFrame(() => { input.focus(); input.select(); });
+}
+
+/**
+ * Show the escalating action only when there is something to escalate.
+ *
+ * An always-present button could be clicked into an empty modal, which is what
+ * it used to do. Tying its existence to the query means the control appears
+ * exactly when it becomes useful and cannot be pressed when it is not.
+ */
+function syncBoardSearchAction() {
+  const query = $('q').value.trim();
+  const button = $('btnFindJobs');
+  if (!button) return;
+  button.hidden = query.length === 0;
+  button.dataset.query = query;
+  button.title = query
+    ? `Ask the job boards for "${query}" — it does not have to be in your profile`
+    : 'Ask the job boards for a role that is not in your profile yet';
+}
+
 async function runJobSearch() {
   const query = $('jobSearchInput').value.trim();
   const msg = $('jobSearchMsg');
@@ -3675,21 +4083,75 @@ async function runJobSearch() {
     closeDialog($('dlgJobSearch'));
     toast(
       found
-        ? `Found ${fmt(found)} for "${result.query}" — ${fmt(scored)} scored and added to the board`
+        ? `Found ${fmt(found)} for "${result.query}" — ${fmt(scored)} scored, in their own list`
         : `No results for "${result.query}" from ${result.sources.join(', ')}`,
       found ? 'good' : '',
     );
-    // Point the board at what was just found, so the results are the first
-    // thing seen rather than something to go hunting for.
-    if (found) {
-      $('q').value = query;
-      await refreshAll();
-    }
+    // Open the role search's OWN list. Deliberately not `$('q').value = query`:
+    // that filtered the personalized board by a string, which is exactly the
+    // conflation these two modes exist to prevent.
+    if (found) await enterRoleSearch(result.query);
   } catch (err) {
     msg.className = 'st-blocked';
     msg.textContent = err.message;
   } finally {
     $('jobSearchGo').disabled = false;
+  }
+}
+
+/**
+ * Show the results of ONE role search, in place of the personalized board.
+ *
+ * Filters are reset because they belong to the list being left: a `fit` or
+ * `sponsorship` narrowing chosen for personalized results would silently hide
+ * most of a role search and make it look like it found nothing.
+ *
+ * @param {string} query the role that was searched for
+ */
+async function enterRoleSearch(query) {
+  state.discoveryMode = 'role_search';
+  state.roleQuery = query;
+  state.page = 1;
+  state.activeTab = 'all';
+  state.selected.clear();
+  resetFilters({ silent: true });
+  renderModeBanner();
+  await refreshAll();
+}
+
+/** Return to the personalized board. The role search's rows are left on disk. */
+async function exitRoleSearch() {
+  state.discoveryMode = 'profile';
+  state.roleQuery = null;
+  state.page = 1;
+  state.selected.clear();
+  renderModeBanner();
+  await refreshAll();
+}
+
+/** Discard one role search's rows, then go back to the personalized board. */
+async function clearRoleSearch() {
+  const query = state.roleQuery;
+  if (!query) return exitRoleSearch();
+  try {
+    const r = await api(`/api/search?query=${encodeURIComponent(query)}`, { method: 'DELETE' });
+    toast(`Cleared ${fmt(r.removed ?? 0)} result${r.removed === 1 ? '' : 's'} for "${query}"`, 'good');
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+  return exitRoleSearch();
+}
+
+/** Keep the banner in step with the mode. Hidden entirely on the profile board. */
+function renderModeBanner() {
+  const banner = $('modeBanner');
+  if (!banner) return;
+  const roleMode = state.discoveryMode === 'role_search';
+  banner.hidden = !roleMode;
+  document.body.dataset.discoveryMode = state.discoveryMode;
+  if (roleMode) {
+    $('modeBannerText').textContent = `Showing job-board results for “${state.roleQuery}”. `
+      + 'These are kept separate from your personalized jobs and were not scored against your profile.';
   }
 }
 
@@ -3942,10 +4404,18 @@ const DEBOUNCED_TEXT_FILTERS = ['q', 'city'];
 let searchTimer = null;
 for (const id of DEBOUNCED_TEXT_FILTERS) {
   $(id).addEventListener('input', () => {
+    // The escalating action tracks the query on every keystroke, NOT on the
+    // debounce — it is a property of what is typed, not of what the board has
+    // finished loading, and a quarter-second of lag on a control appearing
+    // reads as the field being unresponsive.
+    if (id === 'q') syncBoardSearchAction();
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => { state.page = 1; onFilterChange(); }, 250);
   });
 }
+// Also after any programmatic write: Reset, a restored URL/preference, or a
+// filter chip being dismissed all change the query without an `input` event.
+syncBoardSearchAction();
 // Every other filter control except the segmented switch (a click, not a
 // change) reloads the board when it changes.
 for (const id of [...FILTER_IDS, ...TOGGLE_IDS]) {

@@ -234,11 +234,11 @@ async function main() {
     };
 
     // Same chain discovery uses, so an enriched row is judged identically.
-    const exclusion = applyExclusions(job, config.exclusions, { now });
+    const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
     const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
     const titleVerdict = classifyTitleFit(job.title, vocab).verdict;
-    const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict });
+    const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
 
     const before = Number(row.score ?? 0);
     if (score.total > before) stats.improved += 1;

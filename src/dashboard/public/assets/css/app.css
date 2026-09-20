@@ -43,9 +43,15 @@
   --chip: #212b38;
 
   /* elevation */
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, .4);
-  --shadow: 0 8px 24px rgba(0, 0, 0, .45);
-  --shadow-lg: 0 24px 60px rgba(0, 0, 0, .6);
+  /* Tinted to the surface hue, not pure black.
+     The light theme already shadows with rgba(16, 24, 40, …) while the dark
+     theme used flat rgba(0, 0, 0, …) — so the two halves of the same design
+     system lit their surfaces differently. Against a blue-black --bg (#0a0d12)
+     a pure-black shadow reads as a grey smudge; carrying the background's own
+     hue into it keeps one consistent light source across both themes. */
+  --shadow-sm: 0 1px 3px rgba(2, 5, 12, .5);
+  --shadow: 0 8px 24px rgba(2, 5, 12, .55);
+  --shadow-lg: 0 24px 60px rgba(2, 5, 12, .7);
 
   /* radii + spacing */
   --r-xs: 5px;
@@ -175,8 +181,13 @@ body {
   border-radius: var(--r-xs);
 }
 
+/* In-page jumps (the profile drawer's "jump to answers", the skip link) landed
+   instantly, which loses the reader's place in a long scrolling panel. */
+html { scroll-behavior: smooth; }
+
 /* Respect a user's reduced-motion preference across every transition. */
 @media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
   *, *::before, *::after {
     animation-duration: .001ms !important;
     animation-iteration-count: 1 !important;
@@ -369,17 +380,29 @@ button.icon { padding: 4px 7px; }
   position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
   background: var(--line-soft); overflow: hidden;
 }
+/* Driven by `transform: scaleX()`, not `width`.
+   A width transition relayouts the bar on every frame of a run that can span
+   minutes; a transform is composited on the GPU and costs nothing. The element
+   is full width and scaled down, so `--progress: 0` is empty and `1` is full. */
 .runline i {
-  display: block; height: 100%; width: 0; background: var(--accent);
-  transition: width .3s ease;
+  display: block; height: 100%; width: 100%; background: var(--accent);
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left center;
+  transition: transform .3s ease;
 }
 /* No total to count against (a prepare pass) — show motion, not a false number. */
 .runline.indeterminate i {
-  width: 30%; animation: slide 1.2s ease-in-out infinite;
+  transform: scaleX(.3);
+  animation: slide 1.2s ease-in-out infinite;
 }
+/* The scale has to be carried INSIDE the keyframes: an animation's `transform`
+   replaces the static one outright, so animating translateX alone would have
+   cancelled the scaleX(.3) above and slid a full-width bar across.
+   Percentages resolve against the element's untransformed box (now the full
+   width), so -30%/120% reproduce the exact travel the old 30%-wide bar had. */
 @keyframes slide {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
+  0% { transform: translateX(-30%) scaleX(.3); }
+  100% { transform: translateX(120%) scaleX(.3); }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
@@ -547,6 +570,32 @@ button.stat:hover { background: none; border-color: transparent; }
 }
 .card h3:first-child, .panel h3:first-child { margin-top: 0; }
 
+/* ─────────────────── board mode banner ───────────────────
+   Shown only while the board is displaying a ROLE SEARCH rather than the
+   personalized list. It is deliberately loud: the two lists look identical row
+   for row, so the only thing telling them apart is this bar. Amber rather than
+   accent-blue, because it marks a temporary state to come back from, not a
+   feature to be drawn into. */
+.mode-banner {
+  display: flex; align-items: center; gap: var(--s2);
+  margin-bottom: var(--s3); padding: 9px 12px;
+  background: var(--warn-soft);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  border-radius: var(--r-md);
+  font-size: .86rem; line-height: 1.45;
+}
+.mode-banner[hidden] { display: none; }
+.mode-banner-tag {
+  flex: none; padding: 2px 8px; border-radius: 999px;
+  background: var(--warn); color: var(--accent-ink);
+  font-size: .72rem; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+}
+.mode-banner .spacer { flex: 1 1 auto; }
+@media (max-width: 720px) {
+  .mode-banner { flex-wrap: wrap; }
+  .mode-banner .spacer { flex-basis: 100%; }
+}
+
 /* ─────────────────── filters ─────────────────── */
 /* Two lanes in one card: the everyday controls, then a quieter second lane
    holding the rest. Both are always visible — a popover covered the very rows
@@ -577,9 +626,122 @@ button.stat:hover { background: none; border-color: transparent; }
   border: 1px solid var(--line); border-radius: var(--r-sm);
   padding: 5px 9px; font: inherit; font-size: 13px;
 }
+/* Native selects paint their own arrow INSIDE the padding box, so a uniform
+   9px right padding let the longest label ("Any sponsorship") run underneath
+   it. Reserving the gutter is cheaper and more robust than shortening every
+   label to fit, and it keeps the two filter lanes visually consistent. */
+.filters select, .filters-more select { padding-right: 26px; }
 .filters input:hover, .filters select:hover,
 .filters input:focus, .filters select:focus { border-color: var(--accent); }
-.filters .grow { width: min(250px, 100%); }
+/* `.grow` was the search box's own width rule and nothing carries that class
+   any more — the box is now `.searchfield`, which sizes itself. Kept as a
+   comment rather than a live rule so the next person does not spend time
+   wondering which element it sizes. */
+
+/* ── search field: one input, two scopes ───────────────────────────────────
+   The board filter and the job-board search ask the same question at different
+   ranges, so they share one field instead of sitting side by side as a text box
+   and an unrelated ghost button. The wrapper carries the border and the focus
+   ring; the input inside is transparent and borderless, so the icon, the text
+   and the escalating action read as one control rather than three.
+
+   Selectors are scoped `.filters .searchfield …` deliberately: the base rules
+   above (`.filters input[type=search]`, `.filters input:hover`) match at the
+   same specificity, and a one-class override would depend on source order to
+   win. Three classes is unambiguous. */
+/* Scoped past `.filters .grow` (0,2,0), which the wrapper no longer carries —
+   250px left only ~90px for text once the action was in the field, so
+   "senior product manager" truncated to "senior produc". The width now budgets
+   for BOTH zones: ~260px of typing beside a ~116px action. */
+.filters .searchfield {
+  display: flex; align-items: center; gap: 7px;
+  height: 34px; padding: 0 4px 0 10px;
+  width: min(420px, 100%);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  transition: border-color .12s, box-shadow .12s;
+}
+.searchfield:hover { border-color: var(--accent); }
+/* ACTIVE STATE BELONGS TO THE WRAPPER NOW.
+   `.filters input[type=search]:not(:placeholder-shown)` marks a filtering field
+   by accenting its border AND its text. With the input borderless inside this
+   wrapper, the border half of that rule painted nothing and only the text half
+   survived — so everything you typed came out accent blue and read as a link
+   rather than as a value. The wrapper owns the border, so it takes the accent;
+   the text goes back to being text. */
+.searchfield:has(input:not(:placeholder-shown)) { border-color: var(--accent); }
+.filters .searchfield input[type=search]:not(:placeholder-shown) {
+  color: var(--text); border-color: transparent;
+}
+/* The ring lives on the WRAPPER, so focusing the inner input lights the whole
+   control — otherwise the field would show a border on one element and a focus
+   ring on another inside it. */
+.searchfield:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.filters .searchfield input[type=search] {
+  flex: 1 1 auto; min-width: 0;
+  height: 100%; padding: 0;
+  background: transparent; border: 0; border-radius: 0;
+  color: var(--text); font-size: 13px;
+}
+.filters .searchfield input[type=search]:hover,
+.filters .searchfield input[type=search]:focus {
+  border-color: transparent; outline: none;
+}
+.searchfield-icon {
+  width: 14px; height: 14px; flex: none; color: var(--text-faint);
+  fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round;
+}
+.searchfield:focus-within .searchfield-icon { color: var(--accent); }
+
+/* The escalation. Tinted rather than outlined so it reads as an action nested
+   INSIDE the field, not as a second control docked beside it — and quiet enough
+   at 11.5px that it never competes with the text being typed.
+
+   The hairline is load bearing: the input's own native clear button (✕) paints
+   at the input's right edge, so without a divider the two sat flush and the
+   field ended in "…manager✕Search boards" with no seam between a control that
+   erases the query and one that sends it. */
+.filters .searchfield-scope {
+  position: relative; flex: none; height: 24px; padding: 0 8px; gap: 5px;
+  margin-left: 4px;
+  font-size: 11.5px; font-weight: 600;
+  color: var(--accent); background: var(--accent-soft);
+  border: 1px solid transparent; border-radius: var(--r-xs);
+}
+.filters .searchfield-scope::before {
+  content: ''; position: absolute; left: -6px; top: 50%;
+  width: 1px; height: 16px; margin-top: -8px;
+  background: var(--line);
+}
+.filters .searchfield-scope:hover {
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.filters .searchfield-scope svg {
+  width: 11px; height: 11px; flex: none;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+/* `button` sets display:inline-flex, which outranks the UA sheet's
+   `[hidden] { display: none }` — without this the action is merely invisible
+   and still occupies the field, still focusable by keyboard. */
+.filters .searchfield-scope[hidden] { display: none; }
+
+/* Very narrow viewports: the action drops to its arrow so the input never
+   shrinks below a usable width. (Full-width is handled at the 860px breakpoint
+   with the rest of the bar, so the two cannot disagree about where the layout
+   changes.) The label survives as the accessible name via `title`/aria. */
+@media (max-width: 520px) {
+  .filters .searchfield-scope span {
+    position: absolute; width: 1px; height: 1px;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+  }
+  .filters .searchfield-scope { padding: 0 7px; }
+}
 
 /* Lane 2 is deliberately smaller and dimmer: same controls, lower priority. */
 .filters-more {
@@ -661,7 +823,7 @@ button.stat:hover { background: none; border-color: transparent; }
 .filter-toggle { display: none; }
 
 @media (max-width: 860px) {
-  .filters .grow { width: 100%; }
+  .filters .searchfield { width: 100%; }
   .reset-filter { margin-left: 0; }
   .filters-sep { display: none; }
 
@@ -670,7 +832,12 @@ button.stat:hover { background: none; border-color: transparent; }
      the chip row underneath still names whatever is active, so nothing set can
      hide in here. */
   .filterbar { padding: 7px; }
-  .filterbar[data-collapsed="true"] .filters > :not(.grow):not(.filter-toggle),
+  /* `.searchfield` is what this exemption protects. It used to be `.grow`, and
+     wrapping the input so the board filter and the job-board search could share
+     one control moved that class off the very thing the rule was keeping
+     visible — which collapsed the search box behind the button meant to reveal
+     everything else, leaving phones with no way to type. */
+  .filterbar[data-collapsed="true"] .filters > :not(.searchfield):not(.filter-toggle),
   .filterbar[data-collapsed="true"] .filters-more { display: none; }
   /* Search keeps the first line to itself; the toggle sits on the next. */
   .filter-toggle { display: inline-flex; }
@@ -1193,6 +1360,29 @@ ul.plan li { margin: 3px 0; }
   border-radius: var(--r-sm); padding: var(--s2) var(--s3);
   color: var(--text-dim); font-size: 12px; margin-top: var(--s2);
 }
+
+/* PROSE MEASURE AND ORPHAN CONTROL.
+ *
+ * The advisory notes are the only real PARAGRAPHS in the app — everything else
+ * is table cells, labels and chips. In a ~780px drawer at 12px they ran to
+ * ~100 characters a line, well past the ~65-75 that reads comfortably, and the
+ * last line regularly stranded a single word ("...across Data & Analytics.").
+ *
+ * The measure is set on the TEXT, never on the tinted block. Constraining the
+ * block instead made `.evidence-note` shrink while `.attention` beside it
+ * stayed full width, so the drawer gained a ragged right edge — a worse
+ * problem than the orphan it fixed. Blocks keep one shared width; only the
+ * lines inside them stop early.
+ *
+ * `text-wrap: pretty` asks the browser to avoid the orphan; `ch` takes the
+ * measure from the font's own metrics rather than a guessed pixel width. Both
+ * degrade silently where unsupported, and neither touches the dense table UI,
+ * which is deliberately NOT prose.
+ */
+.evidence-note > *, .grounded-note > *, .attention > div > *, .attention > div {
+  text-wrap: pretty;
+  max-width: 78ch;
+}
 .grounded-note {
   border-left: 3px solid var(--good); background: var(--good-soft);
   border-radius: var(--r-sm); padding: var(--s2) var(--s3);
@@ -1342,7 +1532,14 @@ dialog .dlg-foot {
   padding: var(--s3) var(--s4) var(--s4);
 }
 dialog label { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 3px; }
-dialog input[type=text], dialog input[type=url], dialog textarea {
+/* `search` was missing from this list, so the one dialog input that uses it —
+   the job-board query — fell back to the browser's default ~170px box while
+   every other dialog field spanned the width. Invisible while that field was
+   always opened empty; the moment it carries a real phrase the text scrolls out
+   of view. Fixed on the SELECTOR rather than on the one id, so the next
+   `type=search` in a dialog inherits the system instead of repeating the bug. */
+dialog input[type=text], dialog input[type=url], dialog input[type=search],
+dialog textarea {
   width: 100%; background: var(--surface-2); color: var(--text);
   border: 1px solid var(--line); border-radius: var(--r-sm);
   padding: 8px 10px; font: inherit; margin-bottom: var(--s3);
@@ -1595,6 +1792,9 @@ kbd {
 /* ─────────────────── empty + loading ─────────────────── */
 .empty { text-align: center; color: var(--text-dim); padding: 42px 16px; }
 .empty .big { font-size: 15px; color: var(--text); margin-bottom: 6px; font-weight: 620; }
+/* `.row-gap` is left-aligned by default, which reads as misplaced inside a
+   centred empty state. */
+.empty-actions { justify-content: center; margin-top: 14px; }
 .skeleton {
   height: 38px; border-radius: var(--r-sm); margin: 6px 0;
   background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%);
@@ -1699,3 +1899,14 @@ a.btn:hover { color: var(--text); }
 /* Long role names must wrap inside the rail rather than widen the panel. */
 .detail-head h2 { overflow-wrap: anywhere; }
 .panel, .card { overflow-wrap: break-word; }
+
+/* Key/value pairs inside an advisory note (derived screening answers).
+   A two-column grid keeps the values aligned so the list scans vertically
+   instead of reading as one wrapped sentence per row. */
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px var(--s2); margin: var(--s2) 0 0; }
+.kv dt { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.kv dd { margin: 0; color: var(--text-dim); text-wrap: pretty; }
+@media (max-width: 560px) {
+  .kv { grid-template-columns: 1fr; gap: 0 0; }
+  .kv dd { margin-bottom: var(--s2); }
+}

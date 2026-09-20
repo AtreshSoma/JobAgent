@@ -38,6 +38,7 @@ import { classifySponsorship, SPONSORSHIP } from '../scoring/sponsorshipClassifi
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
+import { scoringFingerprint } from '../scoring/fingerprint.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { isQueryFirstAdapter } from '../search/sources.js';
@@ -115,12 +116,16 @@ export async function runScore({ config, db, logger, deps = {} } = {}) {
  *   2. The query is injected as `options.queries`, which both adapters already
  *      support, so no adapter needed changing.
  *
- * The query is ALSO prepended to `targetTitles` for this call only, in a config
- * copy that is never written. Without that, `classifyDiscovery` would judge the
- * results against the stored profile and discard the very rows the user just
- * asked for — searching "product manager" from a data-engineering profile would
- * return nothing and look broken. Nothing about the saved profile changes; this
- * is a preview of what targeting that title would find.
+ * For this call only, in a config copy that is never written, the phrase BECOMES
+ * the target list. Without that, `classifyDiscovery` would judge the results
+ * against the stored profile and discard the very rows the user just asked for —
+ * searching "product manager" from a data-engineering profile would return
+ * nothing and look broken. Nothing about the saved profile changes.
+ *
+ * Every row written here is stamped `discovery_mode = 'role_search'` with the
+ * phrase, so these results have their own list and never reach the personalized
+ * board. That stamp is what makes the two flows independent; see the pipeline's
+ * `runMode` and `boardPage`'s scope.
  *
  * @param {object} args
  * @param {object} args.config loadConfig() bundle
@@ -150,21 +155,47 @@ export async function runQuerySearch({ config, db, logger, query, deps = {} } = 
     );
   }
 
+  /*
+   * THE SEARCHED PHRASE IS THE WHOLE PROFILE, FOR THIS CALL ONLY.
+   *
+   * This used to PREPEND the phrase to the saved `targetTitles` and keep the
+   * rest. That made a role search a personalized search with one extra term:
+   * asking for "Product Manager" still recognized, scored and boarded every
+   * data-engineering title on the list, so the two features returned
+   * overlapping results and neither answered its own question cleanly.
+   *
+   * Replacing the list instead makes this mode mean exactly what its name says
+   * — find what the market calls THIS role — and is safe precisely because the
+   * rows it writes are stamped `role_search` and never reach the personalized
+   * board. Nothing here is persisted to config: `searchConfig` is a copy, and
+   * the saved profile is untouched.
+   */
   const searchConfig = {
     ...config,
     jobboards: { ...config.jobboards, sources },
     candidate: {
       ...config.candidate,
-      targetTitles: [phrase, ...(config.candidate?.targetTitles ?? [])],
+      targetTitles: [phrase],
+      anchorTitles: [phrase],
+      adjacentTitles: [],
+      searchPhrases: [phrase],
     },
   };
 
   const result = await runPipeline({
     config: searchConfig, db, logger, mode: 'DRY_RUN',
-    // The user asked for these rows by name. Scoring them against a keyword
-    // vocabulary built for a different role and then discarding them would
-    // return nothing and look broken — see keepBelowThreshold in the pipeline.
-    deps: { ...deps, keepBelowThreshold: true },
+    deps: {
+      ...deps,
+      // The user asked for these rows by name. Scoring them against a keyword
+      // vocabulary built for a different role and then discarding them would
+      // return nothing and look broken — see keepBelowThreshold in the pipeline.
+      keepBelowThreshold: true,
+      // What makes the line above safe: every row written here is stamped as
+      // belonging to THIS query, so keeping low scorers cannot leak them onto
+      // the personalized board.
+      discoveryMode: 'role_search',
+      searchQuery: phrase,
+    },
   });
   return {
     query: phrase,
@@ -216,7 +247,19 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
   // Stream by id rather than materializing every row: each row carries its full
   // JD text (~150 MB across a 32k-job corpus) and only one is needed at a time.
   // Falls back to the eager read for test stubs without listJobIds.
-  const ids = typeof db.listJobIds === 'function' ? db.listJobIds() : null;
+  /*
+   * RE-SCORE JUDGES THE PERSONALIZED BOARD, AND ONLY IT.
+   *
+   * Re-scoring recomputes fit against the SAVED PROFILE. Applying that to a row
+   * an ad-hoc role search found is a category error: the user asked for that
+   * job by name, and the profile's vocabulary has no opinion worth acting on
+   * about a role outside it. Measured before this scope existed, one re-score
+   * took a "Senior Product Manager, Payments" kept at 20/100 by an explicit
+   * search for "Product Manager", re-tiered it Discard, and marked it
+   * `discarded` — emptying the role-search list the user had just built, with
+   * no action of theirs and no way to tell what had happened.
+   */
+  const ids = typeof db.listJobIds === 'function' ? db.listJobIds({ mode: 'profile' }) : null;
   const eagerRows = ids ? null : db.listJobs({});
   const total = ids ? ids.length : eagerRows.length;
   const counters = { jobs_rescored: 0, jobs_excluded: 0, jobs_skipped_protected: 0 };
@@ -270,7 +313,7 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     }
 
     // Same chain as discovery: exclusions -> sponsorship -> score -> tier.
-    const exclusion = applyExclusions(job, config.exclusions, { now });
+    const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
     if (exclusion.excluded) {
       // The sponsorship verdict is refreshed for EVERY discarded row, whatever
       // the discard reason. It is a fact about the employer, independent of why
@@ -294,7 +337,7 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     }
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
     const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
-    const { tier, explanation } = explainScore(score, config.scoring);
+    const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
     db.upsertJob({
       id: job.id,
       score: score.total, tier, sponsorship: sponsorship.status,
@@ -302,6 +345,9 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
       employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
       matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
       explanation,
+      // The configuration that produced this verdict, so incremental discovery
+      // can tell a current score from one judged under a different profile.
+      scoring_fingerprint: scoringFingerprint(config),
       status: tier === 'Discard' ? 'discarded' : 'scored',
       discard_reason: tier === 'Discard' ? 'below score threshold on re-score' : null,
     });
@@ -376,7 +422,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
   // Any exclusion that WOULD have applied during bulk discovery (staleness, a
   // "no sponsorship" phrase, a role/location mismatch) is surfaced as a visible
   // caveat instead of a hard discard; the score + tier still decide the outcome.
-  const exclusion = applyExclusions(job, config.exclusions, { now });
+  const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
   const caveat = exclusion.excluded ? `Heads-up (${exclusion.category}): ${exclusion.reason}.` : null;
   if (caveat) {
     logger?.event?.(EVENT_TYPES.EXCLUSION_MATCHED, { jobId: job.id, message: `${exclusion.reason} (added manually, scored anyway)` });
@@ -384,7 +430,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
 
   const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
   const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
-  const { tier, explanation } = explainScore(score, config.scoring);
+  const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
   const fullExplanation = caveat ? `${caveat} ${explanation}` : explanation;
 
   const patch = {
@@ -397,6 +443,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
     employment_category: classifyEmployment(job, config.exclusions?.employmentTypes).category,
     score: score.total, tier, sponsorship: sponsorship.status,
     sponsorship_signals: sponsorship.signals ?? [],
+    scoring_fingerprint: scoringFingerprint(config),
     matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
     explanation: fullExplanation, status: tier === 'Discard' ? 'discarded' : 'scored',
     discard_reason: tier === 'Discard' && caveat ? exclusion.reason : null,

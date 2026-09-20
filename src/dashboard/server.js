@@ -90,6 +90,7 @@ import {
   preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
 import {
   PROFILE_FIELDS, readProfile, writeProfile, readScreeningAnswers,
@@ -109,6 +110,13 @@ import {
   validExtensionKey,
 } from '../extension/companion.js';
 import { extractResumeEvidence, diffAgainstProfile } from '../resume/resumeProfile.js';
+import {
+  listProfiles as listSearchProfiles, readProfile as readSearchProfile,
+  readActiveProfile, activateProfile, saveProfile as saveSearchProfile, acknowledgeResumeMismatch,
+  deleteProfile as deleteSearchProfile, migrateLegacyCandidate,
+  proposeProfileFromResume, mergeIntoActiveProfile,
+} from '../profile/store.js';
+import { deriveFromProfile } from '../profile/derive.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'public');
 
@@ -504,6 +512,29 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   }
 
   /**
+   * Is the packet stored for this job the ACTIVE candidate's?
+   *
+   * There is one job store and one approvals table for every profile, and a
+   * packet used to record nothing about who it was built for — so switching
+   * profiles and pressing Auto-fill filled the new candidate's application from
+   * the previous candidate's tailored resume, cover letter and screening
+   * answers. Reusing a stored packet is only safe once it has been asked whose
+   * it is. See `packetOwnershipCheck`.
+   *
+   * @param {object|null} approval approval row for the job
+   * @returns {{ok: boolean, reason: string|null}} ok when there is nothing
+   *   stored (nothing to reuse) or the stored packet belongs to this candidate
+   */
+  function storedPacketIsOurs(approval) {
+    if (!approval) return { ok: true, reason: null };
+    const loaded = deps.loadPacketImpl ? deps.loadPacketImpl(approval) : loadPacket(approval);
+    // An unreadable packet is handled by the caller that needs its contents;
+    // it is not an ownership problem.
+    if (!loaded) return { ok: true, reason: null };
+    return packetOwnershipCheck(loaded, config);
+  }
+
+  /**
    * Read a generated resume for the local review panel. The path comes only
    * from the selected DB row, is resolved through the real filesystem, and
    * must remain inside this Job Agent workspace. Pending-review packets are
@@ -608,6 +639,38 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       // hit the same problem.
       return { available: false, reason: `the master resume could not be read: ${sanitizeErrorMessage(err.message)}` };
     }
+  }
+
+  /**
+   * A profile plus what it makes the agent DO.
+   *
+   * The second half is the point. A profile is only meaningful through its
+   * consequences — which queries go to the boards, which titles are recognized,
+   * which families are in scope — and those were previously invisible, which is
+   * how a run could keep using one person's titles with nothing saying so.
+   */
+  function summarizeSearchProfile(profile) {
+    // Same root as activation uses, so what this panel promises is exactly what
+    // activating would write. Defaulting the root here would read the taxonomy
+    // from the installed package instead of this workspace.
+    const derived = deriveFromProfile(profile, { root: config?.root });
+    return {
+      profile,
+      // Labelled by ORIGIN so the UI can never present evidence as preference.
+      background: profile.background,
+      searchIntent: profile.searchIntent,
+      effect: {
+        families: derived.families.map((f) => ({ id: f.id, label: f.label })),
+        searchPhrases: derived.searchPhrases,
+        targetTitles: derived.candidate.targetTitles,
+        statedRoles: profile.searchIntent.targetRoles,
+        expandedRoles: derived.candidate.targetTitles.filter(
+          (t) => !profile.searchIntent.targetRoles.some((r) => r.toLowerCase() === t.toLowerCase()),
+        ),
+        categories: derived.categories.map((c) => ({ id: c.id, label: c.label, weight: c.weight })),
+        gapVocabularySize: derived.marketSkills.length,
+      },
+    };
   }
 
   function readResumePreview(jobId, requestedFormat = 'auto') {
@@ -1003,6 +1066,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       err.statusCode = 500;
       throw err;
     }
+    // Refuse rather than re-prepare: this path is a human pressing Auto-fill on
+    // one reviewed job, and quietly replacing the documents they approved would
+    // defeat the approval boundary just as surely as filling somebody else's.
+    const owned = packetOwnershipCheck(loaded, config);
+    if (!owned.ok) {
+      const err = new Error(
+        `this packet is not the active candidate's — ${owned.reason}. `
+        + 'Prepare it again so the resume, cover letter and screening answers describe whoever is applying.',
+      );
+      err.statusCode = 409;
+      throw err;
+    }
     const packet = reconcilePacket(loaded, jobId);
     const runId = randomUUID();
     Object.assign(runState, {
@@ -1129,7 +1204,21 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
 
         // 1. Prepare packets for jobs that don't have one yet (tailored resume
         //    + application packet). Failures are honest skips, not crashes.
-        const needPacket = candidates.filter((id) => !db.getApprovalByJob?.(id));
+        // A job needs a packet when it has none — and equally when the one it
+        // has belongs to a different candidate or was prepared under a
+        // different search profile. Re-preparing rebuilds the documents for
+        // whoever is active now; `enqueueForApproval` repoints the approval at
+        // the new packet and resets it to pending, so the foreign packet can
+        // never be the thing that gets filled.
+        const needPacket = candidates.filter((id) => {
+          const approval = db.getApprovalByJob?.(id);
+          if (!approval) return true;
+          const owned = storedPacketIsOurs(approval);
+          if (!owned.ok) {
+            logger?.info?.(`auto-apply: re-preparing ${id} — ${owned.reason}`);
+          }
+          return !owned.ok;
+        });
         if (needPacket.length) {
           runState.phase = `auto-apply — preparing ${needPacket.length} packet(s)…`;
           const prepareImpl = deps.prepareForJobsFn ?? preparePacketsForJobs;
@@ -1410,13 +1499,55 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       if (runState.running) {
         return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — wait for it to finish` });
       }
+      /*
+       * TAKE THE LOCK, do not merely look at it.
+       *
+       * This checked `runState.running` and never SET it, so the mutual
+       * exclusion it documents only worked in one direction: a run blocked a
+       * search, and a search blocked nothing. Starting "Find new jobs" while a
+       * role search was in flight ran both pipelines against the same jobs
+       * table at once — the interleaved upserts this guard exists to prevent,
+       * and with the two modes now writing different `discovery_mode` values to
+       * the same rows, the ownership rule in persistJob would be racing too.
+       *
+       * Held in a finally so a failed search can never strand the lock and
+       * leave every later run answering 409.
+       */
+      Object.assign(runState, {
+        running: true, phase: `role search: ${query}`, startedAt: new Date().toISOString(),
+        finishedAt: null, lastError: null, cancelRequested: false,
+        runId: randomUUID(), rca: [], partial: false, progress: null,
+      });
       try {
         const searchFn = deps.querySearchFn ?? runQuerySearch;
         const result = await searchFn({ config, db, logger, query, deps });
         return sendJson(res, 200, result);
       } catch (err) {
+        runState.lastError = sanitizeErrorMessage(err.message);
         return sendJson(res, err.statusCode ?? 400, { error: sanitizeErrorMessage(err.message) });
+      } finally {
+        runState.running = false;
+        runState.finishedAt = new Date().toISOString();
       }
+    }
+    /*
+     * The role searches that have been run and still hold rows.
+     *
+     * Role-search results live in the same table as the personalized board but
+     * are fenced off by `discovery_mode`, so they need their own index — there
+     * is no other way to find them again, and without one they would be rows
+     * nobody could reach or clean up.
+     */
+    if (req.method === 'GET' && path === '/api/search/history') {
+      return sendJson(res, 200, { searches: db.listRoleSearches?.() ?? [] });
+    }
+    // Discard one role search entirely. Scoped to `discovery_mode` in SQL, so
+    // it can never reach a row the personalized board owns.
+    if (req.method === 'DELETE' && path === '/api/search') {
+      const query = String(url.searchParams.get('query') ?? '').trim();
+      if (!query) return sendJson(res, 400, { error: 'which search should be cleared?' });
+      const removed = db.deleteRoleSearch?.(query) ?? 0;
+      return sendJson(res, 200, { query, removed });
     }
     if (req.method === 'GET' && path === '/api/run/status') {
       return sendJson(res, 200, runState);
@@ -1501,6 +1632,165 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       const body = await readBody(req);
       return sendJson(res, 200, restoreMasterResume(body.name));
     }
+    /* ── Search profiles ───────────────────────────────────────────────────
+     *
+     * WHOSE SEARCH IS RUNNING? These endpoints exist so the board can answer
+     * that, and so a different candidate's resume can produce a different
+     * search without anyone editing JSON by hand. `/api/profile` above is a
+     * different thing: the contact details the FORM FILLER types. This is what
+     * the agent LOOKS FOR.
+     */
+    if (req.method === 'GET' && path === '/api/search-profiles') {
+      const root = requireConfigRoot();
+      const listing = listSearchProfiles(root);
+      const active = readActiveProfile(root);
+      return sendJson(res, 200, {
+        ...listing,
+        active: active ? summarizeSearchProfile(active) : null,
+      });
+    }
+    // Read the master resume as a PROPOSAL: what it says, whether it looks like
+    // the same person, and the three things the user may do about it. Read-only
+    // — see src/profile/fromResume.js for why adopting stays an explicit act.
+    if (req.method === 'GET' && path === '/api/search-profiles/from-resume/preview') {
+      const root = requireConfigRoot();
+      const result = await proposeProfileFromResume(root, join(root, MASTER_RESUME_RELATIVE));
+      return sendJson(res, 200, result);
+    }
+    // Catch-all by id. MUST stay after every literal sub-path above: it treats
+    // whatever follows the prefix as a profile id, so a route added below it
+    // silently becomes a 404 for a profile that does not exist.
+    if (req.method === 'GET' && path.startsWith('/api/search-profiles/')) {
+      const root = requireConfigRoot();
+      const id = decodeURIComponent(path.slice('/api/search-profiles/'.length));
+      const profile = readSearchProfile(root, id);
+      if (!profile) return sendJson(res, 404, { error: `no profile named "${id}"` });
+      return sendJson(res, 200, summarizeSearchProfile(profile));
+    }
+    if (req.method === 'POST' && path === '/api/search-profiles/activate') {
+      const body = await readBody(req);
+      /**
+       * A RUN IN PROGRESS OWNS THE CONFIGURATION IT STARTED WITH.
+       *
+       * Activation rewrites candidate.json, scoring.json, exclusions.json and
+       * the screening answers, then reloads the in-memory config. An auto-apply
+       * batch holds a queue of packets built BEFORE that, but reads `config`
+       * fresh on every iteration — so activating mid-batch filled the remaining
+       * jobs with one profile's screening answers onto another profile's
+       * documents, in the same run. The batch is short and the switch can wait.
+       */
+      // A dry run computes and writes nothing, so it stays available.
+      if (runState.running && body.dryRun !== true) {
+        return sendJson(res, 409, {
+          error: `a ${runState.phase} run is in progress — wait for it to finish before switching search profiles, `
+            + 'so one batch cannot mix two profiles\' answers and documents',
+        });
+      }
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        const summary = activateProfile(root, String(body.id ?? ''), { dryRun: body.dryRun === true });
+        // Activation rewrites candidate.json, scoring.json and exclusions.json.
+        // The in-memory config MUST be reloaded or the board keeps serving the
+        // previous candidate's search until the process restarts.
+        const warning = summary.dryRun ? null : reloadConfig();
+        return sendJson(res, 200, { ...summary, warning });
+      });
+    }
+    // Re-open a resume question the user had settled with "Keep my current
+    // goals". Clearing the acknowledgment is the only way back to the prompt,
+    // so the decision is durable without being irreversible.
+    if (req.method === 'POST' && path === '/api/search-profiles/acknowledge-resume') {
+      const body = await readBody(req);
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        if (body.clear === true) {
+          return sendJson(res, 200, acknowledgeResumeMismatch(root, ''));
+        }
+        const proposed = readActiveProfile(root);
+        if (!proposed) return sendJson(res, 200, { acknowledged: false });
+        return sendJson(res, 200, acknowledgeResumeMismatch(root, String(body.fingerprint ?? '')));
+      });
+    }
+    if (req.method === 'POST' && path === '/api/search-profiles/migrate') {
+      return saving(res, () => {
+        const result = migrateLegacyCandidate(requireConfigRoot());
+        return sendJson(res, 200, result);
+      });
+    }
+    if (req.method === 'DELETE' && path.startsWith('/api/search-profiles/')) {
+      const id = decodeURIComponent(path.slice('/api/search-profiles/'.length));
+      return saving(res, () => sendJson(res, 200, deleteSearchProfile(requireConfigRoot(), id)));
+    }
+    if (req.method === 'POST' && path === '/api/search-profiles/from-resume') {
+      const body = await readBody(req);
+      /**
+       * A RUN IN PROGRESS OWNS THE CONFIGURATION IT STARTED WITH.
+       *
+       * Activation rewrites candidate.json, scoring.json, exclusions.json and
+       * the screening answers, then reloads the in-memory config. An auto-apply
+       * batch holds a queue of packets built BEFORE that, but reads `config`
+       * fresh on every iteration — so activating mid-batch filled the remaining
+       * jobs with one profile's screening answers onto another profile's
+       * documents, in the same run. The batch is short and the switch can wait.
+       */
+      // "keep" is an explicit no-op and changes no configuration.
+      if (runState.running && String(body.choice ?? '') !== 'keep') {
+        return sendJson(res, 409, {
+          error: `a ${runState.phase} run is in progress — wait for it to finish before switching search profiles, `
+            + 'so one batch cannot mix two profiles\' answers and documents',
+        });
+      }
+      return saving(res, async () => {
+        const root = requireConfigRoot();
+        const choice = String(body.choice ?? '');
+        const proposed = await proposeProfileFromResume(root, join(root, MASTER_RESUME_RELATIVE));
+
+        if (choice === 'keep') {
+          // DURABLY recorded, not merely acknowledged in the response. This
+          // returned a message and wrote nothing, so the drawer re-ran the
+          // comparison on its next render and asked the same question again —
+          // a decision the user had already made, over and over.
+          //
+          // "Keep" is also the one choice that still means something with no
+          // resume on disk: there is nothing to compare against, so there is
+          // nothing to record, and the answer is the same either way.
+          const ack = proposed.available
+            ? acknowledgeResumeMismatch(root, proposed.resumeFingerprint)
+            : { acknowledged: false };
+          return sendJson(res, 200, {
+            choice,
+            changed: false,
+            acknowledged: ack.acknowledged,
+            message: ack.acknowledged
+              ? 'Your current search goals are unchanged. This resume will not be queried again unless you edit it.'
+              : 'Your current search goals are unchanged.',
+          });
+        }
+        if (!proposed.available) throw new Error(proposed.reason);
+
+        if (choice === 'create') {
+          const saved = saveSearchProfile(root, { ...proposed.proposal, label: body.label || proposed.proposal.label });
+          // Saving is not activating: a new profile never takes over the search
+          // without a second, deliberate action.
+          if (body.activate === true) {
+            const summary = activateProfile(root, saved.id);
+            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning: reloadConfig() });
+          }
+          return sendJson(res, 200, { choice, changed: true, ...saved, activated: null });
+        }
+        if (choice === 'merge') {
+          const merged = mergeIntoActiveProfile(root, {
+            roles: Array.isArray(body.roles) ? body.roles : [],
+            skills: Array.isArray(body.skills) ? body.skills : [],
+            industries: Array.isArray(body.industries) ? body.industries : [],
+          });
+          const summary = activateProfile(root, merged.id);
+          return sendJson(res, 200, { choice, changed: true, ...merged, activated: summary, warning: reloadConfig() });
+        }
+        throw new Error('choice must be one of: create, keep, merge');
+      });
+    }
+
     // ── Application profile ────────────────────────────────────────────────
     // The values the form filler types, the answers it draws on, and the
     // questions it could not answer. Editing them here replaces hand-editing
@@ -1846,7 +2136,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     sendJson(res, 404, { error: `no route: ${req.method} ${path}` });
   }
 
-  return { server, runState, inFlight, flushTracker };
+  return {
+    server, runState, inFlight, flushTracker,
+    // The LIVE bundle, not the one booted with: routes that rewrite config
+    // files reload it into this closure, and `startDashboard` cannot see that
+    // from its own immutable parameter.
+    currentConfig: () => config,
+  };
 }
 
 /**
@@ -1856,7 +2152,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
  * @returns {Promise<{ server: import('node:http').Server, port: number, url: string, close: Function }>}
  */
 export function startDashboard({ config, db, logger, port = 4646, deps = {} } = {}) {
-  const { server, runState, inFlight, flushTracker } = createDashboardServer({ config, db, logger, deps });
+  const { server, runState, inFlight, flushTracker, currentConfig } = createDashboardServer({ config, db, logger, deps });
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       if (err?.code === 'EADDRINUSE') {
@@ -1875,6 +2171,23 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
         runState,
         port: actual,
         url: `http://127.0.0.1:${actual}`,
+        /**
+         * The config bundle the server is CURRENTLY serving.
+         *
+         * Not a convenience: several routes rewrite config files on disk and
+         * then reload them into the request handler's closure, and "did the
+         * live bundle actually follow?" is a different question from "is the
+         * file on disk right?". Activating a search profile is the case that
+         * matters — if the reload silently fails, every subsequent run keeps
+         * using the previous candidate's titles until the process restarts,
+         * which is the exact silent staleness the profile model exists to end.
+         *
+         * It must come from `createDashboardServer`, which owns the mutable
+         * binding. `startDashboard`'s own `config` parameter is the BOOT value
+         * and never changes, so reading it here would have reported a stale
+         * answer forever while looking correct.
+         */
+        currentConfig,
         close: async () => {
           runState.cancelRequested = true;
           await new Promise((r) => server.close(r));
