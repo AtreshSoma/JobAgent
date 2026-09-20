@@ -24,7 +24,7 @@ Every strong match becomes a reviewable **application packet**: the job, its sco
 <tr>
 <td width="25%"><b>Start here</b><br><a href="#requirements">Requirements</a> · <a href="#installation">Install</a><br><a href="#first-time-configuration">Configure</a> · <a href="#preflight-check">Preflight</a><br><a href="#your-first-run">First run</a></td>
 <td width="25%"><b>Understand it</b><br><a href="#-what-it-does">What it does</a><br><a href="#-the-pipeline">The pipeline</a><br><a href="#-safety-model">Safety model</a> · <a href="#-run-modes">Run modes</a></td>
-<td width="25%"><b>Use it</b><br><a href="#-the-dashboard">Dashboard</a> · <a href="#-command-reference">Commands</a><br><a href="#-browser-assisted-apply">Browser assist</a><br><a href="#-chrome--edge-extension">Extension</a></td>
+<td width="25%"><b>Use it</b><br><a href="#-search-profiles">Search profiles</a> · <a href="#-the-dashboard">Dashboard</a><br><a href="#-command-reference">Commands</a> · <a href="#-browser-assisted-apply">Browser assist</a><br><a href="#-chrome--edge-extension">Extension</a></td>
 <td width="25%"><b>Tune it</b><br><a href="#-discovery-sources">Discovery sources</a><br><a href="#-performance-notes">Performance</a><br><a href="#-configuration-files">Config</a> · <a href="#-optional-llm-assist">LLM assist</a></td>
 </tr>
 <tr>
@@ -83,16 +83,22 @@ The default path never submits. Once it has filled and uploaded everything it ca
 | --- | :---: | --- |
 | **Node.js** | **≥ 22.5** | The built-in `node:sqlite` module needs it |
 | **Python** | 3.12 | Resume editing through `python-docx` |
-| **Playwright Chromium** | *installed by `npm install`* | Browser-assisted form filling |
+| **Playwright Chromium** | *`npx playwright install chromium`* | Browser-assisted form filling |
 | MS Word | *optional* | Only for `docx2pdf` PDF export |
 
 ### Installation
 
 ```bash
-npm install                      # Node dependencies + Playwright
-pip install -r requirements.txt  # Python dependencies (docx2pdf is optional)
-cp .env.example .env             # then edit it. DRY_RUN needs no secrets
+npm install                        # Node dependencies (the Playwright LIBRARY)
+npx playwright install chromium    # the BROWSER itself — a separate download
+pip install -r requirements.txt    # Python dependencies (docx2pdf is optional)
+cp .env.example .env               # then edit it. DRY_RUN needs no secrets
 ```
+
+`npm install` does **not** download the browser. This repo has no `postinstall`
+hook, so the Chromium binary has to be fetched by the second command above;
+without it, discovery and scoring work fine and anything that opens a browser
+fails at the point of use. `npm run doctor` reports whether it is present.
 
 ### First-time configuration
 
@@ -144,6 +150,113 @@ You get one readable checklist covering Node version, SQLite, config schemas, re
 <td><code>npm start</code> runs the whole flow as one interactive session.<br><br>It finds, scores, and prepares in a single pass, lists the prepared packets, and asks which ones to approve. Type <kbd>a</kbd> for all, <kbd>n</kbd> for none, or a range like <code>1,3</code> or <code>1-2</code>.<br><br>Then it offers to open a browser and fill them, stopping before submit. It refreshes the Excel tracker at <code>data/job_tracker.csv</code> along the way.</td>
 </tr>
 </table>
+
+## 👤 Search profiles
+
+**This agent is not built for one person or one profession.** What it searches
+for, what it recognizes, what it scores well and what it throws away all come
+from a *search profile* you can create, edit and switch — with no code change.
+
+### The one distinction that makes it work
+
+A profile is two halves, and conflating them is the bug the whole model exists
+to prevent:
+
+| Half | What it is | Where it comes from |
+| --- | --- | --- |
+| **`background`** | *Evidence.* Roles held, years, skills, industries, seniority, education, certifications, leadership. | Parsed from your resume. |
+| **`searchIntent`** | *Preference.* Target roles, desired level, locations, work mode, employment type, industries, pay, work authorization, skills to keep or grow into. | Stated by you. |
+
+A resume says what you have **done**; your search says what you **want**. Those
+diverge exactly when someone is changing direction — a career-changer's resume
+is still full of the field they are leaving. So **uploading a resume never
+rewrites your goals.** It fills `background`, and *proposes* a `searchIntent`
+for you to accept, edit or decline.
+
+### Uploading a different resume
+
+When a resume arrives, the agent compares it to the active profile and says
+which of three things it thinks happened — `same`, `evolved`, or `different`
+candidate — with its reasons, then offers exactly three choices:
+
+- **Create a search profile from this resume** — a new profile, saved but not
+  active until you activate it.
+- **Keep my current search goals** — an explicit no-op. The resume is still used
+  for tailoring.
+- **Merge selected roles and skills** — additive only; nothing you chose is removed.
+
+It never silently keeps searching with another person's titles, and it never
+silently replaces goals you set on purpose.
+
+### Role discovery is derived, not literal
+
+The agent does not just search the exact titles on your resume. From your
+profile it derives:
+
+```
+resume → skills + experience → role families → title variations → discovery → full-description scoring
+```
+
+Families live in **`config/role_families.json`** — plain, editable data covering
+~26 occupational families. There is no profession-specific branch anywhere in
+the code; every family runs through the same matcher, so a title is only
+rejected when it confidently belongs to a family *you are not in*.
+
+Two lists come out of this, and they do different jobs:
+
+| List | Job | Size |
+| --- | --- | --- |
+| `candidate.searchPhrases` | What is **sent** to job boards. Costs one request each. | A small set cover (2–4) |
+| `candidate.targetTitles` | What is **recognized** and **scored**. Free. | Expanded (often 15–25) |
+
+Worked examples, all produced by the same code with no branches:
+
+| Profile | Search phrases | Also recognizes |
+| --- | --- | --- |
+| Senior Data Engineer | `"data engineer"` | Analytics Engineer, Data Architect, BI Engineer, Data Platform Engineer … |
+| Regulatory Affairs Specialist | `"regulatory affairs"` | Regulatory Affairs Manager, Regulatory Submissions Manager, QA Specialist … |
+| Marketing Coordinator (new grad) | `"marketing coordinator"` | Digital / Content / Product Marketing Manager, Brand Manager, Campaign Manager … |
+
+### Commands
+
+```bash
+npm run profiles                     # list saved profiles, marking the active one
+npm run profiles show                # what the active profile makes the agent DO
+npm run profiles from-resume         # read the master resume; propose, write nothing
+npm run profiles from-resume -- --save
+npm run profiles preview <id>        # compute the full effect, write nothing
+npm run profiles activate <id>       # switch: regenerates the runtime config
+npm run profiles migrate             # import an existing candidate.json as profile #1
+npm run profiles delete <id>
+```
+
+You can do all of this from the dashboard too — open **Master resume**, and the
+profile panel sits at the top of the drawer.
+
+### What activation actually does
+
+`config/candidate.json` becomes a **generated view** of the active profile. That
+is the seam that keeps every other module unchanged: the scorer, the adapters,
+the form filler and the cover-letter writer all keep reading the files they
+always read.
+
+Activating a profile regenerates, keeping a `.bak` of each:
+
+- `config/candidate.json` — target titles, search phrases, skills, preferences
+- `config/scoring.json` → `categories` (bound to *your* titles and *your* skills) and `marketSkills` (the gap vocabulary for *your* field)
+- `config/exclusions.json` → `roleMismatchDerived` (seniority rules from your **desired** level) and the US-only geography gate
+
+> [!IMPORTANT]
+> **Your own rules are never touched.** Derived values live in their own keys
+> (`roleMismatchDerived`, `categories`, `marketSkills`). Anything you typed by
+> hand — your `roleMismatch` phrases, tiers, sponsorship lists — survives every
+> profile switch. If you hand-edit `candidate.json` after activating, `npm run
+> doctor` warns you that the next activation will overwrite it.
+
+> [!NOTE]
+> Profiles are stored in `config/profiles/` and are 🔒 **gitignored** — they hold
+> the same personal data `candidate.json` does, and more. The taxonomy they are
+> matched against (`config/role_families.json`) is impersonal and **is** tracked.
 
 ## 🔄 The pipeline
 
@@ -582,6 +695,20 @@ npm start -- --no-assist      # approve, but don't open the browser
 > [!IMPORTANT]
 > `--yes` only auto-***approves*** and fills the forms. **Nothing gets submitted automatically.** You review and submit each one yourself.
 
+### Search profiles
+
+Who the agent is searching *as*. See [Search profiles](#-search-profiles).
+
+```bash
+npm run profiles                  # list saved profiles, marking the active one
+npm run profiles show [id]        # what a profile makes the agent DO
+npm run profiles from-resume      # read the master resume and propose a profile
+npm run profiles preview <id>     # full effect, writes nothing
+npm run profiles activate <id>    # switch (regenerates candidate/scoring/exclusions)
+npm run profiles migrate          # import an existing candidate.json as profile #1
+npm run profiles delete <id>
+```
+
 ### Pipeline phases
 
 Prefer `npm start` above. These are for running a single phase.
@@ -683,10 +810,12 @@ A `prepare-apps` run prints a `cover_letter_generated` and an `approval_required
 
 | File | Contents |
 | --- | --- |
-| `config/candidate.json` | Your profile, skills, target titles, work authorization. 🔒 **Gitignored**, so copy `candidate.example.json` |
+| `config/profiles/*.json` | Saved [search profiles](#-search-profiles) — `background` (evidence) + `searchIntent` (preference). 🔒 **Gitignored** |
+| `config/candidate.json` | Your profile, skills, target titles, work authorization. **Generated** from the active profile when one is active. 🔒 **Gitignored**, so copy `candidate.example.json` |
+| `config/role_families.json` | The occupational taxonomy role discovery and filtering are derived from. Plain data, ~26 families, tracked in git — edit it to add or correct a field |
 | `config/screening_answers.json` | Truthful, pattern-matched answers to form questions. 🔒 **Gitignored**, so copy `screening_answers.example.json` |
-| `config/scoring.json` | Weights, tiers, keywords, sponsorship signals, `evidenceAliases` |
-| `config/exclusions.json` | Hard disqualifier phrases |
+| `config/scoring.json` | Weights, tiers, keywords, sponsorship signals, `evidenceAliases`. `categories` and `marketSkills` are generated from the active profile |
+| `config/exclusions.json` | Hard disqualifier phrases. `roleMismatchDerived` and the US-only gate are generated from the active profile; everything else is yours |
 | `config/jobboards.json` | Which sources are enabled, and how they are tuned |
 | `config/cover_letter.json` | Cover-letter template and thresholds |
 | `config/humanizer_patterns.json` | Banned phrases and characters to strip |
