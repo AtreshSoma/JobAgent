@@ -50,6 +50,25 @@ describe('runPipeline', () => {
   const sampleJobs = [F.azureFabricSenior, F.confirmedSponsorship, F.noSponsorship, F.juniorRole, F.snowflakeMismatch, F.staleHighApplicants];
   const searchFn = async () => ({ jobs: sampleJobs, duplicates: [], errors: [] });
 
+  it('runs with no logger at all instead of crashing on the first event', async () => {
+    // `startDashboard({ logger })` threads whatever it is handed straight into
+    // this function, and it made ten UNGUARDED `logger.event(...)` calls while
+    // every other caller in the repo uses `logger?.event?.()`. Passing null
+    // therefore killed discovery on its very first line with "Cannot read
+    // properties of null (reading 'event')", reported as an RCA category of
+    // "unknown" — found by clicking "Find new jobs" in a running dashboard.
+    //
+    // Event logging is diagnostics. Losing it must degrade the run, never end it.
+    const { db, config } = makeCtx(root);
+    const result = await runPipeline({
+      config, db, logger: null, mode: 'DRY_RUN',
+      deps: { searchFn, now: F.NOW, stamp: 'nolog' },
+    });
+    expect(result.counters.jobs_found).toBe(sampleJobs.length);
+    expect(existsSync(result.report.files.json)).toBe(true);
+    db.close();
+  });
+
   it('DRY_RUN scores and reports without preparing packets', async () => {
     const { db, logger, config } = makeCtx(root);
     const result = await runPipeline({ config, db, logger, mode: 'DRY_RUN', deps: { searchFn, now: F.NOW, stamp: 'test' } });

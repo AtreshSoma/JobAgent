@@ -18,7 +18,8 @@
  */
 
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
 
@@ -34,9 +35,10 @@ import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
 import { explainScore, TIERS } from '../scoring/explainScore.js';
+import { scoringFingerprint } from '../scoring/fingerprint.js';
 import { compareJobsForQueue } from '../scoring/jobRanking.js';
 import { generateCoverLetter } from '../apply/coverLetter.js';
-import { buildApplicationPacket, writePacket } from '../apply/applicationPacket.js';
+import { buildApplicationPacket, writePacket, packetOwner } from '../apply/applicationPacket.js';
 import { enqueueForApproval } from '../apply/approvalQueue.js';
 import { generateReport } from '../reports/reportGenerator.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
@@ -46,6 +48,7 @@ import { tailorResumeForJob } from '../resume/tailorRunner.js';
 import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '../lifecycle.js';
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
 import { findPlaceholders } from '../config/placeholders.js';
+import { resumeProfileMismatch } from '../profile/resumeIdentity.js';
 
 /**
  * Tiers that warrant AUTO-building an application packet in PREPARE/LIVE_ASSIST.
@@ -55,6 +58,18 @@ import { findPlaceholders } from '../config/placeholders.js';
  * still be prepared explicitly via the dashboard's "Prepare selected".
  */
 const PREPARE_TIERS = new Set([TIERS.PRIORITY, TIERS.APPLY]);
+
+/**
+ * Stand-in used when no logger is supplied. Mirrors the surface of
+ * `JobLogger` that this module actually calls — `event`, `error`, `endRun` —
+ * and does nothing with any of it.
+ */
+const NO_OP_LOGGER = Object.freeze({
+  event() {},
+  error() {},
+  startRun() {},
+  endRun() { return {}; },
+});
 
 /**
  * @param {object} args
@@ -68,7 +83,22 @@ const PREPARE_TIERS = new Set([TIERS.PRIORITY, TIERS.APPLY]);
  * @param {Date} [args.deps.now]
  * @returns {Promise<object>} run summary with counters + scored jobs
  */
-export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) {
+export async function runPipeline({ config, db, logger: suppliedLogger, mode, deps = {} } = {}) {
+  // AN ABSENT LOGGER MUST NOT KILL THE RUN.
+  //
+  // This function made ten unguarded `logger.event(...)` calls while every
+  // other caller in the repo (src/cli/commands.js, src/cli/applyOneByOne.js)
+  // treats the logger as optional with `?.`. `startDashboard({ logger })`
+  // accepts whatever it is handed and threads it straight through to here, so
+  // a caller that passes null — which the dashboard tests all do — turned the
+  // very first line of discovery into "Cannot read properties of null (reading
+  // 'event')". The run then reported as a failure with an RCA category of
+  // "unknown", which says nothing about what actually went wrong.
+  //
+  // A no-op logger degrades the run to "no event log" instead, which is the
+  // honest outcome: event logging is diagnostics, never a precondition for
+  // finding jobs.
+  const logger = suppliedLogger ?? NO_OP_LOGGER;
   const now = deps.now ?? new Date();
   const searchFn = deps.searchFn ?? runSearch;
   /**
@@ -88,6 +118,25 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
    * rows reaching the board.
    */
   const keepBelowThreshold = deps.keepBelowThreshold === true;
+  /**
+   * WHICH SEARCH THIS RUN IS — 'profile' or 'role_search'.
+   *
+   * Stamped onto every row this run persists, so the personalized board and an
+   * ad-hoc role search can never be read as the same pile. This is the whole
+   * reason `keepBelowThreshold` above is now safe: it keeps a row the user
+   * explicitly asked for, and the stamp keeps that row out of the board that
+   * answers "what should I apply to?".
+   */
+  const runMode = deps.discoveryMode === 'role_search'
+    ? { discovery_mode: 'role_search', search_query: deps.searchQuery ?? null }
+    : { discovery_mode: 'profile', search_query: null };
+  /**
+   * Fingerprint of the configuration judging this run, computed ONCE.
+   *
+   * Stored beside every score written here and required to match before the
+   * incremental skip may reuse one. See src/scoring/fingerprint.js.
+   */
+  const configFingerprint = scoringFingerprint(config);
 
   logger.event(EVENT_TYPES.SEARCH_START, { message: 'Starting search' });
   // Preload the set of already-APPLIED job ids ONCE (cheap) rather than issuing
@@ -245,7 +294,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     const discardReason = undated ? reason : `stale: ${reason}`;
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'discarded', discard_reason: discardReason }, config.exclusions?.employmentTypes);
+    persistJob(db, job, { status: 'discarded', discard_reason: discardReason }, config.exclusions?.employmentTypes, runMode);
     discovered.push(discoveredRow(job, discovery, {
       keptForScoring: false, discardReason, lifecycle: LIFECYCLE.HARD_DISCARDED,
     }));
@@ -258,7 +307,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     counters.jobs_unknown_date_review += 1;
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'unknown_date_review', discard_reason: 'unknown posting date' }, config.exclusions?.employmentTypes);
+    persistJob(db, job, { status: 'unknown_date_review', discard_reason: 'unknown posting date' }, config.exclusions?.employmentTypes, runMode);
     const dRow = discoveredRow(job, discovery, {
       keptForScoring: false, discardReason: 'unknown posting date',
       lifecycle: LIFECYCLE.UNKNOWN_DATE_REVIEW,
@@ -279,7 +328,18 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     // score does not need deterministic scoring work repeated. Re-score is the
     // explicit command for applying changed scoring configuration to all rows.
     const existing = db.getJob?.(job.id) ?? null;
-    if (mode === 'DRY_RUN' && existing?.score != null && materiallyUnchanged(existing, job)) {
+    // UNCHANGED MEANS THE JOB *AND* THE JUDGE.
+    //
+    // This compared the posting only, so every stored score survived a change
+    // of candidate, target roles, scoring weights or exclusions untouched — a
+    // nursing profile kept showing an engineering job at 94/100 and rescored
+    // nothing. The fingerprint is what the configuration was when the score was
+    // written; a row scored under a different one is no longer current and has
+    // to be judged again. See src/scoring/fingerprint.js.
+    if (mode === 'DRY_RUN'
+      && existing?.score != null
+      && existing?.scoring_fingerprint === configFingerprint
+      && materiallyUnchanged(existing, job)) {
       counters.jobs_skipped_unchanged += 1;
       continue;
     }
@@ -287,11 +347,11 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
 
     // 1. Hard exclusions.
-    const exclusion = applyExclusions(job, config.exclusions, { now });
+    const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
     if (exclusion.excluded) {
       counters.jobs_discarded += 1;
       counters.jobs_discarded_excluded += 1;
-      persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason }, config.exclusions?.employmentTypes);
+      persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason }, config.exclusions?.employmentTypes, runMode);
       logger.event(EVENT_TYPES.EXCLUSION_MATCHED, {
         jobId: job.id, message: exclusion.reason, meta: { category: exclusion.category },
       });
@@ -311,7 +371,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     // otherwise the recall gain arrives as several hundred extra speculative
     // near-misses on the board.
     const titleVerdict = profileVocab ? classifyTitleFit(job.title, profileVocab).verdict : null;
-    const { tier, explanation, sponsorshipGated } = explainScore(score, config.scoring, { titleVerdict });
+    const { tier, explanation, sponsorshipGated } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
     counters.jobs_scored += 1;
     const queuedTier = isQueuedTier(tier, config.scoring);
     let lifecycle = lifecycleForTier(tier, config.scoring);
@@ -332,8 +392,11 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
       sponsorship_signals: sponsorship.signals ?? [],
       matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
       explanation,
+      // Which configuration produced this verdict — read back by the
+      // incremental skip above so a stale score can never pass as current.
+      scoring_fingerprint: configFingerprint,
       status: tier === TIERS.DISCARD && !keepBelowThreshold ? 'discarded' : 'scored',
-    }, config.exclusions?.employmentTypes);
+    }, config.exclusions?.employmentTypes, runMode);
     logger.event(EVENT_TYPES.SCORE_EXPLAINED, {
       jobId: job.id, message: `${score.total}/100 -> ${tier}`,
       meta: { score: score.total, tier, sponsorship: sponsorship.status, sponsorshipGated, posted: formatPostedRelative(job.postedAt, now) },
@@ -359,7 +422,7 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
         discard_reason: 'not judged: the description was never fetched (summary only)',
         score: score.total,
         tier: null,
-      }, config.exclusions?.employmentTypes);
+      }, config.exclusions?.employmentTypes, runMode);
       discovered.push(discoveredRow(job, discovery, {
         keptForScoring: false,
         discardReason: 'description not fetched',
@@ -513,14 +576,42 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     );
   }
 
+  // SECOND CHOKEPOINT: whose career history is about to be tailored?
+  //
+  // The resume/profile identity check ran in `quickPreflight`, which only the
+  // CLI and the dashboard's startup gate call. Packet preparation did not run
+  // it, so the check could report a mismatch while "Prepare selected" and
+  // auto-apply happily produced a tailored resume and a cover letter that put
+  // the active profile's name and target role onto a different person's
+  // career history — the exact document this repo most needs never to write.
+  //
+  // Preparation is where a profile becomes a document, so the check belongs
+  // here as well as at startup. Skippable only by an explicit caller override,
+  // which exists for tests that build packets from synthetic configs with no
+  // resume on disk.
+  if (deps.skipResumeIdentityCheck !== true) {
+    const identityProblems = resumeProfileMismatch(
+      config, join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx'),
+    );
+    if (identityProblems.length) {
+      logger?.warn?.({ job: job.id }, 'refusing to prepare a packet from a mismatched master resume');
+      throw new Error(`Refusing to prepare an application packet: ${identityProblems[0]}`);
+    }
+  }
+
   const now = deps.now ?? new Date();
   // Professional, recruiter-friendly output location for every artifact:
-  //   applications/output/{Company}/{Title}_{Date}/...
+  //   applications/output/{Company}/{Title}_{Date}_{JobID hash}/...
   const outPaths = buildJobPaths({
     root: config.root,
     company: job.company,
     title: job.title,
     dateOrId: dateStamp(now),
+    // Without the job id this folder was {Company}/{Title}_{Date}, which two
+    // different requisitions can share — and the second one prepared silently
+    // overwrote the first one's resume, cover letter and packet, leaving the
+    // first job's approval pointing at documents for a different job.
+    jobId: job.id,
     candidateName: config.candidate?.identity?.fullName,
   });
 
@@ -627,6 +718,12 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     resumePath, coverLetter: cover, coverLetterPath,
     resumeTailored, resumeWarning, resumePdfPath, resumePreviewWarning, resumeValidation,
     tailoring: resumeTailoring,
+    // Stamp the candidate and search profile this packet was built for, so no
+    // later path can fill it onto a different person's application. The resume
+    // fingerprint rides along as provenance: it answers "which version of the
+    // master resume were these documents tailored from?" for a packet a human
+    // is reviewing days after it was built.
+    owner: packetOwner({ ...config, resumeFingerprint: masterResumeFingerprint(config.root) }),
     atsReport: resumeAtsReport,
     formFields: job.formFields ?? [],
     html: job.html ?? '',
@@ -652,6 +749,28 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     meta: { packetPath, blockers: packet.blockers },
   });
   return packetPath;
+}
+
+
+/**
+ * Content hash of the master resume, recorded on every packet as provenance.
+ *
+ * Hashes the FILE rather than its extracted text: this is a "which version was
+ * this tailored from?" marker, it must be cheap enough to compute per packet,
+ * and it must never be the thing that fails a preparation — an unreadable
+ * resume is reported by its own checks, so this returns null instead.
+ *
+ * @param {string} root project root
+ * @returns {string|null}
+ */
+function masterResumeFingerprint(root) {
+  try {
+    const master = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+    if (!existsSync(master)) return null;
+    return createHash('sha1').update(readFileSync(master)).digest('hex').slice(0, 16);
+  } catch {
+    return null;
+  }
 }
 
 function writeCoverLetter(dir, fileName, cover, deps) {
@@ -681,7 +800,7 @@ function materiallyUnchanged(row, job) {
     && String(row.employment_type ?? '') === String(job.employmentType ?? '');
 }
 
-function persistJob(db, job, fields = {}, markers = {}) {
+function persistJob(db, job, fields = {}, markers = {}, mode = null) {
   const patch = { ...fields };
   // Downgrade guard: a re-discovered job the human already invested in
   // (decision, packet, approval, assist outcome, submission) keeps its status —
@@ -692,9 +811,33 @@ function persistJob(db, job, fields = {}, markers = {}) {
   const protectionRow = () => (typeof db.getJobProtectionFields === 'function'
     ? db.getJobProtectionFields(job.id)
     : db.getJob?.(job.id));
-  if (DISCOVERY_STATUSES.has(patch.status) && isProtectedJobRow(protectionRow())) {
+  const existing = mode || DISCOVERY_STATUSES.has(patch.status) ? protectionRow() : null;
+  if (DISCOVERY_STATUSES.has(patch.status) && isProtectedJobRow(existing)) {
     delete patch.status;
     delete patch.discard_reason;
+  }
+
+  /*
+   * WHO OWNS THIS ROW — and the one direction ownership may move.
+   *
+   * A personalized run always claims the row: finding a posting through the
+   * saved profile is proof it belongs on the personalized board, even if an
+   * ad-hoc role search happened to surface it first. The reverse is forbidden.
+   * A role search that stumbles onto a job the profile already owns must leave
+   * it alone, or typing "Product Manager" once would quietly re-label rows the
+   * personalized search had earned — the exact leak the two modes exist to
+   * prevent. Omitting the columns entirely (rather than writing null) leaves
+   * them out of the UPDATE set, so the stored value survives untouched.
+   */
+  if (mode?.discovery_mode === 'profile') {
+    patch.discovery_mode = 'profile';
+    patch.search_query = null;
+  } else if (mode?.discovery_mode === 'role_search') {
+    const owner = existing?.discovery_mode ?? (existing ? 'profile' : null);
+    if (owner === null) {
+      patch.discovery_mode = 'role_search';
+      patch.search_query = mode.search_query ?? null;
+    }
   }
   db.upsertJob({
     id: job.id,
