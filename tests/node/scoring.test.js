@@ -2,10 +2,16 @@ import { describe, it, expect } from 'vitest';
 import { classifySponsorship } from '../../src/scoring/sponsorshipClassifier.js';
 import { scoreJob } from '../../src/scoring/scorer.js';
 import { explainScore, rawTier, TIERS } from '../../src/scoring/explainScore.js';
-import { loadTestConfig } from './helpers/testConfig.js';
+import { loadTestConfig, legacyScoringShape } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const { scoring, candidate } = loadTestConfig({ loadEnv: false, env: {} });
+// These exercise the LEGACY weights/keywords scoring shape, which a
+// scoring.json predating search profiles still uses and which must keep
+// scoring identically. The shipped config/scoring.json is now generated from
+// the active profile — see tests/node/profileDriven.test.js for that path.
+const loaded = loadTestConfig({ loadEnv: false, env: {} });
+const scoring = legacyScoringShape(loaded.scoring);
+const { candidate } = loaded;
 const sponConfig = scoring.sponsorship;
 
 describe('sponsorshipClassifier', () => {

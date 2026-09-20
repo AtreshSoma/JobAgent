@@ -1,9 +1,25 @@
 import { describe, it, expect } from 'vitest';
 import { applyExclusions } from '../../src/scoring/exclusionFilter.js';
+import { deriveSeniorityExclusions } from '../../src/profile/derive.js';
 import { loadTestConfig } from './helpers/testConfig.js';
 import * as F from './fixtures/jobs.js';
 
-const { exclusions } = loadTestConfig({ loadEnv: false, env: {} });
+const { exclusions: shipped } = loadTestConfig({ loadEnv: false, env: {} });
+
+/**
+ * The exclusions a SENIOR candidate's profile produces.
+ *
+ * Seniority rules used to be hardcoded in `exclusions.roleMismatch` as
+ * "junior" / "entry level" / "intern". That is right for a senior candidate and
+ * catastrophic for a new graduate, whose every qualified posting was discarded
+ * before it could be scored. They are now DERIVED from the active profile's
+ * desired level into `roleMismatchDerived`, which `applyExclusions` reads
+ * alongside the user's own untouched list.
+ *
+ * These tests therefore run against a derived senior profile, which is what a
+ * senior user's activated profile actually writes.
+ */
+const exclusions = { ...shipped, roleMismatchDerived: deriveSeniorityExclusions('senior') };
 const opts = { now: F.NOW };
 
 describe('exclusionFilter', () => {
@@ -25,10 +41,26 @@ describe('exclusionFilter', () => {
     expect(r.excluded).toBe(false);
   });
 
-  it('discards junior/entry-level roles', () => {
+  it('discards junior/entry-level roles FOR A SENIOR PROFILE', () => {
     const r = applyExclusions(F.juniorRole, exclusions, opts);
     expect(r.excluded).toBe(true);
     expect(r.category).toBe('role_mismatch');
+  });
+
+  it('keeps the same posting for a candidate who WANTS an entry-level role', () => {
+    // The other half of the rule, and the reason it had to stop being a
+    // constant: a graduate's profile derives an empty seniority exclusion list.
+    const graduate = { ...shipped, roleMismatchDerived: deriveSeniorityExclusions('entry') };
+    expect(graduate.roleMismatchDerived).toEqual([]);
+    expect(applyExclusions(F.juniorRole, graduate, opts).excluded).toBe(false);
+  });
+
+  it('leaves the phrases the USER wrote in roleMismatch untouched', () => {
+    const mine = { ...shipped, roleMismatch: ['contract to perm only'], roleMismatchDerived: [] };
+    const job = { ...F.azureFabricSenior, title: 'Data Engineer — contract to perm only' };
+    const r = applyExclusions(job, mine, opts);
+    expect(r.excluded).toBe(true);
+    expect(r.matched).toContain('contract to perm only');
   });
 
   /**
@@ -56,12 +88,23 @@ describe('exclusionFilter', () => {
       'Junior Data Engineer',
       'Data Engineer Intern',
       'Entry-Level Analytics Engineer',
-      'iOS Developer',
     ])('still discards on the title: %s', (title) => {
       const job = { ...F.azureFabricSenior, title };
       const r = applyExclusions(job, exclusions, opts);
       expect(r.excluded).toBe(true);
       expect(r.category).toBe('role_mismatch');
+    });
+
+    it('no longer names one candidate off-stack technologies here', () => {
+      // "ios developer", "php developer", "sap abap", "java full stack" and
+      // "blockchain developer" were entries in the shipped roleMismatch list.
+      // They only ever described what ONE person was not, and a mobile
+      // developer using this tool would have had their own field deleted.
+      // Wrong-family titles are now the job of the occupational family gate
+      // (src/scoring/profileFit.js), which is symmetric.
+      const job = { ...F.azureFabricSenior, title: 'iOS Developer' };
+      expect(applyExclusions(job, exclusions, opts).excluded).toBe(false);
+      expect(shipped.roleMismatch).not.toContain('ios developer');
     });
 
     it('still discards a body-scoped scope statement from roleMismatchBody', () => {

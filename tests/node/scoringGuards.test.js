@@ -41,12 +41,12 @@ const unrelatedManager = normalizeJob({
   jdText: 'Lead a team of iOS and Android engineers. People management, Swift, Kotlin, roadmaps.',
 });
 
-async function runWith(jobs) {
+async function runWith(jobs, { candidate } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'guards-'));
   const db = openDatabase({ path: ':memory:' });
   const { logger: pino } = createPinoLogger({ toFile: false });
   const logger = new JobLogger({ db, logger: pino });
-  const config = { ...base, root };
+  const config = { ...base, root, ...(candidate ? { candidate } : {}) };
   try {
     await runPipeline({
       config, db, logger, mode: 'DRY_RUN',
@@ -69,12 +69,35 @@ describe('scoring guardrails', () => {
     } finally { cleanup(); }
   });
 
-  it('a matching contract-only (C2C) role remains visible and scored', async () => {
-    const { db, cleanup } = await runWith([c2cOnly]);
+  it('a matching contract-only (C2C) role remains visible when the profile has not ruled contracts out', async () => {
+    // The original guard, unchanged in substance: the WORDS "corp to corp" must
+    // never hard-exclude an otherwise strong role. Employment arrangement is a
+    // preference to be stated, not a phrase to be pattern-matched — so a
+    // candidate who has stated no arrangement preference still sees it.
+    const unconstrained = {
+      ...base.candidate,
+      employmentPreferences: { types: [], minContractMonths: 0, requiresW2: false },
+    };
+    const { db, cleanup } = await runWith([c2cOnly], { candidate: unconstrained });
     try {
       const row = db.getJob(c2cOnly.id);
       expect(row.status).toBe('scored');
       expect(row.discard_reason).toBeFalsy();
+    } finally { cleanup(); }
+  });
+
+  it('but a STATED employment preference and contract minimum are honoured', async () => {
+    // The fixture candidate wants full-time or contract-to-hire work of at
+    // least 12 months. This posting is a 3-month C2C contract, so it violates
+    // both — and those preferences used to govern nothing at all, leaving the
+    // user to re-read and reject by hand every posting they had already ruled
+    // out in their profile.
+    const { db, cleanup } = await runWith([c2cOnly]);
+    try {
+      const row = db.getJob(c2cOnly.id);
+      expect(row.status).toBe('discarded');
+      // The reason names the user's own constraint, not a mystery rule.
+      expect(row.discard_reason).toMatch(/contract|employment/i);
     } finally { cleanup(); }
   });
 

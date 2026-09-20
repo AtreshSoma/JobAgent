@@ -18,12 +18,17 @@ import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 import { usLocationSignal, leadingForeignCountry } from '../utils/usGeography.js';
 import { detectSponsorshipDenial } from '../utils/sponsorshipLanguage.js';
+import { checkSearchConstraints } from './searchConstraints.js';
+import { classifyEmployment } from './employmentClassifier.js';
 
 /**
  * @param {object} job normalized job
  * @param {object} exclusions parsed config/exclusions.json
  * @param {object} [options]
  * @param {Date} [options.now] reference time for staleness
+ * @param {object} [options.candidate] parsed config/candidate.json. Supplying it
+ *   is what lets a candidate who needs no sponsorship keep the jobs that say
+ *   sponsorship is unavailable — see `candidateNeedsSponsorship`.
  * @returns {{
  *   excluded: boolean,
  *   category: string|null,
@@ -32,7 +37,7 @@ import { detectSponsorshipDenial } from '../utils/sponsorshipLanguage.js';
  *   flags: string[]
  * }}
  */
-export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } = {}) {
+export function applyExclusions(job = {}, exclusions = {}, { now = new Date(), candidate = null } = {}) {
   const text = normalizeText([job.title, job.jdText, job.employmentType, job.location].join(' \n '));
   // Role identity lives in the TITLE, not in the body prose (see checkRoleMismatch).
   const roleText = normalizeText([job.title, job.employmentType].join(' \n '));
@@ -45,10 +50,21 @@ export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } 
   // the reader found 773 real refusals the list missed — including
   // "This role is not eligible for work visa sponsorship", the phrasing that was
   // instead being scored as Confirmed.
-  const denial = matchedPhrases(text, exclusions.sponsorshipDenial ?? []);
-  if (denial.length) return discard('sponsorship_denial', denial);
-  const detected = detectSponsorshipDenial(text);
-  if (detected.denied) return discard('sponsorship_denial', detected.evidence.slice(0, 2));
+  //
+  // IT IS ONLY A DENIAL IF THE CANDIDATE NEEDS SOMETHING. "We do not sponsor
+  // work visas" is disqualifying for someone who needs sponsorship and simply
+  // irrelevant to a citizen or permanent resident — but this rule discarded the
+  // posting either way, so a candidate who explicitly stated they need no
+  // sponsorship lost every job that mentioned the subject at all. The relaxation
+  // requires an EXPLICIT `false`: an unstated requirement keeps the discard,
+  // because the failure mode there is applying for a job the employer has
+  // already said it cannot hire you for.
+  if (candidateNeedsSponsorship(candidate) !== false) {
+    const denial = matchedPhrases(text, exclusions.sponsorshipDenial ?? []);
+    if (denial.length) return discard('sponsorship_denial', denial);
+    const detected = detectSponsorshipDenial(text);
+    if (detected.denied) return discard('sponsorship_denial', detected.evidence.slice(0, 2));
+  }
 
   // 2. Security clearance — discard unless the requirement is soft or negated.
   const clearanceGate = checkClearance(text, exclusions);
@@ -68,7 +84,19 @@ export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } 
   //
   // `roleMismatchBody` keeps the handful of phrases that are genuine BODY
   // statements about scope ("frontend only", "mobile only") scanning the full text.
-  const role = matchedPhrases(roleText, exclusions.roleMismatch ?? []);
+  //
+  // TWO LISTS, ONE TEST. `roleMismatch` is what the USER wrote. The shipped
+  // file hardcoded "junior", "entry level", "internship" and "intern" there,
+  // which is correct for a senior candidate and catastrophic for a new
+  // graduate — every relevant posting hard-discarded before it could be
+  // scored. Those level rules now come from `roleMismatchDerived`, written by
+  // activating a search profile from its DESIRED seniority, so a graduate's
+  // profile produces an empty list. Keeping them separate means switching
+  // profiles never edits a phrase the user typed themselves.
+  const role = matchedPhrases(roleText, [
+    ...(exclusions.roleMismatch ?? []),
+    ...(exclusions.roleMismatchDerived ?? []),
+  ]);
   if (role.length) return discard('role_mismatch', role);
   const roleBody = matchedPhrases(text, exclusions.roleMismatchBody ?? []);
   if (roleBody.length) return discard('role_mismatch', roleBody);
@@ -86,6 +114,25 @@ export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } 
   // never mistaken for "Mexico" / "India"). Opt-in via exclusions.geography.usOnly.
   const usGate = checkUsOnly(job, exclusions.geography);
   if (usGate) return usGate;
+
+  // 5c. THE CONSTRAINTS THE USER TYPED.
+  //
+  // Excluded employers, excluded terms, excluded locations, employment type,
+  // minimum contract length and minimum salary were all collected by the search
+  // profile and enforced by nothing — a user could rule out a staffing agency
+  // and still be shown its postings at the top of the board. Every check is
+  // positive-evidence-only, so a posting that states none of these is kept and
+  // judged on fit. See src/scoring/searchConstraints.js.
+  if (candidate) {
+    // The employment category is computed LAZILY. Classifying costs a pass over
+    // the whole JD, this runs once per posting per discovery run, and most
+    // profiles state no employment preference at all — so the common case must
+    // not pay for it.
+    const constraint = checkSearchConstraints(job, candidate, {
+      employmentCategory: () => classifyEmployment(job, exclusions.employmentTypes ?? {}).category,
+    });
+    if (constraint.violated) return discard(constraint.category, constraint.matched);
+  }
 
   // 6. Staleness.
   const stale = exclusions.staleness ?? {};
@@ -106,6 +153,23 @@ export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } 
   }
 
   return { excluded: false, category: null, reason: null, matched: [], flags };
+}
+
+/**
+ * Does this candidate need visa sponsorship?
+ *
+ * TRI-STATE ON PURPOSE. `true` and `false` are statements the candidate made;
+ * `null` means nobody has said, and the difference decides whether a job that
+ * refuses sponsorship is disqualifying or irrelevant. Collapsing "not stated"
+ * into either answer is a guess about someone's immigration status, so callers
+ * test against `false` explicitly rather than for truthiness.
+ *
+ * @param {object|null} candidate parsed config/candidate.json
+ * @returns {boolean|null}
+ */
+export function candidateNeedsSponsorship(candidate) {
+  const value = candidate?.workAuthorization?.requiresSponsorship ?? candidate?.sponsorshipRequired;
+  return typeof value === 'boolean' ? value : null;
 }
 
 function discard(category, matched) {

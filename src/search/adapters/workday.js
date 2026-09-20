@@ -222,6 +222,32 @@ export function deriveSearchTerms(titles, maxTerms = DEFAULT_MAX_SEARCH_TERMS) {
 }
 
 /**
+ * The search phrases to use for a candidate, preferring the profile's own.
+ *
+ * `deriveSearchTerms` below is the fallback: a token set-cover over the literal
+ * target titles, which picks the TRAILING two tokens of each. That is right for
+ * "Senior Data Engineer" -> "data engineer" and wrong for "Regulatory Affairs
+ * Specialist" -> "affairs specialist", which keeps the word every field shares
+ * and drops the one that identifies the field.
+ *
+ * When a search profile has been activated, `candidate.searchPhrases` already
+ * holds a family-aware cover built in src/profile/roleFamilies.js — it knows
+ * "regulatory affairs" is one term and uses it whole. Preferring it here means
+ * every adapter that searches by phrase (Workday, Amazon, Oracle) gets the
+ * better queries from one change.
+ *
+ * @param {object} candidate
+ * @param {number} [maxTerms]
+ * @returns {string[]}
+ */
+export function searchTermsFor(candidate, maxTerms = DEFAULT_MAX_SEARCH_TERMS) {
+  const phrases = Array.isArray(candidate?.searchPhrases) ? candidate.searchPhrases.filter(Boolean) : [];
+  const cap = Number.isFinite(maxTerms) ? Math.max(0, Math.trunc(maxTerms)) : DEFAULT_MAX_SEARCH_TERMS;
+  if (phrases.length) return phrases.slice(0, cap);
+  return deriveSearchTerms(candidate?.targetTitles, maxTerms);
+}
+
+/**
  * Default number of per-job detail GETs in flight per tenant. Bounded
  * concurrency (NOT a fixed inter-request delay) is the politeness mechanism.
  *
@@ -321,7 +347,7 @@ export async function run(source = {}, ctx = {}) {
   // with no per-tenant edit. `source.searchTexts` overrides the derivation.
   const defaultTerms = Array.isArray(source.searchTexts) && source.searchTexts.length
     ? source.searchTexts.map((s) => String(s ?? '').trim())
-    : deriveSearchTerms(ctx.candidate?.targetTitles, source.maxSearchTerms);
+    : searchTermsFor(ctx.candidate, source.maxSearchTerms);
 
   // Tenants are independent public career sites — fetch them in parallel.
   const perTenant = await mapWithConcurrency(tenants, tenantConcurrency, async (tenant) => {

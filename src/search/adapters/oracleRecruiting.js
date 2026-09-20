@@ -46,7 +46,7 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
-import { deriveSearchTerms } from './workday.js';
+import { searchTermsFor } from './workday.js';
 import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
 export const adapterId = 'oracleRecruiting';
@@ -113,7 +113,7 @@ export async function run(source = {}, ctx = {}) {
   // stays the single source of truth. An empty list means "enumerate everything".
   const defaultKeywords = Array.isArray(options.keywords)
     ? options.keywords.map((k) => String(k ?? '').trim()).filter(Boolean)
-    : deriveSearchTerms(ctx.candidate?.targetTitles, options.maxSearchTerms);
+    : searchTermsFor(ctx.candidate, options.maxSearchTerms);
 
   const jobs = [];
   const errors = [];
@@ -217,6 +217,13 @@ async function fetchTenant(cfg, ctx) {
   const {
     fetchImpl, rateLimiter, hostGate, maxRetries, requestTimeoutMs, rateLimitMs,
     pageConcurrency, detailConcurrency, maxDetailFetches, titleGate, ageGate, shouldCancel,
+    // `vocab` is passed by the caller and read below to spend the detail budget
+    // best-first. It was missing from this list, so the read was a free
+    // variable: under ESM strict mode that is a ReferenceError, not `undefined`,
+    // and it threw once per tenant AFTER the listings had been fetched — so the
+    // whole source reported "vocab is not defined" and returned nothing, while
+    // looking like a network-level failure.
+    vocab,
   } = ctx;
   const errors = [];
   let cancelled = false;

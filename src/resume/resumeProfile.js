@@ -30,6 +30,7 @@
  */
 
 import { normalizeLoose, normalizeText } from '../utils/textNormalize.js';
+import { loadRoleFamilies } from '../profile/roleFamilies.js';
 
 /**
  * Section headings a resume uses, mapped to the kind of evidence beneath them.
@@ -71,7 +72,7 @@ const TITLE_STOPWORDS = new Set([
  * this rule rejects is simply not proposed — the user can still type it — which
  * is the right way for the error to fall.
  */
-const ROLE_NOUNS = [
+const BASE_ROLE_NOUNS = [
   'engineer', 'developer', 'analyst', 'architect', 'scientist', 'administrator',
   'manager', 'director', 'consultant', 'specialist', 'lead', 'designer',
   'programmer', 'strategist', 'researcher', 'technician', 'advisor', 'officer',
@@ -81,6 +82,34 @@ const ROLE_NOUNS = [
   'marketer', 'salesperson', 'representative', 'coordinator', 'supervisor',
   'head', 'chief', 'vp', 'cto', 'cio', 'ceo', 'devops', 'sre', 'dba',
 ];
+
+/**
+ * Every role noun, drawn from the shared taxonomy so the list covers whatever
+ * fields that file describes.
+ *
+ * The hand-written list above could not read a resume outside office work: it
+ * had no 'nurse', 'chef', 'pharmacist', 'electrician', 'paralegal' or
+ * 'therapist', so a nurse's resume yielded ZERO titles and the whole
+ * resume-to-profile path silently produced an empty proposal. Unioning the
+ * `heads` of every family in config/role_families.json fixes that for every
+ * profession the taxonomy knows, and adding a field there fixes it for one
+ * more — with no edit here.
+ */
+function allRoleNouns() {
+  const nouns = new Set(BASE_ROLE_NOUNS);
+  try {
+    for (const family of Object.values(loadRoleFamilies().families ?? {})) {
+      for (const head of family.heads ?? []) {
+        if (!head.includes(' ')) nouns.add(head);
+      }
+    }
+  } catch {
+    // A missing taxonomy must not stop a resume being read at all.
+  }
+  return [...nouns];
+}
+
+const ROLE_NOUNS = allRoleNouns();
 const ROLE_NOUN_RE = new RegExp(`(?:^|[^a-z])(?:${ROLE_NOUNS.join('|')})(?:[^a-z]|$)`, 'i');
 
 /** "Raleigh, NC" / "Columbus, OH (Remote)" — a place, not a role. */
@@ -256,6 +285,10 @@ const TITLE_ACRONYMS = new Set([
   'SRE', 'DBA', 'CRM', 'ERP', 'SEO', 'SEM', 'API', 'VP', 'SVP', 'EVP',
   'CTO', 'CIO', 'CEO', 'CFO', 'COO', 'PM', 'PMO', 'GIS', 'NLP', 'LLM',
   'AWS', 'GCP', 'SAP', 'MDM', 'BA', 'QAE', 'DE', 'ML/AI', 'R&D', 'IOS', 'DEVOPS',
+  // Non-office fields name their roles with acronyms too, and a title written
+  // "Icu Nurse" becomes a literal search phrase.
+  'ICU', 'ER', 'OR', 'RN', 'LPN', 'NP', 'PA', 'EHR', 'EMR', 'CNA', 'EMT',
+  'CPA', 'CFA', 'FP&A', 'AML', 'KYC', 'GRC', 'SOC', 'CDL', 'HVAC', 'FDA', 'CAPA',
 ]);
 
 function tidyTitleCase(title) {

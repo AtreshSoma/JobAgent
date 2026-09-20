@@ -42,29 +42,8 @@
     "sponsorship available for cleared candidates",
     "clearance not required"
   ],
-  "_roleMismatchNote": "roleMismatch is matched against the TITLE (plus employmentType) only -- a role's identity is stated in its title. Matching these against the JD body made senior roles disqualify themselves for saying 'mentor junior engineers' (2,502 of 2,748 discards were body-only false positives). Phrases that are genuine BODY statements about scope belong in roleMismatchBody, which still scans the full text.",
-  "roleMismatch": [
-    "junior",
-    "entry level",
-    "entry-level",
-    "internship",
-    "intern position",
-    "intern",
-    "co-op",
-    "ios developer",
-    "android developer",
-    "sap abap",
-    "abap developer",
-    "java full stack",
-    "full stack java",
-    "react full stack",
-    "angular full stack",
-    "php developer",
-    "php only",
-    "blockchain developer",
-    "blockchain only",
-    "smart contract developer"
-  ],
+  "_roleMismatchNote": "roleMismatch is matched against the TITLE (plus employmentType) only -- a role's identity is stated in its title. Matching these against the JD body made senior roles disqualify themselves for saying 'mentor junior engineers' (2,502 of 2,748 discards were body-only false positives). Phrases that are genuine BODY statements about scope belong in roleMismatchBody, which still scans the full text. THIS LIST IS YOURS TO EDIT AND IS NEVER REWRITTEN. Two kinds of entry were removed from it: (1) seniority rules ('junior', 'entry level', 'internship', 'intern', 'co-op'), which are now DERIVED from the active profile's desired level into roleMismatchDerived -- hardcoded here they discarded every posting a new graduate was qualified for; and (2) one candidate's off-stack technologies ('ios developer', 'php developer', 'sap abap', 'java full stack', 'blockchain developer'), which only ever described what ONE person was not. Those are now handled by the occupational family gate in src/scoring/profileFit.js, which asks whether a title belongs to a family YOU are in -- symmetrically, for whoever is using the tool.",
+  "roleMismatch": [],
   "roleMismatchBody": [
     "frontend only",
     "front-end only",
@@ -414,5 +393,19 @@
       "direct hire",
       "direct-hire"
     ]
-  }
+  },
+  "roleMismatchDerived": [
+    "intern",
+    "internship",
+    "intern position",
+    "co-op",
+    "co op",
+    "junior",
+    "entry level",
+    "entry-level",
+    "new grad",
+    "new graduate",
+    "recent graduate"
+  ],
+  "_generatedFrom": "the active search profile (config/profiles/)"
 }

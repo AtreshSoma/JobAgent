@@ -46,6 +46,7 @@ import { fileURLToPath } from 'node:url';
 
 import { extractDocxText } from '../src/resume/docxText.js';
 import { extractResumeEvidence } from '../src/resume/resumeProfile.js';
+import { PROFILE_CATEGORY_SPEC } from '../src/profile/derive.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SCORING = join(ROOT, 'config', 'scoring.json');
@@ -55,41 +56,11 @@ const RESUME = join(ROOT, 'resumes', 'base', 'MASTER_RESUME.docx');
 /**
  * The profile-driven category set.
  *
- * Weights sum with the structural ones (seniority 8, sponsorship 10, employer
- * sponsorship 5, geography 6, freshness 4, direct ATS 3, resume alignment 10 =
- * 46) to 100, so a score reads as a percentage without rescaling.
- *
- * `fullAt: 6` on coreSkills is deliberate: with the profile supplying the
- * vocabulary there is no reason to saturate after three hits, and rewarding
- * depth is what separates a real match from a posting that name-drops one tool.
+ * Defined in src/profile/derive.js, which is where activating a search profile
+ * writes it from. Re-exported here so this script and profile activation can
+ * never drift into producing two different scoring configs.
  */
-export const PROFILE_DRIVEN_CATEGORIES = [
-  {
-    id: 'titleFit',
-    label: 'Title fit',
-    weight: 18,
-    fullAt: 1,
-    match: 'title',
-    from: 'targetTitles',
-    note: 'Reads candidate.targetTitles. Editing your target titles now changes what is SCORED as well as what is searched — those used to be two separate lists that silently disagreed.',
-  },
-  {
-    id: 'coreSkills',
-    label: 'Core skills',
-    weight: 30,
-    fullAt: 6,
-    from: 'technicalStack',
-    note: 'Reads every value in candidate.technicalStack. Add the tools, methods, certifications and systems your field actually uses — they do not have to be software.',
-  },
-  {
-    id: 'domainFit',
-    label: 'Industry / domain',
-    weight: 6,
-    fullAt: 1,
-    keywordSet: 'domains',
-    note: 'Reads scoring.keywords.domains. Edit that list for the industries you want to work in.',
-  },
-];
+export const PROFILE_DRIVEN_CATEGORIES = PROFILE_CATEGORY_SPEC;
 
 const args = process.argv.slice(2);
 const apply = args.includes('--apply');

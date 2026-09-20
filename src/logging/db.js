@@ -67,7 +67,9 @@ CREATE TABLE IF NOT EXISTS jobs (
   submitted_confirmation TEXT,
   created_at TEXT,
   updated_at TEXT,
-  summary_only INTEGER
+  summary_only INTEGER,
+  discovery_mode TEXT,
+  search_query TEXT
 );
 
 CREATE TABLE IF NOT EXISTS run_log (
@@ -128,6 +130,25 @@ CREATE INDEX IF NOT EXISTS idx_approval_job ON approval_queue(job_id);
 
 `;
 
+/**
+ * Sort clauses `listJobsSummaryPage` will accept, keyed by the board's own sort
+ * names. An allowlist rather than interpolation: the value reaches an ORDER BY
+ * clause, and it arrives from a query string.
+ *
+ * Each mirrors the equivalent JavaScript comparator in src/dashboard/data.js
+ * (SORTS). `company` is deliberately ABSENT — its comparator uses
+ * `localeCompare`, which orders case and accents differently from any SQLite
+ * collation, so pushing it down would make the fast and slow paths disagree
+ * about the order of the same rows. That sort keeps the in-memory path.
+ */
+const SUMMARY_PAGE_ORDERS = Object.freeze({
+  // NULLs sort last in SQLite DESC, matching `(b.score ?? -1) - (a.score ?? -1)`.
+  score: 'score DESC',
+  posted: "COALESCE(posted_at, '') DESC",
+  updated: "COALESCE(updated_at, '') DESC",
+  discovered: "COALESCE(created_at, '') DESC",
+});
+
 /** All jobs-table columns except jd_text (see listJobsSummary). */
 const JOB_SUMMARY_COLUMNS = [
   'id', 'source', 'company', 'title', 'location', 'url', 'posted_at',
@@ -138,8 +159,35 @@ const JOB_SUMMARY_COLUMNS = [
   'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
-  'created_at', 'updated_at',
+  'created_at', 'updated_at', 'discovery_mode', 'search_query',
 ].join(', ');
+
+/**
+ * SQL restricting a board read to ONE discovery mode.
+ *
+ * 'profile' is the default everywhere and deliberately treats NULL as profile:
+ * every row written before this column existed came from a personalized run,
+ * because ad-hoc role search is the only other writer and it is newer. Without
+ * the NULL branch the entire existing board would vanish on upgrade.
+ *
+ * @param {'profile'|'role_search'|'all'} [mode]
+ * @param {string|null} [query] required to scope a role_search read to one phrase
+ * @returns {{sql: string, params: string[]}} a WHERE-ready fragment ('' when unrestricted)
+ */
+export function discoveryModeClause(mode = 'profile', query = null) {
+  if (mode === 'all') return { sql: '', params: [] };
+  if (mode === 'role_search') {
+    return query
+      ? { sql: "discovery_mode = 'role_search' AND search_query = ?", params: [String(query)] }
+      : { sql: "discovery_mode = 'role_search'", params: [] };
+  }
+  return { sql: "(discovery_mode IS NULL OR discovery_mode = 'profile')", params: [] };
+}
+
+/** `WHERE <clause>` / `AND <clause>`, or '' when the mode is unrestricted. */
+function whereMode(clause, keyword = 'WHERE') {
+  return clause.sql ? ` ${keyword} ${clause.sql}` : '';
+}
 
 /**
  * The only columns dashboardStats reads — directly, or via the helpers it calls
@@ -173,7 +221,11 @@ const JOB_COLUMNS = [
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at',
-  'summary_only',
+  'summary_only', 'scoring_fingerprint',
+  // Which search produced the row, and the phrase it was asked for. Omitted
+  // from a patch, they keep their stored value — which is what lets a role
+  // search update a posting's text without claiming a row the profile owns.
+  'discovery_mode', 'search_query',
 ];
 
 /**
@@ -281,6 +333,42 @@ function applyMigrations(db) {
   if (!jobCols.has('ats_score')) {
     db.exec('ALTER TABLE jobs ADD COLUMN ats_score INTEGER');
   }
+  // Which CONFIGURATION produced this row's score. Incremental discovery skips
+  // a job whose posting has not changed, and without this it had no way to
+  // notice that the candidate had. Rows scored before this column existed hold
+  // NULL, which never matches a live fingerprint, so they rescore once and are
+  // then correctly skipped.
+  if (!jobCols.has('scoring_fingerprint')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN scoring_fingerprint TEXT');
+  }
+
+  /*
+   * WHICH SEARCH FOUND THIS ROW.
+   *
+   * 'profile'     — personalized discovery, judged against the saved profile.
+   * 'role_search' — an ad-hoc "search by job role" for a phrase the user typed.
+   *
+   * Without this the two were the same pile. An ad-hoc search runs the same
+   * pipeline with `keepBelowThreshold`, so every row it touched persisted as
+   * `scored` no matter how it rated against the profile — searching "Product
+   * Manager" once permanently seeded the personalized board with product roles
+   * and there was no way to tell them apart afterwards, or to undo it.
+   *
+   * Existing rows hold NULL and are read as 'profile': every row already in the
+   * database was found by a profile run, because ad-hoc search is the only
+   * other writer and it is newer than every row here.
+   */
+  if (!jobCols.has('discovery_mode')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN discovery_mode TEXT');
+  }
+  if (!jobCols.has('search_query')) {
+    db.exec('ALTER TABLE jobs ADD COLUMN search_query TEXT');
+  }
+  // The board filters on discovery_mode on EVERY query, including the covering
+  // open-rows path above, so it has to be part of that index or the filter
+  // reverts the plan to a full scan of a 383 MB table.
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_mode
+             ON jobs(discovery_mode, search_query, status, score, id)`);
 }
 
 /** Serialize a value for a TEXT column (objects/arrays become JSON). */
@@ -390,7 +478,7 @@ export class Database {
    */
   getJobProtectionFields(id) {
     return this.prepareCached(
-      'SELECT applied, application_packet_path, user_decision, status FROM jobs WHERE id = ?',
+      'SELECT applied, application_packet_path, user_decision, status, discovery_mode FROM jobs WHERE id = ?',
     ).get(id) ?? null;
   }
 
@@ -469,11 +557,18 @@ export class Database {
    * @param {string} [filter.status]
    * @returns {object[]}
    */
-  listJobs({ tier, status } = {}) {
+  listJobs({ tier, status, mode = 'all', query = null } = {}) {
     const clauses = [];
     const params = [];
     if (tier) { clauses.push('tier = ?'); params.push(tier); }
     if (status) { clauses.push('status = ?'); params.push(status); }
+    // Defaults to 'all', unlike every other read here, because this is the raw
+    // whole-table accessor its existing callers already expect. It takes the
+    // option so a caller that DOES need one search's rows can say so and be
+    // obeyed — passing `mode` to a method that silently ignored it is exactly
+    // how a scoping bug hides.
+    const clause = discoveryModeClause(mode, query);
+    if (clause.sql) { clauses.push(clause.sql); params.push(...clause.params); }
     const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
     return this.db.prepare(`SELECT * FROM jobs${where} ORDER BY score DESC`).all(...params);
   }
@@ -489,8 +584,11 @@ export class Database {
    *
    * @returns {string[]}
    */
-  listJobIds() {
-    return this.db.prepare('SELECT id FROM jobs ORDER BY score DESC').all().map((r) => r.id);
+  listJobIds({ mode = 'profile', query = null } = {}) {
+    const clause = discoveryModeClause(mode, query);
+    return this.db.prepare(
+      `SELECT id FROM jobs${whereMode(clause)} ORDER BY score DESC`,
+    ).all(...clause.params).map((r) => r.id);
   }
 
   /**
@@ -500,8 +598,73 @@ export class Database {
    * full-table decoration pass from hundreds of MB of I/O to a few MB.
    * @returns {object[]} jobs-table rows minus jd_text
    */
-  listJobsSummary() {
-    return this.db.prepare(`SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs ORDER BY score DESC`).all();
+  listJobsSummary({ mode = 'profile', query = null } = {}) {
+    const clause = discoveryModeClause(mode, query);
+    return this.db.prepare(
+      `SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs${whereMode(clause)} ORDER BY score DESC`,
+    ).all(...clause.params);
+  }
+
+  /** Total rows in the jobs table, within one discovery mode. */
+  countJobs({ mode = 'profile', query = null } = {}) {
+    const clause = discoveryModeClause(mode, query);
+    return this.prepareCached(
+      `SELECT COUNT(*) AS c FROM jobs${whereMode(clause)}`,
+    ).get(...clause.params).c ?? 0;
+  }
+
+  /**
+   * The saved role searches that still have rows, newest first.
+   * @returns {{query: string, jobs: number, lastFoundAt: string}[]}
+   */
+  listRoleSearches() {
+    return this.prepareCached(`SELECT search_query AS query, COUNT(*) AS jobs,
+        MAX(created_at) AS lastFoundAt
+      FROM jobs
+      WHERE discovery_mode = 'role_search' AND search_query IS NOT NULL
+      GROUP BY search_query ORDER BY lastFoundAt DESC`).all();
+  }
+
+  /** Drop every row a given role search produced (never touches profile rows). */
+  deleteRoleSearch(query) {
+    return this.db.prepare(
+      "DELETE FROM jobs WHERE discovery_mode = 'role_search' AND search_query = ?",
+    ).run(String(query)).changes ?? 0;
+  }
+
+  /**
+   * ONE PAGE of summary rows, ordered and limited BY SQLITE.
+   *
+   * Why this exists: the board read every row, decorated every row, sorted, and
+   * then returned a hundred. Measured on this 111,108-row table, the unfiltered
+   * "all jobs" view cost 5.8 s of blocked event loop and ~640 MB of resident
+   * memory to produce a 100-row response — 0.8 s of it the read, the rest
+   * decorating 111,008 rows nobody would see. While that ran, every other
+   * request on this single-threaded server waited, including the ones that
+   * cancel a run.
+   *
+   * Only usable when NO predicate needs a decorated field, which the caller
+   * decides (see `boardPage`). Ordering is restricted to an allowlist of raw
+   * columns so the clause can never be caller-controlled text, and `id` is
+   * appended as a tiebreaker: without it SQLite may order rows with equal
+   * scores differently between two LIMIT/OFFSET queries, which is how a paged
+   * list silently repeats one row and skips another.
+   *
+   * @param {object} [options]
+   * @param {string} [options.orderBy] one of SUMMARY_PAGE_ORDERS
+   * @param {number} [options.limit]
+   * @param {number} [options.offset]
+   * @returns {object[]}
+   */
+  listJobsSummaryPage({ orderBy = 'score', limit = 200, offset = 0, mode = 'profile', query = null } = {}) {
+    const order = SUMMARY_PAGE_ORDERS[orderBy];
+    if (!order) throw new Error(`unsupported page order "${orderBy}"`);
+    const take = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+    const skip = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
+    const clause = discoveryModeClause(mode, query);
+    return this.prepareCached(
+      `SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs${whereMode(clause)} ORDER BY ${order}, id LIMIT ? OFFSET ?`,
+    ).all(...clause.params, take, skip);
   }
 
   /**
@@ -510,8 +673,11 @@ export class Database {
    * fraction of the bytes read and strings allocated.
    * @returns {object[]}
    */
-  listJobsForStats() {
-    return this.prepareCached(`SELECT ${JOB_STATS_COLUMNS} FROM jobs ORDER BY score DESC`).all();
+  listJobsForStats({ mode = 'profile', query = null } = {}) {
+    const clause = discoveryModeClause(mode, query);
+    return this.prepareCached(
+      `SELECT ${JOB_STATS_COLUMNS} FROM jobs${whereMode(clause)} ORDER BY score DESC`,
+    ).all(...clause.params);
   }
 
   /**
@@ -536,7 +702,7 @@ export class Database {
    * superset of what they may display and apply their own predicates on top.
    * @returns {object[]} jobs-table rows minus jd_text, minus certain discards
    */
-  listOpenJobsSummary() {
+  listOpenJobsSummary({ mode = 'profile', query = null } = {}) {
     // Every comparison here must be NULL-SAFE. `status = 'discarded'` yields
     // NULL (not false) for a row whose status is NULL, and `NOT (NULL AND ...)`
     // is NULL, which WHERE treats as no-match — so the plain form silently DROPS
@@ -556,13 +722,14 @@ export class Database {
     // the wide columns for just the ~2,500 ids that survived — a few thousand
     // primary-key seeks rather than a whole-table read. Same rows, same order,
     // 1.6 s cold and 185 ms warm.
+    const clause = discoveryModeClause(mode, query);
     const ids = this.prepareCached(`SELECT id FROM jobs
       WHERE NOT (
         status IS 'discarded'
         AND (applied IS NULL OR applied <> 1)
         AND user_decision IS NULL
         AND NOT EXISTS (SELECT 1 FROM approval_queue aq WHERE aq.job_id = jobs.id)
-      )`).all().map((r) => r.id);
+      )${whereMode(clause, 'AND')}`).all(...clause.params).map((r) => r.id);
     if (!ids.length) return [];
     return this.rowsByIds(ids)
       // Phase 2 returns rows in whatever order the chunks came back, so the

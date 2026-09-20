@@ -67,9 +67,24 @@ export function mergeTerms(base = [], extra = []) {
 }
 
 /**
- * Flatten the scoring config's keyword vocabulary into one de-duplicated list.
- * This grounds the JD keyword tiering: the ATS report only tiers terms from this
- * known data-engineering vocabulary, so it never invents random words.
+ * The vocabulary the JD-requirement tiering is grounded in.
+ *
+ * It reads `scoring.marketSkills` FIRST — the skill list of the active
+ * profile's own role families, written by activating a profile — and then the
+ * legacy `scoring.keywords` lists.
+ *
+ * Reading only `scoring.keywords` made this the last data-engineering-shaped
+ * component in the tailoring path: that file ships as one stack's word list, so
+ * the ATS report could only tier terms a data engineer would recognize. A nurse
+ * or an accountant got a requirements analysis that found none of their
+ * profession's requirements — not because the JD lacked them, but because
+ * nothing was looking. `marketSkills` is the same candidate-independent
+ * market vocabulary the gap analysis was already moved onto (see
+ * `computeMissing`), so the two now agree about what a skill even is.
+ *
+ * Both sources are kept: a user who has tuned `scoring.keywords` by hand keeps
+ * every term they added.
+ *
  * @param {object} [scoring] parsed config/scoring.json
  * @returns {string[]}
  */
@@ -77,14 +92,16 @@ export function vocabularyFromScoring(scoring = {}) {
   const kw = scoring.keywords ?? {};
   const seen = new Set();
   const out = [];
+  const add = (term) => {
+    const key = String(term ?? '').toLowerCase().trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(term);
+  };
+  for (const term of Array.isArray(scoring.marketSkills) ? scoring.marketSkills : []) add(term);
   for (const list of Object.values(kw)) {
     if (!Array.isArray(list)) continue;
-    for (const term of list) {
-      const key = String(term).toLowerCase().trim();
-      if (!key || seen.has(key)) continue;
-      seen.add(key);
-      out.push(term);
-    }
+    for (const term of list) add(term);
   }
   return out;
 }

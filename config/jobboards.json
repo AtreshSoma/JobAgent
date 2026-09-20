@@ -24,11 +24,11 @@
     {
       "id": "apify-scrapers",
       "adapter": "apify",
-      "enabled": true,
+      "enabled": false,
       "priority": 2,
       "rateLimitMs": 2000,
       "options": {
-        "note": "DISCOVERY via Apify actors (Indeed + LinkedIn breadth). ARMED, not manually gated. The adapter performs a LIVE usage preflight against /users/me/limits before starting any billable actor and refuses to run when the account is over its cap — verified 2026-08-07: one preflight call, zero actor runs, zero spend, and a clear quota_exhausted message naming the reset date. Leaving these sources `enabled: false` on top of that guard was redundant belt-and-braces that required a human to remember to flip them back, which is exactly why LinkedIn coverage stayed dark after the cap was hit on 2026-08-05. Enabled here so the source self-recovers the moment the billing cycle rolls; the preflight remains the real spend control. WHY APIFY AND NOT A DIRECT SCRAPER: linkedin.com/robots.txt opens with \"The use of robots or other automated means to access LinkedIn without the express permission of LinkedIn is strictly prohibited\" and grants no User-agent: * allowance, so a direct LinkedIn reader is out of scope for this project on policy, not capability.",
+        "note": "DISABLED: every call returned HTTP 401 with APIFY_TOKEN set, so the token is expired or the account is out of credit. Re-enable after refreshing APIFY_TOKEN in .env. While disabled this source costs nothing; while enabled and unauthenticated it produced 16 errors and zero jobs.",
         "tokenEnv": "APIFY_TOKEN",
         "maxItemsPerActor": 100,
         "maxActorsPerRun": 16,
@@ -232,11 +232,11 @@
     {
       "id": "apify-linkedin",
       "adapter": "apify",
-      "enabled": true,
+      "enabled": false,
       "priority": 2,
       "rateLimitMs": 2000,
       "options": {
-        "note": "DISCOVERY via Apify actors (Indeed + LinkedIn breadth). ARMED, not manually gated. The adapter performs a LIVE usage preflight against /users/me/limits before starting any billable actor and refuses to run when the account is over its cap — verified 2026-08-07: one preflight call, zero actor runs, zero spend, and a clear quota_exhausted message naming the reset date. Leaving these sources `enabled: false` on top of that guard was redundant belt-and-braces that required a human to remember to flip them back, which is exactly why LinkedIn coverage stayed dark after the cap was hit on 2026-08-05. Enabled here so the source self-recovers the moment the billing cycle rolls; the preflight remains the real spend control. WHY APIFY AND NOT A DIRECT SCRAPER: linkedin.com/robots.txt opens with \"The use of robots or other automated means to access LinkedIn without the express permission of LinkedIn is strictly prohibited\" and grants no User-agent: * allowance, so a direct LinkedIn reader is out of scope for this project on policy, not capability.",
+        "note": "DISABLED: same expired APIFY_TOKEN as apify-scrapers (HTTP 401 x9, zero jobs). Re-enable after refreshing the token in .env.",
         "tokenEnv": "APIFY_TOKEN",
         "maxItemsPerActor": 100,
         "maxActorsPerRun": 9,
@@ -351,7 +351,7 @@
       "priority": 2,
       "rateLimitMs": 1500,
       "options": {
-        "note": "QUERY-FIRST DISCOVERY, no API key, no per-run cost. Searches ACROSS every employer hosted by an ATS vendor instead of enumerating one configured board at a time — this is the capability the paid Apify actors provided. Queries default to candidate.targetTitles so the title list lives in exactly one place. Both providers OR-match query terms, so queries are phrase-quoted and every hit must clear a title gate before it is kept. Providers: 'workable' (real pagination, full JD inline, relevance-ranked so dayRange is the only recency lever) and 'smartrecruiters' (already newest-first; newest 100 per query, server ignores offset). Public unauthenticated vendor search endpoints only — no login, CAPTCHA solving, or evasion. PROVIDERS: workable + smartrecruiters (ATS-vendor cross-customer search) and themuse (a cross-company job board). Each was verified against the live endpoint AND its robots.txt before being added — see the per-provider notes in src/search/adapters/atsSearch.js. themuse rows carry an aggregator URL (the board hosts the landing page, not the employer), so they are tagged aggregator:true and the dashboard asks you to trace the direct URL before applying. usOnly gates worldwide indexes through utils/usGeography.js (blank and borderless locations are KEPT).",
+        "note": "QUERY-FIRST DISCOVERY, no API key, no per-run cost. Searches ACROSS every employer hosted by an ATS vendor instead of enumerating one configured board at a time \u2014 this is the capability the paid Apify actors provided. Queries default to candidate.targetTitles so the title list lives in exactly one place. Both providers OR-match query terms, so queries are phrase-quoted and every hit must clear a title gate before it is kept. Providers: 'workable' (real pagination, full JD inline, relevance-ranked so dayRange is the only recency lever) and 'smartrecruiters' (already newest-first; newest 100 per query, server ignores offset). Public unauthenticated vendor search endpoints only \u2014 no login, CAPTCHA solving, or evasion. PROVIDERS: workable + smartrecruiters (ATS-vendor cross-customer search) and themuse (a cross-company job board). Each was verified against the live endpoint AND its robots.txt before being added \u2014 see the per-provider notes in src/search/adapters/atsSearch.js. themuse rows carry an aggregator URL (the board hosts the landing page, not the employer), so they are tagged aggregator:true and the dashboard asks you to trace the direct URL before applying. usOnly gates worldwide indexes through utils/usGeography.js (blank and borderless locations are KEPT).",
         "providers": [
           "workable",
           "smartrecruiters",
@@ -374,17 +374,17 @@
           "IT"
         ],
         "museMaxPages": 3,
-        "detailBudgetNote": "Left at 25 DELIBERATELY. The audit listed raising this as a quick win, but measured against the live store atsSearch has 0 of 331 rows under 200 characters — Workable returns the full JD inline, so the detail budget is not this source's constraint and raising it would buy nothing. The description gap is Workday (69%) and SmartRecruiters (70%); those budgets were raised instead. atsSearch's real limitation is VOLUME (0.3% of the corpus), which is a query/coverage problem, not a detail-fetch one."
+        "detailBudgetNote": "Left at 25 DELIBERATELY. The audit listed raising this as a quick win, but measured against the live store atsSearch has 0 of 331 rows under 200 characters \u2014 Workable returns the full JD inline, so the detail budget is not this source's constraint and raising it would buy nothing. The description gap is Workday (69%) and SmartRecruiters (70%); those budgets were raised instead. atsSearch's real limitation is VOLUME (0.3% of the corpus), which is a query/coverage problem, not a detail-fetch one."
       }
     },
     {
       "id": "adzuna-aggregator",
       "adapter": "adzuna",
-      "enabled": true,
+      "enabled": false,
       "priority": 2,
       "rateLimitMs": 2000,
       "options": {
-        "note": "VERIFIED LIVE 2026-08-01 with a real key (docs/SUPPORT_MATRIX.md). Official Adzuna aggregator API — the closest legitimate substitute for Apify's Indeed/LinkedIn breadth. Queries default to candidate.targetTitles; 17 titles x 2 pages daily is ~1,020 calls/month against the ~1,000/month free-tier cap, so lower maxPages to 1 or set maxQueries if you approach it. `what_phrase` matches anywhere in the posting body, not just the title (a bare 'Data Engineer' query returned 31,148 hits including unrelated roles) — a client-side title gate (same one atsSearch uses) filters this; disable with strictTitleMatch:false if it ever drops something you wanted.",
+        "note": "DISABLED: no ADZUNA_APP_ID / ADZUNA_APP_KEY in .env, so it could never return anything. Register a free key at https://developer.adzuna.com/, add both to .env, then re-enable by setting enabled=true. Search by job role still works without it -- ats-search is the other query-first source.",
         "appIdEnv": "ADZUNA_APP_ID",
         "appKeyEnv": "ADZUNA_APP_KEY",
         "country": "us",
@@ -450,7 +450,6 @@
         "8451",
         "veeamsoftware",
         "trueanomalyinc",
-        "clickhouse",
         "zetaglobal",
         "neuraflash",
         "torcrobotics",
@@ -472,7 +471,6 @@
         "karat",
         "datavations",
         "point72",
-        "berkadia",
         "cortex"
       ],
       "options": {
@@ -633,13 +631,6 @@
           "tenant": "cvshealth",
           "site": "CVS_Health_Careers",
           "company": "CVS Health",
-          "pageSize": 20
-        },
-        {
-          "host": "comcast.wd5.myworkdayjobs.com",
-          "tenant": "comcast",
-          "site": "Comcast_Careers",
-          "company": "Comcast",
           "pageSize": 20
         },
         {
@@ -927,13 +918,6 @@
           "tenant": "livenation",
           "site": "LNExternalSite",
           "company": "Live Nation",
-          "pageSize": 20
-        },
-        {
-          "host": "otis.wd5.myworkdayjobs.com",
-          "tenant": "otis",
-          "site": "REC_Ext_Gateway",
-          "company": "OTIS",
           "pageSize": 20
         },
         {
@@ -2173,8 +2157,8 @@
       "hostSpacingMs": 0,
       "maxDetailFetches": 40,
       "options": {
-        "detailBudgetNote": "20 per tenant, raised from 8. Measured on 3 tenants: 8 -> 24 descriptions in 19.7s, 20 -> 60 in 29.7s, so across 214 tenants at boardConcurrency 24 this costs roughly +30-50s per run. It is a mitigation, not a fix: even 20 reads about 2% of what a large tenant returns. Descriptions are cached per requisition and reused on later runs, and `npm run enrich` is what actually clears the summary-only backlog. AUDIT 2026-09-14 follow-up: measured against the live store, 27,254 of 39,599 Workday rows (69%) still carry under 200 characters of JD — by far the largest share of the ~51,000 unreadable rows in the corpus, and every one of them is a guaranteed Discard because the reachable score without a description (~44) sits below the 50 floor. Raised 20 -> 40 on that basis; by the measurement above that is roughly another +30-50s per run. This is still a mitigation: `npm run enrich` remains the thing that actually clears the backlog, and nothing yet schedules it.",
-        "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) — adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant."
+        "detailBudgetNote": "20 per tenant, raised from 8. Measured on 3 tenants: 8 -> 24 descriptions in 19.7s, 20 -> 60 in 29.7s, so across 214 tenants at boardConcurrency 24 this costs roughly +30-50s per run. It is a mitigation, not a fix: even 20 reads about 2% of what a large tenant returns. Descriptions are cached per requisition and reused on later runs, and `npm run enrich` is what actually clears the summary-only backlog. AUDIT 2026-09-14 follow-up: measured against the live store, 27,254 of 39,599 Workday rows (69%) still carry under 200 characters of JD \u2014 by far the largest share of the ~51,000 unreadable rows in the corpus, and every one of them is a guaranteed Discard because the reachable score without a description (~44) sits below the 50 floor. Raised 20 -> 40 on that basis; by the measurement above that is roughly another +30-50s per run. This is still a mitigation: `npm run enrich` remains the thing that actually clears the backlog, and nothing yet schedules it.",
+        "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) \u2014 adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant."
       },
       "maxSearchTerms": 2,
       "boardConcurrency": 24,
@@ -2222,7 +2206,7 @@
       "maxLinksPerCompany": 50,
       "rateLimitMs": 4000,
       "options": {
-        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped — never bypassed. Entries added 2026-08-05 after live-verifying each site actually exposes a static, unauthenticated job-link surface: sitemap.xml with individual postings (Meta, Costco, EY), or a careers listing page whose raw HTML contains real <a href> links to job pages carrying schema.org JobPosting JSON-LD (Deloitte, KPMG; Cognizant qualifies the same way but its WAF 403s our identifying User-Agent, so it degrades to logged-and-skipped rather than bypassed). Rejected as having no public static feed (JS-rendered listings, no sitemap, no JSON-LD, confirmed by live fetch): Microsoft, Amazon, Google, Apple, Oracle, JPMorgan Chase, Starbucks, Capgemini, Infosys. UnitedHealth Group's individual job pages DO carry JobPosting JSON-LD, but its listing page renders client-side with no static links to scrape, so it stayed out too — revisit if the harvester (scripts/harvestSources.mjs) or a manual URL ever seeds one of its job URLs."
+        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped \u2014 never bypassed. Entries added 2026-08-05 after live-verifying each site actually exposes a static, unauthenticated job-link surface: sitemap.xml with individual postings (Meta, Costco, EY), or a careers listing page whose raw HTML contains real <a href> links to job pages carrying schema.org JobPosting JSON-LD (Deloitte, KPMG; Cognizant qualifies the same way but its WAF 403s our identifying User-Agent, so it degrades to logged-and-skipped rather than bypassed). Rejected as having no public static feed (JS-rendered listings, no sitemap, no JSON-LD, confirmed by live fetch): Microsoft, Amazon, Google, Apple, Oracle, JPMorgan Chase, Starbucks, Capgemini, Infosys. UnitedHealth Group's individual job pages DO carry JobPosting JSON-LD, but its listing page renders client-side with no static links to scrape, so it stayed out too \u2014 revisit if the harvester (scripts/harvestSources.mjs) or a manual URL ever seeds one of its job URLs."
       }
     },
     {
@@ -2304,8 +2288,8 @@
       "options": {
         "maxDetailFetches": 80,
         "strictTitleMatch": true,
-        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). Pages through `offset` until totalFound is reached — it previously read only the first 100 postings per company, which silently truncated ServiceNow (442) and Experian (495). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting. Bosch and IKEA were removed after both returned 0 postings on verification.",
-        "detailBudgetNote": "80 per company, raised from 40. AUDIT 2026-09-14: 23,773 of 33,738 SmartRecruiters rows (70%) hold under 200 characters of JD — the second-largest block of unreadable rows after Workday. The company Posting API is a cheap per-posting read, so this budget is the direct lever on how many of those become scoreable."
+        "note": "DISCOVERY via SmartRecruiters' official public Posting API (api.smartrecruiters.com/v1/companies/<id>/postings). Pages through `offset` until totalFound is reached \u2014 it previously read only the first 100 postings per company, which silently truncated ServiceNow (442) and Experian (495). List endpoint has no full JD; jdText is synthesized from posting metadata and the human reviews the real posting. Bosch and IKEA were removed after both returned 0 postings on verification.",
+        "detailBudgetNote": "80 per company, raised from 40. AUDIT 2026-09-14: 23,773 of 33,738 SmartRecruiters rows (70%) hold under 200 characters of JD \u2014 the second-largest block of unreadable rows after Workday. The company Posting API is a cheap per-posting read, so this budget is the direct lever on how many of those become scoreable."
       },
       "boards": [
         "ServiceNow",
@@ -2471,7 +2455,7 @@
         "clubready"
       ],
       "options": {
-        "note": "DISCOVERY. Rippling ATS public board API (api.rippling.com/platform/api/ats/v1/board/{slug}/jobs) — the same unauthenticated JSON the vendor's own ats.rippling.com board calls to render itself. No key, no cost, no login, no evasion; api.rippling.com serves no robots.txt so no directive is being ignored. `boards` are Rippling board slugs: the {slug} in ats.rippling.com/{slug}. Add any employer you find hosted there. The list response carries NO date and NO description, so the title gate runs against the list first and only plausible matches cost a detail request — verified 730 jobs on one board reduced to a handful. The url returned is the employer's own ats.rippling.com application page, i.e. a DIRECT apply link rather than an aggregator hop. BOARD LIST IS INTENTIONALLY SHORT: every slug here was confirmed to return HTTP 200 with a non-empty job array. Guessed slugs 404, and a 404 per run is exactly the per-source noise the run summary is meant to make meaningful — so add a slug only after checking it: curl -s -o /dev/null -w '%{http_code}' https://api.rippling.com/platform/api/ats/v1/board/<slug>/jobs . You find slugs from a job link you already have (ats.rippling.com/<slug>/jobs/...), not by guessing company names.",
+        "note": "DISCOVERY. Rippling ATS public board API (api.rippling.com/platform/api/ats/v1/board/{slug}/jobs) \u2014 the same unauthenticated JSON the vendor's own ats.rippling.com board calls to render itself. No key, no cost, no login, no evasion; api.rippling.com serves no robots.txt so no directive is being ignored. `boards` are Rippling board slugs: the {slug} in ats.rippling.com/{slug}. Add any employer you find hosted there. The list response carries NO date and NO description, so the title gate runs against the list first and only plausible matches cost a detail request \u2014 verified 730 jobs on one board reduced to a handful. The url returned is the employer's own ats.rippling.com application page, i.e. a DIRECT apply link rather than an aggregator hop. BOARD LIST IS INTENTIONALLY SHORT: every slug here was confirmed to return HTTP 200 with a non-empty job array. Guessed slugs 404, and a 404 per run is exactly the per-source noise the run summary is meant to make meaningful \u2014 so add a slug only after checking it: curl -s -o /dev/null -w '%{http_code}' https://api.rippling.com/platform/api/ats/v1/board/<slug>/jobs . You find slugs from a job link you already have (ats.rippling.com/<slug>/jobs/...), not by guessing company names.",
         "strictTitleMatch": true,
         "maxDetailFetches": 40,
         "maxAgeDays": 180
@@ -2691,7 +2675,7 @@
         }
       ],
       "options": {
-        "note": "DISCOVERY. Oracle Fusion Recruiting Cloud (ORC) public Candidate Experience REST API — the same unauthenticated JSON an ORC careers site calls to render itself. Verified 2026-08-05: answers HTTP 200 with NO headers, no key, no cookie, no login. This unlocked two employers previously recorded as having no public feed (Oracle ~2,300 reqs; JPMorgan Chase ~7,400). It is per-TENANT and shape-identical across tenants, so the next ORC employer is a config line, never new code — find hosts by their `*.fa.*.oraclecloud.com` / `*.fa.ocs.oraclecloud.com` pattern, or let scripts/harvestSources.mjs learn them from job URLs already seen. FOUR API TRAPS, each documented at length in src/search/adapters/oracleRecruiting.js: (1) `expand=requisitionList` is mandatory or a 200 comes back with no jobs at all; (2) jobs live at items[0].requisitionList and the total at items[0].TotalJobsCount — the OUTER hasMore/count describe the search envelope and driving pagination off them returns 25 of 7,397; (3) limit/offset go INSIDE the finder string and limit is capped at 200 server-side; (4) siteNumber is NOT validated — a wrong value silently falls back to the tenant's default site and returns plausible data, so verify it against the careers page HTML (sitenumber=\"CX_...\") rather than trusting that rows came back. ROBOTS: neither host publishes a robots.txt (Oracle 404; JPMorgan's WAF 403s the /robots.txt path itself while serving the API and job pages normally), so there is no Disallow directive being ignored — but the JPMorgan 403 is an unavailable-status ambiguity worth a deliberate decision rather than a default, and it is called out here so disabling that one tenant is a one-line change.",
+        "note": "DISCOVERY. Oracle Fusion Recruiting Cloud (ORC) public Candidate Experience REST API \u2014 the same unauthenticated JSON an ORC careers site calls to render itself. Verified 2026-08-05: answers HTTP 200 with NO headers, no key, no cookie, no login. This unlocked two employers previously recorded as having no public feed (Oracle ~2,300 reqs; JPMorgan Chase ~7,400). It is per-TENANT and shape-identical across tenants, so the next ORC employer is a config line, never new code \u2014 find hosts by their `*.fa.*.oraclecloud.com` / `*.fa.ocs.oraclecloud.com` pattern, or let scripts/harvestSources.mjs learn them from job URLs already seen. FOUR API TRAPS, each documented at length in src/search/adapters/oracleRecruiting.js: (1) `expand=requisitionList` is mandatory or a 200 comes back with no jobs at all; (2) jobs live at items[0].requisitionList and the total at items[0].TotalJobsCount \u2014 the OUTER hasMore/count describe the search envelope and driving pagination off them returns 25 of 7,397; (3) limit/offset go INSIDE the finder string and limit is capped at 200 server-side; (4) siteNumber is NOT validated \u2014 a wrong value silently falls back to the tenant's default site and returns plausible data, so verify it against the careers page HTML (sitenumber=\"CX_...\") rather than trusting that rows came back. ROBOTS: neither host publishes a robots.txt (Oracle 404; JPMorgan's WAF 403s the /robots.txt path itself while serving the API and job pages normally), so there is no Disallow directive being ignored \u2014 but the JPMorgan 403 is an unavailable-status ambiguity worth a deliberate decision rather than a default, and it is called out here so disabling that one tenant is a one-line change.",
         "strictTitleMatch": true,
         "maxDetailFetches": 25,
         "maxAgeDays": 180
@@ -2704,7 +2688,7 @@
       "priority": 3,
       "rateLimitMs": 1500,
       "options": {
-        "note": "DISCOVERY. amazon.jobs public search.json — the same unauthenticated JSON Amazon's own careers SPA renders from. Verified 2026-08-05: no key, no login, no cookie, no CSRF, plain identifying User-Agent accepted. Amazon's careers site is a JS SPA with no sitemap and no JobPosting JSON-LD, so it was previously recorded as having no public feed; this endpoint is the way in. ONE connector covers the whole amazon.jobs family — AWS, Audible, Twitch, Whole Foods and the rest all post here and each row carries its own company_name, so the employer is read per posting rather than hardcoded to 'Amazon'. ROBOTS: www.amazon.jobs/robots.txt allows both paths used here — under `User-agent: *` the only Disallow entries are the /internal locale variants, and no Crawl-delay is set. Search phrases derive from candidate.targetTitles; pin options.queries to override. Two field traps handled in the adapter: use id_icims (not the uuid `id`) for identity because it is what public URLs show, and posted_date arrives as prose with irregular spacing ('August  5, 2026') that must have whitespace collapsed before parsing or every job lands undated and the freshness stage drops it.",
+        "note": "DISCOVERY. amazon.jobs public search.json \u2014 the same unauthenticated JSON Amazon's own careers SPA renders from. Verified 2026-08-05: no key, no login, no cookie, no CSRF, plain identifying User-Agent accepted. Amazon's careers site is a JS SPA with no sitemap and no JobPosting JSON-LD, so it was previously recorded as having no public feed; this endpoint is the way in. ONE connector covers the whole amazon.jobs family \u2014 AWS, Audible, Twitch, Whole Foods and the rest all post here and each row carries its own company_name, so the employer is read per posting rather than hardcoded to 'Amazon'. ROBOTS: www.amazon.jobs/robots.txt allows both paths used here \u2014 under `User-agent: *` the only Disallow entries are the /internal locale variants, and no Crawl-delay is set. Search phrases derive from candidate.targetTitles; pin options.queries to override. Two field traps handled in the adapter: use id_icims (not the uuid `id`) for identity because it is what public URLs show, and posted_date arrives as prose with irregular spacing ('August  5, 2026') that must have whitespace collapsed before parsing or every job lands undated and the freshness stage drops it.",
         "strictTitleMatch": true,
         "maxAgeDays": 180,
         "maxPagesPerQuery": 5
@@ -2935,7 +2919,7 @@
         }
       ],
       "options": {
-        "note": "DISCOVERY. iCIMS public career portals. iCIMS is the LARGEST ATS by market share (~11%, ~6,400 employers, roughly a quarter of the Fortune 500), and this codebase previously had it recorded as 'JS-only SPA, no public feed' — that verdict was wrong and cost real coverage. Fetching /jobs/search?ss=1 does return a ~26KB wrapper with zero job links, but that wrapper is an IFRAME host, not a JS app: its own inline script immediately points the frame at the same URL plus in_iframe=1, which serves ~132KB of fully server-rendered HTML with 50 job links. in_iframe=1 is not an evasion — it is the public URL the page itself navigates to, same host, no auth, no token. Detail pages carry real schema.org JobPosting JSON-LD (only on the in_iframe=1 variant), so descriptions and dates come from structured data. ROBOTS: verified on two portals — /jobs/search and /jobs/{id}/{slug}/job are NOT disallowed and robots.txt explicitly publishes /sitemap.xml; everything it does disallow is candidate-account territory (*login, *candidate, *referral, /connect*) and the adapter refuses those paths even when the listing links to them. URL TRAP: the page's Apply button carries a server-generated hashed= token that cannot be synthesized, so the stored link is the clean canonical /jobs/{id}/{slug}/job, itself a 200 page with a working Apply button. BOARD LIST IS INTENTIONALLY SHORT — the value here is platform reach, not this one seed: run scripts/harvestSources.mjs to convert iCIMS posting URLs already in the database into permanent portal entries, which is how this list is meant to grow."
+        "note": "DISCOVERY. iCIMS public career portals. iCIMS is the LARGEST ATS by market share (~11%, ~6,400 employers, roughly a quarter of the Fortune 500), and this codebase previously had it recorded as 'JS-only SPA, no public feed' \u2014 that verdict was wrong and cost real coverage. Fetching /jobs/search?ss=1 does return a ~26KB wrapper with zero job links, but that wrapper is an IFRAME host, not a JS app: its own inline script immediately points the frame at the same URL plus in_iframe=1, which serves ~132KB of fully server-rendered HTML with 50 job links. in_iframe=1 is not an evasion \u2014 it is the public URL the page itself navigates to, same host, no auth, no token. Detail pages carry real schema.org JobPosting JSON-LD (only on the in_iframe=1 variant), so descriptions and dates come from structured data. ROBOTS: verified on two portals \u2014 /jobs/search and /jobs/{id}/{slug}/job are NOT disallowed and robots.txt explicitly publishes /sitemap.xml; everything it does disallow is candidate-account territory (*login, *candidate, *referral, /connect*) and the adapter refuses those paths even when the listing links to them. URL TRAP: the page's Apply button carries a server-generated hashed= token that cannot be synthesized, so the stored link is the clean canonical /jobs/{id}/{slug}/job, itself a 200 page with a working Apply button. BOARD LIST IS INTENTIONALLY SHORT \u2014 the value here is platform reach, not this one seed: run scripts/harvestSources.mjs to convert iCIMS posting URLs already in the database into permanent portal entries, which is how this list is meant to grow."
       }
     }
   ]

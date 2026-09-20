@@ -363,5 +363,67 @@
     "biSemanticDepth": 3,
     "pythonSqlPyspark": 3,
     "domainFit": 2
-  }
+  },
+  "categories": [
+    {
+      "id": "titleFit",
+      "label": "Title fit",
+      "weight": 18,
+      "fullAt": 1,
+      "match": "title",
+      "from": "targetTitles",
+      "note": "Reads candidate.targetTitles, which the active profile generates from its target roles plus role-family title variations. Editing your profile changes what is SCORED as well as what is searched — those used to be two lists that silently disagreed.",
+      "derived": true
+    },
+    {
+      "id": "coreSkills",
+      "label": "Core skills",
+      "weight": 30,
+      "fullAt": 6,
+      "from": "technicalStack",
+      "note": "Reads every value in candidate.technicalStack — the skills you want to keep using, what your resume evidences, and what you want to grow into. They do not have to be software.",
+      "derived": true
+    },
+    {
+      "id": "domainFit",
+      "label": "Industry / domain",
+      "weight": 6,
+      "fullAt": 1,
+      "from": "industries",
+      "note": "Reads candidate.domainExperience: the industries from your background plus any your search intent names.",
+      "derived": true
+    }
+  ],
+  "marketSkills": [
+    "sql",
+    "python",
+    "spark",
+    "pyspark",
+    "databricks",
+    "snowflake",
+    "power bi",
+    "tableau",
+    "looker",
+    "dbt",
+    "airflow",
+    "kafka",
+    "redshift",
+    "bigquery",
+    "synapse",
+    "azure data factory",
+    "delta lake",
+    "microsoft fabric",
+    "hadoop",
+    "informatica",
+    "ssis",
+    "ssas",
+    "dax",
+    "star schema",
+    "kimball",
+    "r",
+    "sas",
+    "matlab",
+    "pandas"
+  ],
+  "_categoriesNote": "Categories marked \"derived\": true are regenerated from the active profile on every activation — titleFit follows candidate.targetTitles and coreSkills follows candidate.technicalStack. Categories you add yourself, and weights you change on a derived one, are preserved across activations. Delete the \"categories\" array to fall back to the legacy hardcoded data-engineering categories (weights/keywords shape)."
 }

@@ -35,7 +35,7 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
-import { deriveSearchTerms } from './workday.js';
+import { searchTermsFor } from './workday.js';
 
 export const adapterId = 'amazonJobs';
 
@@ -77,7 +77,7 @@ export async function run(source = {}, ctx = {}) {
   // of truth rather than being copied into jobboards.json and drifting.
   const queries = Array.isArray(options.queries) && options.queries.length
     ? options.queries.map((q) => String(q ?? '').trim()).filter(Boolean)
-    : deriveSearchTerms(ctx.candidate?.targetTitles, options.maxSearchTerms);
+    : searchTermsFor(ctx.candidate, options.maxSearchTerms);
 
   const titleGate = makeTitleGate({
     titles: options.titles ?? ctx.candidate?.targetTitles ?? [],

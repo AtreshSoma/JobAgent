@@ -13,6 +13,9 @@
 
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
+import { candidateNeedsSponsorship } from './exclusionFilter.js';
+import { excludedLocationMatch } from './searchConstraints.js';
+import { seniorityRank } from '../profile/roleFamilies.js';
 
 /**
  * Sources considered "direct ATS" for the directAtsAvailability category — a
@@ -30,8 +33,56 @@ const DIRECT_ATS_SOURCES = new Set([
   'manual', 'manual-url',
 ]);
 
-/** Seniority ranking for seniorityFit. */
-const SENIORITY_RANK = { junior: 1, mid: 2, senior: 3, lead: 4, staff: 4, principal: 5, manager: 4 };
+/**
+ * Seniority ranking for seniorityFit — ONE ladder, shared with the profile
+ * taxonomy (`SENIORITY_LEVELS` in src/profile/roleFamilies.js).
+ *
+ * There were two, and they disagreed. This table had associate and mid on the
+ * same rung while the taxonomy separates them, so the two implementations
+ * counted a different number of rungs and "one step up" meant different things
+ * in each; `staff` sat at 5 here (level with principal) and at 5-of-8 there
+ * (level with lead). Seniority credit therefore depended on which module
+ * happened to be asking.
+ *
+ * Aliases map the words a candidate or a posting actually uses onto the
+ * taxonomy's keys. Keeping them here rather than in the taxonomy is deliberate:
+ * the taxonomy defines the LADDER, this defines how loosely we read a title.
+ */
+const SENIORITY_ALIASES = {
+  junior: 'entry', jr: 'entry', graduate: 'entry', 'new grad': 'entry',
+  sr: 'senior', intermediate: 'mid', 'mid level': 'mid',
+  staff: 'lead', manager: 'lead', head: 'director',
+  vp: 'executive', 'vice president': 'executive', chief: 'executive',
+};
+
+/** Rank for a seniority word, on the shared ladder. Null when unrecognized. */
+function rankOf(word) {
+  const key = normalizeText(word);
+  if (!key) return null;
+  return seniorityRank(SENIORITY_ALIASES[key] ?? key);
+}
+
+/**
+ * Level words a JOB TITLE may declare, highest first so the strongest claim in
+ * a title wins ("Senior Staff Engineer" is staff, not senior).
+ *
+ * The old detector recognized only principal/staff, lead/manager, senior,
+ * junior/entry and mid-level — so intern, associate, director and executive
+ * postings read as "seniority unstated" even though they say so plainly, while
+ * the candidate side of the comparison had ranked all of them since the ladder
+ * was generalized. A director role scored as though its level were unknown.
+ */
+const SENIORITY_PATTERNS = [
+  [/\b(chief|c-level|cxo|ceo|cto|cio|coo)\b|\bvice\s+president\b|\bvp\b/, 'executive'],
+  [/\b(director|head\s+of)\b/, 'director'],
+  [/\bprincipal\b/, 'principal'],
+  [/\b(lead|staff|manager)\b/, 'lead'],
+  [/\b(senior|sr\.?)\b/, 'senior'],
+  [/\bmid[-\s]?level\b/, 'mid'],
+  [/\bassociate\b/, 'associate'],
+  [/\b(junior|jr\.?|entry[-\s]level|entry|new\s+grad(?:uate)?)\b/, 'entry'],
+  [/\b(intern|internship|co[-\s]?op)\b/, 'intern'],
+];
 
 /**
  * Score a single job.
@@ -71,8 +122,9 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   // expresses their own field in config instead of editing this file. A
   // category draws its terms from one of three places:
   //
-  //   from: 'targetTitles'    -> candidate.targetTitles   (follows the profile)
-  //   from: 'technicalStack'  -> candidate.technicalStack (follows the profile)
+  //   from: 'targetTitles'    -> candidate.targetTitles    (follows the profile)
+  //   from: 'technicalStack'  -> candidate.technicalStack  (follows the profile)
+  //   from: 'industries'      -> candidate.domainExperience (follows the profile)
   //   keywords / keywordSet   -> an explicit list in scoring.json
   //
   // The first two matter as much as the array does: titleFit used to read
@@ -90,8 +142,21 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   breakdown.seniorityFit = scoreSeniority(job, text, candidate.seniority, weights.seniorityFit);
 
   // Sponsorship feasibility.
-  breakdown.sponsorshipFeasibility = scoreSponsorship(sponsorship?.status, weights.sponsorshipFeasibility);
-  breakdown.companySponsorshipLikelihood = scoreCompanyLikelihood(sponsorship?.status, weights.companySponsorshipLikelihood);
+  //
+  // Both categories measure "can this employer sponsor me?", which is only a
+  // question for a candidate who needs sponsoring. For one who has stated they
+  // do not, an employer's sponsorship posture is not a fact about their fit,
+  // and scoring it cost them 15 of 100 points on every posting that had not
+  // volunteered an answer — pushing genuinely strong roles below the tier
+  // thresholds. Stated `false` scores these as fully satisfied; unstated keeps
+  // the cautious behaviour.
+  const needsSponsorship = candidateNeedsSponsorship(candidate);
+  breakdown.sponsorshipFeasibility = needsSponsorship === false
+    ? { points: weights.sponsorshipFeasibility, weight: weights.sponsorshipFeasibility, matched: ['no sponsorship needed'] }
+    : scoreSponsorship(sponsorship?.status, weights.sponsorshipFeasibility);
+  breakdown.companySponsorshipLikelihood = needsSponsorship === false
+    ? { points: weights.companySponsorshipLikelihood, weight: weights.companySponsorshipLikelihood, matched: ['no sponsorship needed'] }
+    : scoreCompanyLikelihood(sponsorship?.status, weights.companySponsorshipLikelihood);
 
   // Geography fit.
   breakdown.geographyFit = scoreGeography(job, candidate, weights.geographyFit);
@@ -122,7 +187,9 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   const total = max > 0 ? Math.round((raw / max) * 100) : 0;
 
   const matchedKeywords = [...matchedAll];
-  const missingKeywords = computeMissing(text, candidate, kw, scoring.evidenceAliases, categories);
+  const missingKeywords = computeMissing(
+    text, candidate, kw, scoring.evidenceAliases, categories, scoring.marketSkills,
+  );
 
   return {
     total,
@@ -141,10 +208,15 @@ export const STRUCTURAL_WEIGHTS = Object.freeze([
   'geographyFit', 'freshness', 'directAtsAvailability', 'resumeKeywordAlignment',
 ]);
 
-/** Flatten `candidate.technicalStack` into a term list. */
+/**
+ * Terms for the `coreSkills` category.
+ *
+ * Evidenced buckets only — a category labelled "Core skills" and worth 30 of
+ * 100 points must reward what the candidate can actually do. See
+ * `candidateStackTerms` for the measurement that made this necessary.
+ */
 function stackTerms(candidate) {
-  const stack = candidate?.technicalStack ?? {};
-  return Object.values(stack).flat().filter((t) => typeof t === 'string' && t.trim());
+  return candidateStackTerms(candidate ?? {});
 }
 
 /**
@@ -162,6 +234,13 @@ function categoryTerms(category, scoring, candidate) {
   }
   if (category.from === 'technicalStack') {
     return stackTerms(candidate);
+  }
+  if (category.from === 'industries') {
+    // The industries the profile actually names, rather than a fixed list of
+    // six that happened to suit one person ("finance, healthcare, insurance,
+    // retail, banking, bank"). A candidate in education or manufacturing could
+    // not score this category at all.
+    return (candidate?.domainExperience ?? []).filter(Boolean);
   }
   if (Array.isArray(category.keywords)) return category.keywords;
   // `keywordSet` may name one set or several, which is how the legacy
@@ -256,7 +335,9 @@ function keywordCategory(text, keywords = [], weight = 0, fullAt = 1, sink) {
  */
 function scoreSeniority(job, text, candidateSeniority, weight) {
   if (!candidateSeniority) return { points: 0, weight, matched: [] };
-  const want = SENIORITY_RANK[candidateSeniority] ?? 3;
+  // Unrecognized candidate levels fall back to 'senior', matching the previous
+  // behaviour — but every key the profile model can produce now resolves.
+  const want = rankOf(candidateSeniority) ?? seniorityRank('senior');
   const matched = [];
 
   // Title first — that is where a level is actually declared. Lowercased,
@@ -303,12 +384,14 @@ function scopeBonus(text) {
   return { bonus: Math.min(0.25, bonus), matched };
 }
 
+/**
+ * The level a job title (or description) declares, as a rank on the shared
+ * ladder. Null when it declares none. See SENIORITY_PATTERNS.
+ */
 function detectSeniority(text) {
-  if (/\b(principal|staff)\b/.test(text)) return 5;
-  if (/\b(lead|manager)\b/.test(text)) return 4;
-  if (/\b(senior|sr\.?)\b/.test(text)) return 3;
-  if (/\b(junior|jr\.?|entry)\b/.test(text)) return 1;
-  if (/\bmid[- ]?level\b/.test(text)) return 2;
+  for (const [pattern, key] of SENIORITY_PATTERNS) {
+    if (pattern.test(text)) return seniorityRank(key);
+  }
   return null;
 }
 
@@ -333,12 +416,21 @@ function scoreGeography(job, candidate, weight) {
   const matched = [];
   let factor = 0.5; // unknown location: neutral
 
+  // THE EXCLUSION IS CHECKED FIRST, NOT INSIDE THE NON-REMOTE BRANCH.
+  //
+  // It used to sit after `if (/remote/.test(loc))`, so any location string
+  // containing the substring "remote" skipped it entirely — "Remote - Dallas,
+  // TX" scored a full six points for a candidate who had ruled out Dallas.
+  // `excludedLocationMatch` decides remoteness by reading the location as
+  // remote rather than by a substring, and a genuinely remote posting is still
+  // exempt, because ruling out a city is a statement about going there.
+  const excluded = excludedLocationMatch(job.location, prefs.excludedLocations);
+  if (excluded) return { points: 0, weight, matched: [`excluded location: ${excluded}`] };
+
   if (/remote/.test(loc)) {
     if (prefs.remote) { factor = 1; matched.push('remote'); }
   } else if (loc) {
-    const excluded = (prefs.excludedLocations ?? []).some((x) => loc.includes(normalizeText(x)));
-    if (excluded) { factor = 0; matched.push('excluded location'); }
-    else if (prefs.onsite || prefs.hybrid) { factor = 0.8; matched.push('onsite/hybrid ok'); }
+    if (prefs.onsite || prefs.hybrid) { factor = 0.8; matched.push('onsite/hybrid ok'); }
     else { factor = 0.4; matched.push('onsite, candidate prefers remote'); }
   }
   return { points: round2(weight * factor), weight, matched };
@@ -366,10 +458,38 @@ function scoreResumeAlignment(text, candidate, resumeKeywords, weight) {
   return { points: round2(weight * coverage), weight, matched };
 }
 
-/** Flatten the candidate technical stack into a term list. */
-export function candidateStackTerms(candidate = {}) {
+/**
+ * The stack bucket holding skills the candidate wants to LEARN, not ones they
+ * have. Written by `toCandidateConfig` from `searchIntent.skillsToGrow`.
+ */
+const GROWTH_BUCKET = 'growth';
+
+/**
+ * Flatten the candidate technical stack into a term list.
+ *
+ * EVIDENCE BY DEFAULT. `technicalStack.growth` is the one bucket that is not a
+ * statement of ability — it is what the person is moving toward — and
+ * flattening it in alongside the rest made every consumer treat an aspiration
+ * as a demonstrated skill. Measured on a profile whose only skills were six
+ * growth entries: 30/30 core-skill points, no reported gaps, and the terms
+ * printed in a cover letter under "My core strengths align with your
+ * requirements". The background/intent split the profile model exists to
+ * maintain was being discarded at exactly the point it mattered.
+ *
+ * Callers that genuinely want the union — discovery, which should still FIND a
+ * job that uses a skill you are learning — pass `includeGrowth: true`.
+ *
+ * @param {object} [candidate]
+ * @param {object} [options]
+ * @param {boolean} [options.includeGrowth=false]
+ * @returns {string[]}
+ */
+export function candidateStackTerms(candidate = {}, { includeGrowth = false } = {}) {
   const stack = candidate.technicalStack ?? {};
-  return Object.values(stack).flat().filter((t) => typeof t === 'string');
+  return Object.entries(stack)
+    .filter(([bucket]) => includeGrowth || bucket !== GROWTH_BUCKET)
+    .flatMap(([, terms]) => (Array.isArray(terms) ? terms : [terms]))
+    .filter((t) => typeof t === 'string' && t.trim());
 }
 
 /**
@@ -383,7 +503,7 @@ export function candidateStackTerms(candidate = {}) {
  * and missingKeywords (alias not substring-matched in the profile), which
  * reads as a contradiction on the dashboard.
  */
-export function computeMissing(text, candidate, kw, evidenceAliases = {}, categories = null) {
+export function computeMissing(text, candidate, kw, evidenceAliases = {}, categories = null, marketSkills = null) {
   // A GAP NEEDS A VOCABULARY THE CANDIDATE DOES NOT OWN.
   //
   // "Missing" means: this JD asks for something you cannot evidence. Finding
@@ -398,17 +518,26 @@ export function computeMissing(text, candidate, kw, evidenceAliases = {}, catego
   // to the profile. A category bound to `targetTitles` or `technicalStack` is
   // deliberately excluded.
   //
-  // CONSEQUENCE, stated plainly: gap analysis is only as good as
-  // `scoring.keywords`. A user in another field who leaves those lists as the
-  // shipped data-engineering vocabulary will see few or no gaps — not because
-  // they have none, but because nothing is looking for theirs.
+  // THAT CONSEQUENCE IS NOW FIXED. Gap analysis used to be only as good as
+  // `scoring.keywords`, which shipped as a data-engineering word list — so a
+  // nurse or an accountant was told they had no gaps, not because they had
+  // none but because nothing was looking for theirs. `scoring.marketSkills` is
+  // written by activating a search profile and holds every skill the
+  // candidate's own role families know about (config/role_families.json), so
+  // the question "what is this JD asking for that I cannot evidence?" is now
+  // answerable in any field. It is still candidate-INDEPENDENT — a vocabulary
+  // of the market, not of the person — which is what makes a gap a gap.
   // `titles` and `domains` are excluded on principle: a job title is not a skill
   // you can be missing, and neither is an industry. Including them reported
   // "data engineer" as a gap on a data-engineering role.
   const NOT_SKILLS = new Set(['titles', 'domains']);
-  const marketVocabulary = Object.entries(kw ?? {})
-    .filter(([name]) => !NOT_SKILLS.has(name))
-    .flatMap(([, list]) => list ?? []);
+  const fromProfile = Array.isArray(marketSkills) ? marketSkills : [];
+  const marketVocabulary = [
+    ...fromProfile,
+    ...Object.entries(kw ?? {})
+      .filter(([name]) => !NOT_SKILLS.has(name))
+      .flatMap(([, list]) => list ?? []),
+  ];
   const declaredVocabulary = (categories ?? [])
     .filter((c) => c.match !== 'title' && !c.from)
     .flatMap((c) => c.terms ?? []);

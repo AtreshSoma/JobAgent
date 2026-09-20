@@ -282,7 +282,13 @@ export function applyExclusions(baseExclusions = {}, derived) {
       ...(baseExclusions.geography ?? {}),
       usOnly: intent.usOnly === true,
     },
-    _generatedFrom: `config/profiles/${derived.profile.id}.json`,
+    // NO PROFILE ID HERE. `config/exclusions.json` is TRACKED, while a profile
+    // id is slugified from the person's own name and config/profiles/ is
+    // gitignored precisely because it is personal. Stamping the id onto a
+    // tracked file put "config/profiles/jane-doe.json" into git history — the
+    // one place the profile model is supposed to keep it out of. The marker
+    // only has to say the section is generated, not by whom.
+    _generatedFrom: 'the active search profile (config/profiles/)',
   };
 }
 

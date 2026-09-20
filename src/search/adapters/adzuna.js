@@ -41,7 +41,7 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { getSecret } from '../../utils/credentialManager.js';
 import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
-import { makeTitleGate } from './atsSearch.js';
+import { makeTitleGate, candidateQueryPhrases } from './atsSearch.js';
 
 export const adapterId = 'adzuna';
 
@@ -203,11 +203,10 @@ export function buildSearchUrl({
   return url.href;
 }
 
-/** Queries come from explicit config, else the candidate's target titles. */
+/** Queries come from explicit config, else the profile's search phrases. */
 function resolveQueries(options, ctx) {
   const explicit = Array.isArray(options.queries) ? options.queries : null;
-  const fromCandidate = Array.isArray(ctx.candidate?.targetTitles) ? ctx.candidate.targetTitles : [];
-  const list = explicit ?? fromCandidate;
+  const list = explicit ?? candidateQueryPhrases(ctx.candidate);
   const seen = new Set();
   const out = [];
   for (const q of list) {

@@ -365,11 +365,26 @@ export async function run(source = {}, ctx = {}) {
   return { jobs, errors, cancelled };
 }
 
-/** Queries come from explicit config, else the candidate's target titles. */
+/**
+ * The phrases this adapter should ASK a board for.
+ *
+ * `candidate.searchPhrases` is a small set cover of the target roles, generated
+ * by activating a search profile (src/profile/derive.js). It exists because
+ * `targetTitles` grew: role-family expansion turns 3 stated roles into ~15
+ * recognized ones, which is free for scoring and would have been one extra
+ * REQUEST PER TITLE PER SOURCE here. Falls back to targetTitles when no profile
+ * has been activated, so a hand-written candidate.json still works unchanged.
+ */
+export function candidateQueryPhrases(candidate) {
+  const phrases = Array.isArray(candidate?.searchPhrases) ? candidate.searchPhrases.filter(Boolean) : [];
+  if (phrases.length) return phrases;
+  return Array.isArray(candidate?.targetTitles) ? candidate.targetTitles : [];
+}
+
+/** Queries come from explicit config, else the profile's search phrases. */
 function resolveQueries(options, ctx) {
   const explicit = Array.isArray(options.queries) ? options.queries : null;
-  const fromCandidate = Array.isArray(ctx.candidate?.targetTitles) ? ctx.candidate.targetTitles : [];
-  const list = explicit ?? fromCandidate;
+  const list = explicit ?? candidateQueryPhrases(ctx.candidate);
   const seen = new Set();
   const out = [];
   for (const q of list) {

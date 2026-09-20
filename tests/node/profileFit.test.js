@@ -16,7 +16,7 @@ import {
 import { rawTier, TIERS } from '../../src/scoring/explainScore.js';
 import { makeTitleGate } from '../../src/search/adapters/atsSearch.js';
 import { scoreJob } from '../../src/scoring/scorer.js';
-import { loadTestConfig } from './helpers/testConfig.js';
+import { loadTestConfig, legacyScoringShape } from './helpers/testConfig.js';
 
 const config = loadTestConfig({ loadEnv: false, env: {} });
 const vocab = buildProfileVocabulary(config.candidate);
@@ -173,21 +173,47 @@ describe('seniority and scope influence fit', () => {
   };
   const stack = 'Azure Databricks, PySpark, Delta Lake, Power BI semantic models, Python, SQL, ADF.';
 
-  it('no longer penalizes a posting for describing leadership', () => {
-    // REGRESSION: seniority was detected over the whole document, so the VERB
-    // in "you will lead the design" read as a Lead-level role, one rung above a
-    // senior candidate, and cost 3.2 of 8 points for good news.
+  /**
+   * REGRESSION: seniority was detected over the whole document, so the VERB in
+   * "you will lead the design" read as a Lead-level role, one rung above a
+   * senior candidate, and cost 3.2 of 8 points for good news.
+   *
+   * The INVARIANT is that leadership language never costs points. Whether it
+   * also GAINS any depends on the scoring shape, and that difference is real
+   * rather than incidental: under the legacy categories the extra prose happens
+   * to add keyword hits ("lakehouse", "data platform") to an unsaturated
+   * bucket, so the total rises 65 -> 67. Under the profile-driven categories
+   * the posting already saturates both seniorityFit and coreSkills, so it
+   * stays 79 -> 79. Asserting a strict increase on both would be pinning an
+   * artifact of the legacy saturation points, not the fix.
+   */
+  it.each([
+    ['profile-driven (generated from the active profile)', config.scoring],
+    ['legacy weights/keywords shape', legacyScoringShape(config.scoring)],
+  ])('never penalizes a posting for describing leadership — %s', (_label, scoring) => {
     const plain = scoreJob({ ...base, title: 'Senior Data Engineer', jdText: stack },
-      { scoring: config.scoring, candidate: config.candidate });
+      { scoring, candidate: config.candidate });
     const leaderly = scoreJob({
       ...base,
       title: 'Senior Data Engineer',
       jdText: `${stack} You will lead the design of our lakehouse and mentor engineers. You will own the data platform roadmap.`,
-    }, { scoring: config.scoring, candidate: config.candidate });
+    }, { scoring, candidate: config.candidate });
 
     expect(leaderly.breakdown.seniorityFit.points).toBeGreaterThanOrEqual(plain.breakdown.seniorityFit.points);
+    expect(leaderly.total).toBeGreaterThanOrEqual(plain.total);
+    expect(leaderly.breakdown.seniorityFit.matched.join(' ')).toMatch(/ownership|leadership|seniority/);
+  });
+
+  it('still rewards the leadership prose wherever the categories have room for it', () => {
+    const legacy = legacyScoringShape(config.scoring);
+    const plain = scoreJob({ ...base, title: 'Senior Data Engineer', jdText: stack },
+      { scoring: legacy, candidate: config.candidate });
+    const leaderly = scoreJob({
+      ...base,
+      title: 'Senior Data Engineer',
+      jdText: `${stack} You will lead the design of our lakehouse and mentor engineers. You will own the data platform roadmap.`,
+    }, { scoring: legacy, candidate: config.candidate });
     expect(leaderly.total).toBeGreaterThan(plain.total);
-    expect(leaderly.breakdown.seniorityFit.matched.join(' ')).toMatch(/ownership|leadership/);
   });
 
   it('treats a step up as a fit and a step down as a mismatch', () => {

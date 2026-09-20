@@ -6,124 +6,75 @@
  * fetched. That is the wrong default in the wrong place, for two reasons:
  *
  *  1. A title gate is a COST control, not a relevance judgement. Relevance is
- *     decided by the scorer, where the title is worth 12 of ~110 points — the
- *     other ~90% comes from stack, seniority, domain and keyword alignment that
- *     only the DESCRIPTION can supply. Rejecting on the title alone throws the
- *     job away before the evidence that actually decides it has been read.
+ *     decided by the scorer, where the title is worth a small share of the
+ *     total — the rest comes from stack, seniority, domain and keyword
+ *     alignment that only the DESCRIPTION can supply.
  *  2. Employers do not name roles the way a job seeker searches for them.
  *
- * Measured against 55,293 already-scored postings in the local database, the
- * old gate would have rejected 14.8% of everything scoring 60-74 and 46.8% of
- * everything scoring 50-59 — 148 postings at 60+ that the scorer itself judged
- * a good fit, among them "Databricks Senior Architect" (68), "Senior BI & AI
- * Engineer" (74) and "Senior Systems Engineer - Business Analytics Platforms"
- * (81). Those survived only because they arrived from adapters that happen not
- * to apply the gate; the identical role from a gated source vanished silently.
+ * Measured against 55,293 already-scored postings, the old gate would have
+ * rejected 14.8% of everything scoring 60-74 and 46.8% of everything scoring
+ * 50-59. So a title resolves to one of THREE answers, and only `reject` drops a
+ * posting:
  *
- * THE FIX IS A THIRD ANSWER. Instead of accept/reject, a title resolves to:
- *
- *   accept  the title itself carries profile evidence — keep, and prefer it
- *           when a limited description budget is being spent
- *   defer   the title says nothing either way — KEEP IT and let the description
- *           and the scorer decide, because a title is not enough to convict
+ *   accept  the title carries profile evidence — keep, and prefer it when a
+ *           limited description budget is being spent
+ *   defer   the title says nothing either way — KEEP IT, the description decides
  *   reject  the title positively names a different profession — drop it
  *
- * Only `reject` drops a posting. "Unknown" is no longer fatal.
+ * ── WHAT CHANGED, AND WHY IT HAD TO ─────────────────────────────────────────
  *
- * EVERYTHING IS DERIVED FROM THE CANDIDATE PROFILE — `targetTitles`,
+ * This file used to answer "is this in my field?" with vocabulary written for
+ * ONE candidate: a hardcoded `DOMAIN_SEEDS` list of data/analytics words, and
+ * three absolute reject lists (other professions, other business functions,
+ * other engineering) that enumerated everything a data engineer is not.
+ *
+ * Both failed the moment a second person used the tool, and failed in BOTH
+ * directions at once. Measured:
+ *
+ *   - a MARKETING profile ACCEPTED "ETL Developer", "Data Warehouse Engineer"
+ *     and "Lakehouse Platform Engineer", because the data vocabulary was
+ *     injected into every profile regardless of whose it was;
+ *   - the same profile REJECTED "Brand Manager" ("marketing manager" and
+ *     "brand manager" were on the other-business-functions list), and an
+ *     ACCOUNTING profile REJECTED "Accounting Manager".
+ *
+ * So the previous candidate's adjacent roles were kept and the current
+ * candidate's own were thrown away.
+ *
+ * The vocabulary now comes from `config/role_families.json` by way of the
+ * candidate's OWN families (see src/profile/roleFamilies.js). The reject test
+ * is symmetric: a title is dropped only when it confidently names a family the
+ * candidate has no signal in. "Not data engineering" is not a reason; "a
+ * different family from yours" is, whoever you are.
+ *
+ * EVERYTHING IS STILL DERIVED FROM THE PROFILE — `targetTitles`,
  * `technicalStack`, `domainExperience`, `seniority`. No employer names, no
- * hardcoded job titles. Editing config/candidate.json changes what matches, so
- * the same code serves a different candidate without modification.
+ * hardcoded job titles, and no profession-specific branch anywhere below.
  */
 
 import { normalizeText } from '../utils/textNormalize.js';
+import {
+  loadRoleFamilies, profileFamilies, classifyTitleAgainstFamilies,
+} from '../profile/roleFamilies.js';
 
 /**
  * Role nouns — what a person IS. Deliberately includes leadership and advisory
  * nouns (lead/manager/director/head/principal/architect/consultant), because a
- * senior IC's next role is frequently titled with one of them and the old
- * regex recognized none of them.
+ * senior IC's next role is frequently titled with one of them.
+ *
+ * This list is profession-NEUTRAL: it is the set of words any field uses to
+ * name the holder of a role, and it never decides which field a role is in.
+ * That judgement belongs entirely to the family taxonomy.
  */
 const ROLE_NOUNS = [
   'engineer', 'engineering', 'developer', 'architect', 'analyst', 'scientist',
   'consultant', 'specialist', 'administrator', 'programmer', 'modeler', 'modeller',
   'lead', 'manager', 'director', 'head', 'principal', 'staff', 'owner', 'expert',
-];
-
-/**
- * Domain words that place a role in the data/analytics family. Seeded from the
- * vocabulary any such profile implies, then EXTENDED at runtime with the words
- * actually present in the candidate's own target titles and domains.
- */
-const DOMAIN_SEEDS = [
-  'data', 'analytics', 'analytic', 'analysis', 'bi', 'business intelligence',
-  'etl', 'elt', 'warehouse', 'warehousing', 'lakehouse', 'datalake', 'data lake',
-  'pipeline', 'platform', 'reporting', 'report', 'insight', 'insights',
-  'informatics', 'ingestion', 'integration', 'semantic', 'dimensional',
-  'visualization', 'visualisation', 'dashboard', 'metrics', 'mdm',
-  'master data', 'data quality', 'data governance', 'decision intelligence',
-];
-
-/**
- * Titles that belong to a clearly different profession. A title is rejected
- * ONLY when one of these is present AND the title carries no profile signal at
- * all — so "Data Engineer, Clinical Nursing Systems" survives on its data
- * signal while "Registered Nurse" does not.
- *
- * Kept deliberately short and unambiguous. Anything borderline belongs in
- * `defer`, where the description gets a say; a wrong reject is invisible and
- * permanent, a wrong defer merely costs one scoring pass.
- */
-const OTHER_PROFESSIONS = [
-  'nurse', 'nursing', 'physician', 'surgeon', 'dentist', 'pharmacist',
-  'veterinar', 'therapist', 'caregiver', 'phlebotom', 'radiolog', 'sonograph',
-  'attorney', 'paralegal', 'counsel', 'litigation',
-  'driver', 'trucking', 'forklift', 'warehouse associate', 'warehouse worker',
-  'janitor', 'custodian', 'housekeep', 'landscap', 'plumber', 'electrician',
-  'welder', 'machinist', 'carpenter', 'mechanic', 'hvac', 'roofer',
-  'chef', 'cook', 'barista', 'bartender', 'server', 'waiter', 'cashier',
-  'teacher', 'professor', 'tutor', 'lecturer', 'librarian',
-  'salon', 'stylist', 'barber', 'massage',
-  'security guard', 'police', 'firefighter', 'paramedic',
-  'recruiter', 'talent acquisition', 'payroll clerk',
-  'social worker', 'chaplain', 'clergy',
-  'flight attendant', 'pilot', 'deckhand',
-];
-
-/**
- * Business functions that share office vocabulary with data work but are a
- * different job. These matter more than they look: aggregator queries match the
- * whole posting body, not the title, so a "data engineer" search really does
- * return "Accounts Payable Administrator" (measured: one such query returned
- * 31,148 rows). Without an explicit reject these land in `defer` and are kept.
- *
- * As with every other reject list, a domain signal in the title overrides it —
- * "Sales Analytics Engineer" survives.
- */
-const OTHER_BUSINESS_FUNCTIONS = [
-  'accounts payable', 'accounts receivable', 'accountant', 'accounting',
-  'bookkeep', 'auditor', 'tax ', 'treasury', 'billing', 'collections',
-  'account executive', 'account manager', 'sales representative', 'salesperson',
-  'business development', 'customer success', 'customer service',
-  'call center', 'call centre', 'telemarket', 'merchandis', 'buyer',
-  'marketing manager', 'brand manager', 'copywriter', 'social media',
-  'human resources', 'hr generalist', 'benefits administrator',
-  'office manager', 'administrative assistant', 'executive assistant',
-  'receptionist', 'front desk', 'store manager', 'shift supervisor',
-  'procurement', 'logistics coordinator', 'dispatcher', 'claims adjuster',
-  'underwriter', 'loan officer', 'teller', 'real estate agent',
-];
-
-/**
- * Engineering specialisms that are real software work but a different craft.
- * These only reject when NO data/analytics signal is present, so
- * "Frontend Engineer, Analytics Platform" is kept.
- */
-const OTHER_ENGINEERING = [
-  'frontend', 'front end', 'front-end', 'ios', 'android', 'mobile',
-  'game', 'gameplay', 'graphics', 'firmware', 'embedded', 'rf ',
-  'mechanical', 'civil', 'chemical', 'aerospace', 'structural', 'geotechnical',
-  'network engineer', 'field engineer', 'sales engineer', 'flight software',
+  'associate', 'coordinator', 'supervisor', 'technician', 'officer', 'partner',
+  'representative', 'advisor', 'strategist', 'planner', 'designer', 'researcher',
+  'practitioner', 'assistant', 'nurse', 'therapist', 'accountant', 'auditor',
+  'controller', 'attorney', 'counsel', 'writer', 'editor', 'producer', 'chef',
+  'instructor', 'teacher', 'trainer', 'recruiter', 'buyer', 'agent', 'operator',
 ];
 
 /** Words that signal scope/leadership, used for ranking rather than gating. */
@@ -165,29 +116,30 @@ function flattenTerms(value, out = []) {
 }
 
 /**
- * Split a multi-word technology into the tokens worth matching on their own.
+ * Every skill term the taxonomy recognizes, from any family.
  *
- * "Azure Data Factory" should match a title saying "Azure", and "Power BI"
- * should match "Power BI" — but a bare "data" or "factory" is far too generic
- * to be treated as a technology hit, so single generic words are dropped.
+ * Used to decide whether a single word pulled out of a multi-word skill is
+ * worth matching on its own. "Azure Data Factory" should match a title saying
+ * "Azure" — `azure` is a technology the taxonomy knows. It must NOT match on
+ * "data" or "factory", which are ordinary words, nor should "Microsoft Fabric"
+ * match a bare "Fabric": measured, that one token matched "Senior Verification
+ * Engineer - ARM Fabric Unit Level" (NVIDIA), "Hardware Network Fabric
+ * Development Engineer" (HPE) and "Product Manager, Agent Fabric" (Salesforce)
+ * — silicon interconnect and product names, not Microsoft Fabric.
+ *
+ * This replaced a hand-maintained blocklist of ~30 words that was itself
+ * written from one stack ('fabric', 'delta', 'lake', 'onelake', 'gen2'), and
+ * which no second user could have known to extend.
  */
-const GENERIC_TECH_TOKENS = new Set([
-  'data', 'cloud', 'apache', 'microsoft', 'azure data', 'modeling', 'modelling',
-  'architecture', 'pipelines', 'systems', 'design', 'testing', 'quality',
-  'integration', 'streaming', 'engineering', 'analytics', 'reports', 'patterns',
-  // Words that name a technology in this profile but something else entirely in
-  // other engineering fields. "Fabric" is the costly one: as a bare token it
-  // matched "Senior Verification Engineer - ARM Fabric Unit Level" (NVIDIA),
-  // "Hardware Network Fabric Development Engineer" (HPE) and "Product Manager,
-  // Agent Fabric" (Salesforce) — silicon interconnect and product names, not
-  // Microsoft Fabric. Likewise "delta" (an airline), "lake", "event", "hub",
-  // "spark", "factory", "studio". The multi-word phrases they come from
-  // ("microsoft fabric", "delta lake", "azure data factory") survive intact and
-  // are unambiguous, so nothing real is lost by dropping the bare token.
-  'fabric', 'delta', 'lake', 'event', 'hub', 'spark', 'factory', 'studio',
-  'bundles', 'actions', 'logic', 'apps', 'vector', 'feature', 'series',
-  'lineage', 'observability', 'time', 'live', 'tables', 'gen2', 'onelake',
-]);
+function taxonomySkillTokens(taxonomy) {
+  const tokens = new Set();
+  for (const family of Object.values(taxonomy?.families ?? {})) {
+    for (const skill of family.skills ?? []) {
+      if (!skill.includes(' ')) tokens.add(skill);
+    }
+  }
+  return tokens;
+}
 
 /**
  * Build the matching vocabulary for a candidate profile.
@@ -195,20 +147,31 @@ const GENERIC_TECH_TOKENS = new Set([
  * Pure and memo-friendly: the same profile always yields the same vocabulary,
  * so callers can build it once per run.
  *
- * @param {object} candidate parsed config/candidate.json
- * @returns {{domain: string[], tech: string[], titles: string[], seniority: number}}
+ * @param {object} candidate parsed config/candidate.json, OR a normalized
+ *   profile from src/profile/model.js — both are read through the same probes
+ * @param {object} [options]
+ * @param {object} [options.taxonomy] injected role families (tests, dashboard)
+ * @param {string} [options.root] project root to load the taxonomy from
+ * @returns {{domain: string[], tech: string[], titles: string[],
+ *            families: Array, taxonomy: object, seniority: number}}
  */
-export function buildProfileVocabulary(candidate = {}) {
-  const titles = (candidate.targetTitles ?? []).map((t) => normalizeText(t)).filter(Boolean);
+export function buildProfileVocabulary(candidate = {}, { taxonomy, root } = {}) {
+  const tax = taxonomy ?? loadRoleFamilies(root);
+  const titles = (candidate.targetTitles ?? candidate.searchIntent?.targetRoles ?? [])
+    .map((t) => normalizeText(t)).filter(Boolean);
 
-  // Domain words the profile itself uses, on top of the family seeds.
+  const families = profileFamilies(candidate, tax);
+
+  // DOMAIN WORDS COME FROM THE CANDIDATE'S OWN FAMILIES, not from a seed list.
   //
   // Seniority and role words must NOT leak in here. Target titles contain
   // "Senior", "Lead" and role nouns, and admitting them made the domain test
   // fire on any title containing the word "senior" — which accepted "Senior
-  // Quality Engineer - Automation Engineering" as a data role and collapsed
-  // rejection of genuinely irrelevant work from 96% to 8%.
-  const domain = new Set(DOMAIN_SEEDS);
+  // Quality Engineer - Automation Engineering" as a data role.
+  const domain = new Set();
+  for (const family of families) {
+    for (const term of tax.families?.[family.id]?.domain ?? []) domain.add(term);
+  }
   for (const t of titles) {
     for (const word of t.split(/[^a-z0-9+#]+/)) {
       if (word.length <= 2) continue;
@@ -217,34 +180,69 @@ export function buildProfileVocabulary(candidate = {}) {
       domain.add(word);
     }
   }
-  for (const d of candidate.domainExperience ?? []) {
+  for (const d of candidate.domainExperience ?? candidate.background?.industries ?? []) {
     const norm = normalizeText(d);
     // Industry experience ("Insurance", "Government Reporting") describes WHERE
     // the work was, not what the role is. As a gate term it would accept every
-    // insurance job on the board, so it is kept for ranking and left out of the
-    // accept test.
+    // insurance job on the board, so multi-word industries only.
     if (norm && norm.split(/\s+/).length > 1) domain.add(norm);
   }
 
-  // Technologies: the whole phrase, plus its distinctive multi-char tokens.
+  // Technologies: the whole phrase always, plus any single token that the
+  // taxonomy itself recognizes as a technology name (see taxonomySkillTokens).
+  const knownTokens = taxonomySkillTokens(tax);
   const tech = new Set();
-  for (const term of flattenTerms(candidate.technicalStack)) {
+  const stackSource = candidate.technicalStack ?? {
+    keep: candidate.searchIntent?.skillsToKeep,
+    background: candidate.background?.skills,
+    grow: candidate.searchIntent?.skillsToGrow,
+  };
+  for (const term of flattenTerms(stackSource)) {
     const clean = term.replace(/\(.*?\)/g, '').trim();
-    if (clean.length > 1 && !GENERIC_TECH_TOKENS.has(clean)) tech.add(clean);
+    if (clean.length > 1) tech.add(clean);
+    if (!clean.includes(' ')) continue;
     for (const token of clean.split(/[^a-z0-9+#.]+/)) {
-      if (token.length >= 4 && !GENERIC_TECH_TOKENS.has(token)) tech.add(token);
+      if (token.length >= 3 && knownTokens.has(token)) tech.add(token);
     }
   }
-  for (const cert of candidate.certifications ?? []) {
+  for (const cert of candidate.certifications ?? candidate.background?.certifications ?? []) {
     const m = /\b(dp|az|pl|da|ai|ms)-?\d{3}\b/i.exec(String(cert));
     if (m) tech.add(m[0].toLowerCase());
   }
+
+  /*
+   * ANCHOR vs ADJACENT TITLES.
+   *
+   * `anchorTitles` are the roles the candidate stated plus their level
+   * variations; `adjacentTitles` are family siblings a profile-aware expansion
+   * judged to be the same work under a different name (src/profile/derive.js).
+   *
+   * They must not weigh the same. Rule 1 below returns `accept` on a verbatim
+   * title match and returns it DECISIVELY — before the stack, domain and family
+   * tests run — so whatever lands in this list is, in effect, an unconditional
+   * pass. When one undifferentiated list held both, every sibling the taxonomy
+   * offered became an unconditional pass too, and "personalized search" quietly
+   * meant "anything in my field".
+   *
+   * A candidate.json with neither key (hand-written, or written before this
+   * split existed) treats every target title as an anchor, which is exactly the
+   * old behavior.
+   */
+  const anchors = (candidate.anchorTitles ?? [])
+    .map((t) => normalizeText(t)).filter(Boolean);
+  const adjacent = (candidate.adjacentTitles ?? [])
+    .map((t) => normalizeText(t)).filter(Boolean);
+  const anchorTitles = anchors.length ? anchors : titles.filter((t) => !adjacent.includes(t));
 
   return {
     domain: [...domain],
     tech: [...tech],
     titles,
-    seniority: seniorityRank(candidate.seniority ?? 'senior'),
+    anchorTitles,
+    adjacentTitles: adjacent,
+    families,
+    taxonomy: tax,
+    seniority: seniorityRank(candidate.seniority ?? candidate.searchIntent?.seniority ?? 'senior'),
   };
 }
 
@@ -281,44 +279,55 @@ export function classifyTitleFit(title, vocab) {
   const t = normalizeText(raw).replace(/[^a-z0-9+#]+/g, ' ').trim();
   const signals = [];
 
-  // 1. A configured target title, verbatim, is decisive.
-  for (const want of vocab.titles) {
+  // 1. A title the candidate ASKED FOR, verbatim, is decisive.
+  for (const want of vocab.anchorTitles ?? vocab.titles ?? []) {
     if (want && t.includes(want)) { signals.push(`title:${want}`); return { verdict: 'accept', signals }; }
   }
 
-  // 2. A technology from the candidate's own stack is a strong signal on its
-  //    own — "Databricks Senior Architect" names no domain word and no target
-  //    title, yet is unmistakably in profile.
-  const techHit = vocab.tech.find((term) => hasTerm(t, term));
+  // 1b. An ADJACENT title — the same work under a name the candidate did not
+  //     state — is accepted, but recorded as adjacent so the description budget
+  //     and the scorer can both rank it below a role that was actually asked
+  //     for. It still has to survive the family test below, which a stated
+  //     title bypasses: an adjacent match is evidence, not a verdict.
+  for (const want of vocab.adjacentTitles ?? []) {
+    if (want && t.includes(want)) { signals.push(`title-adjacent:${want}`); break; }
+  }
+
+  // 2. A technology, tool or credential from the candidate's OWN profile is a
+  //    strong signal on its own — "Databricks Senior Architect" and "Epic
+  //    Analyst" name no domain word and no target title, yet each is
+  //    unmistakably in profile for the person who listed that tool.
+  const techHit = (vocab.tech ?? []).find((term) => hasTerm(t, term));
   if (techHit) { signals.push(`tech:${techHit}`); return { verdict: 'accept', signals }; }
 
-  // 3. A domain word plus any role noun, in EITHER order. Order-dependence is
-  //    what made the old regex miss "Engineer, IT Data" and "Lead, Analytics".
-  const domainHit = vocab.domain.find((term) => hasTerm(t, term));
+  // 3. A domain word from one of the candidate's families plus any role noun,
+  //    in EITHER order. Order-dependence is what made the old regex miss
+  //    "Engineer, IT Data" and "Lead, Analytics".
+  const domainHit = (vocab.domain ?? []).find((term) => hasTerm(t, term));
   const roleHit = ROLE_NOUNS.find((noun) => hasTerm(t, noun));
   if (domainHit && roleHit) {
     signals.push(`domain:${domainHit}`, `role:${roleHit}`);
     return { verdict: 'accept', signals };
   }
 
-  // 4. Positively another profession, with no profile signal to redeem it.
-  const otherProfession = OTHER_PROFESSIONS.find((p) => t.includes(p));
-  if (otherProfession && !domainHit) {
-    return { verdict: 'reject', signals: [`other-profession:${otherProfession}`] };
-  }
-  const otherEng = OTHER_ENGINEERING.find((p) => t.includes(p));
-  if (otherEng && !domainHit) {
-    return { verdict: 'reject', signals: [`other-engineering:${otherEng}`] };
-  }
-  const otherBiz = OTHER_BUSINESS_FUNCTIONS.find((p) => t.includes(p));
-  if (otherBiz && !domainHit) {
-    return { verdict: 'reject', signals: [`other-function:${otherBiz}`] };
+  // 4. Positively a DIFFERENT occupational family, with no signal from any of
+  //    the candidate's families to redeem it. Symmetric by construction: the
+  //    same test, run against whichever families this candidate belongs to.
+  const family = classifyTitleAgainstFamilies(raw, vocab.families ?? [], vocab.taxonomy ?? { families: {} });
+  if (family.verdict === 'reject') return { verdict: 'reject', signals: family.signals };
+  if (family.verdict === 'accept') return { verdict: 'accept', signals: [...signals, ...family.signals] };
+
+  // 4b. An adjacent title that reached here named the candidate's own work
+  //     under another name and nothing contradicted it — accept, carrying the
+  //     `title-adjacent:` signal that ranks it below a stated role.
+  if (signals.some((s) => s.startsWith('title-adjacent:'))) {
+    return { verdict: 'accept', signals };
   }
 
   // 5. Unknown. NOT a rejection — the description decides.
   if (domainHit) signals.push(`domain:${domainHit}`);
   if (roleHit) signals.push(`role:${roleHit}`);
-  return { verdict: 'defer', signals: signals.length ? signals : ['unknown-title'] };
+  return { verdict: 'defer', signals: signals.length ? signals : family.signals };
 }
 
 /**
@@ -338,8 +347,12 @@ export function titleFitPriority(title, vocab) {
   const { verdict, signals } = classifyTitleFit(title, vocab);
   if (verdict === 'reject') return -1;
   if (verdict === 'defer') return 0;
-  // Among accepts, an exact configured title beats a bare technology mention.
-  if (signals.some((s) => s.startsWith('title:'))) return 3;
+  // Among accepts, a role the candidate ASKED FOR outranks everything. An
+  // adjacent title — the same work under a name they did not state — sits
+  // between a bare technology mention and a stated role, so a limited
+  // description budget is always spent on stated roles first.
+  if (signals.some((s) => s.startsWith('title:'))) return 4;
+  if (signals.some((s) => s.startsWith('title-adjacent:'))) return 3;
   if (signals.some((s) => s.startsWith('tech:'))) return 2;
   return 1;
 }
@@ -347,12 +360,12 @@ export function titleFitPriority(title, vocab) {
 /**
  * Evidence of scope and ownership, read from the full posting.
  *
- * The profile is a senior IC moving toward platform ownership and technical
- * leadership, and none of that was represented anywhere in scoring — a role
- * that says "own the data platform roadmap and mentor engineers" ranked
- * identically to one that says "write SQL to spec". This is deliberately
- * evidence-based: each signal names the phrase that produced it, so a reader
- * can audit why a job ranked where it did.
+ * Scope was represented nowhere in scoring — a role that says "own the data
+ * platform roadmap and mentor engineers" ranked identically to one that says
+ * "write SQL to spec". This is deliberately evidence-based: each signal names
+ * the phrase that produced it, so a reader can audit why a job ranked where it
+ * did. The vocabulary is generic English about responsibility, so it reads the
+ * same way for a nurse manager or a marketing director as for an engineer.
  *
  * @param {{title?: string, jdText?: string}} job
  * @param {object} vocab
@@ -369,11 +382,11 @@ export function assessScope(job = {}, vocab = { tech: [], domain: [] }) {
     || /\b(mentor|mentoring|lead a team|technical leadership|set the technical direction|own the roadmap)\b/.test(body);
   if (leadership) signals.push('leadership-scope');
 
-  const ownership = /\b(own(s|ership)?|architect|design|build out|stand up|establish|drive)\b[\w\s]{0,40}\b(platform|architecture|pipeline|warehouse|lakehouse|roadmap|strategy|framework)\b/.test(body);
+  const ownership = /\b(own(s|ership)?|architect|design|build out|stand up|establish|drive)\b[\w\s]{0,40}\b(platform|architecture|pipeline|warehouse|lakehouse|roadmap|strategy|framework|program|portfolio|function)\b/.test(body);
   if (ownership) signals.push('platform-ownership');
 
-  const techHits = vocab.tech.filter((term) => hasTerm(both, term));
-  const domainHits = vocab.domain.filter((term) => hasTerm(both, term));
+  const techHits = (vocab.tech ?? []).filter((term) => hasTerm(both, term));
+  const domainHits = (vocab.domain ?? []).filter((term) => hasTerm(both, term));
 
   return {
     leadership,

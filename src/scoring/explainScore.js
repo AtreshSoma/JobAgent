@@ -8,6 +8,8 @@
  * is downgraded to "Queue for review" (never silently applied).
  */
 
+import { candidateNeedsSponsorship } from './exclusionFilter.js';
+
 /** Canonical tier labels. */
 export const TIERS = Object.freeze({
   PRIORITY: 'Priority',
@@ -22,13 +24,26 @@ export const TIERS = Object.freeze({
  * @param {object} scoring parsed config/scoring.json
  * @param {object} [options]
  * @param {boolean} [options.userApproved=false] explicit per-job user approval
+ * @param {object} [options.candidate] parsed config/candidate.json — supplying it
+ *   is what stops the gate holding back a candidate who needs no sponsorship
  * @returns {{ tier: string, sponsorshipGated: boolean, explanation: string }}
  */
-export function explainScore(scoreResult, scoring, { userApproved = false, titleVerdict = null } = {}) {
+export function explainScore(scoreResult, scoring, {
+  userApproved = false, titleVerdict = null, candidate = null,
+} = {}) {
   const { total, sponsorship } = scoreResult;
   const tiers = scoring.tiers;
   const allow = new Set(scoring.sponsorshipGate?.allowApplyWhen ?? ['Confirmed', 'Likely', 'Approved']);
-  const sponsorshipOk = userApproved || allow.has(sponsorship);
+  // THE GATE ASKS A QUESTION ONLY SOME CANDIDATES HAVE.
+  //
+  // It exists so nobody auto-applies to an employer who may be unable to hire
+  // them — a real risk when you need sponsorship, and no risk at all when you
+  // do not. Applied unconditionally it held every strong match for a citizen or
+  // permanent resident in "Queue for review" purely because the posting never
+  // mentioned visas, which is most postings. An EXPLICIT `false` clears it;
+  // unstated keeps the gate, because the gate is the cautious answer.
+  const needsSponsorship = candidateNeedsSponsorship(candidate);
+  const sponsorshipOk = userApproved || needsSponsorship === false || allow.has(sponsorship);
 
   let tier = rawTier(total, tiers, titleVerdict);
   let sponsorshipGated = false;

@@ -78,7 +78,13 @@ export function classifyDiscovery(job = {}, { candidate = {}, scoring = {} } = {
   }
 
   // 2. Technical-stack signals from the candidate profile.
-  const stackTerms = candidateStackTerms(candidate);
+  //
+  // `includeGrowth` here and nowhere in scoring: DISCOVERY should still surface
+  // a job that uses a skill the candidate is moving toward — that is the point
+  // of naming one — while SCORING must not treat it as a demonstrated strength.
+  // Finding a role is an invitation to look; claiming the skill is a statement
+  // to an employer.
+  const stackTerms = candidateStackTerms(candidate, { includeGrowth: true });
   const stackHits = matchedPhrases(bodyText, stackTerms);
   if (stackHits.length) {
     signals.push(`stack:${stackHits.slice(0, 8).join('|')}`);

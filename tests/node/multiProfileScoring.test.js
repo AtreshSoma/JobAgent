@@ -20,9 +20,14 @@ import { describe, it, expect } from 'vitest';
 import { scoreJob, resolveCategories, computeMissing } from '../../src/scoring/scorer.js';
 import { classifyDiscovery } from '../../src/search/discoveryFilter.js';
 import { PROFILE_DRIVEN_CATEGORIES } from '../../scripts/initScoring.mjs';
-import { loadTestConfig } from './helpers/testConfig.js';
+import { loadTestConfig, legacyScoringShape } from './helpers/testConfig.js';
 
-const base = loadTestConfig({ loadEnv: false, env: {} });
+// The LEGACY shape on purpose: this file documents what the hardcoded
+// data-engineering categories did, and proves the declarative replacement
+// fixes it. config/scoring.json is now generated from the active profile, so
+// the legacy shape has to be asked for explicitly rather than assumed.
+const loaded = loadTestConfig({ loadEnv: false, env: {} });
+const base = { ...loaded, scoring: legacyScoringShape(loaded.scoring) };
 const FRESH = new Date(Date.now() - 2 * 864e5).toISOString();
 /** The floor a job must clear to avoid being discarded outright. */
 const FLOOR = base.scoring.tiers.nearMiss;
