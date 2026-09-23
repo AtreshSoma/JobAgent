@@ -238,7 +238,7 @@ tenant that sets `searchText: ""` still means "enumerate everything".
 
 | ATS | Auto-fill | Multi-step nav | Uploads (verified attached) | Verified submission | Known limitations | Fixture-tested |
 | --- | --- | --- | --- | --- | --- | --- |
-| Greenhouse | ✅ adapter + semantic resolver | ✅ | ✅ `input-file-list` check | ✅ confirmation-evidence gate | embedded-iframe boards handled | ✅ `atsApplicationFixtures`, `embeddedFormAutomation` |
+| Greenhouse | ✅ adapter + semantic resolver; detected by host **or** a `gh_jid=` query on an employer's own careers page | ✅ | ✅ `input-file-list` check; documents matched to inputs **by label** on both classic and current `job-boards.greenhouse.io` markup | ✅ confirmation-evidence gate | embedded-iframe boards handled | ✅ `atsApplicationFixtures`, `embeddedFormAutomation`, `uploadInputSelection` |
 | Lever | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
 | Ashby | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
 | Workday | ✅ (`data-automation-id` selectors) | ✅ | ✅ | ✅ | account-creation/login walls stop the run (by design) | ✅ `atsApplicationFixtures`, `workdayFormFill` |
@@ -246,7 +246,7 @@ tenant that sets `searchText: ""` still means "enumerate everything".
 | iCIMS | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | frequently login-walled → blocked with RCA. **This row is about AUTO-FILL only.** iCIMS is a working, enabled DISCOVERY source — 2,431 rows in the live store across 54 portals — but it was absent from the discovery table above, so this document read as “iCIMS is unsupported” | ❌ no dedicated fixture |
 | Taleo | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | legacy multi-frame flows often blocked | ❌ no dedicated fixture |
 | Jobvite | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | — | ❌ no dedicated fixture |
-| Generic accessible forms | ✅ semantic field resolver (labels/ARIA/question text; selects, comboboxes, radios, checkboxes, dates, files, conditionals) | ✅ safe Next/Continue only | ✅ | ✅ | unknown required questions block (never guessed) | ✅ `atsApplicationFixtures` generic case, `validationDetection`, `fieldFiller` |
+| Generic accessible forms | ✅ semantic field resolver (labels/ARIA/question text; selects, comboboxes, radios, checkboxes, dates, files, conditionals) | ✅ safe Next/Continue only | ✅ | ✅ | unknown required questions block (never guessed). **Assisted fill only — never eligible for auto-submit**, since an unrecognised site is by definition not fixture-verified | ✅ `atsApplicationFixtures` generic case, `validationDetection`, `fieldFiller` |
 
 Filling-wide guarantees (tested): CAPTCHA/login/MFA/bot walls always stop the
 run (`guards`); validation-error detection after fill and after advancing
@@ -255,7 +255,25 @@ otherwise `submit_unverified` (`hardening`, `dashboardServer`); Auto-Apply
 requires per-run explicit opt-in + eligibility precheck
 (`autoApplyEligibility`); resumable persisted application state
 (`applicationState`, `applicationResume`); duplicate-application prevention
-(`dashboardServer` idempotency guard).
+(`dashboardServer` idempotency guard); sensitive choice widgets (sponsorship,
+visa, authorization, EEO, consent) never auto-pick and are read back after
+commit (`sponsorshipChoiceCommit`); walls judged on visible text, not script
+contents (`guards`); landing pages with a search box or cookie banner still
+open the application (`landingPageIncidentalInputs`); packets refused unless
+they belong to the active candidate (`packetOwnershipChokepoints`); a human
+submit in the handed-over window is detected and recorded as unverified
+(`humanSubmitDetection`); auto-submit withheld on empty live required fields or
+unreviewed sensitive answers (`autoSubmitTightening`).
+
+The Chrome/Edge extension never answers work-authorization, sponsorship, visa
+or citizenship questions, fills only the top frame and job/ATS frames, and
+never exposes its shared key to page scripts (`extensionE2E`,
+`extensionCompanion`).
+
+Discovery detail reuse: Workday, SmartRecruiters, Oracle Recruiting, iCIMS and
+Rippling all hydrate stored descriptions before spending their per-board detail
+budget, so each run's budget goes to postings never read before
+(`detailCacheReuse`).
 
 ## Known-bad data written by past bugs
 

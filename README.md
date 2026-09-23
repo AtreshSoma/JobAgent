@@ -65,7 +65,7 @@ The default path never submits. Once it has filled and uploaded everything it ca
 <tr><th width="46%">The one automated path</th><th width="54%">Every gate it has to clear</th></tr>
 <tr valign="top">
 <td><code>applyRunner.tryAutoSubmit</code><br><br>It exists so a clean, verified, explicitly authorized application can finish without a second trip to the keyboard. Nothing else.<br><br><code>npm run verify</code> asserts these gates are still in place.</td>
-<td>✅ You opted in <b>for that specific run</b> (<code>options.autoSubmit === true</code>, and the dashboard asks every time)<br>✅ Zero blockers, every required field filled<br>✅ Truthful sponsorship answers<br>✅ A confidently identified submit button<br>✅ Daily cap not yet reached (<code>MAX_APPLICATIONS_PER_DAY</code>, default 15)</td>
+<td>✅ You opted in <b>for that specific run</b> (<code>options.autoSubmit === true</code>, and the dashboard asks every time)<br>✅ Zero blockers, every required field filled<br>✅ Truthful sponsorship answers<br>✅ A confidently identified submit button<br>✅ Daily cap not yet reached (<code>MAX_APPLICATIONS_PER_DAY</code>, default 15, counted in <b>your</b> time zone)<br>✅ A fixture-verified ATS — an unrecognised (<code>generic</code>) site is fill-only, never auto-submitted<br>✅ The packet was approved <b>before</b> the run started, and belongs to the active candidate<br>✅ Every visible required control on the live page has a value<br>✅ No sponsorship or legal answer was chosen live that you had not reviewed in the packet</td>
 </tr>
 </table>
 
@@ -74,6 +74,18 @@ The default path never submits. Once it has filled and uploaded everything it ca
 
 > [!CAUTION]
 > **The sponsorship-polarity guard.** Pattern matching cannot tell polarity apart, so a question phrased negatively ("can you work here *without* sponsorship?") is never auto-answered. Inverting the stored answer would amount to guessing about your immigration status. Those questions always come back to you, both at fill time and when you save an answer from the dashboard.
+
+<details>
+<summary><b>🧯 Guards on the fill path</b>: what the runner refuses to do on its own</summary>
+
+- **Never picks a legal answer by default.** On sponsorship, visa, work-authorization, citizenship, clearance, consent, attestation and EEO fields, a dropdown or typeahead never falls back to its top option or to Enter, options match on whole words only ("No" can no longer match inside "now"), and the option actually committed is **read back and checked**. If it contradicts your stated authorization the field is cleared and the run stops for you.
+- **Only the active candidate's packet is filled.** A packet built for another search profile — or an old packet with no recorded owner whose documents are not named for you — is refused at every entry point (dashboard, CLI, one-by-one apply, extension). Prepare it again.
+- **No template text reaches an employer.** A cover letter or planned answer containing an unfilled `{token}` is refused, and placeholder profile values (including work-history highlights, employer and school names) block preparation.
+- **Walls are judged by what the page shows**, not by vendor names inside its scripts, so a healthy application page is no longer mistaken for a bot wall.
+- **Documents go into the input labelled for them**: the resume never lands in a cover-letter or transcript slot, on current `job-boards.greenhouse.io` markup as well as the classic layout.
+- **Your own submit is noticed.** After hand-off the runner watches the open window; if a confirmation page appears it records the job as *submitted — pending your confirmation*. It still never counts as applied until you click **Mark submitted**.
+
+</details>
 
 ## 🚀 Getting started
 
@@ -355,7 +367,16 @@ Valid modes are **`DRY_RUN`**, **`PREPARE`**, and **`LIVE_ASSIST`**, set through
 
 ## 📊 The dashboard
 
-A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies, and drives the whole workflow from the browser. It is built as a dense one-page daily workbench: workflow tabs and the job table hold the main column, priorities and the selected-job inspector hold the right column, and documents, analytics, settings, and run RCA open as utility drawers rather than replacing the workbench.
+A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies, and drives the whole workflow from the browser. It opens on **Today** — a short action queue — with the full board one click away under **All jobs**; the selected-job inspector sits in the right column (a side sheet on laptops, a bottom sheet on phones), and documents, analytics, settings and run history open as dialogs rather than replacing the workbench.
+
+<details open>
+<summary><b>✅ Today: at most ten things worth doing next</b></summary>
+
+- **One card per job, one primary button.** Confirm an unverified submit, review a filled form, answer the question that stopped auto-fill, approve a packet, start or retry auto-fill, or prepare an application — most urgent first, then by score. On a quiet day it tops up with your **best undecided strong and possible fits**, so the landing page is never empty beside good matches.
+- **Setup problems appear once, as notices, not as ten broken jobs.** A missing Playwright browser shows a single banner with the exact command and a Copy button, and Auto-fill buttons are disabled until it is installed. The check is live: once the browser exists, jobs that failed only because it was missing are relabelled *Retry: browser now installed*. Template values still in your profile get their own notice with a button to the profile editor.
+- A **setup checklist** lists any failing health checks (browser, Python, master resume, profile) with a link to the dialog that fixes each.
+
+</details>
 
 <details open>
 <summary><b>📋 Board and filtering</b></summary>
@@ -380,7 +401,8 @@ A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies,
 
 - **Why it fits.** Every job shows its score explanation, the JD skills you have, and the JD skills not evidenced in your profile. A skill-alias ontology (`config/scoring.json` → `evidenceAliases`) keeps those two lists consistent, so "ADF" in a JD is evidenced by "Azure Data Factory" in your profile, and "lakehouse" by "Delta Lake" or "Databricks".
 - **Verify sponsorship queue.** Strong-fit roles at 75 or above with unverified sponsorship get a "verify" chip plus their own tile and next action, rather than disappearing into the medium bucket. The safety gate still keeps them out of auto-preparation until you confirm.
-- **Actions**: shortlist, reject, archive, approve packet, *Fill in browser (stops before submit)*, and *I submitted it myself*, which is **the only path to "submitted"**. The system will never set that on its own.
+- **Actions**: shortlist, reject, archive, approve packet, *Fill in browser (stops before submit)*, and *I submitted it myself*, which is **the only path to "submitted"**. The system will never set that on its own. Reject and Archive — single or batch — offer **Undo** and optional one-click reasons (salary, location, seniority, sponsorship, stack, company, stale, other), recorded with the decision so later tuning has something to learn from. Notes **autosave** as you type, and a background refresh never rebuilds the panel you are typing in.
+- **Run history** under **More ▾ → Run history…** (and from the run pill's Details) lists recent runs with mode, duration, found/new/scored/discarded and a per-source ok/partial/failed outcome.
 - **Pipeline buttons.** Discover, Score, and Find & Prepare run the real pipeline in the background. A run shows live in the header as a progress pill telling you what it is doing, how many of how many boards are done, which board is current, elapsed time, and a determinate progress line. **Details** opens the per-board breakdown of found counts, errors, duration, and cache hits, and when something failed it shows the *cause*: failure category, HTTP status, the provider's own message, and what to do about it. Results stay until you dismiss them.
 - **Breakdowns** for found, strong, prepared and submitted per source; Confirmed, Likely and Unconfirmed sponsorship counts with how many of each are strong fits; and discovered, prepared and submitted per day for the last 7 days.
 - **Next actions**, a ranked to-do list covering filled apps waiting for your Submit, packets awaiting approval, blocked apps, strong fits with no decision, and unconfirmed posting dates. Each one links to the filtered board view.
@@ -388,7 +410,7 @@ A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies,
 
 </details>
 
-Change the port with `--port=NNNN` or `DASHBOARD_PORT`. The dashboard enforces the same safety gates as the CLI.
+Change the port with `--port=NNNN` or `DASHBOARD_PORT`. The dashboard enforces the same safety gates as the CLI. Starting it while one is already running on that port opens the running one instead of starting a second copy. Every state-changing API call must send `content-type: application/json` or `X-Job-Agent: 1`; a run that another process (CLI, maintenance) already holds is refused with `409` and the holder's details.
 
 ## 🤖 Browser-assisted apply
 
@@ -409,7 +431,9 @@ Auto-Apply is off by default and needs explicit one-run authorization in the eli
 
 A job is **excluded** when it is already applied, duplicated, rejected, archived, missing a prepared packet or resume, carrying unresolved screening questions or upload blockers, requiring unsafe sponsorship answers, sitting on an unsupported ATS, or lacking a valid application URL.
 
-Checkpoints distinguish `precheck`, `filling`, `review`, `ready`, `submitting`, `verifying`, `user_submitted`, `verified`, `blocked`, `failed`, and `cancelled`. **Submission-attempt phases cannot quietly reopen and submit again.** Failed or cancelled pre-submission work resumes from saved completed fields.
+Checkpoints distinguish `precheck`, `filling`, `review`, `ready`, `submitting`, `verifying`, `user_submitted`, `verified`, `blocked`, `failed`, and `cancelled`. **Submission-attempt phases cannot quietly reopen and submit again.** Failed or cancelled pre-submission work resumes from saved completed fields, but never at a login or wall page it was stopped on.
+
+Each search profile gets its **own browser profile** (`.browser-profile-<profileId>`) and its own checkpoints under `data/application-state/<profileId>/`, so one person's ATS sign-ins and autofill never follow another's applications. After upgrading, sign in to your ATS accounts once more, or copy `.browser-profile` to `.browser-profile-<profileId>`. If Chromium is not installed, a batch stops before it starts and the jobs are marked blocked on setup, not failed.
 
 </details>
 
@@ -437,6 +461,8 @@ The unpacked Manifest V3 extension in `extension/` moves an approved job from it
 - The extension gets **no permanent website access**, only `activeTab`.
 - Job context is **verified before** any navigation or filling.
 - It never fills passwords, CAPTCHAs, voluntary demographic fields, legal attestations, or submit controls.
+- It **never answers work-authorization, sponsorship, visa or citizenship questions** — those always go to you. Other answers come pre-decided by the server using the same truthfulness rules as the CLI.
+- It fills only the top frame and frames on the job's own host or a known ATS — never a chat widget or newsletter iframe — and **the shared key never reaches a web page**: the service worker holds it and only talks to a loopback address.
 
 Rotate the key if it is ever exposed, and restart the dashboard afterwards.
 
@@ -659,7 +685,51 @@ node scripts/harvestSources.mjs --apply --limit=25 --min-jobs=2
 
 Board enumeration is free and unmetered forever after, so **each harvested coordinate converts a one-off metered lookup into permanent free coverage**. Run it occasionally, since it is the mechanism that makes discovery compound instead of resetting every time a paid provider's quota does.
 
+### Freshness, expiry and re-scoring
+
+| Control | What it does |
+| --- | --- |
+| `JOB_FRESHNESS_MODE` (default `LAST_7_DAYS`) | Gates **new** postings only. A job already on your board is not thrown away just because it turned 8 days old. |
+| `exclusions.staleness.skipOlderThanDays` (45) | How long a stored job is kept. Past it, the row retires as `stale_posting`. |
+| Freshness points | Graded against the discovery window: full at day 0, half at its edge, zero at the retention limit. |
+| Per-source `maxAgeDays` | A fetch-side optimisation only. |
+
+A job whose source completes a full listing in each of its last **three** runs without returning it is retired as `expired: not listed by source for 3 runs`; a past JSON-LD `validThrough` retires it too. Nothing expires when an aggregate source failed that run.
+
+Every verdict carries a fingerprint of the profile and scoring config that produced it. Rows judged under an older config are **re-scored from their stored descriptions — no network — at the end of each run, in the background after a profile switch, and on demand** with `npm run rescore`. On a real store of ~6,000 active rows this takes about 3 seconds.
+
+Pay is read from the description when the posting has no compensation field (strictly: a `$` figure next to a pay word, annualised from hourly at ×2080, never funding rounds or customer counts). It only ever *subtracts* points, and only when both the posting and your profile state pay; your salary floor applies to it too. Two copies of the same role are merged keeping the **US copy**, not merely the longer description, and Greenhouse, Lever and Ashby boards drop other-field titles before any detail is read.
+
 ## ⚡ Performance notes
+
+### Upgrading an existing install (2026-09 release)
+
+The first time the new code opens `data/applied_jobs.db` it runs a one-time, additive migration (schema `user_version` 0 → 2: a backfilled search-mode column, rebuilt covering indexes, a `decision_reason` column). On a 124k-row store it took **2.9 s**; later opens take about 1 ms. Take a copy first — with the dashboard stopped:
+
+```bash
+sqlite3 data/applied_jobs.db ".backup 'data/applied_jobs.pre-upgrade.db'"
+```
+
+The first run afterwards also re-scores every active row under your current profile, so the board can shrink noticeably: part-time roles you excluded, postings older than the retention window and verdicts from an earlier profile are all corrected at once.
+
+<details>
+<summary><b>📈 Measured on a copy of a real 124k-row store</b></summary>
+
+| What | Before | After |
+| --- | --- | --- |
+| `/api/stats`, cold | 5.4–8.3 s | 0.66 s |
+| Reports | 3.4–4.5 s, every call | ~2 ms (cached until data changes) |
+| Documents / master resume | 0.8–0.9 s | 8 ms / 0.14 s |
+| System health (`/api/health`) | froze every request ~2.2 s | 0.46 s, never blocks others |
+| Board page payload (100 rows) | 210 KB | 114 KB (`fields=board`) |
+| Requests per Reject/Shortlist click | 7 | 2 |
+| Location matching, 123k rows | 2,430 ms | 163 ms |
+| Title classification | 929 µs / title | 85 µs / title |
+| Sorting 150 titles by fit | 1,195 ms | 1.4 ms |
+
+Static assets are served with ETags and gzip, whole-page caches recompute only when data actually changes (a user's own action always refreshes immediately), and a stale figure is served while one recomputation runs in the background.
+
+</details>
 
 ### The fast "what's new today?" sweep
 
@@ -768,7 +838,9 @@ npm run verify         # repo health + safety check (asserts submit stays human-
 npm run setup          # create missing personal config from the examples (never overwrites)
 npm run lint           # eslint, then ruff if installed (python -m pip install ruff)
 npm run typecheck      # JSDoc type check (tsc) of the files marked // @ts-check
-npm run db:maintenance # checkpoint the SQLite WAL (+ --vacuum to compact)
+npm run db:maintenance # checkpoint the SQLite WAL (+ --vacuum to compact; refuses while a run or the dashboard is active)
+npm run db:prune       # dry run: descriptions of old discarded rows (+ --prune-events=<days> for diagnostics)
+npm run rescore        # re-judge stored rows under the current profile (no network)
 npm run tracker        # refresh the Excel tracker at data/job_tracker.csv
 npm test               # Node test suite (vitest)
 npm run test:py        # Python test suite (pytest, needs `python` on PATH)
@@ -875,12 +947,12 @@ applications/
 data/
   jobs_input/       your manual_jobs.csv
   found_jobs.json   every discovered job + its lifecycle status
-  scored_jobs.json  every scored job (tier + sponsorship breakdown)
+  scored_jobs.json  every scored job — written only when a caller opts in (nothing reads it)
   queued_jobs.json  only actionable jobs (Priority/Apply/Queue)
   unknown_date_review.json  undated jobs held for manual review (opt-in)
   applied_jobs.db   local SQLite store (jobs, runs, events, approval queue)
-reports/          report-YYYYMMDD.json / .csv / .html
-logs/             structured JSON run logs
+reports/          report-YYYYMMDD.json / .csv / .html (last 14 days kept)
+logs/             structured JSON run logs (created on first write; newest 30 files / 50 MB kept)
 tests/            node/ (vitest) and python/ (pytest)
 docs/             SUPPORT_MATRIX.md, the evidence-backed capability statement
 ```
