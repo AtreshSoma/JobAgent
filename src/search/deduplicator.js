@@ -17,6 +17,7 @@
  */
 
 import { normalizeLoose } from '../utils/textNormalize.js';
+import { passesUsOnlyGate } from '../scoring/exclusionFilter.js';
 
 /**
  * @param {object[]} jobs normalized jobs
@@ -25,7 +26,10 @@ import { normalizeLoose } from '../utils/textNormalize.js';
  *   return true to treat a job as a known duplicate from a prior run
  * @returns {{ unique: object[], duplicates: object[], seenKeys: string[] }}
  */
-export function deduplicate(jobs = [], { existsInDb } = {}) {
+export function deduplicate(jobs = [], { existsInDb, geography = null } = {}) {
+  // The same US-only test the exclusion stage applies, so the copy kept here is
+  // the one that will survive there. No geography config: every copy passes.
+  const passesGeo = (job) => passesUsOnlyGate(job, geography);
   /** @type {Map<string, object>} */
   const byKey = new Map();
   /** @type {Set<string>} normalized URLs already owned by a kept record */
@@ -53,14 +57,27 @@ export function deduplicate(jobs = [], { existsInDb } = {}) {
       if (urlKey) seenUrls.add(urlKey);
       continue;
     }
-    // Keep the record with the longer JD text; the other is the duplicate.
-    if ((job.jdText?.length ?? 0) > (prior.jdText?.length ?? 0)) {
+    // WHICH COPY SURVIVES.
+    //
+    // Longer JD used to win outright, so "Acme — Data Engineer (Remote, US)"
+    // lost to the richer "Acme — Data Engineer (Bangalore)" copy, which the
+    // US-only gate then discarded — and the role vanished from the board
+    // although a perfectly good US copy had been found. The copy that PASSES
+    // the geography gate now wins; JD length only breaks a tie. The loser's
+    // location is kept on the winner as `alsoAt`, so the other places the role
+    // is offered remain visible.
+    const jobOk = passesGeo(job);
+    const priorOk = passesGeo(prior);
+    const jobWins = jobOk !== priorOk
+      ? jobOk
+      : (job.jdText?.length ?? 0) > (prior.jdText?.length ?? 0);
+    const [winner, loser] = jobWins ? [job, prior] : [prior, job];
+    noteAlsoAt(winner, loser);
+    if (jobWins) {
       byKey.set(key, job);
       if (urlKey) seenUrls.add(urlKey);
-      duplicates.push({ job: prior, reason: 'duplicate_in_batch', key });
-    } else {
-      duplicates.push({ job, reason: 'duplicate_in_batch', key });
     }
+    duplicates.push({ job: loser, reason: 'duplicate_in_batch', key });
   }
 
   return {
@@ -110,5 +127,34 @@ export function urlKeyFor(job = {}) {
 export function keyFor(job = {}) {
   const company = normalizeLoose(job.company);
   const title = normalizeLoose(job.title);
+  // A record with NO company must not collapse across employers: "Data
+  // Engineer" from an aggregator that dropped the employer name keyed as just
+  // "data engineer" and swallowed every other company-less Data Engineer in the
+  // run. Without a company, the posting's own host (or its source) stands in.
+  if (!company) {
+    const where = hostOf(job.url) || normalizeLoose(job.source) || 'unknown';
+    return ['~', where, title].filter(Boolean).join('::');
+  }
   return [company, title].filter(Boolean).join('::');
+}
+
+/** Lowercased hostname of a URL, `www.` stripped, or ''. */
+function hostOf(url) {
+  try {
+    return new URL(String(url ?? '')).hostname.toLowerCase().replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+/** Record the loser's location on the winner, once, without touching `location`. */
+function noteAlsoAt(winner, loser) {
+  const places = [loser.location, ...(loser.rawMetadata?.alsoAt ?? [])]
+    .map((p) => String(p ?? '').trim()).filter(Boolean);
+  if (!places.length) return;
+  winner.rawMetadata = winner.rawMetadata ?? {};
+  const own = String(winner.location ?? '').trim();
+  const merged = new Set(winner.rawMetadata.alsoAt ?? []);
+  for (const p of places) if (p !== own) merged.add(p);
+  if (merged.size) winner.rawMetadata.alsoAt = [...merged];
 }

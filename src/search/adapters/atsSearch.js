@@ -165,6 +165,31 @@ const DEFAULT_MAX_DETAIL_FETCHES = 25;
  * @param {boolean} [options.strict=true] when false, keep everything
  * @returns {(title: string) => boolean}
  */
+/**
+ * The title gate for a company-first board adapter (Greenhouse, Lever, Ashby).
+ *
+ * Those three mapped EVERY posting on every board — full description HTML,
+ * htmlToText, normalizeJob — and carried it through dedupe, freshness and the
+ * rest of the run, only for the family gate to reject an Accounts Payable or
+ * Nurse posting much later. SmartRecruiters and Oracle already gated on the
+ * list's own title first. The gate only rejects titles that positively name
+ * ANOTHER family (see classifyTitleFit), so unfamiliar titles are kept; with no
+ * candidate profile it keeps everything. `options.strictTitleMatch: false`
+ * disables it per source.
+ *
+ * @param {object} source jobboards entry
+ * @param {object} ctx adapter context (reads ctx.candidate)
+ * @returns {(title: string) => boolean}
+ */
+export function earlyTitleGate(source = {}, ctx = {}) {
+  if (!ctx.candidate) return () => true;
+  return makeTitleGate({
+    titles: source.options?.titles ?? ctx.candidate?.targetTitles ?? [],
+    strict: source.options?.strictTitleMatch !== false,
+    candidate: ctx.candidate,
+  });
+}
+
 export function makeTitleGate({ titles = [], strict = true, candidate = null } = {}) {
   if (!strict) return () => true;
 

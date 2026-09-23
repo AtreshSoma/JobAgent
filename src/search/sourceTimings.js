@@ -124,6 +124,9 @@ export function createSourceTimings({
           // Degradations (budget reached, teaser kept) are not failures; kept
           // apart so a healthy-but-budgeted source never reads as erroring.
           ...(Number(entry.notes) ? { notes: Number(entry.notes) } : {}),
+          // Whether this run returned a COMPLETE listing — the expiry pass
+          // only counts such runs as evidence a posting is gone.
+          ...(typeof entry.succeeded === 'boolean' ? { ok: entry.succeeded } : {}),
           ...(entry.cancelled ? { cancelled: true } : {}),
           ...(entry.cached ? { cached: true } : {}),
         },
@@ -138,5 +141,15 @@ export function createSourceTimings({
     }
   }
 
-  return { expectedMs, record, path };
+  /**
+   * Recorded runs for a source, newest first (bounded by HISTORY_LIMIT).
+   * @param {string} sourceId
+   * @returns {Array<{at: string, ms: number, found: number, errors: number, ok?: boolean}>}
+   */
+  function historyOf(sourceId) {
+    const h = state[sourceId]?.history;
+    return Array.isArray(h) ? h.map((x) => ({ ...x })) : [];
+  }
+
+  return { expectedMs, record, historyOf, path };
 }

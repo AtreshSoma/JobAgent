@@ -9,6 +9,7 @@ import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchJsonWithTimeout } from '../../utils/httpClient.js';
+import { earlyTitleGate } from './atsSearch.js';
 
 export const adapterId = 'ashby';
 
@@ -31,6 +32,7 @@ export async function run(source = {}, ctx = {}) {
   const { fetchImpl = fetch, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
+  const titleGate = earlyTitleGate(source, ctx);
   const jobs = [];
   const errors = [];
 
@@ -50,7 +52,7 @@ export async function run(source = {}, ctx = {}) {
         { maxRetries },
       );
       const mapped = (data.jobs ?? [])
-        .filter((j) => j.isListed !== false)
+        .filter((j) => j.isListed !== false && titleGate(j?.title))
         .map((j) => mapJob(j, board));
       return { jobs: mapped, error: null };
     } catch (err) {

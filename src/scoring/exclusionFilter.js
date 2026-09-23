@@ -359,6 +359,19 @@ const US_COUNTRY_NAMES = new Set([
   'united states', 'united states of america', 'usa', 'us', 'u s a', 'u s',
 ]);
 
+/**
+ * Would this job survive the US-only gate? True when the gate is off.
+ * Shared with the deduplicator so the copy it keeps is one this stage keeps.
+ *
+ * @param {object} job
+ * @param {object|null} geo exclusions.geography
+ * @returns {boolean}
+ */
+export function passesUsOnlyGate(job, geo) {
+  if (!geo || geo.usOnly !== true) return true;
+  return checkUsOnly(job, geo) === null;
+}
+
 function checkUsOnly(job, geo = {}) {
   if (!geo || geo.usOnly !== true) return null;
 
