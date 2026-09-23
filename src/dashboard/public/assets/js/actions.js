@@ -8,7 +8,7 @@ import { loadSections, renderTabs } from './analytics.js';
 import { loadBoard } from './board.js';
 import { cssEscape, loadDetail, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
 import { closeDialog, openDialog, runPendingConfirm } from './dialogs.js';
-import { autofillOne, checkLink, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
+import { autofillOne, checkLink, sweepClosedPostings, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
 import { setView, todayAct } from './today.js';
 import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection, reasonHandlers, showCompare, toggleSelect } from './selection.js';
 import { openDocuments, openReports } from './reports.js';
@@ -228,6 +228,7 @@ export const ACTIONS = {
   'autofill-one': (target) => autofillOne(target.dataset.id),
   'prepare-one': (target) => prepareOne(target.dataset.id),
   'check-link': (target) => checkLink(target.dataset.id),
+  'sweep-postings': () => sweepClosedPostings(),
   'preview-resume': (target) => openResumePreview(target.dataset.id),
   'copy-id': (target) => copyText(target.dataset.id, 'Job id copied'),
   'save-note': () => saveNote(),

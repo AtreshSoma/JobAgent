@@ -393,6 +393,12 @@ export function nameCellFor(job) {
   // it qualifies rather than in a column of its own.
   const exception = typeException(job);
   if (exception) meta.append(' ', exception);
+  // Only a closed posting is worth a flag on the row; "open" is the default.
+  if (job.linkState === 'closed') {
+    meta.append(' ', el('span', {
+      class: 'chip bad', title: 'Its ATS no longer lists this job — it can no longer be applied to', text: 'posting closed',
+    }));
+  }
   cell.append(meta);
   return cell;
 }

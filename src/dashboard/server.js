@@ -93,6 +93,7 @@ import {
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { rescoreStale } from '../pipeline/index.js';
+import { sweepPostings } from '../search/postingLiveness.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
 import {
@@ -418,6 +419,53 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     browserCheck = { at: Date.now(), value };
     setBrowserAvailability(value);
     return value;
+  }
+
+  /**
+   * Keep the board free of postings the employer has closed.
+   *
+   * Measured 2026-09-23: 24 of the 40 best-scored open Workday rows were closed
+   * at the source and still on the board. A sweep asks each posting's own ATS
+   * API (search/postingLiveness.js) whether it still exists — best-scored
+   * first, each posting at most once a day, a few requests in flight per host
+   * — and retires the closed ones. It never runs during a pipeline run, and
+   * whatever it learned before a stop is kept.
+   */
+  const postingSweep = { running: false, controller: null, last: null, startedAt: null, finishedAt: null };
+  async function runPostingSweep({ limit = 300, maxAgeHours = 24 } = {}) {
+    if (postingSweep.running || runState.running || !db?.listPostingsToCheck) return null;
+    postingSweep.running = true;
+    postingSweep.controller = new AbortController();
+    postingSweep.startedAt = new Date().toISOString();
+    try {
+      const sweep = deps.sweepPostingsImpl ?? sweepPostings;
+      const result = await sweep({ db, limit, maxAgeHours, signal: postingSweep.controller.signal });
+      postingSweep.last = result;
+      if (result?.checked) {
+        noteUserMutation();
+        logger?.info?.(`posting check: ${result.checked} checked, ${result.closed} closed (${result.retired} retired)`);
+      }
+      return result;
+    } catch (err) {
+      postingSweep.last = { error: sanitizeErrorMessage(err?.message ?? String(err)) };
+      return null;
+    } finally {
+      postingSweep.running = false;
+      postingSweep.controller = null;
+      postingSweep.finishedAt = new Date().toISOString();
+    }
+  }
+  function schedulePostingSweeps() {
+    if (process.env.JOB_AGENT_POSTING_SWEEP === 'off' || !config?.root) return;
+    const first = setTimeout(() => { runPostingSweep().catch(() => {}); }, deps.postingSweepDelayMs ?? 90_000);
+    const every = setInterval(() => { runPostingSweep().catch(() => {}); }, deps.postingSweepEveryMs ?? 6 * 3600_000);
+    first.unref?.();
+    every.unref?.();
+    server.on('close', () => {
+      clearTimeout(first);
+      clearInterval(every);
+      postingSweep.controller?.abort();
+    });
   }
 
   let rescoreTimer = null;
@@ -2167,6 +2215,19 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         return sendJson(res, 200, profileState());
       });
     }
+    if (path === '/api/postings/sweep' && req.method === 'GET') {
+      const { running, last, startedAt, finishedAt } = postingSweep;
+      return sendJson(res, 200, { running, last, startedAt, finishedAt });
+    }
+    if (path === '/api/postings/sweep' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (postingSweep.running) return sendJson(res, 409, { error: 'a posting check is already running' });
+      if (runState.running) return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — try again when it finishes` });
+      const limit = Math.max(1, Math.min(2000, Number(body?.limit) || 300));
+      // Re-check everything asked for, not just what is a day old.
+      track(runPostingSweep({ limit, maxAgeHours: Number(body?.maxAgeHours ?? 1) }));
+      return sendJson(res, 202, { started: true, limit });
+    }
     if (req.method === 'GET' && path === '/api/health') {
       // Full doctor pass (config, resume, python, browsers, dirs) — the
       // Settings page's system-health panel. Doctor spawns Python etc., so it
@@ -2356,7 +2417,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           return sendJson(res, 400, { error: 'job URL must be a non-local HTTP(S) address' });
         }
         const checker = deps.checkLinkFn ?? checkJobLink;
-        return sendJson(res, 200, await checker(job.url, deps));
+        const result = await checker(job.url, { ...deps, job: { id: job.id, url: job.url, source: job.source } });
+        // A definitive answer from the ATS is recorded; a closed posting nobody
+        // acted on leaves the board (discarded, "expired: …"), as the sweep does.
+        let retired = false;
+        const state = result?.liveness?.state;
+        if (state === 'open' || state === 'closed') {
+          try {
+            retired = db.recordPostingCheck?.(jobId, { state, via: result.liveness.via })?.retired === true;
+            noteUserMutation();
+          } catch { /* the check result is still worth returning */ }
+        }
+        return sendJson(res, 200, { ...result, retired });
       }
       if (req.method === 'POST' && action === 'link') {
         const job = db.getJob?.(jobId);
@@ -2451,6 +2523,8 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
 
     sendJson(res, 404, { error: `no route: ${req.method} ${path}` });
   }
+
+  schedulePostingSweeps();
 
   return {
     server, runState, inFlight, flushTracker, browserAvailableCached,

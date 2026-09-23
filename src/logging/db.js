@@ -163,6 +163,7 @@ const JOB_SUMMARY_COLUMNS = [
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at', 'discovery_mode', 'search_query', 'decision_reason',
+  'link_state', 'link_checked_at',
 ];
 
 /**
@@ -246,6 +247,9 @@ const JOB_COLUMNS = [
   // Why the user rejected/archived the job (schema v2). Written only through
   // setUserDecision, but allowed here so an import can carry it.
   'decision_reason',
+  // Is the posting still open at its source (schema v3)? Written by
+  // recordPostingCheck from an ATS-specific liveness check.
+  'link_state', 'link_checked_at',
 ];
 
 /**
@@ -425,6 +429,9 @@ function addColumnIfMissing(db, table, column, type) {
  * jd_text/row): v0 -> v2 in 1.84 s (open-ids read 181 -> 18 ms, stats read
  * 455 -> 211 ms, both now COVERING). See tests/node/dbMigrations.test.js.
  */
+/** Statuses a closed posting is retired from (open, nobody has acted on it). */
+const RETIREABLE_STATUSES = new Set(['scored', 'needs_description']);
+
 export const MIGRATIONS = Object.freeze([
   {
     version: 1,
@@ -458,6 +465,19 @@ export const MIGRATIONS = Object.freeze([
       // the master-resume staleness count stop scanning the whole table
       // (measured live without it: ~1.0 s each, reading every inline jd_text).
       db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_documents ON jobs(id) WHERE ${DOCUMENT_ROW_PREDICATE}`);
+    },
+  },
+  {
+    version: 3,
+    name: 'posting liveness: is the job still open at its source?',
+    up(db) {
+      // Measured 2026-09-23 on the live board: 24 of the 40 best-scored open
+      // Workday rows and 5 of 6 SmartRecruiters rows had been CLOSED by the
+      // employer, yet still sat on the board — clicking through showed
+      // Workday's "The page you are looking for doesn't exist". Workday answers
+      // 200 for that page, so the old HTTP link check could never tell.
+      addColumnIfMissing(db, 'jobs', 'link_state', 'TEXT');
+      addColumnIfMissing(db, 'jobs', 'link_checked_at', 'TEXT');
     },
   },
 ]);
@@ -1143,6 +1163,62 @@ export class Database {
       }
       return { id, from, to };
     });
+  }
+
+  /**
+   * Record whether a posting is still open at its source, and retire it from
+   * the board when the employer has closed it.
+   *
+   * Only rows nobody has invested in are retired: a job you applied to, hold a
+   * packet for, or shortlisted keeps its status and just carries the flag —
+   * a closed posting you already applied to is normal, not a reason to hide
+   * it. Everything else moves to `discarded` with an `expired:` reason through
+   * setJobStatus, so the move is a legal, logged transition.
+   *
+   * @param {string} id
+   * @param {{ state: 'open'|'closed'|'unknown', via?: string, checkedAt?: string }} check
+   * @returns {{ id: string, state: string, retired: boolean }}
+   */
+  recordPostingCheck(id, { state, via = '', checkedAt = new Date().toISOString() } = {}) {
+    const row = this.prepareCached(
+      'SELECT status, applied, application_packet_path, user_decision FROM jobs WHERE id = ?',
+    ).get(id);
+    if (!row) return { id, state, retired: false };
+    if (state !== 'open' && state !== 'closed') {
+      // Unknown proves nothing either way; only note that we looked.
+      this.prepareCached('UPDATE jobs SET link_checked_at = ? WHERE id = ?').run(checkedAt, id);
+      return { id, state, retired: false };
+    }
+    const retireable = state === 'closed'
+      && RETIREABLE_STATUSES.has(row.status)
+      && Number(row.applied ?? 0) !== 1
+      && !row.application_packet_path
+      && !['shortlisted', 'approved'].includes(row.user_decision ?? '');
+    if (retireable) {
+      this.setJobStatus(id, 'discarded', {
+        reason: `expired: the employer closed this posting${via ? ` (${via})` : ''}`,
+        patch: {
+          discard_reason: `expired: the employer closed this posting (checked ${checkedAt.slice(0, 10)}${via ? `, ${via}` : ''})`,
+          link_state: 'closed', link_checked_at: checkedAt,
+        },
+      });
+      return { id, state, retired: true };
+    }
+    this.prepareCached('UPDATE jobs SET link_state = ?, link_checked_at = ? WHERE id = ?').run(state, checkedAt, id);
+    return { id, state, retired: false };
+  }
+
+  /**
+   * Open rows whose posting has not been checked recently, best-scored first.
+   * @param {{ olderThan: string, limit?: number, sources?: string[] }} args
+   */
+  listPostingsToCheck({ olderThan, limit = 300 } = {}) {
+    return this.db.prepare(`SELECT id, source, url, company, title FROM jobs
+      WHERE status IN ('scored', 'needs_description')
+        AND COALESCE(applied, 0) = 0
+        AND (link_checked_at IS NULL OR link_checked_at < ?)
+      ORDER BY COALESCE(score, 0) DESC
+      LIMIT ?`).all(olderThan, Math.max(1, Math.min(5000, Number(limit) || 300)));
   }
 
   /** @param {string} id */

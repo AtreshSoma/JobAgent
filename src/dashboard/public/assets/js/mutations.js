@@ -144,14 +144,27 @@ export async function checkLink(id) {
   if (box) { box.className = 'linkhealth'; box.textContent = 'Checking the saved posting link…'; }
   try {
     const result = await postJson(`/api/jobs/${encodeURIComponent(id)}/check-link`);
-    const tone = result.status === 'reachable' ? 'good'
+    const tone = ['reachable', 'open'].includes(result.status) ? 'good'
       : ['closed', 'invalid', 'error'].includes(result.status) ? 'bad' : '';
-    const text = `${result.message}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`;
+    // An ATS answer is the whole story; the raw HTTP code only helps when we
+    // fell back to fetching the page itself.
+    const text = result.liveness
+      ? `${result.message}${result.retired ? ' It has been removed from your board.' : ''}`
+      : `${result.message}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`;
+    const known = state.known.get(id);
+    if (known && result.liveness?.state) {
+      known.linkState = result.liveness.state;
+      known.linkCheckedAt = new Date().toISOString();
+    }
     state.linkHealth.set(id, { tone, text });
     if (box) { box.className = `linkhealth ${tone}`.trim(); box.textContent = text; }
     // Always surface it as a toast too: the inline slot only exists while the
     // detail rail is open, and the old build silently dropped the result.
     toast(text, tone);
+    if (result.retired) {
+      scheduleBoardReload();
+      scheduleTodayReload();
+    }
   } catch (err) {
     state.linkHealth.set(id, { tone: 'bad', text: err.message });
     if (box) { box.className = 'linkhealth bad'; box.textContent = err.message; }
@@ -176,4 +189,34 @@ export function announceDecision(id, decision, wasDecision) {
   const name = job?.title ? `“${job.title}”` : 'this job';
   offerUndo(`${decision === 'rejected' ? 'Rejected' : 'Archived'} ${name}`,
     new Map([[id, wasDecision]]), { reasonFor: { jobIds: [id], decision } });
+}
+
+
+/**
+ * Check open postings against their ATS now, and take the closed ones off the
+ * board. The dashboard also does this by itself every few hours; this is the
+ * "I just saw a dead link, clean it up" button.
+ */
+export async function sweepClosedPostings() {
+  try {
+    const started = await postJson('/api/postings/sweep', { limit: 500 });
+    toast(`Checking up to ${started.limit} open postings with their employers' job systems…`, '');
+  } catch (err) {
+    toast(err.message, 'bad');
+    return;
+  }
+  const deadline = Date.now() + 15 * 60_000;
+  const poll = async () => {
+    let status = null;
+    try { status = await fetch('/api/postings/sweep').then((r) => r.json()); } catch { status = null; }
+    if (status?.running && Date.now() < deadline) { setTimeout(poll, 3000); return; }
+    const last = status?.last;
+    if (!last || last.error) { toast(last?.error ?? 'The posting check did not finish.', 'bad'); return; }
+    toast(last.retired
+      ? `Checked ${last.checked} postings — ${last.retired} closed by the employer and removed from your board.`
+      : `Checked ${last.checked} postings — all still open.`, 'good');
+    scheduleBoardReload();
+    scheduleTodayReload();
+  };
+  setTimeout(poll, 3000);
 }

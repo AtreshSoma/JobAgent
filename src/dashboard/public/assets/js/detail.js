@@ -1,7 +1,7 @@
 /** The detail rail / sheet: keyed sections, notes autosave, action plans, resume card. */
 
 import { compactLocation } from './format.js';
-import { $, el, esc, safeHref, shortStamp, toast } from './dom.js';
+import { $, el, esc, relTime, safeHref, shortStamp, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
@@ -237,6 +237,18 @@ export function detailSections(job) {
   chips.append(el('span', { class: `chip st-${job.appStatus}`, text: statusLabel(job) }));
   if (job.decisionReason) {
     chips.append(el('span', { class: 'chip', title: 'Why you closed this job', text: `reason: ${reasonLabel(job.decisionReason)}` }));
+  }
+  // Checked against the posting's own ATS (daily in the background, or with
+  // "Check link"): the one fact that decides whether applying is possible.
+  if (job.linkState === 'open' || job.linkState === 'closed') {
+    const when = relTime(job.linkCheckedAt);
+    chips.append(el('span', {
+      class: `chip ${job.linkState === 'open' ? 'good' : 'bad'}`,
+      title: `Checked against the employer's job system${job.linkCheckedAt ? ` at ${shortStamp(job.linkCheckedAt)}` : ''}`,
+      text: job.linkState === 'open'
+        ? `● posting open${when ? ` · checked ${when}` : ''}`
+        : '✕ closed by the employer',
+    }));
   }
   if (job.atsScore != null) {
     chips.append(el('span', { class: 'chip', title: 'Resume/JD keyword match from the ATS report', text: `ATS ${job.atsScore}%` }));

@@ -3,6 +3,7 @@ import { lookup as dnsLookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
 import { isPublicHttpUrl } from '../utils/publicUrl.js';
+import { checkPostingLiveness } from '../search/postingLiveness.js';
 
 const AGGREGATORS = /(^|\.)(linkedin|indeed|glassdoor|dice|ziprecruiter|simplyhired|monster)\./i;
 
@@ -66,10 +67,30 @@ async function unsafeHopReason(url, lookupImpl) {
     ? 'resolves to a private or local network address' : null;
 }
 
-export async function checkJobLink(value, { fetchImpl = fetch, timeoutMs = 12000, lookupImpl } = {}) {
+const ATS_NAMES = {
+  workday: 'Workday', smartrecruiters: 'SmartRecruiters', greenhouse: 'Greenhouse', lever: 'Lever',
+  oracle: 'Oracle Recruiting', ashby: 'Ashby',
+};
+
+export async function checkJobLink(value, { fetchImpl = fetch, timeoutMs = 12000, lookupImpl, job = null, livenessImpl } = {}) {
   const classified = classifyJobUrl(value);
   if (classified.kind === 'invalid') {
     return { ...classified, status: 'invalid', httpStatus: null, finalUrl: null, message: 'This is not a valid HTTP(S) job URL.' };
+  }
+  // Ask the posting's own ATS first. An HTTP 200 proves nothing on Workday,
+  // which renders "The page you are looking for doesn't exist" in the browser
+  // on a 200 response — the link check used to call those postings reachable.
+  if (job) {
+    const live = await (livenessImpl ?? checkPostingLiveness)({ ...job, url: value }, { fetchImpl, timeoutMs });
+    const name = ATS_NAMES[live.via] ?? live.via;
+    if (live.state === 'open') {
+      return { ...classified, status: 'open', liveness: live, httpStatus: live.httpStatus ?? null, finalUrl: String(value),
+        message: `Posting is open — confirmed by the ${name} job API.` };
+    }
+    if (live.state === 'closed') {
+      return { ...classified, status: 'closed', liveness: live, httpStatus: live.httpStatus ?? null, finalUrl: String(value),
+        message: `The employer has closed this posting — ${name} no longer lists it.` };
+    }
   }
   // Real DNS whenever the real fetch is used; an injected fetch (tests) may
   // inject its own resolver too.

@@ -49,6 +49,8 @@
     "db:maintenance": "node scripts/dbMaintenance.mjs",
     "db:prune": "node scripts/dbMaintenance.mjs --prune-descriptions=60",
     "db:prune:apply": "node scripts/dbMaintenance.mjs --prune-descriptions=60 --apply --vacuum",
+    "postings:check": "node scripts/checkPostings.mjs",
+    "postings:prune": "node scripts/checkPostings.mjs --apply --limit=5000",
     "setup": "node scripts/setupLocalConfig.mjs",
     "setup:check": "node scripts/setupLocalConfig.mjs --check",
     "test": "vitest run",

@@ -731,6 +731,9 @@ function boardRow(job, approval, now) {
     statusLabel: attention?.label ?? APP_STATUS_LABELS[appStatus] ?? appStatus,
     lastAction: lastActionFor(job, appStatus),
     userDecision: job.user_decision ?? null,
+    // Is the posting still open at its source (search/postingLiveness.js)?
+    linkState: job.link_state ?? null,
+    linkCheckedAt: job.link_checked_at ?? null,
     // Why the user rejected/archived it (DECISION_REASONS), or null.
     decisionReason: job.decision_reason ?? null,
     atsPlatform: job.ats_platform ?? (ATS_NATIVE_SOURCES.has(job.source) ? job.source : null),
@@ -1328,6 +1331,7 @@ export const BOARD_FIELDS = Object.freeze([
   'postedAt', 'postedLabel', 'postedLast24h', 'postedConfidence', 'createdAt',
   'resumeStatus', 'resumeDocxPath', 'resumePdfPath', 'atsPlatform', 'employmentCategory', 'employmentLabel',
   'discoveryMode', 'searchQuery', 'userDecision', 'decision', 'decisionReason', 'applied',
+  'linkState', 'linkCheckedAt',
 ]);
 
 /** Project one decorated row onto BOARD_FIELDS. */
@@ -2111,6 +2115,7 @@ function todayTopUp(row) {
 /** Why this row is on the list, in one line. */
 function todayReason(row, action) {
   if (action.rank === 8) return `Strong fit posted ${row.postedLabel ?? 'in the last 24 hours'}`;
+  if (action.closed) return 'Its ATS no longer lists this job, so it cannot be applied to.';
   if (action.recovered) {
     return 'The last attempt failed only because the browser was not installed. It is now; if the packet was '
       + 'built for another profile it will be refused — prepare it again first.';
@@ -2208,6 +2213,15 @@ export function todayQueue(db, {
           row,
           action: { rank: 6, kind: 'autofill', label: 'Retry auto-fill — the browser is installed now', recovered: true },
         });
+      }
+      continue;
+    }
+    // A posting its employer closed is never "worth your time". Rows nobody
+    // acted on are already retired by the posting check; one you shortlisted or
+    // prepared stays, and the only useful next step is to archive it.
+    if (row.linkState === 'closed') {
+      if ([APP_STATUS.SHORTLISTED, APP_STATUS.NEEDS_REVIEW, APP_STATUS.APPROVED].includes(row.appStatus)) {
+        candidates.push({ row, action: { rank: 9, kind: 'review', label: 'The employer closed this posting — archive it', closed: true } });
       }
       continue;
     }

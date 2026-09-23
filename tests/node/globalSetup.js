@@ -85,6 +85,8 @@ export default function setup() {
   // The dashboard's live "is Chromium installed?" check would make status
   // labels depend on the machine running the suite. Tests inject it instead.
   process.env.JOB_AGENT_BROWSER_CHECK = 'off';
+  // No background posting-status sweep (it would call real ATS APIs).
+  process.env.JOB_AGENT_POSTING_SWEEP = 'off';
   const root = buildTestRoot();
   process.env.JOB_AGENT_ROOT = root;
   return () => {

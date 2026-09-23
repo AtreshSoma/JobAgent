@@ -79,6 +79,7 @@
       <button class="ghost" data-action="toggle-menu" aria-haspopup="true" aria-expanded="false" aria-controls="mainMenu">More ▾</button>
       <div class="menu-pop" id="mainMenu" role="menu">
         <button role="menuitem" data-action="run" data-phase="score" title="Recompute fit for jobs already on the board, from their stored descriptions. No network.">↻ Re-score existing jobs</button>
+        <button role="menuitem" data-action="sweep-postings" title="Ask each job's own ATS whether the posting is still open, and take closed ones off the board. Also runs by itself every few hours.">🔗 Remove closed postings</button>
         <hr role="separator">
         <button role="menuitem" data-action="open-reports">📊 View reports…</button>
         <button role="menuitem" data-action="open-runs"
