@@ -330,7 +330,10 @@ button.icon { padding: 4px 7px; }
    header height (the sticky offset is measured, so it follows) and lets each
    line use the pill's full width. An empty second line collapses to nothing, so
    a clean run is still one line tall. */
-.run-main { display: flex; flex-direction: column; align-items: flex-start; gap: 0; min-width: 0; }
+/* `overflow: hidden` + `stretch` give the two lines a real width to ellipsize
+   against. Without them, a long result ran on underneath the Details and ✕
+   buttons instead of truncating before them. */
+.run-main { display: flex; flex-direction: column; align-items: stretch; gap: 0; min-width: 0; overflow: hidden; flex: 1 1 auto; }
 #runStatus {
   font-weight: 620; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -1163,6 +1166,22 @@ td.check { width: 34px; }
   border-top: 1px solid var(--line-soft);
   margin-top: -1px;
 }
+/* Phones: neither the header nor the pager sticks. Together they held 41% of
+   a 390x844 screen permanently, leaving the board a letterbox. The pager
+   folds to one line: Prev/Next, the count, and the view controls. */
+@media (max-width: 720px) {
+  .topbar { position: static; }
+  /* Four actions and More on two rows instead of three. */
+  .actions-group { gap: 6px; }
+  .actions-group > button, .actions-group > .menu > button { padding: 5px 10px; font-size: 13px; }
+  .boardwrap { scroll-margin-top: var(--s2); }
+  .pagerbar { position: static; flex-wrap: nowrap; gap: var(--s2); }
+  .pager { flex-wrap: nowrap; gap: 6px; padding: var(--s2) 0; min-width: 0; }
+  .pager .pg-edge, .pager .pg-of, .pagesize > span { display: none; }
+  .pager .count { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+  .viewmenu > button { padding: 3px 7px; }
+}
+
 /* The bulk-action bar is fixed over this same corner. When rows are selected
    that bar is the subject, so the pager stands down rather than fighting it. */
 body:has(#selbar[data-open="true"]) .pagerbar {
@@ -1385,13 +1404,23 @@ button.rs-open.prepared:hover { background: var(--accent-soft); }
     border: 0; padding: 0; overflow: visible; min-width: 0; max-width: 100%;
   }
 
+  /* Top-aligned: centred cards put the grade beside the MIDDLE of a
+     three-line title, and on a narrow card that pushed it off the left edge
+     of the line the eye starts on. */
+  #board tr.job { align-items: flex-start; }
+
   /* Line one: pick, grade, and the role — everything you triage on. */
   #board td.check { flex: 0 0 auto; padding: 0; }
   #board td:nth-child(2) { flex: 0 0 auto; display: flex; align-items: baseline; gap: 6px; }
   #board td:nth-child(2) .faint { font-size: 11px; }
   .namecell { flex: 1 1 60%; min-width: 0; }
   .namecell .rolelink { -webkit-line-clamp: 3; }
-  .namemeta { white-space: normal; }
+  /* Two lines at most. Unclamped, one posting's 50-state location list made a
+     single card taller than the phone's screen. */
+  .namemeta {
+    white-space: normal; display: -webkit-box; -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2; overflow: hidden;
+  }
 
   /* Line two: the facts, each labelled because there is no header row now.
      Tightened so Sponsor / Posted / Found share ONE line instead of spilling

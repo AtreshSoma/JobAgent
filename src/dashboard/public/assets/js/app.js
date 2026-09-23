@@ -1668,15 +1668,16 @@ function renderPager(page) {
 
   const count = el('span', { class: 'count' });
   count.append('Showing ', el('b', { text: `${fmt(from)}–${fmt(to)}` }), ' of ', el('b', { text: fmt(page.total) }));
-  if (page.total > page.limit) count.append(` · page ${page.page} of ${page.pages}`);
+  if (page.total > page.limit) count.append(el('span', { class: 'pg-of', text: ` · page ${page.page} of ${page.pages}` }));
   host.append(count);
 
   if (page.pages > 1) {
     host.append(
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': '1', disabled: page.page <= 1, text: '« First' }),
+      // First/Last carry `pg-edge` so a phone can fold the pager to one line.
+      el('button', { class: 'small pg-edge', 'data-action': 'page', 'data-page': '1', disabled: page.page <= 1, text: '« First' }),
       el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page - 1), disabled: page.page <= 1, text: '‹ Prev' }),
       el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page + 1), disabled: page.page >= page.pages, text: 'Next ›' }),
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.pages), disabled: page.page >= page.pages, text: 'Last »' }),
+      el('button', { class: 'small pg-edge', 'data-action': 'page', 'data-page': String(page.pages), disabled: page.page >= page.pages, text: 'Last »' }),
     );
   }
   if (state.selected.size) {

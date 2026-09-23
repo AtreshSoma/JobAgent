@@ -253,3 +253,23 @@ describe('numbers say what they count (U10)', () => {
     expect(app).toContain('(${verdictLabel(j)})');
   });
 });
+
+describe('phones get the screen back (U11)', () => {
+  const phone = css.slice(css.indexOf('@media (max-width: 720px) {\n  .topbar { position: static; }'));
+
+  it('stops the header and the pager from sticking, and folds the pager to one line', () => {
+    expect(phone).toContain('.topbar { position: static; }');
+    expect(phone).toContain('.pagerbar { position: static; flex-wrap: nowrap;');
+    expect(phone).toContain('.pager .pg-edge, .pager .pg-of');
+    expect(app).toContain("class: 'small pg-edge'");
+  });
+
+  it('clamps the card meta line and top-aligns cards', () => {
+    expect(css).toMatch(/\.namemeta \{\s*white-space: normal; display: -webkit-box; -webkit-box-orient: vertical;\s*-webkit-line-clamp: 2;/);
+    expect(css).toContain('#board tr.job { align-items: flex-start; }');
+  });
+
+  it('keeps the run pill text from running under its buttons', () => {
+    expect(css).toMatch(/\.run-main \{[^}]*align-items: stretch;[^}]*overflow: hidden;/);
+  });
+});
