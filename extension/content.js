@@ -4,6 +4,12 @@
 
   const PROTECTED = /\b(gender|sex|race|ethnicity|ethnic|disability|veteran|military status|date of birth|birth date|age|religion|sexual orientation|pronouns?)\b/i;
   const LEGAL = /\b(i agree|attest|certify|signature|terms|privacy policy|consent|acknowledge|truthful|accurate)\b/i;
+  // Work-authorization questions are NEVER answered by the extension. Its
+  // pattern matcher cannot see polarity: "Are you able to work here WITHOUT
+  // requiring sponsorship?" matched `require sponsorship` and was answered
+  // "Yes" for a candidate who needs it. Mirrors EXTENSION_MANUAL_LABEL in
+  // src/extension/companion.js.
+  const WORK_AUTH = /\b(sponsor\w*|visas?|authori[sz]\w*|citizen\w*)\b/i;
   const SKIP_TYPES = new Set(['hidden', 'password', 'submit', 'button', 'reset', 'image']);
   const ALIASES = {
     firstName: ['first name', 'given name'], lastName: ['last name', 'surname', 'family name'],
@@ -50,6 +56,7 @@
     }
     const controls = [...applicationRoot.querySelectorAll('input, textarea, select')].slice(0, 160);
     const profileValues = valuesFrom(payload.profile);
+    const decisions = new Map(Object.entries(payload.screeningDecisions || {}).map(([k, v]) => [norm(k), v]));
     let resumeUsed = false;
     let coverUsed = false;
 
@@ -61,6 +68,9 @@
       if (!label) continue;
       if (PROTECTED.test(label)) { blockers.push(`Review protected/voluntary question: ${label}`); mark(el, 'review'); continue; }
       if (LEGAL.test(label) || type === 'checkbox') { blockers.push(`Review checkbox/attestation manually: ${label}`); mark(el, 'review'); continue; }
+      if (type !== 'file' && WORK_AUTH.test(label)) {
+        blockers.push(`Answer this work-authorization question yourself: ${label}`); mark(el, 'review'); continue;
+      }
 
       if (type === 'file') {
         const kind = /cover/i.test(label) ? 'cover-letter' : /resume|résumé|cv/i.test(label) ? 'resume' : null;
@@ -71,7 +81,7 @@
         const artifact = kind === 'resume' ? payload.artifacts.resume : payload.artifacts.coverLetter;
         if (!artifact?.available) { if (el.required) blockers.push(`Approved packet has no file for: ${label}`); continue; }
         try {
-          await attach(el, payload.job.id, kind, artifact.name, connection);
+          await attach(el, payload.job.id, kind, artifact.name);
           kind === 'resume' ? (resumeUsed = true) : (coverUsed = true);
           filled.push({ field: kind, label, source: 'approved_artifact' }); mark(el, 'filled');
         } catch (e) { blockers.push(`${label}: ${e.message}`); mark(el, 'review'); }
@@ -82,8 +92,20 @@
       let value = canonical ? profileValues[canonical] : null;
       let source = canonical ? 'candidate_profile' : '';
       if (!value) {
-        const screening = screeningFor(label, payload.screeningAnswers || []);
-        if (screening) { value = screening.answer; source = `screening:${screening.id}`; }
+        // A decision the server already made for this exact question wins over
+        // the local pattern match — including a decision to leave it alone.
+        const decision = decisions.get(norm(label));
+        if (decision?.action === 'ask_user') {
+          if (el.required) blockers.push(`Required field needs your answer: ${label}`);
+          mark(el, 'review');
+          continue;
+        }
+        if (decision?.action === 'fill' && decision.answer) {
+          value = decision.answer; source = `screening:${decision.matchedId || 'server'}`;
+        } else {
+          const screening = screeningFor(label, payload.screeningAnswers || []);
+          if (screening) { value = screening.answer; source = `screening:${screening.id}`; }
+        }
       }
       if (value == null || String(value).trim() === '') {
         if (el.required) { blockers.push(`Required field needs your answer: ${label}`); mark(el, 'review'); }
@@ -231,9 +253,11 @@
     return { ok: el.value.trim().length > 0, reason: 'value did not remain set' };
   }
 
-  async function attach(input, jobId, kind, name, connection) {
-    const url = `${connection.serverUrl}/api/extension/jobs/${encodeURIComponent(jobId)}/files/${kind}`;
-    const response = await chrome.runtime.sendMessage({ type: 'JOB_AGENT_FETCH_ARTIFACT', url, key: connection.key, name });
+  // The content script never sees the connection key or the server URL: it
+  // runs inside a third-party page, and anything it holds that page can read.
+  // It names WHAT it needs; the service worker builds the request itself.
+  async function attach(input, jobId, kind, name) {
+    const response = await chrome.runtime.sendMessage({ type: 'JOB_AGENT_FETCH_ARTIFACT', jobId, kind, name });
     if (!response?.ok) throw new Error(response?.error || 'could not load approved artifact');
     const binary = atob(response.base64);
     const bytes = new Uint8Array(binary.length);

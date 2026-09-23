@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import {
-  buildExtensionPayload, isChromiumExtensionOrigin, readApprovedArtifact, validExtensionKey,
+  answerForLabels, buildExtensionPayload, isChromiumExtensionOrigin, readApprovedArtifact, validExtensionKey,
 } from '../../src/extension/companion.js';
 
 const packet = (root) => ({
@@ -79,5 +79,33 @@ describe('extension companion security boundary', () => {
       args.db.getJob = () => ({ id: 'j1', applied: 1, status: 'submitted' });
       expect(() => buildExtensionPayload(args)).toThrow(/already submitted/i);
     } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('pre-computes polarity-aware screening decisions for the packet questions', () => {
+    const root = mkdtempSync(join(tmpdir(), 'extension-'));
+    try {
+      const args = fixture(root);
+      args.config.screeningAnswers = { answers: [
+        { id: 'notice', patterns: ['notice period'], answer: 'Two weeks' },
+        { id: 'sp', patterns: ['require sponsorship'], answer: 'Yes, I require sponsorship.' },
+      ] };
+      args.loadPacketImpl = () => ({
+        ...packet(root),
+        prefill: { plan: [{ label: 'Notice period', source: 'screening' }], needsUser: [{ label: 'Favourite colour' }] },
+        screeningPlan: { answered: [{ label: 'Will you require sponsorship?' }], needsUser: [] },
+      });
+      const { screeningDecisions } = buildExtensionPayload(args);
+      expect(screeningDecisions['Notice period']).toMatchObject({ action: 'fill', answer: 'Two weeks' });
+      expect(screeningDecisions['Favourite colour'].action).toBe('ask_user');
+      // Work authorization is never delegated to the extension.
+      expect(screeningDecisions['Will you require sponsorship?']).toMatchObject({ action: 'ask_user', answer: null });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  it('answerForLabels never answers an inverted sponsorship question', () => {
+    const d = answerForLabels(['Can you work here without requiring sponsorship?', 'Are you a US citizen?'], {
+      screeningAnswers: { answers: [{ id: 'sp', patterns: ['requiring sponsorship'], answer: 'Yes' }] },
+    });
+    expect(Object.values(d).every((x) => x.action === 'ask_user' && x.answer === null)).toBe(true);
   });
 });

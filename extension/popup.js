@@ -58,17 +58,26 @@ $('fill').addEventListener('click', async () => {
       if (!ok) throw new Error('Not filled. Return to the correct employer application.');
     }
 
-    const injected = await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: true }, files: ['content.js'],
+    // Inject ONLY into frames that can be the application: the top frame, and
+    // child frames served from the job's own host, the page's host, or a known
+    // ATS. Injecting into every frame handed the candidate's profile and
+    // answers to ad, analytics and chat iframes on the same page. The probe
+    // below returns nothing but each frame's hostname.
+    const probed = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true }, func: () => location.hostname,
     });
-    const targets = [...new Set(injected.map((item) => item.frameId))];
+    const targets = selectFillFrames(probed, { expectedHost: expected, pageHost: actual });
+    if (!targets.length) throw new Error('No frame on this page belongs to the application.');
+    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: targets }, files: ['content.js'] });
     const results = [];
     for (const frameId of targets) {
       try {
+        // No key and no server URL: the content script lives inside a
+        // third-party page. Artifact downloads go through the service worker,
+        // which reads both from storage itself.
         const result = await chrome.tabs.sendMessage(tab.id, {
           type: 'JOB_AGENT_FILL', payload,
           connection: {
-            serverUrl: settings.serverUrl, key: settings.key,
             allowStart: frameId === 0, expectedHost: expected,
             trustedHost: actual === expected || trusted.has(actual),
           },
@@ -93,7 +102,7 @@ $('fill').addEventListener('click', async () => {
       });
     }
 
-    const audit = await fetch(`${settings.serverUrl}/api/extension/jobs/${encodeURIComponent(jobId)}/result`, {
+    const audit = await fetch(`${loopbackServer(settings.serverUrl)}/api/extension/jobs/${encodeURIComponent(jobId)}/result`, {
       method: 'POST', headers: { 'content-type': 'application/json', 'x-job-agent-key': settings.key },
       body: JSON.stringify({
         filled, blockers, formDetected, readyForReview, startedApplication,
@@ -117,8 +126,38 @@ $('fill').addEventListener('click', async () => {
   }
 });
 
+/** Hosts of the ATS products whose embedded application frames we fill. */
+const ATS_FRAME_HOST = /(^|\.)(greenhouse\.io|grnhse\.io|lever\.co|myworkdayjobs\.com|myworkdaysite\.com|ashbyhq\.com|icims\.com|jobvite\.com|smartrecruiters\.com|workable\.com|bamboohr\.com|breezy\.hr|teamtailor\.com|taleo\.net)$/i;
+
+/**
+ * Frame ids that may receive the fill payload.
+ * @param {Array<{frameId: number, result?: string}>} probed executeScript results
+ * @param {{expectedHost?: string, pageHost?: string}} hosts
+ * @returns {number[]}
+ */
+function selectFillFrames(probed = [], { expectedHost = '', pageHost = '' } = {}) {
+  const allowed = new Set([expectedHost, pageHost].filter(Boolean).map((h) => h.toLowerCase()));
+  const ids = (probed || []).filter((item) => {
+    if (item?.frameId === 0) return true;
+    const host = String(item?.result || '').toLowerCase();
+    return Boolean(host) && (allowed.has(host) || ATS_FRAME_HOST.test(host));
+  }).map((item) => item.frameId);
+  return [...new Set(ids)];
+}
+globalThis.__jobAgentPopup = { selectFillFrames };
+
+/** The configured server, only when it is a loopback http origin. */
+function loopbackServer(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'http:' && isLoopback(url.hostname) ? url.origin : null;
+  } catch { return null; }
+}
+
 async function getPayload(settings, jobId) {
-  const response = await fetch(`${settings.serverUrl}/api/extension/jobs/${encodeURIComponent(jobId)}/payload`, {
+  const server = loopbackServer(settings.serverUrl);
+  if (!server) throw new Error('Job Agent server must be http://127.0.0.1 or http://localhost (see Options).');
+  const response = await fetch(`${server}/api/extension/jobs/${encodeURIComponent(jobId)}/payload`, {
     headers: { 'x-job-agent-key': settings.key }, cache: 'no-store',
   });
   const payload = await response.json();
