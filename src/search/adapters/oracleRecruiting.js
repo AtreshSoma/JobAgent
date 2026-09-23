@@ -47,7 +47,8 @@ import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
 import { searchTermsFor } from './workday.js';
-import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, sortByTitleFit } from '../../scoring/profileFit.js';
+import { hydrateFromDetailCache } from '../detailBudget.js';
 
 export const adapterId = 'oracleRecruiting';
 
@@ -118,6 +119,7 @@ export async function run(source = {}, ctx = {}) {
   const jobs = [];
   const errors = [];
   let cancelled = false;
+  let reused = 0;
 
   const perTenant = await mapWithConcurrency(tenants, tenantConcurrency, async (tenant) => {
     if (ctx.shouldCancel?.()) return { jobs: [], errors: [], cancelled: true };
@@ -128,7 +130,8 @@ export async function run(source = {}, ctx = {}) {
         fetchImpl, rateLimiter, hostGate, maxRetries, requestTimeoutMs,
         rateLimitMs: source.rateLimitMs, pageConcurrency, detailConcurrency,
         maxDetailFetches, titleGate, ageGate, shouldCancel: ctx.shouldCancel,
-        vocab: ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null,
+        vocab: profileVocabularyFor(ctx.candidate),
+        detailCache: ctx.detailCache ?? ctx.workdayDetailCache ?? null,
       });
     } catch (err) {
       return {
@@ -144,6 +147,7 @@ export async function run(source = {}, ctx = {}) {
   for (const r of perTenant) {
     if (!r) continue;
     jobs.push(...(r.jobs ?? []));
+    reused += Number(r.reused) || 0;
     errors.push(...(r.errors ?? []));
     cancelled ||= r.cancelled === true;
   }
@@ -156,7 +160,7 @@ export async function run(source = {}, ctx = {}) {
     });
   }
 
-  return { jobs, errors, cancelled };
+  return { jobs, errors, cancelled, reused };
 }
 
 /**
@@ -223,7 +227,7 @@ async function fetchTenant(cfg, ctx) {
     // and it threw once per tenant AFTER the listings had been fetched — so the
     // whole source reported "vocab is not defined" and returned nothing, while
     // looking like a network-level failure.
-    vocab,
+    vocab, detailCache,
   } = ctx;
   const errors = [];
   let cancelled = false;
@@ -302,13 +306,19 @@ async function fetchTenant(cfg, ctx) {
   const kept = rows.filter((row) => titleGate(row?.Title) && ageGate(row?.PostedDate ?? null));
   const out = kept.map((row) => mapJob(row, cfg));
 
-  if (cfg.fetchDetails && maxDetailFetches > 0) {
+  // Descriptions read on an earlier run are reused BEFORE the budget is spent,
+  // so this run's fetches go to requisitions never read before — the budget
+  // rolls forward instead of re-buying the same top-ranked postings each run.
+  const reused = hydrateFromDetailCache(out, detailCache);
+  const needDetail = out.filter((job) => job.rawMetadata?.summaryOnly !== false);
+
+  if (cfg.fetchDetails && maxDetailFetches > 0 && needDetail.length) {
     // Best-first, so the budget lands on the most likely fits.
     const ordered = vocab
-      ? [...out].sort((a, b) => titleFitPriority(b.title, vocab) - titleFitPriority(a.title, vocab))
-      : out;
+      ? sortByTitleFit(needDetail, (job) => job.title, vocab)
+      : needDetail;
     const budgeted = ordered.slice(0, maxDetailFetches);
-    const dropped = out.length - budgeted.length;
+    const dropped = needDetail.length - budgeted.length;
     const notes = await mapWithConcurrency(budgeted, detailConcurrency, async (job) => {
       if (shouldCancel?.()) { cancelled = true; return null; }
       try {
@@ -348,7 +358,7 @@ async function fetchTenant(cfg, ctx) {
     }
   }
 
-  return { jobs: out, errors, cancelled };
+  return { jobs: out, errors, cancelled, reused };
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {

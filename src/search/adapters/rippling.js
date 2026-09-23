@@ -35,7 +35,8 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
-import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, sortByTitleFit } from '../../scoring/profileFit.js';
+import { lookupDetail, jobFromCachedDetail } from '../detailBudget.js';
 
 export const adapterId = 'rippling';
 
@@ -89,11 +90,13 @@ export async function run(source = {}, ctx = {}) {
     candidate: ctx.candidate ?? null,
   });
   const ageGate = makeAgeGate(options.maxAgeDays);
-  const vocab = ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null;
+  const vocab = profileVocabularyFor(ctx.candidate);
+  const detailCache = ctx.detailCache ?? ctx.workdayDetailCache ?? null;
 
   const jobs = [];
   const errors = [];
   let cancelled = false;
+  let reused = 0;
 
   const request = async (url) => {
     if (rateLimiter) await rateLimiter.wait(`rippling:${RIPPLING_HOST}`, source.rateLimitMs);
@@ -118,10 +121,25 @@ export async function run(source = {}, ctx = {}) {
     const rows = Array.isArray(listing) ? listing : [];
 
     // Gate on the list's own title before spending a request on the detail.
-    const candidates = rows.filter((row) => titleGate(row?.name));
+    //
+    // A posting read on an earlier run is rebuilt from its stored row — looked
+    // up by URL, because a Rippling job id includes the company name only the
+    // detail returns — and costs no request. The budget then lands on postings
+    // never read before, so coverage grows run over run instead of re-buying
+    // the same top-ranked titles.
+    const fromCache = [];
+    const candidates = [];
+    for (const row of rows.filter((r) => titleGate(r?.name))) {
+      const hit = row?.url ? lookupDetail(detailCache, { url: row.url, source: 'rippling' }) : null;
+      const job = hit ? jobFromCachedDetail(hit, {
+        source: 'rippling', url: row.url, title: row.name, rawMetadata: { board: slug },
+      }) : null;
+      if (job && ageGate(job.postedAt)) fromCache.push(job);
+      else if (!job) candidates.push(row);
+    }
     // Best-first: certain matches are enriched before speculative ones.
     if (vocab) {
-      candidates.sort((a, b) => titleFitPriority(b?.name, vocab) - titleFitPriority(a?.name, vocab));
+      candidates.splice(0, candidates.length, ...sortByTitleFit(candidates, (row) => row?.name, vocab));
     }
     const budgeted = maxDetailFetches > 0 ? candidates.slice(0, maxDetailFetches) : [];
     const dropped = candidates.length - budgeted.length;
@@ -158,17 +176,18 @@ export async function run(source = {}, ctx = {}) {
           + 'Raise it, or narrow options.titles, to cover them.',
       });
     }
-    return { jobs: found, errors: detailErrors };
+    return { jobs: [...fromCache, ...found], errors: detailErrors, reused: fromCache.length };
   });
 
   for (const r of perBoard) {
     if (!r) continue;
     if (r.cancelled) { cancelled = true; continue; }
     jobs.push(...(r.jobs ?? []));
+    reused += Number(r.reused) || 0;
     if (r.error) errors.push(r.error);
     if (Array.isArray(r.errors)) errors.push(...r.errors);
   }
-  return { jobs, errors, cancelled };
+  return { jobs, errors, cancelled, reused };
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {

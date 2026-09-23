@@ -29,6 +29,7 @@ import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { createSourceTimings } from '../search/sourceTimings.js';
+import { createDetailCache } from '../search/detailBudget.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { buildProfileVocabulary, classifyTitleFit } from '../scoring/profileFit.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
@@ -193,9 +194,10 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   // Descriptions bought by an earlier run, reusable by ANY adapter with a
   // detail budget — not just Workday. `workdayDetailCache` stays as an alias so
   // the Workday adapter's existing parameter name keeps resolving.
-  const detailCache = db.getReusableDetail
-    ? (jobId) => db.getReusableDetail(jobId)
-    : (db.getReusableWorkdayDetail ? (jobId) => db.getReusableWorkdayDetail(jobId) : null);
+  //
+  // The cache returns the stored LOCATION too (and a by-URL lookup for sources
+  // whose id only exists after a detail read) — see src/search/detailBudget.js.
+  const detailCache = deps.detailCache !== undefined ? deps.detailCache : createDetailCache(db);
   const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,

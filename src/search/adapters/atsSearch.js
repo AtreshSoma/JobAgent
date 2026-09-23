@@ -90,7 +90,7 @@
  */
 
 import { normalizeJob, htmlToText } from '../normalize.js';
-import { buildProfileVocabulary, classifyTitleFit } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, classifyTitleFit } from '../../scoring/profileFit.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
@@ -174,7 +174,7 @@ export function makeTitleGate({ titles = [], strict = true, candidate = null } =
   // ~11% of the scoring signal and the gate runs before the other ~89% has
   // even been fetched. Measured over 55,293 scored postings, the old question
   // discarded 12.6% of everything the scorer itself rated 60+.
-  const vocab = candidate ? buildProfileVocabulary(candidate) : null;
+  const vocab = profileVocabularyFor(candidate);
   if (vocab) {
     return (title) => classifyTitleFit(title, vocab).verdict !== 'reject';
   }

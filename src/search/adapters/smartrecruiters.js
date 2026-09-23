@@ -39,7 +39,8 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, smartRecruitersJdText } from './atsSearch.js';
-import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, sortByTitleFit } from '../../scoring/profileFit.js';
+import { hydrateFromDetailCache } from '../detailBudget.js';
 
 export const adapterId = 'smartrecruiters';
 
@@ -116,7 +117,7 @@ export async function run(source = {}, ctx = {}) {
     strict: options.strictTitleMatch !== false,
     candidate: ctx.candidate ?? null,
   });
-  const vocab = ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null;
+  const vocab = profileVocabularyFor(ctx.candidate);
 
   const jobs = [];
   const errors = [];
@@ -156,8 +157,14 @@ export async function run(source = {}, ctx = {}) {
       // Keep whatever pages already succeeded — a failure on page 4 must not
       // discard pages 1-3. They stay summary-level: the listing is trustworthy
       // even when the run that would have enriched it died.
+      //
+      // Stored descriptions still apply here: without them a board whose 4th
+      // page failed reported every posting as unread, even ones read last run.
+      const partial = collected.filter((p) => titleGate(p?.name)).map((p) => mapPosting(p, company));
+      const reused = hydrateFromDetailCache(partial, detailCache);
       return {
-        jobs: collected.filter((p) => titleGate(p?.name)).map((p) => mapPosting(p, company)),
+        jobs: partial,
+        reused,
         error: { company, error: err.message, status: err.status ?? null, attempts: err.attempts ?? 0 },
       };
     }
@@ -228,20 +235,7 @@ async function enrichCompany(postings, company, cfg) {
   // reads, and at 4 in-flight against a ~500ms endpoint that is ~8 minutes of
   // wall clock spent re-reading postings already on disk. Workday has hydrated
   // from this cache for some time; this adapter never did.
-  let reused = 0;
-  if (detailCache) {
-    for (const job of jobs) {
-      const cached = typeof detailCache === 'function'
-        ? detailCache(job.id)
-        : detailCache.get?.(job.id);
-      if (!cached?.jdText) continue;
-      job.jdText = cached.jdText;
-      if (cached.postedAt) job.postedAt = cached.postedAt;
-      job.rawMetadata.summaryOnly = false;
-      job.rawMetadata.detailReused = true;
-      reused += 1;
-    }
-  }
+  const reused = hydrateFromDetailCache(jobs, detailCache);
 
   // Only postings we still have no description for can consume budget. Nothing
   // is "unread" here: `maxDetailFetches: 0` is an explicit list-only choice,
@@ -252,7 +246,7 @@ async function enrichCompany(postings, company, cfg) {
   // Best-first: an exact target-title match is enriched before a speculative
   // one, so a small budget buys the descriptions most likely to matter.
   const ordered = vocab
-    ? [...needDetail].sort((a, b) => titleFitPriority(b.title, vocab) - titleFitPriority(a.title, vocab))
+    ? sortByTitleFit(needDetail, (job) => job.title, vocab)
     : needDetail;
   const budgeted = ordered.slice(0, maxDetailFetches);
   const unread = ordered.length - budgeted.length;
