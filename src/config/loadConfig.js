@@ -122,13 +122,13 @@ export function readJson(filePath) {
   try {
     raw = readFileSync(filePath, 'utf8');
   } catch (err) {
-    throw new Error(`Config file not found or unreadable: ${filePath} (${err.code || err.message})`);
+    throw new Error(`Config file not found or unreadable: ${filePath} (${err.code || err.message})`, { cause: err });
   }
   let parsed;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new Error(`Config file is not valid JSON: ${filePath} - ${err.message}`);
+    throw new Error(`Config file is not valid JSON: ${filePath} - ${err.message}`, { cause: err });
   }
   // Fail loudly rather than silently using whichever copy happened to be last.
   const dupes = duplicateKeys(raw);

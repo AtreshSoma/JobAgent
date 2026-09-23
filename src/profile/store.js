@@ -319,6 +319,7 @@ export function activateProfile(root, id, { taxonomy, dryRun = false, db = null 
       `activating "${profile.label}" failed after writing ${done.length} of ${writes.length} files `
       + `(${err.message}). Every file was rolled back to its previous contents, so the configuration `
       + 'is still the one that was active before — no half-switched profile was left behind.',
+      { cause: err },
     );
   }
 

@@ -430,7 +430,12 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
   }
 
   const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
-  const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
+  // Exclusions are passed through because this path scores an excluded job
+  // anyway: a hard clearance requirement then shows up as an eligibility
+  // penalty and reason, not only as a caveat.
+  const score = scoreJob(job, {
+    scoring: config.scoring, sponsorship, candidate: config.candidate, now, exclusions: config.exclusions,
+  });
   const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
   const fullExplanation = caveat ? `${caveat} ${explanation}` : explanation;
 
@@ -746,7 +751,7 @@ export function recordAssistResult(db, jobId, result) {
     // an unverified submit the human is never asked to confirm). Everything
     // else stays best-effort (the job may not be persisted in some flows).
     if (result.submitted === true) {
-      throw new Error(`failed to record submitted application for ${jobId}: ${err.message}`);
+      throw new Error(`failed to record submitted application for ${jobId}: ${err.message}`, { cause: err });
     }
   }
 }

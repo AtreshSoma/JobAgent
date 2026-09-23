@@ -193,5 +193,15 @@ function buildExplanation(scoreResult, tier, { sponsorshipGated }) {
       ? `Pay: ${pay.matched?.[0] ?? 'below target'} (${pay.points} pts).`
       : `Pay: ${pay.matched?.[0] ?? 'meets target'}.`);
   }
+  // Eligibility is penalty-only too, and the reason matters more than the
+  // points: "requires 10+ years" is what a reader needs before applying.
+  const eligibility = scoreResult.eligibility;
+  if (eligibility && (eligibility.verdict === 'stretch' || eligibility.verdict === 'ineligible')) {
+    const penalty = breakdown?.eligibility?.points;
+    parts.push(`Eligibility: ${eligibility.verdict} — ${eligibility.reasons.slice(0, 2).join('; ')}`
+      + `${penalty ? ` (${penalty} pts)` : ''}.`);
+  } else if (eligibility?.reasons?.length) {
+    parts.push(`Eligibility note: ${eligibility.reasons.slice(0, 2).join('; ')}.`);
+  }
   return parts.join(' ');
 }

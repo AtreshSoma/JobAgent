@@ -163,7 +163,7 @@ export function createFileApplicationStateStore(path, { legacyPath = null } = {}
     try {
       parsed = JSON.parse(readFileSync(file, 'utf8'));
     } catch (err) {
-      throw new Error(`application state is unreadable (${file}): ${err.message}`);
+      throw new Error(`application state is unreadable (${file}): ${err.message}`, { cause: err });
     }
     validateApplicationState(parsed);
     return parsed;

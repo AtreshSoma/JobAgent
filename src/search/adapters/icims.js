@@ -46,8 +46,8 @@ import { lookupDetail, jobFromCachedDetail } from '../detailBudget.js';
 
 export const adapterId = 'icims';
 
-/** Results per listing page. iCIMS fixes this; `pr` is a PAGE index, not a row offset. */
-const PAGE_SIZE = 50;
+// iCIMS fixes results per listing page (50); `pr` is a PAGE index, not a row
+// offset, so paging needs only the page count read from page 0.
 
 /** Hard runaway guard on listing pages per portal. */
 const MAX_PAGES = 20;
@@ -133,11 +133,11 @@ export async function run(source = {}, ctx = {}) {
   const perBoard = await mapWithConcurrency(boards, boardConcurrency, async (board) => {
     if (ctx.shouldCancel?.()) return { jobs: [], errors: [], cancelled: true };
     const boardErrors = [];
-    let rows = [];
+    let rows;
 
     // Page 0 first: it carries the "Page 1 of N" label, so the real page count
     // is read from the portal rather than probed for by requesting until empty.
-    let pageCount = 1;
+    let pageCount;
     try {
       const html = await request(listUrl(board.host, 0));
       rows = extractJobRows(html, board.host);

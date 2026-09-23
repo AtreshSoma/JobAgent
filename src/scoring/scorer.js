@@ -16,6 +16,8 @@ import { ageInDays } from '../utils/dates.js';
 import { candidateNeedsSponsorship } from './exclusionFilter.js';
 import { excludedLocationMatch, postedPay } from './searchConstraints.js';
 import { seniorityRank } from '../profile/roleFamilies.js';
+import { matchedTitlePhrases } from './titleMatch.js';
+import { assessEligibility, eligibilityPenalty } from './eligibility.js';
 
 /**
  * Sources considered "direct ATS" for the directAtsAvailability category — a
@@ -97,15 +99,18 @@ const SENIORITY_PATTERNS = [
  * @param {{discoveryDays: number, retentionDays: number}} [args.freshnessModel] grade
  *   freshness against the discovery window (see freshnessFactor); omitted, the
  *   legacy scoring.freshness curve applies
- * @returns {object} score result with breakdown, matched/missing keywords
+ * @param {object} [args.exclusions] parsed config/exclusions.json — lets the
+ *   eligibility assessment report a hard clearance requirement
+ * @returns {object} score result with breakdown, matched/missing keywords and
+ *   `eligibility` ({verdict, reasons}, see src/scoring/eligibility.js)
  */
 export function scoreJob(job = {}, {
   scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date(), freshnessModel = null,
+  exclusions = null,
 } = {}) {
   const weights = scoring.weights;
   const kw = scoring.keywords;
   const text = normalizeText([job.title, job.jdText].join(' \n '));
-  const titleText = normalizeText(job.title);
 
   const breakdown = {};
   const matchedAll = new Set();
@@ -137,10 +142,12 @@ export function scoreJob(job = {}, {
   // SEARCHED for but not what was SCORED, and the two silently disagreed.
   const categories = resolveCategories(scoring, candidate);
   for (const category of categories) {
-    breakdown[category.id] = keywordCategory(
-      category.match === 'title' ? titleText : text,
-      category.terms, category.weight, category.fullAt, matchedAll,
-    );
+    // Title categories fold morphology and word order ("Engineer, Data",
+    // "Data Engineering") — see src/scoring/titleMatch.js. Description
+    // categories keep strict phrase matching.
+    breakdown[category.id] = category.match === 'title'
+      ? keywordCategory(job.title, category.terms, category.weight, category.fullAt, matchedAll, matchedTitlePhrases)
+      : keywordCategory(text, category.terms, category.weight, category.fullAt, matchedAll);
   }
 
   // Seniority fit.
@@ -187,6 +194,13 @@ export function scoreJob(job = {}, {
   const payFit = scorePay(job, candidate, weights.payFit);
   if (payFit) breakdown.payFit = payFit;
 
+  // Eligibility: the posting's stated floor (years, degree, clearance) against
+  // the candidate. Also PENALTY ONLY and outside the denominator — an unknown
+  // candidate or an unstated floor changes nothing.
+  const eligibility = assessEligibility(job, candidate ?? {}, { now, exclusions });
+  const eligibilityFit = eligibilityPenalty(eligibility, weights.eligibility);
+  if (eligibilityFit) breakdown.eligibility = eligibilityFit;
+
   const raw = Math.max(0, Object.values(breakdown).reduce((s, b) => s + b.points, 0));
   // The denominator is the STRUCTURAL weights plus whatever categories were
   // declared. It cannot be `Object.values(weights)`: on a legacy config the
@@ -210,6 +224,7 @@ export function scoreJob(job = {}, {
     matchedKeywords,
     missingKeywords,
     sponsorship: sponsorship?.status ?? 'Unconfirmed',
+    eligibility: { verdict: eligibility.verdict, reasons: eligibility.reasons },
   };
 }
 
@@ -313,8 +328,8 @@ export function resolveCategories(scoring = {}, candidate = {}) {
 }
 
 /** Points = weight * min(1, matched/fullAt). */
-function keywordCategory(text, keywords = [], weight = 0, fullAt = 1, sink) {
-  const matched = matchedPhrases(text, keywords);
+function keywordCategory(text, keywords = [], weight = 0, fullAt = 1, sink, match = matchedPhrases) {
+  const matched = match(text, keywords);
   for (const m of matched) sink?.add(m);
   const coverage = Math.min(1, matched.length / Math.max(1, fullAt));
   return { points: round2(weight * coverage), weight, matched };

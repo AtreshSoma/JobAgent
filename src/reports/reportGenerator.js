@@ -302,7 +302,7 @@ export function pruneReports(dir, {
   const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   const oldestKept = localStamp(new Date(now.getTime() - (days - 1) * 86_400_000), zone);
   const removed = [];
-  let names = [];
+  let names;
   try { names = readdir(dir); } catch { return removed; }
   for (const name of names) {
     const m = REPORT_FILE_RE.exec(name);

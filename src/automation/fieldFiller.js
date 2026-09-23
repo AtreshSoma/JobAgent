@@ -99,11 +99,11 @@ async function pickComboboxOption(page, field, value) {
 
   for (const base of OPTION_SELECTORS) {
     const sel = `${scope}${base}`;
-    let count = 0;
+    let count;
     try { count = await page.locator(sel).count(); } catch { count = 0; }
     if (!count) continue;
 
-    let texts = [];
+    let texts;
     try { texts = await page.locator(sel).allTextContents(); } catch { texts = []; }
     const norm = texts.map((t) => String(t ?? '').trim().toLowerCase());
     let idx = norm.findIndex((t) => t === want);
