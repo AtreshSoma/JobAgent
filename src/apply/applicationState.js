@@ -104,33 +104,76 @@ function jobKey(packet = {}) {
   return cleanText(packet?.job?.id ?? packet?.id ?? packet?.job?.url, 500) ?? 'unknown-application';
 }
 
+/** Filesystem-safe form of a search-profile id (null when there is none). */
+export function safeProfileSegment(profileId) {
+  const id = String(profileId ?? '').trim();
+  if (!id) return null;
+  return id.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64) || null;
+}
+
 /**
  * Stable default checkpoint path for a job. The hash prevents collisions and
  * the short readable prefix makes the directory inspectable by a human.
+ *
+ * PER PROFILE. Checkpoints were keyed by job alone, so after switching search
+ * profiles a run for the new candidate RESUMED the previous candidate's
+ * checkpoint — its last URL, its completed-field trail and, worst, its
+ * "already submitted" duplicate guard. With a profile id (explicit, or the
+ * packet owner's) the checkpoint lives under
+ * `data/application-state/<profileId>/`. Without one the historical flat path
+ * is kept, so installs that never created a profile are unaffected.
+ *
+ * @param {string} root project root
+ * @param {object} [packet]
+ * @param {{profileId?: string|null}} [options]
+ * @returns {string|null}
  */
-export function applicationStatePath(root, packet = {}) {
+export function applicationStatePath(root, packet = {}, { profileId } = {}) {
   if (!root) return null;
   const key = jobKey(packet);
   const prefix = key.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48) || 'application';
   const digest = createHash('sha256').update(key).digest('hex').slice(0, 12);
-  return join(root, 'data', 'application-state', `${prefix}-${digest}.json`);
+  const profile = safeProfileSegment(profileId ?? packet?.owner?.profileId);
+  const dir = profile
+    ? join(root, 'data', 'application-state', profile)
+    : join(root, 'data', 'application-state');
+  return join(dir, `${prefix}-${digest}.json`);
 }
 
-/** Atomic file-backed store used by the live runner. */
-export function createFileApplicationStateStore(path) {
+/** The pre-profile checkpoint path for the same job (migration source). */
+export function legacyApplicationStatePath(root, packet = {}) {
+  return applicationStatePath(root, { ...packet, owner: null }, { profileId: '' });
+}
+
+/**
+ * Atomic file-backed store used by the live runner.
+ *
+ * MIGRATION. `legacyPath` is read when `path` does not exist yet, so a
+ * checkpoint written before checkpoints were keyed by profile is still found —
+ * above all its write-once "submitting / user_submitted" duplicate guard. The
+ * next save writes the new path; the legacy file is left in place untouched.
+ *
+ * @param {string} path
+ * @param {{legacyPath?: string|null}} [options]
+ */
+export function createFileApplicationStateStore(path, { legacyPath = null } = {}) {
   if (!path) throw new Error('application state path is required');
+  const read = (file) => {
+    let parsed;
+    try {
+      parsed = JSON.parse(readFileSync(file, 'utf8'));
+    } catch (err) {
+      throw new Error(`application state is unreadable (${file}): ${err.message}`);
+    }
+    validateApplicationState(parsed);
+    return parsed;
+  };
   return {
     path,
     load() {
-      if (!existsSync(path)) return null;
-      let parsed;
-      try {
-        parsed = JSON.parse(readFileSync(path, 'utf8'));
-      } catch (err) {
-        throw new Error(`application state is unreadable (${path}): ${err.message}`);
-      }
-      validateApplicationState(parsed);
-      return parsed;
+      if (existsSync(path)) return read(path);
+      if (legacyPath && legacyPath !== path && existsSync(legacyPath)) return read(legacyPath);
+      return null;
     },
     save(state) {
       validateApplicationState(state);
@@ -141,11 +184,14 @@ export function createFileApplicationStateStore(path) {
 }
 
 /** Resolve an injected store or the default on-disk store. `false` disables it. */
-export function resolveApplicationStateStore({ packet, root, statePath, store } = {}) {
+export function resolveApplicationStateStore({ packet, root, statePath, store, profileId } = {}) {
   if (store === false || statePath === false) return null;
   if (store) return store;
-  const path = typeof statePath === 'string' ? statePath : applicationStatePath(root, packet);
-  return path ? createFileApplicationStateStore(path) : null;
+  if (typeof statePath === 'string') return createFileApplicationStateStore(statePath);
+  const path = applicationStatePath(root, packet, { profileId });
+  if (!path) return null;
+  const legacyPath = legacyApplicationStatePath(root, packet);
+  return createFileApplicationStateStore(path, { legacyPath: legacyPath !== path ? legacyPath : null });
 }
 
 /** Create the first queued checkpoint. */
@@ -280,6 +326,13 @@ export function transitionApplicationState(state, nextPhase, patch = {}, { now, 
       ? state.blockers
       : [...new Set((patch.blockers ?? []).map((b) => cleanText(b, 500)).filter(Boolean))],
     lastUrl: persistentUrl(patch.lastUrl ?? state.lastUrl),
+    // Was `lastUrl` a login / CAPTCHA / bot wall? A resumed run must never
+    // reopen one of those as if it were the application; it restarts from the
+    // job's own URL instead. Any checkpoint that records a new URL without the
+    // flag clears it.
+    lastUrlUnsafe: patch.lastUrlUnsafe === true
+      ? true
+      : (patch.lastUrl !== undefined ? false : state.lastUrlUnsafe === true),
     updatedAt: at,
     resumeCount: Math.max(0, Number(patch.resumeCount ?? state.resumeCount ?? 0) || 0),
     phaseTimestamps: {

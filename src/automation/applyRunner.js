@@ -35,6 +35,7 @@ import { scanFields, resolveFormScope, detectValidationErrors } from './domScann
 import { fillScannedFields } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
+import { detectBlocker } from './guards.js';
 import { assertTruthfulSponsorship, isInvertedSponsorshipQuestion } from '../apply/screeningQA.js';
 import {
   APPLICATION_PHASE,
@@ -114,6 +115,8 @@ export async function assistApply({
       root: config?.root,
       statePath: options.statePath,
       store: deps.stateStore,
+      // Checkpoints are per search profile: see applicationStatePath.
+      profileId: config?.profile?.id ?? null,
     });
     result.applicationStatePath = stateStore?.path ?? (typeof options.statePath === 'string' ? options.statePath : null);
     const loaded = stateStore ? await stateStore.load?.() : null;
@@ -243,10 +246,18 @@ export async function assistApply({
   // never conflicts with an already-running browser (which would otherwise
   // forward the command to the live instance and leave a dead about:blank tab).
   // Pass userDataDir:false to force isolation.
+  //
+  // PER SEARCH PROFILE. One shared `.browser-profile` meant the second
+  // candidate inherited the first one's ATS sessions, autofill and saved
+  // logins — a Workday account signed in as somebody else. With an active
+  // profile id the folder is `.browser-profile-<profileId>[-<channel>]`.
+  // MIGRATION: installs with no profile id keep the historical
+  // `.browser-profile[-<channel>]` folder, so nobody is signed out by this
+  // change; after creating a profile, sign in once more in its own browser
+  // (or copy the old folder to the new name to carry the cookies over).
   let userDataDir = options.userDataDir ?? config?.runtime?.browserUserDataDir ?? null;
   if (userDataDir === null && config?.root) {
-    const dirName = channel ? `.browser-profile-${channel}` : '.browser-profile';
-    userDataDir = join(config.root, dirName);
+    userDataDir = join(config.root, browserProfileDirName({ channel, profileId: config?.profile?.id }));
   }
   if (userDataDir === false) userDataDir = null;
 
@@ -397,7 +408,11 @@ export async function assistApply({
     };
 
     // 1. Open + guard. Never proceed past a protected page.
-    const resumeUrl = result.resumed && applicationState.lastUrl ? applicationState.lastUrl : url;
+    // Resume at the saved step — unless that URL was a wall. Reopening a
+    // CAPTCHA/login page "where we left off" only ever hits the same wall (or
+    // an expired SSO callback); the job's own URL is the safe restart.
+    const resumeUrl = result.resumed && applicationState.lastUrl && !unsafeResumeUrl(applicationState)
+      ? applicationState.lastUrl : url;
     await checkpoint(APPLICATION_PHASE.OPENING, {
       currentStep: applicationState.currentStep,
       lastUrl: resumeUrl,
@@ -413,6 +428,7 @@ export async function assistApply({
         currentStep: applicationState.currentStep,
         lastUrl: nav.url ?? resumeUrl,
         blockers: result.blockers,
+        lastUrlUnsafe: true,
       }, `page blocked (${nav.guard.kind})`);
       return result;
     }
@@ -447,6 +463,7 @@ export async function assistApply({
             currentStep: stepNumber,
             lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
             blockers: result.blockers,
+            lastUrlUnsafe: true,
           }, `page blocked (${nav.guard.kind})`);
           return result;
         }
@@ -759,6 +776,7 @@ export async function assistApply({
           currentStep: stepNumber,
           lastUrl: afterAdvance.url ?? currentUrlOf(page) ?? resumeUrl,
           blockers: result.blockers,
+          lastUrlUnsafe: true,
         }, `page blocked after advancing (${afterAdvance.guard.kind})`);
         return result;
       }
@@ -846,6 +864,22 @@ export async function assistApply({
       await session.close?.();
     }
   }
+}
+
+/**
+ * Folder name of the persistent browser profile for a search profile/channel.
+ * @param {{channel?: string|null, profileId?: string|null}} args
+ * @returns {string}
+ */
+export function browserProfileDirName({ channel = null, profileId = null } = {}) {
+  const profile = String(profileId ?? '').trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return ['.browser-profile', profile, channel].filter(Boolean).join('-');
+}
+
+/** Was the checkpoint's last URL a wall (flagged, or a login-shaped URL)? */
+function unsafeResumeUrl(state) {
+  if (state?.lastUrlUnsafe === true) return true;
+  return detectBlocker({ url: String(state?.lastUrl ?? '') }).blocked;
 }
 
 /** Count selector matches (0 on error / missing selector). */
