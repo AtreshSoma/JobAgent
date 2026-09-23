@@ -301,6 +301,56 @@ function wordMatch(foldedText, term) {
  * @param {object} [geo] exclusions.geography config
  *   { usOnly, usLocationMarkers, nonUsLocationMarkers, nonUsCountryMarkers }
  */
+/**
+ * Location SENTENCES in a description: "based at our Hyderabad office",
+ * "located in Bengaluru", "Location: Manila, Philippines". Deliberately
+ * constructions that state where THIS role sits — never a bare mention, because
+ * US employers routinely write "offices in India and the Philippines" in their
+ * boilerplate (Capital One does, on US-located roles).
+ */
+const BODY_LOCATION_PATTERNS = [
+  /\b(?:based|located|situated)\s+(?:at|in|out\s+of)\s+(?:our\s+|the\s+)?([a-z][a-z .,'-]{1,60}?)(?=\s+(?:office|campus|location|site|hub|center|centre)\b|[.;:()\n]|$)/g,
+  /\b(?:work|job|primary|office)?\s*location\s*[:\-–]\s*([a-z][a-z .,'-]{1,60}?)(?=[.;()\n]|$)/g,
+];
+
+/**
+ * The first description phrase that places the role outside the US, or null.
+ *
+ * Conservative on purpose — a wrong answer here deletes a real US job:
+ *
+ *   - only the constructions in BODY_LOCATION_PATTERNS count;
+ *   - the captured place must match a configured foreign marker or a leading
+ *     ISO country prefix;
+ *   - ANY US signal in ANY captured place (a state, "United States", "remote")
+ *     cancels the whole verdict, so "based in Hyderabad or Austin, Texas" stays.
+ *
+ * @param {string} jdText
+ * @param {object} geo exclusions.geography
+ * @returns {string|null}
+ */
+export function bodyLocationEvidence(jdText, geo = {}) {
+  const text = foldAccents(normalizeText(jdText));
+  if (!text) return null;
+  const markers = [...(geo?.nonUsLocationMarkers ?? []), ...(geo?.nonUsCountryMarkers ?? [])]
+    .map((m) => normalizeText(m)).filter(Boolean);
+  let foreign = null;
+  for (const pattern of BODY_LOCATION_PATTERNS) {
+    pattern.lastIndex = 0;
+    let m;
+    while ((m = pattern.exec(text)) !== null) {
+      const place = m[1].trim();
+      if (!place) continue;
+      if (/\b(remote|anywhere|united states|usa|u\.s\.)\b/.test(place)) return null;
+      const signal = usLocationSignal(place);
+      if (signal.isUs && signal.strength !== 'abbreviation') return null;
+      if (!foreign && (leadingForeignCountry(place) || markers.some((mk) => wordMatch(place, mk)))) {
+        foreign = m[0].trim();
+      }
+    }
+  }
+  return foreign;
+}
+
 /** Country names/codes that mean the United States when stated explicitly. */
 
 
@@ -344,7 +394,17 @@ function checkUsOnly(job, geo = {}) {
 
   // Folded ONCE for every marker test below (see wordMatch).
   const loc = foldAccents(normalizeText(job.location));
-  if (!loc) return null; // unknown location -> defer, do not hard-discard
+  if (!loc) {
+    // Unknown location: defer — UNLESS the description itself states, in a
+    // location sentence, that the role sits somewhere outside the US. Measured:
+    // 3,955 stored Workday rows with a read JD had an empty location and 193 of
+    // them name India/Philippines cities; the only two Apply-tier Workday rows
+    // were Accenture postings saying "This position is based at our Hyderabad
+    // office." See bodyLocationEvidence for how narrow this is.
+    const evidence = bodyLocationEvidence(job.jdText, geo);
+    if (evidence) return discard('geography_mismatch', [`description places the role outside the US: "${evidence}"`]);
+    return null;
+  }
 
   // A leading ISO country prefix is checked FIRST and is conclusive, because it
   // is the one case where the state-abbreviation reader is actively wrong
