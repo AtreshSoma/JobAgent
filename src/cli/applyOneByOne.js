@@ -206,6 +206,8 @@ export async function runApply({ config, db, logger, options = {}, deps = {} } =
       // Open ONE browser; capture the live session so we can close it on demand.
       let session = null;
       const captureDeps = {
+        // Seen-confirmation is recorded even if you answer "decide later".
+        onHumanSubmitted: (update) => recordAssistResult(db, job.id, update),
         ...deps,
         createSession: async (a) => { session = await makeSession(a); return session; },
       };

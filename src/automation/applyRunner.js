@@ -926,8 +926,143 @@ export async function assistApply({
     // human (headed + stopped before submit). In headless/CI, always close.
     if (!result.sessionLeftOpen) {
       await session.close?.();
+    } else if (shouldWatchForHumanSubmit(result, options, session?.page)) {
+      // The human has the window now. If they submit and the ATS shows its
+      // confirmation page, record that as a human submission PENDING their
+      // confirmation — it used to go unrecorded until they remembered to press
+      // "Mark submitted", while the job still read "ready to submit" and a
+      // re-run could reopen it.
+      result.watchingForHumanSubmit = true;
+      const inspect = deps.inspectPage ?? inspectCurrentPage;
+      result.humanSubmitWatch = watchForHumanSubmission({
+        page: session.page,
+        url,
+        inspectPage: inspect,
+        pollMs: options.humanSubmitPollMs,
+        timeoutMs: options.humanSubmitWatchMs,
+        onConfirmed: async (verification) => {
+          const evidence = [
+            'confirmation page seen after hand-off to the human',
+            ...verification.signals,
+          ];
+          try {
+            const next = transitionApplicationState(applicationState, APPLICATION_PHASE.USER_SUBMITTED, {
+              lastUrl: verification.lastUrl ?? url,
+              submissionEvidence: evidence,
+              blockers: [],
+            }, { now: clock, detail: 'confirmation page detected after the human took over' });
+            applicationState = next;
+            if (stateStore) await stateStore.save?.(next);
+          } catch { /* the DB record below is still made */ }
+          const update = {
+            jobId: result.jobId,
+            status: LIFECYCLE.SUBMIT_UNVERIFIED,
+            submitted: false,
+            filled: result.filled,
+            blockers: [],
+            humanSubmissionDetected: {
+              at: nowIso(),
+              url: verification.lastUrl ?? null,
+              signals: verification.signals,
+            },
+            phases: [{ phase: APPLICATION_PHASE.USER_SUBMITTED, at: nowIso(), detail: 'confirmation page detected' }],
+          };
+          try { await deps.onHumanSubmitted?.(update); } catch { /* recording is best-effort here */ }
+        },
+      });
     }
   }
+}
+
+/** Should the runner watch a handed-over window for the human's submission? */
+function shouldWatchForHumanSubmit(result, options, page) {
+  if (options.watchHumanSubmit === false || result.submitted) return false;
+  if (![LIFECYCLE.READY_FOR_SUBMIT, LIFECYCLE.ASSIST_BLOCKED].includes(result.status)) return false;
+  return Boolean(page) && typeof page.on === 'function';
+}
+
+/** Default: stop watching a handed-over window after 45 minutes. */
+const HUMAN_SUBMIT_WATCH_MS = 45 * 60 * 1000;
+
+/**
+ * Watch a page the human is finishing for the ATS's confirmation page.
+ *
+ * Evidence is the SAME as for an auto-submit (`verifySubmission`), but only
+ * its strongest signal counts here: a visible confirmation message. "The URL
+ * changed and the form is gone" is what a human browsing away looks like, so
+ * it is not accepted. A confirmation phrase already visible when watching
+ * starts (a sidebar "Thanks for applying to other roles") only counts after
+ * the page has navigated. Stops on the first match, when the page closes, or
+ * after `timeoutMs`.
+ *
+ * @param {object} args
+ * @param {object} args.page Playwright page
+ * @param {string} args.url application URL (fallback for inspection)
+ * @param {Function} args.inspectPage inspectCurrentPage-compatible
+ * @param {(verification: object) => Promise<void>|void} args.onConfirmed
+ * @param {number} [args.pollMs=1500]
+ * @param {number} [args.timeoutMs]
+ * @returns {{ stop: () => void, readonly stopped: boolean, ready: Promise<void> }}
+ */
+export function watchForHumanSubmission({
+  page, url, inspectPage = inspectCurrentPage, onConfirmed, pollMs = 1500, timeoutMs = HUMAN_SUBMIT_WATCH_MS,
+} = {}) {
+  let stopped = false;
+  let checking = false;
+  let navigated = false;
+  let baselineHit = false;
+  const timers = [];
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    for (const t of timers) { clearInterval(t); clearTimeout(t); }
+    try { page.off?.('framenavigated', onNavigate); } catch { /* ignore */ }
+    try { page.off?.('close', stop); } catch { /* ignore */ }
+  };
+
+  const check = async () => {
+    if (stopped || checking) return;
+    if (baselineHit && !navigated) return;
+    checking = true;
+    try {
+      if (page.isClosed?.()) { stop(); return; }
+      const verification = await verifySubmission({ page, url, beforeUrl: null, inspectPage });
+      if (!stopped && verification.verified && verification.signals.includes('confirmation message')) {
+        stop();
+        await onConfirmed?.(verification);
+      }
+    } catch { /* a page mid-navigation is checked again on the next tick */ } finally {
+      checking = false;
+    }
+  };
+
+  function onNavigate(frame) {
+    try { if (frame && typeof page.mainFrame === 'function' && frame !== page.mainFrame()) { /* iframe */ } } catch { /* ignore */ }
+    navigated = true;
+    // Give the new document a moment to render its confirmation text.
+    const t = setTimeout(check, 250);
+    t.unref?.();
+    timers.push(t);
+  }
+
+  page.on('framenavigated', onNavigate);
+  page.on('close', stop);
+  const ready = (async () => {
+    try {
+      const html = await page.content();
+      baselineHit = SUBMIT_CONFIRMATION_RE.test(visibleText(html));
+    } catch { baselineHit = false; }
+    if (stopped) return;
+    const poll = setInterval(check, Math.max(50, Number(pollMs) || 1500));
+    poll.unref?.();
+    timers.push(poll);
+    const deadline = setTimeout(stop, Math.max(1000, Number(timeoutMs) || HUMAN_SUBMIT_WATCH_MS));
+    deadline.unref?.();
+    timers.push(deadline);
+  })();
+
+  return { stop, get stopped() { return stopped; }, ready };
 }
 
 /**

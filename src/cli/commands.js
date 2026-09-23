@@ -589,7 +589,10 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
     }
 
     const result = await assistFn({
-      packet, config, mode: effectiveMode, approval, dailyCount, options, deps,
+      packet, config, mode: effectiveMode, approval, dailyCount, options,
+      // A confirmation page seen after hand-off is recorded as a human
+      // submission awaiting the user's confirmation (never applied=1).
+      deps: { onHumanSubmitted: (update) => recordAssistResult(db, approval.job_id, update), ...deps },
     });
     results.push(result);
     counters.jobs_assisted += 1;
@@ -699,6 +702,16 @@ export function recordAssistResult(db, jobId, result) {
       patch.applied_at = new Date().toISOString();
       patch.status = 'submitted';
       patch.submitted_confirmation = `auto-submitted — confirmed by ${signals.join(', ') || 'post-submit check'}`;
+    } else if (result.humanSubmissionDetected) {
+      // The HUMAN submitted in the window we handed over and the ATS showed
+      // its confirmation page. That is evidence, not proof we can act on
+      // alone: the job moves to submit_unverified with the evidence recorded,
+      // and only the user's "Mark submitted" makes it applied.
+      const seen = result.humanSubmissionDetected;
+      patch.status = LIFECYCLE.SUBMIT_UNVERIFIED;
+      patch.submitted_confirmation = 'you appear to have submitted it — confirmation page seen'
+        + `${seen.url ? ` at ${seen.url}` : ''} (${(seen.signals ?? []).join(', ') || 'confirmation message'}); `
+        + 'confirm with "Mark submitted"';
     } else if (result.submitted === true) {
       // Defensive truthfulness guard: a caller may accidentally claim
       // `submitted` without the runner's positive verification result. Never

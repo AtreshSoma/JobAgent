@@ -1337,7 +1337,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             const result = await assistFn({
               packet, config, mode: 'LIVE_ASSIST', approval, dailyCount,
               options: { autoSubmit },
-              deps: { ...deps, shouldCancel: () => runState.cancelRequested },
+              deps: {
+                // A confirmation page the human reaches in the handed-over
+                // window is recorded as submit_unverified with its evidence.
+                onHumanSubmitted: (update) => { recordAssistResult(db, jobId, update); refreshTracker(); },
+                ...deps,
+                shouldCancel: () => runState.cancelRequested,
+              },
             });
             recordAssistResult(db, jobId, result);
             captureUnansweredQuestions(jobId, result);
