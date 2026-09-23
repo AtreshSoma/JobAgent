@@ -1653,6 +1653,9 @@ ul.plan li { margin: 3px 0; }
 .minitable tbody.show-tail tr.tail { display: table-row; }
 .breakdown-more { width: 100%; justify-content: center; margin-top: 2px; }
 .more-row td { border-bottom: 0; padding-top: 2px; }
+/* Never-evaluated jobs: stated, greyed, and visibly outside the scale. */
+.minitable tr.not-evaluated td { font-size: 12px; font-style: italic; border-bottom: 0; padding-top: 8px; }
+.card-head h3 .faint { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .analytics-head { margin: var(--s5) 0 var(--s2); font-size: 13px; }
 .analytics-toggle {
   display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;

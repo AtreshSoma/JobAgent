@@ -229,3 +229,27 @@ describe('closing a job can be undone, and can say why (U9)', () => {
     expect(app).toContain('if (job.decisionReason)');
   });
 });
+
+describe('numbers say what they count (U10)', () => {
+  const card = app.slice(app.indexOf('function renderSponsorship'), app.indexOf('function renderAnalytics'));
+
+  it('uses sponsorshipOpen and keeps never-evaluated jobs out of the verdicts', () => {
+    expect(card).toContain('const open = stats.sponsorshipOpen;');
+    expect(card).toContain('open.notEvaluated');
+    expect(card).toContain('not evaluated — closed before classification');
+    // Unclassified is never a row on the scale, and never "unknown".
+    expect(app).toContain("const SPONSORSHIP_SCALE = ['Confirmed', 'Likely', 'Unconfirmed', 'Denied'];");
+    expect(card).not.toContain('still unknown');
+  });
+
+  it('labels the health strip as the whole store', () => {
+    const facts = app.slice(app.indexOf('const HEALTH_FACTS'), app.indexOf('function statNode'));
+    expect(facts).toContain("label: 'in store'");
+    expect(facts).toContain("label: 'seen in last 24h'");
+  });
+
+  it('uses the server grade label instead of re-deriving a fit label', () => {
+    expect(app).toContain('return job.grade?.label ?? fitLabel(job.fit);');
+    expect(app).toContain('(${verdictLabel(j)})');
+  });
+});

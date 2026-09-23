@@ -540,8 +540,11 @@ function applyFilterObject(filter = {}) {
 
 /** Always shown: how big the corpus is and how fresh it is. */
 const HEALTH_FACTS = [
-  { key: 'jobsTracked', label: 'tracked', filter: { includeClosed: true }, title: 'Every job ever seen, including closed ones' },
-  { key: 'discoveredLast24h', label: 'found 24h', tone: 'hot', title: 'Jobs discovered in the last 24 hours' },
+  // Labelled as the WHOLE STORE, because that is what they count. "122,977
+  // tracked · 8,964 found 24h" sat above a board of 43 open jobs and read as
+  // though the board were hiding 122,934 of them.
+  { key: 'jobsTracked', label: 'in store', filter: { includeClosed: true }, title: 'Every job ever stored, including closed and filtered-out ones — the whole corpus, not this board' },
+  { key: 'discoveredLast24h', label: 'seen in last 24h', tone: 'hot', title: 'Postings discovery saw for the first time in the last 24 hours, across the whole store' },
   { key: 'postedLast24h', label: 'posted 24h', tone: 'hot', filter: { postedWithinHours: '24' }, title: 'Jobs whose POSTING is less than 24 hours old' },
   // The 24h count is often single digits while a week holds hundreds. Without
   // this chip the bar implies there is nothing to apply to.
@@ -717,7 +720,54 @@ function fillBreakdown(body, entries, rowFn, colspan) {
  * ranking, so "is this getting better or worse" could not be read off it at
  * all. Sorting an ordinal scale by frequency destroys the only thing it means.
  */
-const SPONSORSHIP_SCALE = ['Confirmed', 'Likely', 'Unconfirmed', 'Denied', 'Unclassified'];
+const SPONSORSHIP_SCALE = ['Confirmed', 'Likely', 'Unconfirmed', 'Denied'];
+
+/**
+ * "Can you apply?" — sponsorship verdicts, and only verdicts.
+ *
+ * The old card listed "Unclassified" (99,438 on a real store) as a fifth
+ * confidence next to real verdicts, and folded it into "still unknown" in the
+ * lead line — but those jobs were never evaluated at all: they closed before
+ * classification ran. Counting them as unknown made sponsorship look ten
+ * times less known than it is. They are now reported apart, greyed, and
+ * never added to a verdict.
+ *
+ * Prefers `stats.sponsorshipOpen` (open jobs only: { confirmed, likely,
+ * unconfirmed, denied, notEvaluated }); an older server's `bySponsorship`
+ * covers every stored job and has no per-bucket split of what is open.
+ */
+function renderSponsorship(stats) {
+  const body = $('sponRows');
+  body.textContent = '';
+  const open = stats.sponsorshipOpen;
+  const legacy = stats.bySponsorship ?? {};
+  const rows = SPONSORSHIP_SCALE.map((key) => {
+    const count = open ? Number(open[key.toLowerCase()] ?? 0) : Number(legacy[key]?.count ?? 0);
+    const strong = open ? null : Number(legacy[key]?.strong ?? 0);
+    return { key, count, strong };
+  });
+  const notEvaluated = open ? Number(open.notEvaluated ?? 0) : Number(legacy.Unclassified?.count ?? 0);
+  const max = Math.max(0, ...rows.map((r) => r.count));
+  const byKey = Object.fromEntries(rows.map((r) => [r.key, r.count]));
+  $('sponsorLead').textContent = `${fmt(byKey.Confirmed + byKey.Likely)} confirmed or likely · `
+    + `${fmt(byKey.Unconfirmed)} unconfirmed · ${fmt(byKey.Denied)} denied`
+    + (open ? ' — open jobs' : ' — every stored job');
+  // The strong-fit column only exists in the legacy shape.
+  $('sponRows').closest('table').querySelector('thead th:nth-child(3)').hidden = Boolean(open);
+  for (const row of rows) {
+    if (!row.count && !open) continue;
+    body.append(el('tr', {},
+      el('td', {}, el('span', { class: `chip ${esc(row.key)}`, text: row.key })),
+      el('td', { class: 'r' }, el('span', { class: 'num-with-bar' },
+        el('span', { class: 'n', text: fmt(row.count) }), bar(row.count, max))),
+      open ? null : el('td', { class: 'r' }, el('b', { class: row.strong > 0 ? 'yield-on' : 'yield-off', text: fmt(row.strong) }))));
+  }
+  if (notEvaluated > 0) {
+    body.append(el('tr', { class: 'not-evaluated' },
+      el('td', { colspan: open ? '2' : '3', class: 'faint' },
+        `${fmt(notEvaluated)} not evaluated — closed before classification, so they are not counted above.`)));
+  }
+}
 
 function renderAnalytics(stats) {
   const srcEntries = Object.entries(stats.bySource).sort((a, b) => b[1].found - a[1].found);
@@ -775,22 +825,7 @@ function renderAnalytics(stats) {
     }, 3);
   }
 
-  const spon = stats.bySponsorship ?? {};
-  const sponRows = $('sponRows');
-  sponRows.textContent = '';
-  const sponMax = Math.max(0, ...Object.values(spon).map((v) => v.count));
-  const viable = (spon.Confirmed?.count ?? 0) + (spon.Likely?.count ?? 0);
-  const unknown = (spon.Unconfirmed?.count ?? 0) + (spon.Unclassified?.count ?? 0);
-  $('sponsorLead').textContent = `${fmt(viable)} confirmed or likely · ${fmt(unknown)} still unknown`;
-  for (const key of SPONSORSHIP_SCALE) {
-    const v = spon[key];
-    if (!v) continue;
-    sponRows.append(el('tr', {},
-      el('td', {}, el('span', { class: `chip ${esc(key)}`, text: key })),
-      el('td', { class: 'r' }, el('span', { class: 'num-with-bar' },
-        el('span', { class: 'n', text: fmt(v.count) }), bar(v.count, sponMax))),
-      el('td', { class: 'r' }, el('b', { class: v.strong > 0 ? 'yield-on' : 'yield-off', text: fmt(v.strong) }))));
-  }
+  renderSponsorship(stats);
 
   renderDailyTrend(stats.daily ?? []);
   renderNextActions(stats.nextActions ?? []);
@@ -3378,7 +3413,7 @@ async function showCompare() {
   const rows = [
     ['Company', (j) => j.company],
     ['Role', (j) => j.title],
-    ['Score', (j) => `${j.score ?? '—'} (${j.fit})`],
+    ['Score', (j) => `${j.score ?? '—'} (${verdictLabel(j)})`],
     ['Grade', (j) => j.grade?.letter ?? '—'],
     ['Sponsorship', (j) => j.sponsorship ?? '—'],
     ['Posted', (j) => j.postedLabel],
