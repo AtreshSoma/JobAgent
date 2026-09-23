@@ -298,7 +298,10 @@
       const done = topics.filter((t) => progress[`${m.id}/${t.id}`]).length;
       const pct = topics.length ? Math.round((done / topics.length) * 100) : 0;
       const tools = (meta.tools || []).slice(0, 3).map((x) => `<span class="tool-chip sm">${x}</span>`).join("");
-      return `<button class="path-card" onclick="location.hash='#/${m.id}'">
+      // A hash link rather than onclick="location.hash=…": the dashboard serves
+      // this page under `script-src 'self'`, which refuses inline handlers, so
+      // every card was dead. An <a href> navigates with no script involved.
+      return `<a class="path-card" href="#/${m.id}">
         <div class="path-top"><div class="ic">${m.icon}</div>${levelBadge(meta.level)}</div>
         <h4>${m.title}</h4>
         <p>${m.summary || ""}</p>
@@ -308,7 +311,7 @@
           <span class="path-cta">View Syllabus →</span>
         </div>
         ${done ? `<div class="path-prog" title="${done}/${topics.length} complete"><span style="width:${pct}%"></span></div>` : ""}
-      </button>`;
+      </a>`;
     }).join("");
 
     const tech = TECH_STACK.map((t) => `<div class="tech-chip"><span class="tech-ic">${t.i}</span>${t.n}</div>`).join("");
@@ -329,8 +332,8 @@
           <h1>Everything you need to land a<br>Senior / Lead Data Engineer offer.</h1>
           <p>A complete, end-to-end course built from <strong>244 real Data Engineer job applications</strong> — every topic explained simply, with a hands-on scenario and interview-ready answers.</p>
           <div class="cta">
-            <button class="btn light" onclick="location.hash='#/intro/welcome'">Start learning free →</button>
-            <button class="btn outline" onclick="location.hash='#/intro/market'">See what's in demand</button>
+            <a class="btn light" href="#/intro/welcome">Start learning free →</a>
+            <a class="btn outline" href="#/intro/market">See what's in demand</a>
           </div>
         </section>
 
