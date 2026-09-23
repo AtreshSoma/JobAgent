@@ -84,16 +84,16 @@ describe('dashboard server — hardening and contracts', () => {
   });
 
   it('static assets: ETag + no-cache, 304 on If-None-Match, gzip, and HEAD without a body', async () => {
-    const first = await get('/assets/js/app.js', { 'accept-encoding': 'gzip' });
+    const first = await get('/assets/js/main.js', { 'accept-encoding': 'gzip' });
     expect(first.status).toBe(200);
     expect(first.headers.get('cache-control')).toBe('no-cache');
     const etag = first.headers.get('etag');
     expect(etag).toMatch(/^".+"$/);
     expect(first.headers.get('content-encoding')).toBe('gzip');
     await first.arrayBuffer();
-    const again = await get('/assets/js/app.js', { 'if-none-match': etag });
+    const again = await get('/assets/js/main.js', { 'if-none-match': etag });
     expect(again.status).toBe(304);
-    const head = await fetch(`${dash.url}/assets/js/app.js`, { method: 'HEAD' });
+    const head = await fetch(`${dash.url}/assets/js/main.js`, { method: 'HEAD' });
     expect(head.status).toBe(200);
     expect(head.headers.get('etag')).toBe(etag);
     expect((await head.arrayBuffer()).byteLength).toBe(0);
