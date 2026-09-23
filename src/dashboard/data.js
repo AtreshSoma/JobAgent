@@ -36,6 +36,7 @@ import {
 } from '../domain/appStatus.js';
 import { candidateTimeZone, dayOf } from '../domain/time.js';
 import { findPlaceholders } from '../config/placeholders.js';
+import { csvCell } from '../reports/csv.js';
 
 // The status vocabulary and the pure per-row rules moved to src/domain so the
 // tracker, reports and CLI can use them without importing this whole data
@@ -2187,11 +2188,6 @@ export function buildExportRows(db, { now = new Date(), includeClosed = true } =
   }));
 }
 
-/** Escape one CSV cell (RFC-4180: quote when it contains comma/quote/newline). */
-function csvCell(value) {
-  const s = String(value ?? '');
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 /**
  * Serialize export rows to a CSV string with a human-friendly header row.

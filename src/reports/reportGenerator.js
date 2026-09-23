@@ -14,9 +14,10 @@
  */
 
 import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
+import { csvCell } from './csv.js';
 
 import { dateStamp } from '../utils/dates.js';
 
@@ -124,16 +125,10 @@ export function summarize(jobs = []) {
 }
 
 /**
- * Escape a single CSV field (RFC 4180: quote when it contains , " or newline).
- * @param {unknown} value
- * @returns {string}
+ * Encode one CSV field. Kept under its historical name; the implementation is
+ * the shared encoder in ./csv.js (RFC 4180 quoting + formula neutralization).
  */
-export function csvField(value) {
-  if (value === null || value === undefined) return '';
-  const s = Array.isArray(value) ? value.join('; ') : String(value);
-  if (/[",\n\r]/.test(s)) return `"${s.replaceAll('"', '""')}"`;
-  return s;
-}
+export const csvField = csvCell;
 
 /**
  * Render one CSV row per job with a header line. No trailing newline.
@@ -248,9 +243,12 @@ ${htmlTable(['Score', 'Tier', 'Company', 'Title', 'Sponsorship', 'URL'], topRows
  * @param {object[]} args.jobs report rows
  * @param {string} args.outDir directory for the report files (created if needed)
  * @param {string} [args.stamp] filename stamp; defaults to today's YYYYMMDD
- * @returns {{ files: { json: string, csv: string, html: string }, summary: object }}
+ * @param {number|false} [args.keepDays=14] prune older report-YYYYMMDD files
+ *   afterwards (see pruneReports); false disables
+ * @param {Date} [args.now]
+ * @returns {{ files: { json: string, csv: string, html: string }, summary: object, pruned: string[] }}
  */
-export function generateReport({ jobs = [], outDir, stamp } = {}) {
+export function generateReport({ jobs = [], outDir, stamp, keepDays = REPORT_KEEP_DAYS, now = new Date() } = {}) {
   if (!outDir) throw new Error('generateReport requires an outDir');
   const tag = stamp ?? dateStamp();
   mkdirSync(outDir, { recursive: true });
@@ -264,5 +262,65 @@ export function generateReport({ jobs = [], outDir, stamp } = {}) {
   writeFileAtomic(files.json, JSON.stringify(summary, null, 2), 'utf8');
   writeFileAtomic(files.csv, renderCsv(jobs), 'utf8');
   writeFileAtomic(files.html, renderHtml(summary), 'utf8');
-  return { files, summary };
+  let pruned = [];
+  if (keepDays !== false) {
+    // Never let housekeeping fail the report that was just written.
+    try { pruned = pruneReports(outDir, { keepDays, now, keep: tag }); } catch { pruned = []; }
+  }
+  return { files, summary, pruned };
+}
+
+/** Days of per-run reports kept in reports/. */
+export const REPORT_KEEP_DAYS = 14;
+
+/** Only the files generateReport writes; audits and subfolders are never touched. */
+const REPORT_FILE_RE = /^report-(\d{8})\.(json|csv|html)$/;
+
+/**
+ * Delete report-YYYYMMDD.{json,csv,html} older than `keepDays` local days.
+ *
+ * Every run rewrote the day's three report files and nothing ever removed
+ * one, so reports/ grew by three files per run-day forever — each CSV a full
+ * dump of the run's rows (tens of MB on real runs). The newest `keepDays`
+ * calendar days (in the machine's local zone, today included) are kept.
+ *
+ * @param {string} dir
+ * @param {object} [options]
+ * @param {number} [options.keepDays=14]
+ * @param {Date} [options.now]
+ * @param {string} [options.timeZone] defaults to the process's local zone
+ * @param {{ readdir?: Function, rm?: Function }} [options.fs] injectable
+ * @param {string|null} [options.keep] a stamp that is never removed
+ * @returns {string[]} names removed
+ */
+export function pruneReports(dir, {
+  keepDays = REPORT_KEEP_DAYS, now = new Date(), timeZone = undefined, fs = {}, keep = null,
+} = {}) {
+  const days = Math.max(1, Math.floor(Number(keepDays) || REPORT_KEEP_DAYS));
+  const readdir = fs.readdir ?? readdirSync;
+  const rm = fs.rm ?? ((p) => rmSync(p, { force: true }));
+  const zone = timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const oldestKept = localStamp(new Date(now.getTime() - (days - 1) * 86_400_000), zone);
+  const removed = [];
+  let names = [];
+  try { names = readdir(dir); } catch { return removed; }
+  for (const name of names) {
+    const m = REPORT_FILE_RE.exec(name);
+    // `keep`: the stamp just written is never pruned, even when a caller
+    // backdates it (tests and re-runs pass an explicit old stamp).
+    if (!m || m[1] >= oldestKept || m[1] === keep) continue;
+    rm(join(dir, name));
+    removed.push(name);
+  }
+  return removed;
+}
+
+/** YYYYMMDD of `at` in `timeZone`. */
+function localStamp(at, timeZone) {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(at).replaceAll('-', '');
+  } catch {
+    return dateStamp(at);
+  }
 }

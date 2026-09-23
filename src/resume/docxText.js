@@ -36,9 +36,17 @@ const EOCD_MAX_SCAN = 65_557;
 const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 
 class DocxReadError extends Error {
-  constructor(message) {
+  /**
+   * @param {string} message
+   * @param {{code?: string}} [options] `code: 'DOCX_TOO_LARGE'` for a
+   *   decompression-bomb refusal; always carries statusCode 422 so a route can
+   *   answer "the file is wrong" rather than "the server broke"
+   */
+  constructor(message, { code = 'DOCX_UNREADABLE' } = {}) {
     super(message);
     this.name = 'DocxReadError';
+    this.code = code;
+    this.statusCode = 422;
   }
 }
 
@@ -98,8 +106,15 @@ function readZipEntry(buf, wanted) {
       if (method === 0) return Buffer.from(raw);
       if (method !== 8) throw new DocxReadError(`unsupported .docx compression method ${method}`);
       try {
-        return inflateRawSync(raw);
-      } catch {
+        // Bounded: the compressed-size check above says nothing about the
+        // INFLATED size, and deflate reaches ~1000:1 — an 8 MB upload (the
+        // upload cap) could expand to gigabytes inside this synchronous call
+        // and take the dashboard process down with it (a zip bomb).
+        return inflateRawSync(raw, { maxOutputLength: MAX_ENTRY_BYTES });
+      } catch (err) {
+        if (err instanceof RangeError || err?.code === 'ERR_BUFFER_TOO_LARGE') {
+          throw new DocxReadError('resume too large when decompressed', { code: 'DOCX_TOO_LARGE' });
+        }
         throw new DocxReadError('the document body inside the .docx could not be decompressed');
       }
     }

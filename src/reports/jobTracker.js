@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
-import { csvField } from './reportGenerator.js';
+import { csvCell as csvField } from './csv.js';
 import { formatPostedRelative } from '../utils/dates.js';
 import { deriveAppStatus, APP_STATUS } from '../domain/appStatus.js';
 import { jsonList } from '../utils/json.js';
