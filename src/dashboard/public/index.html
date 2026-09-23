@@ -78,7 +78,7 @@
       <button class="ghost" data-action="toggle-menu" aria-haspopup="true" aria-expanded="false" aria-controls="mainMenu">More ▾</button>
       <div class="menu-pop" id="mainMenu" role="menu">
         <button role="menuitem" data-action="run" data-phase="score" title="Recompute fit for jobs already on the board, from their stored descriptions. No network.">↻ Re-score existing jobs</button>
-        <hr>
+        <hr role="separator">
         <button role="menuitem" data-action="open-reports">📊 View reports…</button>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">🧾 Master resume…</button>
@@ -87,7 +87,7 @@
         <button role="menuitem" data-action="open-documents">📄 Resume library…</button>
         <button role="menuitem" data-action="export-jobs">⬇ Export all jobs + scores (CSV)</button>
         <button role="menuitem" data-action="export-tracker">⬇ Export application tracker (CSV)</button>
-        <hr>
+        <hr role="separator">
         <button role="menuitem" data-action="open-health">🩺 System health…</button>
         <a role="menuitem" class="btn" href="/learn/" target="_blank" rel="noopener">🎓 Interview Prep</a>
         <button role="menuitem" data-action="open-keys">⌨ Keyboard shortcuts</button>
@@ -355,9 +355,9 @@
           <div class="menu-label" role="presentation">Density</div>
           <button type="button" role="menuitemradio" aria-checked="true" data-action="set-density" data-density="comfortable">Comfortable</button>
           <button type="button" role="menuitemradio" aria-checked="false" data-action="set-density" data-density="compact">Compact</button>
-          <hr>
+          <hr role="separator">
           <div class="menu-label" role="presentation">Columns</div>
-          <div id="columnToggles"></div>
+          <div id="columnToggles" role="group" aria-label="Columns"></div>
         </div>
       </span>
       <label class="pagesize" for="pageSize"><span>Rows</span>

@@ -108,3 +108,26 @@ describe('a click costs one write and one board read (U3)', () => {
     for (const text of ['Refreshing…', 'Updated just now', 's ago']) expect(app).toContain(text);
   });
 });
+
+describe('menus follow the menu-button pattern (U5)', () => {
+  it('moves focus into the menu and around it with the keyboard', () => {
+    expect(app).toContain('function openMenu(pop');
+    expect(app).toContain("(focus === 'last' ? items.at(-1) : items[0])?.focus();");
+    for (const key of ["'ArrowDown'", "'ArrowUp'", "'Home'", "'End'", "'Escape'", "'Tab'"]) {
+      expect(app).toContain(`event.key === ${key}`);
+    }
+    // Escape returns focus to the trigger; leaving the menu closes it.
+    expect(app).toContain('closeMenu(pop, { returnFocus: true });');
+    expect(app).toContain("wrap.addEventListener('focusout'");
+  });
+
+  it('keeps menu semantics valid', () => {
+    expect(html).toContain('<hr role="separator">');
+    expect(html).not.toMatch(/<hr>/);
+    expect(html).toContain('id="columnToggles" role="group"');
+  });
+
+  it('returns focus to the trigger when a menu item opens a dialog', () => {
+    expect(app).toContain("const menu = from?.closest?.('.menu-pop');");
+  });
+});
