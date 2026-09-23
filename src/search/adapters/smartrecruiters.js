@@ -37,7 +37,7 @@
 import { normalizeJob } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, smartRecruitersJdText } from './atsSearch.js';
 import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
@@ -294,9 +294,8 @@ async function enrichCompany(postings, company, cfg) {
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(fetchImpl, url, { headers: discoveryHeaders() }, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'SmartRecruiters', url);
-  return res.json();
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, { headers: discoveryHeaders() }, requestTimeoutMs, 'SmartRecruiters');
 }
 
 /** Map one SmartRecruiters posting (list shape) to the normalized form. */

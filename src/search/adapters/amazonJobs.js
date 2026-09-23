@@ -33,7 +33,7 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
 import { searchTermsFor } from './workday.js';
 
@@ -184,14 +184,8 @@ export function searchUrl(query, offset = 0, pageSize = DEFAULT_PAGE_SIZE) {
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'application/json' }) },
-    requestTimeoutMs,
-  );
-  if (!res.ok) throw httpError(res, 'Amazon Jobs', url);
-  return res.json();
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, { headers: discoveryHeaders({ Accept: 'application/json' }) }, requestTimeoutMs, 'Amazon Jobs');
 }
 
 /**

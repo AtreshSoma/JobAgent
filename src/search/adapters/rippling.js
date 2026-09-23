@@ -33,7 +33,7 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
 import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
@@ -172,14 +172,8 @@ export async function run(source = {}, ctx = {}) {
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'application/json' }) },
-    requestTimeoutMs,
-  );
-  if (!res.ok) throw httpError(res, 'Rippling', url);
-  return res.json();
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, { headers: discoveryHeaders({ Accept: 'application/json' }) }, requestTimeoutMs, 'Rippling');
 }
 
 /**

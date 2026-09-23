@@ -8,7 +8,7 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout } from '../../utils/httpClient.js';
 
 export const adapterId = 'lever';
 
@@ -68,9 +68,8 @@ export async function run(source = {}, ctx = {}) {
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'Lever', url);
-  return res.json();
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, {}, requestTimeoutMs, 'Lever');
 }
 
 /** Map one Lever posting to the normalized shape. */

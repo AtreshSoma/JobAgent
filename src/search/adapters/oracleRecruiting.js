@@ -44,7 +44,7 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
 import { searchTermsFor } from './workday.js';
 import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
@@ -352,14 +352,10 @@ async function fetchTenant(cfg, ctx) {
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'application/json' }) },
-    requestTimeoutMs,
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(
+    fetchImpl, url, { headers: discoveryHeaders({ Accept: 'application/json' }) }, requestTimeoutMs, 'Oracle Recruiting',
   );
-  if (!res.ok) throw httpError(res, 'Oracle Recruiting', url);
-  return res.json();
 }
 
 /**

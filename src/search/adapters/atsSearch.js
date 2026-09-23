@@ -93,7 +93,7 @@ import { normalizeJob, htmlToText } from '../normalize.js';
 import { buildProfileVocabulary, classifyTitleFit } from '../../scoring/profileFit.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { normalizeText } from '../../utils/textNormalize.js';
 import { usLocationSignal } from '../../utils/usGeography.js';
 
@@ -883,12 +883,8 @@ const PROVIDERS = {
 export const PROVIDER_IDS = Object.freeze(Object.keys(PROVIDERS));
 
 async function fetchJson(fetchImpl, url, label, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'application/json' }) },
-    requestTimeoutMs,
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(
+    fetchImpl, url, { headers: discoveryHeaders({ Accept: 'application/json' }) }, requestTimeoutMs, label,
   );
-  if (!res.ok) throw httpError(res, label, url);
-  return res.json();
 }

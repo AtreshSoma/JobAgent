@@ -28,7 +28,7 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout } from '../../utils/httpClient.js';
 import { createHostGate } from '../../utils/hostGate.js';
 import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
@@ -636,7 +636,8 @@ function pageBody(cfg, offset, searchText = cfg.searchText) {
 }
 
 async function postJson(fetchImpl, url, body, requestTimeoutMs, signal) {
-  const res = await fetchWithTimeout(fetchImpl, url, {
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
@@ -644,9 +645,7 @@ async function postJson(fetchImpl, url, body, requestTimeoutMs, signal) {
     // cancelled run aborts the request already on the wire instead of waiting
     // out the full requestTimeoutMs.
     ...(signal ? { signal } : {}),
-  }, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'Workday', url);
-  return res.json();
+  }, requestTimeoutMs, 'Workday');
 }
 
 /**
@@ -753,9 +752,7 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
 }
 
 async function getJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(fetchImpl, url, { headers: { Accept: 'application/json' } }, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'Workday detail', url);
-  return res.json();
+  return fetchJsonWithTimeout(fetchImpl, url, { headers: { Accept: 'application/json' } }, requestTimeoutMs, 'Workday detail');
 }
 
 /**

@@ -39,7 +39,7 @@
 import { parseJsonLdJobs, normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchTextWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
 import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
 
@@ -328,14 +328,8 @@ export function cleanLocation(location) {
 }
 
 async function fetchText(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'text/html,application/xhtml+xml' }) },
-    requestTimeoutMs,
-  );
-  if (!res.ok) throw httpError(res, 'iCIMS', url);
-  return res.text();
+  // One deadline for headers AND body — see fetchTextWithTimeout.
+  return fetchTextWithTimeout(fetchImpl, url, { headers: discoveryHeaders({ Accept: 'text/html,application/xhtml+xml' }) }, requestTimeoutMs, 'iCIMS');
 }
 
 /**
