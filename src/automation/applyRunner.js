@@ -72,7 +72,9 @@ import { join } from 'node:path';
  * @returns {Promise<object>} assist result (see fields assembled below)
  */
 export async function assistApply({
-  packet, config, mode, approval = {}, dailyCount = 0, options = {}, deps = {},
+  // `mode` and `approval` stay in the documented call shape (callers pass
+  // them), but nothing in this function reads them.
+  packet, config, mode: _mode, approval: _approval, dailyCount = 0, options = {}, deps = {},
 } = {}) {
   const url = packet?.job?.url;
   const result = {
@@ -1204,7 +1206,7 @@ export function submissionFailureSignal({ status = null, html = '' } = {}) {
  * @returns {Promise<{ verified: boolean, signals: string[] }>}
  */
 async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
-  let after = null;
+  let after;
   try { after = await inspectPage(page, url); } catch { after = null; }
   if (!after) return { verified: false, signals: ['post-submit inspection failed'], lastUrl: currentUrlOf(page) ?? beforeUrl };
   if (after.guard?.blocked) {
@@ -1213,7 +1215,7 @@ async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
 
   const signals = [];
   let html = after.html ?? '';
-  let formGone = false;
+  let formGone;
   try {
     // The confirmation (and any leftover form) may live inside an embedded ATS
     // iframe — include its content and its field count.

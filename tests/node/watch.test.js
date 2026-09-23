@@ -97,7 +97,7 @@ describe('runWatch loop', () => {
   it('runs a bounded number of cycles and never auto-submits', async () => {
     const { db, logger, config } = makeCtx(root);
     let prepared = 0;
-    const runPrepareAppsFn = vi.fn(async (args) => {
+    const runPrepareAppsFn = vi.fn(async (_args) => {
       // Honor the prepareFilter contract so the loop logic is exercised.
       prepared += 1;
       return { queued: prepared === 1

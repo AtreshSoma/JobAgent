@@ -194,7 +194,7 @@ function collectFields() {
 
   // Tag (never drop) incidental controls, so callers decide what to ignore.
   for (const field of out) {
-    let el = null;
+    let el;
     try { el = field.selector ? document.querySelector(field.selector) : null; } catch { el = null; }
     if (!el && field.kind === 'radio' && field.options?.[0]?.selector) {
       try { el = document.querySelector(field.options[0].selector); } catch { el = null; }
@@ -277,10 +277,10 @@ export async function resolveFormScope(page, { timeoutMs = 3000, pollMs = 150 } 
     let pendingChild = false;
     for (const f of frames) {
       if (!f || typeof f.parentFrame !== 'function') continue;
-      let parent = null;
+      let parent;
       try { parent = f.parentFrame(); } catch { continue; }
       if (!parent) continue;
-      let url = '';
+      let url;
       try { url = f.url() || ''; } catch { url = ''; }
       if (ATS_FRAME_RE.test(url)) embeds.push(f);
       else if (url === '' || url === 'about:blank') pendingChild = true;

@@ -221,7 +221,7 @@ export async function uploadFiles(page, fillPlan = {}, { dryRun = false, fileExi
       else blockers.push(message);
       continue;
     }
-    let count = 0;
+    let count;
     try {
       count = await page.locator(u.selector).count();
     } catch {

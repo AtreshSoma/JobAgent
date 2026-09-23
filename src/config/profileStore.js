@@ -218,7 +218,7 @@ export function writeProfile(root, values = {}) {
  *   profile is active (candidate.json is then the source of truth already)
  */
 function writeThroughToProfile(root, values) {
-  let active = null;
+  let active;
   try {
     active = readActiveProfile(root);
   } catch {

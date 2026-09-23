@@ -750,7 +750,8 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   let resumePdfPath = null;
   let resumePreviewWarning = null;
   let resumeTailored = false;
-  let resumeWarning = null;
+  // Assigned on every path below: from the tailor result, or by the catch.
+  let resumeWarning;
   let resumeValidation = null;
   let resumeAtsReport = null;
   let resumeTailoring = null;
