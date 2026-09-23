@@ -73,7 +73,7 @@ describe('required fields', () => {
 
   let browser;
   beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
-  afterAll(async () => { await browser?.close(); });
+  afterAll(async () => { await browser?.close(); }, 30_000);
 
   it('reads blank required controls from the live DOM', async () => {
     const page = await browser.newPage();

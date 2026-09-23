@@ -40,7 +40,7 @@ import {
 import { fillScannedFields, isSensitiveChoiceLabel } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
-import { detectBlocker } from './guards.js';
+import { detectBlocker, visibleText } from './guards.js';
 import {
   assertTruthfulSponsorship, isInvertedSponsorshipQuestion, isSponsorshipTopic,
 } from '../apply/screeningQA.js';
@@ -1022,24 +1022,8 @@ const SUBMIT_FAILURE_RE = new RegExp([
   '\\brequest (?:has )?failed\\b',
 ].join('|'), 'i');
 
-/**
- * Visible-ish text of an HTML document: scripts, styles and markup removed.
- *
- * Confirmation and failure phrases both appear verbatim inside bundled
- * JavaScript on most ATSes, so matching raw HTML reports whichever template the
- * page happens to ship rather than what it is actually showing a human.
- *
- * @param {string} html
- * @returns {string}
- */
-export function visibleText(html = '') {
-  return String(html ?? '')
-    .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+/** Re-exported: the page guard and submit verification share one definition. */
+export { visibleText };
 
 /**
  * Does this page say the request FAILED?

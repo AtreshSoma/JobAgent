@@ -120,7 +120,7 @@ describe('read-back contradiction check', () => {
 describe('read-back against a live DOM', () => {
   let browser;
   beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
-  afterAll(async () => { await browser?.close(); });
+  afterAll(async () => { await browser?.close(); }, 30_000);
 
   it('clears a select whose widget committed the opposite answer', async () => {
     const page = await browser.newPage();

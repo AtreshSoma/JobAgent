@@ -85,4 +85,25 @@ describe('detectBlocker', () => {
     expect(v.kind).toBe(null);
     expect(isSafeToProceed({ html: 'apply now', status: 200 })).toBe(true);
   });
+
+  it('ignores wall phrases that exist only inside script bundles', () => {
+    // Regression: ATS bundles ship "please sign in to continue" / "unusual
+    // traffic" as error templates; matching raw HTML stopped clean forms.
+    const page = '<form><label>Email <input id="email"></label></form>'
+      + '<script>const t={login:"Please sign in to continue",bot:"Unusual traffic from your network"}</script>';
+    expect(detectBlocker({ html: page, status: 200 }).blocked).toBe(false);
+    expect(detectBlocker({ html: '<p>Please sign in to continue</p>', status: 200 }).kind).toBe('login');
+  });
+
+  it('counts bot-vendor tokens only on thin pages or next to a challenge element', () => {
+    const content = '<main>' + 'Lead Data Engineer responsibilities and benefits. '.repeat(200) + '</main>';
+    const sensor = '<script src="https://js.datadome.co/tags.js"></script><div class="cf-ray-beacon"></div>'
+      + '<script>window._pxAppId="PXabc"; /* perimeterx */</script>';
+    expect(detectBlocker({ html: content + sensor, status: 200 }).blocked).toBe(false);
+    expect(detectBlocker({ html: '<p>Access to this page is restricted.</p>' + sensor, status: 200 }).kind).toBe('bot');
+    expect(detectBlocker({
+      html: content + '<iframe src="https://geo.captcha-delivery.com/captcha/?x=1"></iframe><script src="https://js.datadome.co/tags.js"></script>',
+      status: 200,
+    }).kind).toBe('bot');
+  });
 });
