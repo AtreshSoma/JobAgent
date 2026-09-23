@@ -62,16 +62,18 @@
 
 import { createServer } from 'node:http';
 import {
-  copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync,
+  copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync,
   rmSync, statSync, writeFileSync,
 } from 'node:fs';
 import {
   join, dirname, normalize, extname, isAbsolute, resolve, basename,
 } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { ensureResumePdf } from '../resume/pdfPreview.js';
 import { checkJobLink } from './linkHealth.js';
+import { acquireRunLock, RunLockError } from '../utils/runLock.js';
+import { gzipSync } from 'node:zlib';
 
 import { buildRca, sanitizeErrorMessage, inferScope } from '../utils/failureRca.js';
 import { isPublicHttpUrl } from '../utils/publicUrl.js';
@@ -82,7 +84,7 @@ import {
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
   buildDocuments, buildMasterResume, MASTER_RESUME_RELATIVE, MASTER_HISTORY_RELATIVE,
-  setDuringBulkRun,
+  setDuringBulkRun, todayQueue, undoDecision, noteUserMutation,
 } from './data.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import {
@@ -147,6 +149,46 @@ const MAX_MASTER_BACKUPS = 10;
 
 /** Upload body cap: base64 inflates the payload by ~4/3, plus JSON overhead. */
 const MAX_UPLOAD_BODY_BYTES = 12 * 1024 * 1024;
+
+/** /api/runs page size: default and ceiling. */
+const RUNS_DEFAULT_LIMIT = 20;
+const RUNS_MAX_LIMIT = 100;
+
+/**
+ * One run_log row as /api/runs reports it: the raw columns (kept for existing
+ * readers) plus a camelCase summary — counters grouped, the per-source table
+ * parsed, and an error COUNT so a list can flag a bad run without parsing.
+ *
+ * @param {object} row listRunLogs() row
+ * @returns {object}
+ */
+export function runSummary(row = {}) {
+  const counters = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (key.startsWith('jobs_') && value !== null && value !== undefined) counters[key] = Number(value);
+  }
+  let perSource = [];
+  try { perSource = row.per_source ? JSON.parse(row.per_source) : []; } catch { perSource = []; }
+  let errorCount = 0;
+  if (row.errors) {
+    try {
+      const parsed = JSON.parse(row.errors);
+      errorCount = Array.isArray(parsed) ? parsed.reduce((n, e) => n + (Number(e?.count) || 1), 0) : 1;
+    } catch { errorCount = 1; }
+  }
+  const { per_source: _perSource, ...raw } = row;
+  return {
+    ...raw,
+    runId: row.run_id ?? null,
+    mode: row.mode ?? null,
+    startedAt: row.started_at ?? null,
+    endedAt: row.ended_at ?? null,
+    durationMs: row.durationMs ?? null,
+    counters,
+    perSource: Array.isArray(perSource) ? perSource : [],
+    errorCount,
+  };
+}
 
 /**
  * Fold RCA entries that say the same thing into one row carrying a count.
@@ -214,19 +256,49 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   // and the page would look like it had saved nothing.
   let config = bootConfig;
   const extensionKey = deps.extensionKey ?? process.env.JOB_AGENT_EXTENSION_KEY ?? '';
+  // Each run gets its OWN JobLogger (`runDeps.logger`, see startRun). Passing
+  // the dashboard SESSION's logger made the pipeline's endRun() write every
+  // run's counters to the session's run id — which upserted a mode='unknown'
+  // run_log row and merged every run of the session into it.
   const runners = {
     // "Find New Jobs" must leave jobs ON THE BOARD. The bare discover phase
     // only writes data/found_jobs.json — never the SQLite DB the board reads —
     // so the button appeared to do nothing (header stuck at "0 found in last
     // 24h" no matter how many jobs the run found). Route it through the
     // scoring pipeline, which discovers, scores, AND persists in one pass.
-    discover: deps.discoverFn ?? ((runDeps = {}) => runScore({ config, db, logger, deps: { ...deps, ...runDeps } })),
+    discover: deps.discoverFn ?? (({ logger: runLogger, ...runDeps } = {}) => runScore({
+      config, db, logger: runLogger ?? logger, deps: { ...deps, ...runDeps },
+    })),
     // "Re-score" recomputes fit for jobs ALREADY on the board from their stored
     // JDs — no network, no re-discovery. (It used to silently re-run the full
     // discovery pipeline, which is what the Find button is for.)
-    score: deps.scoreFn ?? ((runDeps = {}) => runRescore({ config, db, logger, deps: { ...deps, ...runDeps } })),
-    prepare: deps.prepareFn ?? ((runDeps = {}) => runPrepareApps({ config, db, logger, deps: { ...deps, ...runDeps } })),
+    score: deps.scoreFn ?? (({ logger: runLogger, ...runDeps } = {}) => runRescore({
+      config, db, logger: runLogger ?? logger, deps: { ...deps, ...runDeps },
+    })),
+    prepare: deps.prepareFn ?? (({ logger: runLogger, ...runDeps } = {}) => runPrepareApps({
+      config, db, logger: runLogger ?? logger, deps: { ...deps, ...runDeps },
+    })),
   };
+
+  /**
+   * Take the cross-process run lock (src/utils/runLock.js) for a run this
+   * server starts, or throw a 409 that names who holds it. Without a project
+   * root (unit-test servers) there is no data/ directory to lock.
+   * @returns {{ release: () => void }}
+   */
+  function takeRunLock(phase) {
+    const root = config?.root;
+    const enabled = deps.runLock ?? process.env.JOB_AGENT_RUN_LOCK !== 'off';
+    if (!root || !enabled) return { release() {} };
+    try {
+      return (deps.acquireRunLockImpl ?? acquireRunLock)({ root, owner: 'dashboard', phase });
+    } catch (err) {
+      if (err instanceof RunLockError || err?.holder) {
+        throw Object.assign(new Error(err.message), { statusCode: 409, holder: err.holder });
+      }
+      throw err;
+    }
+  }
   const assistFn = deps.assistFn ?? assistApply;
 
   /** Single mutable run/assist state, surfaced at /api/run/status. */
@@ -241,7 +313,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   const inFlight = new Set();
   const track = (promise) => {
     inFlight.add(promise);
-    promise.finally(() => inFlight.delete(promise));
+    // `.finally()` returns a NEW promise that re-rejects when `promise` does.
+    // Nothing awaited it, so a rejected background task surfaced a second time
+    // as an unhandled rejection. The catch absorbs only that derived copy; the
+    // original is still returned (and still rejects) for whoever awaits it.
+    promise.catch(() => {}).finally(() => inFlight.delete(promise));
     return promise;
   };
 
@@ -298,6 +374,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     try {
       const loader = deps.loadConfigImpl ?? loadConfig;
       config = loader({ root, loadEnv: false });
+      // A new profile / scoring / gate changes what the board SHOWS without
+      // writing a row, so the data-keyed caches must be told.
+      noteUserMutation();
       return null;
     } catch (err) {
       const message = sanitizeErrorMessage(err.message);
@@ -686,11 +765,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       throw Object.assign(new Error(`${label} is not available for this job`), { statusCode: 404 });
     }
     const candidate = workspaceArtifact(raw);
+    // Only the two document types this route is for. The path comes from a DB
+    // column, and containment alone would still serve ANY file inside the
+    // workspace — .env, the SQLite file, the candidate config — under a
+    // resume content type, if a row ever pointed at one.
+    const extension = extname(candidate).toLowerCase();
+    if (extension !== '.pdf' && extension !== '.docx') {
+      throw Object.assign(new Error('the stored resume is not a PDF or DOCX file'), { statusCode: 422 });
+    }
     const size = statSync(candidate).size;
     if (size > MAX_RESUME_PREVIEW_BYTES) {
       throw Object.assign(new Error('resume is too large to preview'), { statusCode: 413 });
     }
-    const extension = extname(candidate).toLowerCase();
     const type = extension === '.pdf'
       ? 'application/pdf'
       : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -735,9 +821,24 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     return candidate;
   }
 
-  /** Keep the history directory bounded — it is a safety net, not an archive. */
+  /**
+   * Keep the history directory bounded — it is a safety net, not an archive.
+   *
+   * Lists the directory itself. It used to call masterResumeState() — which
+   * re-extracts the whole master resume's text and scans the jobs table for
+   * stale packets — only to read the backup list, and the upload then called it
+   * AGAIN for its response: two full builds per upload, one thrown away.
+   */
   function pruneBackups(historyDir) {
-    const kept = masterResumeState().backups ?? [];
+    let names = [];
+    try { names = readdirSync(historyDir); } catch { return; }
+    const kept = names
+      .filter((name) => /^MASTER_RESUME\..+\.docx$/i.test(name))
+      .map((name) => {
+        try { return { name, mtimeMs: statSync(join(historyDir, name)).mtimeMs }; } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.mtimeMs - a.mtimeMs);
     for (const stale of kept.slice(MAX_MASTER_BACKUPS)) {
       try { rmSync(join(historyDir, stale.name), { force: true }); }
       catch (err) { logger?.warn?.(`could not prune old master resume ${stale.name}: ${err.message}`); }
@@ -784,6 +885,8 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     try {
       extracted = extractDocxText(bytes);
     } catch (err) {
+      // A decompression bomb gets its own plain answer; anything else is "unreadable".
+      if (err?.code === 'DOCX_TOO_LARGE') fail('resume too large when decompressed', 422);
       fail(`the .docx could not be read: ${err.message}`, 422);
     }
     if (extracted.wordCount < MIN_MASTER_RESUME_WORDS) {
@@ -888,7 +991,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       err.statusCode = 409;
       throw err;
     }
+    // Another PROCESS (a CLI discover / watch) may be writing the same rows.
+    const runLock = takeRunLock(phase);
     const runId = randomUUID();
+    // This run's own logger: its run id, its log lines, its run_log row.
+    const runLogger = typeof logger?.forRun === 'function' ? logger.forRun(runId) : logger;
     const sourceItems = phase === 'discover'
       ? (config?.jobboards?.sources ?? [])
         .filter((source) => source.enabled)
@@ -951,11 +1058,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     // Fire and forget from the request's perspective; tracked so shutdown can
     // drain the work before the database is closed.
     track((async () => {
+      let r = null;
       try {
-        const r = await runners[phase]({
+        r = await runners[phase]({
           shouldCancel: () => runState.cancelRequested,
           abortSignal: runAbort.signal,
           searchHooks: { onSource },
+          logger: runLogger,
         });
         // Per-source failures (a board that timed out, a token that expired)
         // do NOT fail the run — valid results from healthy sources were kept.
@@ -1018,17 +1127,21 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         // Close the run_log row with what the run actually did. updateRunLog
         // upserts, so a run whose opening insert failed still leaves a record.
         try {
-          const counters = runState.lastResult?.counters ?? {};
+          // THIS run's counters only (a failed run has none — it used to
+          // record the PREVIOUS run's lastResult). Every numeric counter is
+          // passed; updateRunLog keeps the ones run_log has a column for, so
+          // jobs_new / jobs_discarded_stale / … are no longer dropped.
+          const counters = r?.counters ?? {};
+          const numeric = Object.fromEntries(Object.entries(counters)
+            .filter(([key, value]) => key.startsWith('jobs_') && Number.isFinite(Number(value)))
+            .map(([key, value]) => [key, Number(value)]));
           db.updateRunLog?.(runId, {
+            jobs_found: 0, jobs_scored: 0, jobs_queued: 0, jobs_prepared: 0, jobs_applied: 0, jobs_discarded: 0,
+            ...numeric,
             mode: phase,
             started_at: runStartedAt,
             ended_at: runState.finishedAt,
-            jobs_found: Number(counters.jobs_found ?? 0),
-            jobs_scored: Number(counters.jobs_scored ?? 0),
-            jobs_queued: Number(counters.jobs_queued ?? 0),
-            jobs_prepared: Number(counters.jobs_prepared ?? 0),
-            jobs_applied: Number(counters.jobs_applied ?? 0),
-            jobs_discarded: Number(counters.jobs_discarded ?? 0),
+            per_source: Array.isArray(r?.perSource) ? JSON.stringify(r.perSource.slice(0, 100)) : null,
             errors: runState.lastError
               ? runState.lastError
               : (runState.rca.length ? JSON.stringify(runState.rca.slice(0, 20)) : null),
@@ -1036,6 +1149,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         } catch (err) {
           logger?.warn?.({ runId, phase, err: err.message }, 'could not close run_log row');
         }
+        runLock.release();
+        // The spreadsheet mirrors the table: rewrite it ONCE per run, at the end.
+        refreshTracker();
       }
     })());
     return { started: true, phase, runId };
@@ -1335,7 +1451,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     try {
       await route(req, res);
     } catch (err) {
-      sendJson(res, err.statusCode ?? 500, { error: sanitizeErrorMessage(err.message) });
+      // A malformed percent-escape in the path (`/api/jobs/%E0%A4`) makes
+      // decodeURIComponent throw URIError — the request is wrong, not the
+      // server, so it is a 400 rather than a 500.
+      const status = err instanceof URIError ? 400 : (err.statusCode ?? 500);
+      const body = { error: sanitizeErrorMessage(err instanceof URIError ? 'malformed URL escape in the request path' : err.message) };
+      if (err.holder) body.holder = err.holder;
+      if (res.headersSent) { res.end(); return; }
+      sendJson(res, status, body);
     }
   });
 
@@ -1408,6 +1531,20 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       }
       if (req.method === 'POST' && action === 'result') {
         const body = await readBody(req);
+        // The extension may only REPORT on a job it was given an approved
+        // packet for. This route used to accept any id: an unknown one created
+        // nothing but still "recorded", and a submitted (or unverified-submit)
+        // job could be flipped back to assist_started / ready_for_submit —
+        // un-submitting an application and re-opening it for a second fill.
+        const current = db.getJob?.(jobId);
+        if (!current) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+        if (isSubmittedOrUnverified(current)) {
+          return sendJson(res, 409, { error: 'this job is already submitted (or awaiting submit verification) — result not recorded' });
+        }
+        const approvalRow = db.getApprovalByJob?.(jobId);
+        if (!approvalRow || approvalRow.approval_status !== APPROVAL_STATUS.APPROVED) {
+          return sendJson(res, 409, { error: 'this job\'s packet is not human-approved — approve it before using the extension' });
+        }
         const filled = Array.isArray(body.filled) ? body.filled.slice(0, 120).map((x) => ({
           field: String(x?.field ?? '').slice(0, 80),
           label: String(x?.label ?? '').slice(0, 120),
@@ -1431,8 +1568,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         // employer URL. Future extension runs open the useful direct page
         // instead of bouncing through LinkedIn/Indeed again.
         if (body.contextVerified === true && isSafeObservedApplicationUrl(body.observedUrl)) {
-          const current = db.getJob?.(jobId);
-          if (current && isAggregatorUrl(current.url)) {
+          if (isAggregatorUrl(current.url)) {
             db.upsertJob({ id: jobId, url: String(body.observedUrl).slice(0, 2048) });
           }
         }
@@ -1453,14 +1589,27 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (String(req.headers['sec-fetch-site'] ?? '').toLowerCase() === 'cross-site') {
       return sendJson(res, 403, { error: 'forbidden: cross-site requests are not allowed' });
     }
-    if (req.method !== 'GET' && !isAllowedOrigin(req.headers.origin)) {
+    const readOnly = req.method === 'GET' || req.method === 'HEAD';
+    if (!readOnly && !isAllowedOrigin(req.headers.origin)) {
       return sendJson(res, 403, { error: 'forbidden: cross-origin requests are not allowed' });
     }
+    // CSRF: a state-changing request must be one a plain HTML form or an
+    // <img>/no-cors fetch CANNOT send. Those can only produce the three
+    // "simple" content types (form-urlencoded, multipart, text/plain) and no
+    // custom headers, and some browsers omit Origin on them — which the check
+    // above treats as a same-origin client. Requiring JSON, or the custom
+    // `X-Job-Agent: 1` header the dashboard sends on every request, forces a
+    // CORS preflight that a foreign page can never pass.
+    if (!readOnly && !isTrustedMutation(req)) {
+      return sendJson(res, 403, {
+        error: 'forbidden: send JSON (content-type: application/json) or the X-Job-Agent: 1 header',
+      });
+    }
 
-    if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
+    if (readOnly && (path === '/' || path === '/index.html')) {
       const html = readFileSync(join(PUBLIC_DIR, 'index.html'), 'utf8');
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      res.end(html);
+      res.end(req.method === 'HEAD' ? undefined : html);
       return;
     }
     // Interview-prep mini-site, mounted under /learn (a separate hash-routed SPA).
@@ -1478,11 +1627,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return;
     }
     // Static assets (css/js/img/fonts) for the dashboard and the /learn mini-site.
-    if (req.method === 'GET' && (path.startsWith('/assets/') || path.startsWith('/learn/assets/'))) {
-      return serveStatic(res, path);
+    if (readOnly && (path.startsWith('/assets/') || path.startsWith('/learn/assets/'))) {
+      return serveStatic(req, res, path);
     }
     if (req.method === 'GET' && path === '/api/stats') {
-      return sendJson(res, 200, dashboardStats(db, { now: nowDate(), config }));
+      // Stale-while-revalidate: a stats rebuild blocks this single-threaded
+      // server for seconds on a large store; the tiles can show the last value
+      // (flagged `stale: true`) while one rebuild runs after the response.
+      return sendJson(res, 200, dashboardStats(db, { now: nowDate(), config, allowStale: true }));
+    }
+    // The Today queue: the ten next actions + setup notices (see todayQueue).
+    if (req.method === 'GET' && path === '/api/today') {
+      return sendJson(res, 200, todayQueue(db, { now: nowDate(), config }));
     }
     if (req.method === 'GET' && path === '/api/jobs') {
       const filters = Object.fromEntries(url.searchParams.entries());
@@ -1513,6 +1669,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
        * Held in a finally so a failed search can never strand the lock and
        * leave every later run answering 409.
        */
+      const searchLock = takeRunLock('role_search');
       Object.assign(runState, {
         running: true, phase: `role search: ${query}`, startedAt: new Date().toISOString(),
         finishedAt: null, lastError: null, cancelRequested: false,
@@ -1528,6 +1685,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       } finally {
         runState.running = false;
         runState.finishedAt = new Date().toISOString();
+        searchLock.release();
       }
     }
     /*
@@ -1547,7 +1705,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       const query = String(url.searchParams.get('query') ?? '').trim();
       if (!query) return sendJson(res, 400, { error: 'which search should be cleared?' });
       const removed = db.deleteRoleSearch?.(query) ?? 0;
-      return sendJson(res, 200, { query, removed });
+      // `kept`: rows the user had acted on (applied, decided, packet, queued)
+      // are re-owned by the personalized board instead of deleted.
+      return sendJson(res, 200, { query, removed, kept: db.lastRoleSearchKept ?? 0 });
     }
     if (req.method === 'GET' && path === '/api/run/status') {
       return sendJson(res, 200, runState);
@@ -1556,8 +1716,10 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     // nothing and read by nothing, so "what did last night's run do?" had no
     // answer anywhere in the product.
     if (req.method === 'GET' && path === '/api/runs') {
-      const limit = Number(new URL(req.url, 'http://localhost').searchParams.get('limit') ?? 25);
-      return sendJson(res, 200, { runs: db.listRunLogs?.({ limit }) ?? [] });
+      const requested = Number(url.searchParams.get('limit') ?? RUNS_DEFAULT_LIMIT);
+      const limit = Number.isFinite(requested) && requested >= 1
+        ? Math.min(RUNS_MAX_LIMIT, Math.floor(requested)) : RUNS_DEFAULT_LIMIT;
+      return sendJson(res, 200, { runs: (db.listRunLogs?.({ limit }) ?? []).map(runSummary) });
     }
     if (req.method === 'POST' && path === '/api/run/cancel') {
       if (!runState.running) {
@@ -1578,7 +1740,16 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       });
     }
     if (req.method === 'GET' && path === '/api/sections') {
-      return sendJson(res, 200, dashboardSections(db, { now: nowDate() }));
+      const sections = dashboardSections(db, { now: nowDate() });
+      // `?only=<key>`: one section, for a panel that refreshes on its own.
+      const only = url.searchParams.get('only');
+      if (only) {
+        if (!Object.hasOwn(sections, only)) {
+          return sendJson(res, 400, { error: `unknown section "${only}" (use ${Object.keys(sections).join(', ')})` });
+        }
+        return sendJson(res, 200, { [only]: sections[only] });
+      }
+      return sendJson(res, 200, sections);
     }
     if (req.method === 'GET' && path === '/api/reports') {
       return sendJson(res, 200, buildReports(db, { now: nowDate(), config }));
@@ -1943,6 +2114,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       if (runState.running) {
         return sendJson(res, 409, { error: `busy: ${runState.phase} is in progress` });
       }
+      const prepareLock = takeRunLock('prepare-selected');
       // Reset the FULL run state, including runId/rca/progress. Leaving the
        // previous run's `progress` in place made the header report stale
        // counters (e.g. "prepare-selected (3) running… 13/13").
@@ -1985,6 +2157,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         } finally {
           runState.running = false;
           runState.finishedAt = new Date().toISOString();
+          prepareLock.release();
         }
       })());
       return sendJson(res, 202, { started: true, queued: ids.length });
@@ -1995,7 +2168,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       const updated = [];
       const failed = [];
       for (const jobId of ids) {
-        try { applyDecision(db, jobId, body.decision); updated.push(jobId); }
+        try { applyDecision(db, jobId, body.decision, { reason: body.reason ?? null }); updated.push(jobId); }
         catch (err) { failed.push({ jobId, error: err.message }); }
       }
       refreshTracker();
@@ -2070,7 +2243,16 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       }
       if (req.method === 'POST' && action === 'decision') {
         const body = await readBody(req);
-        const result = applyDecision(db, jobId, body.decision);
+        // Optional `reason` (DECISION_REASONS) + `reasonNote` (<= 200 chars).
+        const result = applyDecision(db, jobId, body.decision, { reason: body.reason ?? null, reasonNote: body.reasonNote ?? null });
+        refreshTracker();
+        return sendJson(res, 200, result);
+      }
+      // Revert the most recent decision on ONE job, restoring the exact
+      // decision and reason it replaced (409 when there is nothing to undo).
+      if (req.method === 'POST' && action === 'undo-decision') {
+        await readBody(req);
+        const result = undoDecision(db, jobId);
         refreshTracker();
         return sendJson(res, 200, result);
       }
@@ -2115,6 +2297,8 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       if (req.method === 'POST' && action === 'note') {
         const body = await readBody(req);
         const result = setJobNote(db, jobId, body.note);
+        // Notes travel in the tracker CSV; the refresh is debounced (400 ms).
+        refreshTracker();
         return sendJson(res, 200, result);
       }
       if (req.method === 'POST' && action === 'assist') {
@@ -2208,7 +2392,8 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
  * window (or Playwright's transport errors), the resulting unhandled rejection
  * would otherwise terminate the whole server and every later request would fail
  * with the browser's generic "Failed to fetch". This records the error on
- * `runState.lastError` (so the UI surfaces it) and keeps serving. Process
+ * `runState.lastError` (so the UI surfaces it) and keeps serving; an uncaught
+ * EXCEPTION is logged and exits(1) (see onException). Process
  * signals (SIGINT/SIGTERM) are deliberately NOT intercepted. Returns an
  * uninstall function so tests never leak global handlers.
  *
@@ -2218,14 +2403,28 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
  * @param {NodeJS.EventEmitter} [args.proc=process]
  * @returns {() => void} uninstall the handlers
  */
-export function installProcessSafetyNet({ runState, logger, proc = process } = {}) {
+export function installProcessSafetyNet({ runState, logger, proc = process, exit = null } = {}) {
   const record = (kind) => (reason) => {
     const msg = reason?.message ?? String(reason);
     logger?.error?.(`dashboard survived an ${kind}: ${msg}`);
     if (runState) runState.lastError = `background error (server still up): ${msg}`;
   };
   const onRejection = record('unhandled rejection');
-  const onException = record('uncaught exception');
+  /*
+   * An uncaught EXCEPTION is different: Node's own documentation is explicit
+   * that the process is in an undefined state afterwards (a half-run
+   * synchronous handler, a stream mid-write, a transaction left open on the
+   * SQLite handle). Carrying on served requests from that state. It is logged,
+   * then the process exits non-zero so the launcher / user restarts it clean.
+   * A rejected promise is recoverable, and keeps the old survive-and-report
+   * behaviour above.
+   */
+  const onException = (err) => {
+    const msg = err?.message ?? String(err);
+    try { logger?.error?.(`dashboard stopping after an uncaught exception: ${msg}`); } catch { /* logging must not block exit */ }
+    try { console.error(`[dashboard] uncaught exception — exiting: ${err?.stack ?? msg}`); } catch { /* ignore */ }
+    (exit ?? ((code) => proc.exit?.(code)))(1);
+  };
   proc.on('unhandledRejection', onRejection);
   proc.on('uncaughtException', onException);
   return () => {
@@ -2269,9 +2468,43 @@ export function isAllowedOrigin(origin) {
   }
 }
 
+/**
+ * Is this state-changing request one a foreign page could not have forged?
+ * JSON bodies and the custom `X-Job-Agent: 1` header both require a CORS
+ * preflight; see the CSRF note in route().
+ * @param {import('node:http').IncomingMessage} req
+ */
+export function isTrustedMutation(req) {
+  if (String(req.headers['x-job-agent'] ?? '') === '1') return true;
+  const type = String(req.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+  return type === 'application/json';
+}
+
+/** JSON bodies at least this large are gzipped when the client accepts it. */
+const GZIP_MIN_BYTES = 64 * 1024;
+
+/** Does the request that produced `res` accept gzip? */
+function acceptsGzip(res) {
+  return /\bgzip\b/i.test(String(res.req?.headers?.['accept-encoding'] ?? ''));
+}
+
 function sendJson(res, status, body) {
+  const text = JSON.stringify(body);
+  // Measured live: a default 100-row board page is ~210 KB and the full stats
+  // payload is larger; gzip cuts JSON like this ~8x for a few ms of CPU.
+  if (text.length >= GZIP_MIN_BYTES && acceptsGzip(res)) {
+    const zipped = gzipSync(text);
+    res.writeHead(status, {
+      'content-type': 'application/json; charset=utf-8',
+      'content-encoding': 'gzip',
+      vary: 'Accept-Encoding',
+      'content-length': zipped.length,
+    });
+    res.end(zipped);
+    return;
+  }
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
-  res.end(JSON.stringify(body));
+  res.end(text);
 }
 
 function setExtensionCors(res, origin) {
@@ -2361,28 +2594,74 @@ const MIME_TYPES = {
  * @param {import('node:http').ServerResponse} res
  * @param {string} urlPath request pathname (e.g. "/assets/js/app.js")
  */
-function serveStatic(res, urlPath) {
+function serveStatic(req, res, urlPath) {
   let rel;
   try { rel = decodeURIComponent(urlPath); }
-  catch { rel = urlPath; }
+  catch { return sendJson(res, 400, { error: 'malformed URL escape in the request path' }); }
   const abs = normalize(join(PUBLIC_DIR, rel));
   // Same containment helper as the artifact reads, so both use the platform's
   // real path semantics rather than raw string prefixes.
   if (!isInsideDirectory(PUBLIC_DIR, abs)) {
     return sendJson(res, 403, { error: 'forbidden' });
   }
-  let buf;
+  let asset;
   try {
-    buf = readFileSync(abs);
+    asset = cachedAsset(abs);
   } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'EISDIR') {
+    if (err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ENOTDIR') {
       return sendJson(res, 404, { error: `not found: ${urlPath}` });
     }
     throw err;
   }
+  // `no-cache` = "revalidate every time", NOT "do not store": the browser
+  // keeps the bytes and asks with If-None-Match, and an unchanged asset costs
+  // a 304 with no body. The API keeps `no-store` (set in setSecurityHeaders).
+  res.setHeader('cache-control', 'no-cache');
+  res.setHeader('etag', asset.etag);
+  if (String(req.headers['if-none-match'] ?? '') === asset.etag) {
+    res.writeHead(304);
+    res.end();
+    return;
+  }
+  const gzip = asset.gzip && acceptsGzip(res);
+  const bytes = gzip ? asset.gzip : asset.bytes;
+  res.writeHead(200, {
+    'content-type': asset.type,
+    'content-length': bytes.length,
+    ...(asset.gzip ? { vary: 'Accept-Encoding' } : {}),
+    ...(gzip ? { 'content-encoding': 'gzip' } : {}),
+  });
+  // HEAD: identical headers, no body.
+  res.end(req.method === 'HEAD' ? undefined : bytes);
+}
+
+/** Text asset types worth gzipping. */
+const COMPRESSIBLE = /^(text\/|application\/json|image\/svg\+xml)/;
+
+/**
+ * In-memory static cache keyed by path, validated by mtime + size.
+ *
+ * serveStatic used to readFileSync every asset on every request — app.js is
+ * ~200 KB and the page loads it on every reload. A stat is ~20x cheaper than a
+ * read, and still picks up an edited file immediately (Node does not
+ * hot-reload the server, but the assets are served from disk precisely so a
+ * reload shows new front-end code).
+ * @type {Map<string, {mtimeMs: number, size: number, bytes: Buffer, gzip: Buffer|null, etag: string, type: string}>}
+ */
+const STATIC_CACHE = new Map();
+
+function cachedAsset(abs) {
+  const st = statSync(abs);
+  if (!st.isFile()) throw Object.assign(new Error('not a file'), { code: 'EISDIR' });
+  const hit = STATIC_CACHE.get(abs);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit;
+  const bytes = readFileSync(abs);
   const type = MIME_TYPES[extname(abs).toLowerCase()] ?? 'application/octet-stream';
-  res.writeHead(200, { 'content-type': type });
-  res.end(buf);
+  const etag = `"${createHash('sha1').update(bytes).digest('base64url')}"`;
+  const gzip = COMPRESSIBLE.test(type) && bytes.length > 1024 ? gzipSync(bytes) : null;
+  const entry = { mtimeMs: st.mtimeMs, size: st.size, bytes, gzip, etag, type };
+  STATIC_CACHE.set(abs, entry);
+  return entry;
 }
 
 /**

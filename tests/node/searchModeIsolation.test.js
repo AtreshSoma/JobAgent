@@ -313,7 +313,7 @@ describe('the role-search API is reachable and scoped', () => {
   let root;
 
   const get = (p) => fetch(dash.url + p).then(async (r) => ({ status: r.status, body: await r.json() }));
-  const del = (p) => fetch(dash.url + p, { method: 'DELETE' })
+  const del = (p) => fetch(dash.url + p, { method: 'DELETE', headers: { 'x-job-agent': '1' } })
     .then(async (r) => ({ status: r.status, body: await r.json() }));
 
   beforeEach(async () => {

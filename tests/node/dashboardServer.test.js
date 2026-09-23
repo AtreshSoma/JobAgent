@@ -573,12 +573,18 @@ describe('installProcessSafetyNet', () => {
   it('records background errors on runState instead of crashing the process', () => {
     const runState = { lastError: null };
     const proc = fakeProc();
-    installProcessSafetyNet({ runState, proc });
+    const exits = [];
+    const logs = [];
+    installProcessSafetyNet({ runState, proc, logger: { error: (m) => logs.push(m) }, exit: (code) => exits.push(code) });
     proc.emit('unhandledRejection', new Error('window closed by user'));
     expect(runState.lastError).toContain('window closed by user');
     expect(runState.lastError).toContain('server still up');
+    expect(exits).toEqual([]);
+    // An uncaught EXCEPTION leaves the process in an undefined state: it is
+    // logged, then the process exits non-zero instead of limping on.
     proc.emit('uncaughtException', new Error('transport EPIPE'));
-    expect(runState.lastError).toContain('transport EPIPE');
+    expect(logs.at(-1)).toContain('transport EPIPE');
+    expect(exits).toEqual([1]);
   });
 
   it('uninstall removes the handlers so tests never leak globals', () => {

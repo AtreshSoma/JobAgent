@@ -15,6 +15,10 @@
 import { materializeLocalFiles } from '../../scripts/setupLocalConfig.mjs';
 
 export default function setup() {
+  // Many test files boot a dashboard on the REPO root in parallel; the
+  // cross-process run lock (src/utils/runLock.js) would make those unrelated
+  // servers 409 each other. Tests that exercise the lock opt back in.
+  process.env.JOB_AGENT_RUN_LOCK = 'off';
   const { created, missingExample } = materializeLocalFiles();
 
   if (missingExample.length) {
