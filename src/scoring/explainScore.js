@@ -105,11 +105,33 @@ export function gateThreshold() {
  *   jobs-table row or board row
  * @returns {boolean}
  */
-export function isSponsorshipGated(job = {}) {
+export function isSponsorshipGated(job = {}, { threshold, scoring } = {}) {
   return job.tier === TIERS.QUEUE
     && job.sponsorship !== 'Denied'
     && typeof job.score === 'number'
-    && job.score >= applyThreshold;
+    && job.score >= resolveApplyThreshold({ threshold, scoring });
+}
+
+/**
+ * The Apply threshold for a gate check: an explicit `threshold`, else the
+ * caller's `scoring.tiers.apply`, else the process-wide value set by
+ * `configureGateThreshold`.
+ *
+ * The module global is kept only as a fallback. It was the sole source, which
+ * made the answer depend on whichever config was loaded LAST in the process — a
+ * dashboard holding two profiles, or a test that loaded a custom scoring file,
+ * silently judged every row against someone else's threshold. Callers that
+ * hold a config should pass it.
+ *
+ * @param {{threshold?: number, scoring?: object}} [args]
+ * @returns {number}
+ */
+export function resolveApplyThreshold({ threshold, scoring } = {}) {
+  for (const candidate of [threshold, scoring?.tiers?.apply]) {
+    const n = Number(candidate);
+    if (candidate !== undefined && candidate !== null && Number.isFinite(n) && n > 0 && n <= 100) return n;
+  }
+  return applyThreshold;
 }
 
 /**
@@ -162,6 +184,14 @@ function buildExplanation(scoreResult, tier, { sponsorshipGated }) {
   }
   if (sponsorshipGated) {
     parts.push('Downgraded to Queue: score qualified for Apply/Priority but sponsorship is not Confirmed/Likely/Approved.');
+  }
+  // Pay is a penalty-only factor, so it never appears among the top
+  // contributors; state it explicitly whenever it was evaluated.
+  const pay = breakdown?.payFit;
+  if (pay) {
+    parts.push(pay.points < 0
+      ? `Pay: ${pay.matched?.[0] ?? 'below target'} (${pay.points} pts).`
+      : `Pay: ${pay.matched?.[0] ?? 'meets target'}.`);
   }
   return parts.join(' ');
 }

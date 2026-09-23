@@ -14,7 +14,7 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 import { candidateNeedsSponsorship } from './exclusionFilter.js';
-import { excludedLocationMatch } from './searchConstraints.js';
+import { excludedLocationMatch, postedPay } from './searchConstraints.js';
 import { seniorityRank } from '../profile/roleFamilies.js';
 
 /**
@@ -176,7 +176,13 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
     text, candidate, resumeKeywords, weights.resumeKeywordAlignment,
   );
 
-  const raw = Object.values(breakdown).reduce((s, b) => s + b.points, 0);
+  // Pay fit: a PENALTY ONLY, and only when both sides are stated. It carries no
+  // weight in the denominator, so every posting that states no pay — most of
+  // them — scores exactly as it did before this existed.
+  const payFit = scorePay(job, candidate, weights.payFit);
+  if (payFit) breakdown.payFit = payFit;
+
+  const raw = Math.max(0, Object.values(breakdown).reduce((s, b) => s + b.points, 0));
   // The denominator is the STRUCTURAL weights plus whatever categories were
   // declared. It cannot be `Object.values(weights)`: on a legacy config the
   // categories derive their weights from that same object, so summing both
@@ -345,7 +351,12 @@ function scoreSeniority(job, text, candidateSeniority, weight) {
   // raw "Junior Data Engineer" would otherwise detect nothing, fall through to
   // the body, and pick up the VERB "lead" — scoring a junior role as a step up.
   let detected = detectSeniority(String(job?.title ?? '').toLowerCase());
-  if (detected === null) detected = detectSeniority(text);
+  // The body is consulted ONLY for an explicit, structured level statement.
+  // Running the title patterns over the whole JD read "reports to our CTO" as
+  // executive, "partner with the VP" as executive, "the hiring manager" and
+  // "you will lead" as lead — so an unleveled title took whatever rank its
+  // boilerplate happened to mention. Anything else is "unstated" (0.6).
+  if (detected === null) detected = detectStatedSeniority(text);
 
   let factor;
   if (detected === null) {
@@ -396,6 +407,31 @@ function detectSeniority(text) {
 }
 
 /**
+ * Structured level statements a DESCRIPTION may make: "this is a senior-level
+ * role", "Level: Senior", "Seniority: Mid-Senior", "Career level: Entry".
+ * Prose ("lead the design", "reports to the CTO") never counts.
+ */
+const STATED_SENIORITY_PATTERNS = [
+  /\bthis\s+is\s+an?\s+([a-z]+(?:[\s-][a-z]+)?)[\s-]level\s+(?:role|position|opportunity|job)\b/,
+  /\b(?:job|career|experience|position|role)?\s*(?:level|seniority)\s*[:\-–]\s*([a-z]+(?:[\s-][a-z]+)?)/,
+];
+
+/**
+ * The level a description STATES, or null. See STATED_SENIORITY_PATTERNS.
+ * @param {string} text normalized title + description
+ * @returns {number|null}
+ */
+function detectStatedSeniority(text) {
+  for (const re of STATED_SENIORITY_PATTERNS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const rank = detectSeniority(m[1]);
+    if (rank !== null) return rank;
+  }
+  return null;
+}
+
+/**
  * Sponsorship feasibility points. `Denied` scores ZERO — below Unconfirmed,
  * which still earns partial credit for being merely unknown. An explicit refusal
  * is worse than silence, so it must never out-score it.
@@ -434,6 +470,34 @@ function scoreGeography(job, candidate, weight) {
     else { factor = 0.4; matched.push('onsite, candidate prefers remote'); }
   }
   return { points: round2(weight * factor), weight, matched };
+}
+
+/** Raw points a posting that pays well under target can lose, by default. */
+const DEFAULT_PAY_PENALTY = 6;
+
+/**
+ * Pay versus the candidate's stated preference.
+ *
+ * Reads the posting's compensation field, or a strict pay-transparency
+ * sentence in its description (`postedPay`). Compared against
+ * `salaryPreference.targetAnnualUSD`, falling back to `minAnnualUSD`. A top of
+ * range at or above the target costs nothing; below it the penalty grows
+ * linearly and is complete at 25% under. (A top of range below the FLOOR is a
+ * hard exclusion in searchConstraints.js, not a penalty.)
+ *
+ * @returns {{points: number, weight: 0, matched: string[]}|null} null when either side is unstated
+ */
+function scorePay(job, candidate, weight) {
+  const target = Number(candidate?.salaryPreference?.targetAnnualUSD)
+    || Number(candidate?.salaryPreference?.minAnnualUSD) || 0;
+  if (!(target > 0)) return null;
+  const pay = postedPay(job);
+  if (!pay) return null;
+  const max = Number.isFinite(Number(weight)) && Number(weight) >= 0 ? Number(weight) : DEFAULT_PAY_PENALTY;
+  const label = `posted pay up to ${Math.round(pay.max).toLocaleString('en-US')} (${pay.source})`;
+  if (pay.max >= target) return { points: 0, weight: 0, matched: [`${label} meets target`] };
+  const shortfall = Math.min(1, (target - pay.max) / (0.25 * target));
+  return { points: -round2(max * shortfall), weight: 0, matched: [`${label} below target ${target.toLocaleString('en-US')}`] };
 }
 
 function scoreFreshness(job, freshness, weight, now) {
