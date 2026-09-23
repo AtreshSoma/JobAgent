@@ -16,7 +16,7 @@
  *     Data-Engineer-Interview-Prep.md    — a single combined Markdown master doc
  */
 import { readFile, writeFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { join, dirname, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
 import { chromium } from 'playwright';
@@ -28,17 +28,17 @@ const MD_OUT = join(HERE, 'Data-Engineer-Interview-Prep.md');
 /** Chapters, in reading order. */
 const DOCS = [
   { file: 'README.md',                                    num: '00' },
-  { file: '01-sql-mastery.md',                            num: '01' },
-  { file: '02-python-and-pyspark.md',                     num: '02' },
-  { file: '03-spark-databricks-delta.md',                 num: '03' },
-  { file: '04-data-modeling-warehousing.md',              num: '04' },
-  { file: '05-pipelines-orchestration-streaming.md',      num: '05' },
-  { file: '06-azure-fabric-platform.md',                  num: '06' },
-  { file: '07-gap-areas-dbt-snowflake-scala-airflow.md',  num: '07' },
-  { file: '08-system-design.md',                          num: '08' },
-  { file: '09-behavioral-and-star.md',                    num: '09' },
-  { file: '10-mock-interviews.md',                        num: '10' },
-  { file: '11-gap-analysis-and-pdf-roadmap.md',           num: 'A'  },
+  { file: 'modules/01-sql-mastery.md',                            num: '01' },
+  { file: 'modules/02-python-and-pyspark.md',                     num: '02' },
+  { file: 'modules/03-spark-databricks-delta.md',                 num: '03' },
+  { file: 'modules/04-data-modeling-warehousing.md',              num: '04' },
+  { file: 'modules/05-pipelines-orchestration-streaming.md',      num: '05' },
+  { file: 'modules/06-azure-fabric-platform.md',                  num: '06' },
+  { file: 'modules/07-gap-areas-dbt-snowflake-scala-airflow.md',  num: '07' },
+  { file: 'modules/08-system-design.md',                          num: '08' },
+  { file: 'modules/09-behavioral-and-star.md',                    num: '09' },
+  { file: 'modules/10-mock-interviews.md',                        num: '10' },
+  { file: 'modules/11-gap-analysis-and-pdf-roadmap.md',           num: 'A'  },
 ];
 
 marked.setOptions({ gfm: true, breaks: false });
@@ -88,12 +88,18 @@ async function buildDoc(doc) {
   return { ...doc, html, toc, mdClean: md, title: toc[0]?.text || doc.file };
 }
 
-function rewriteLinks(html) {
+function rewriteLinks(html, sourceFile) {
   return html.replace(/href="([^"]+)"/g, (m, href) => {
-    const fm = href.match(/^([\w.-]+\.md)(#.*)?$/);
-    if (fm && fileAnchor[fm[1]]) return `href="#${fileAnchor[fm[1]]}"`;
+    const fm = href.match(/^([^#]+\.md)(#.*)?$/);
+    const target = fm && posix.normalize(posix.join(posix.dirname(sourceFile), fm[1]));
+    if (target && fileAnchor[target]) return `href="#${fileAnchor[target]}"`;
     return m;
   });
+}
+
+function linksFromCourseRoot(markdown, file) {
+  return markdown.replace(/\]\(([^)#]+\.md)(#[^)]*)?\)/g, (_match, target, anchor = '') =>
+    `](${posix.normalize(posix.join(posix.dirname(file), target))}${anchor})`);
 }
 
 const CSS = `
@@ -190,7 +196,7 @@ input[type=checkbox]{ margin-right:6px; }
 async function main() {
   const built = [];
   for (const d of DOCS) built.push(await buildDoc(d));
-  for (const b of built) b.html = rewriteLinks(b.html);
+  for (const b of built) b.html = rewriteLinks(b.html, b.file);
 
   // The cover used to carry one person's name, hardcoded, into every build.
   // It is now opt-in: PREP_PDF_NAME="…" or --name="…"; otherwise no name.
@@ -284,7 +290,7 @@ async function main() {
     '',
     '---',
     '',
-    built.map((b) => b.mdClean).join('\n\n---\n\n'),
+    built.map((b) => linksFromCourseRoot(b.mdClean, b.file)).join('\n\n---\n\n'),
     '',
   ].join('\n');
   await writeFile(MD_OUT, masterMd, 'utf8');

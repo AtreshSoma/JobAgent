@@ -28,7 +28,7 @@ Every strong match becomes a reviewable **application packet**: the job, its sco
 <td width="25%"><b>Tune it</b><br><a href="#-discovery-sources">Discovery sources</a><br><a href="#-performance-notes">Performance</a><br><a href="#-configuration-files">Config</a> · <a href="#-optional-llm-assist">LLM assist</a></td>
 </tr>
 <tr>
-<td colspan="4"><b>Reference</b> · <a href="#-project-layout">Project layout</a> · <a href="#-tech-stack">Tech stack</a> · <a href="#-testing-and-verification">Testing</a> · <a href="docs/SUPPORT_MATRIX.md">Support matrix</a></td>
+<td colspan="4"><b>Reference</b> · <a href="#-project-layout">Project layout</a> · <a href="docs/README.md">Documentation</a> · <a href="#-tech-stack">Tech stack</a> · <a href="#-testing-and-verification">Testing</a> · <a href="docs/SUPPORT_MATRIX.md">Support matrix</a></td>
 </tr>
 </table>
 
@@ -944,8 +944,9 @@ src/              Node + Python modules
   llm/              optional JD requirement extraction
   logging/          SQLite store + pino structured logs
   utils/            shared helpers (geography, paths, retry, rate limiting)
-scripts/          maintenance and diagnostic tools
+scripts/          operational tools, diagnostics, and archived one-off repairs (see scripts/README.md)
 extension/        unpacked Manifest V3 Chrome/Edge extension
+interview-prep/   course overview, modules/, build-pdf.mjs, and published study exports
 resumes/
   base/             master resume (read-only) + history/
   output/           tailored drafts + cover letters
@@ -958,11 +959,13 @@ data/
   queued_jobs.json  only actionable jobs (Priority/Apply/Queue)
   unknown_date_review.json  undated jobs held for manual review (opt-in)
   applied_jobs.db   local SQLite store (jobs, runs, events, approval queue)
-reports/          report-YYYYMMDD.json / .csv / .html (last 14 days kept)
+reports/          generated report-YYYYMMDD.json / .csv / .html (last 14 days kept)
 logs/             structured JSON run logs (created on first write; newest 30 files / 50 MB kept)
 tests/            node/ (vitest) and python/ (pytest)
-docs/             SUPPORT_MATRIX.md, the evidence-backed capability statement
+docs/             architecture/, audits/, and the evidence-backed SUPPORT_MATRIX.md
 ```
+
+For ownership, local data rules, and path conventions, see the [repository structure guide](docs/architecture/REPOSITORY_STRUCTURE.md).
 
 > [!NOTE]
 > Each packet in `applications/output/` is **the artifact you review**. It holds the job, the score and tier, the tailored resume path, the cover letter path, the detected ATS, the per-field fill plan, the upload plan, and any blockers or questions needing your input.

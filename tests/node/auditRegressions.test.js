@@ -1,5 +1,5 @@
 /**
- * Regression guards for the findings in reports/audit/jobagent-audit-2026-09-14.
+ * Regression guards for the findings in docs/audits/jobagent-audit-2026-09-14.
  *
  * Each block below reproduces a defect the audit demonstrated at runtime, so the
  * specific behaviour that made it possible cannot come back. The audit's own

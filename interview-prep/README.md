@@ -73,16 +73,16 @@ From your applications, you face **four archetypes**, each with a different inte
 | Module | File | Covers |
 |---|---|---|
 | 00 | this `README.md` | Overview, study plan, requirements analysis |
-| 01 | [01-sql-mastery.md](01-sql-mastery.md) | SQL theory, patterns, 20+ Q&A, coding problems w/ answers |
-| 02 | [02-python-and-pyspark.md](02-python-and-pyspark.md) | Python for DE, PySpark API, coding problems |
-| 03 | [03-spark-databricks-delta.md](03-spark-databricks-delta.md) | Spark internals, Databricks, Delta Lake |
-| 04 | [04-data-modeling-warehousing.md](04-data-modeling-warehousing.md) | Kimball/Inmon, SCDs, medallion, lakehouse |
-| 05 | [05-pipelines-orchestration-streaming.md](05-pipelines-orchestration-streaming.md) | ETL/ELT, Airflow, CDC, Kafka, Structured Streaming |
-| 06 | [06-azure-fabric-platform.md](06-azure-fabric-platform.md) | ADF, Synapse, Fabric, Event Hub (your differentiator) |
-| 07 | [07-gap-areas-dbt-snowflake-scala-airflow.md](07-gap-areas-dbt-snowflake-scala-airflow.md) | Crash courses on your 4 gaps + how to answer honestly |
-| 08 | [08-system-design.md](08-system-design.md) | Framework + 6 worked DE system-design problems |
-| 09 | [09-behavioral-and-star.md](09-behavioral-and-star.md) | STAR stories from YOUR projects, LPs, questions to ask |
-| 10 | [10-mock-interviews.md](10-mock-interviews.md) | 4 full timed mock loops with model answers |
+| 01 | [01-sql-mastery.md](modules/01-sql-mastery.md) | SQL theory, patterns, 20+ Q&A, coding problems w/ answers |
+| 02 | [02-python-and-pyspark.md](modules/02-python-and-pyspark.md) | Python for DE, PySpark API, coding problems |
+| 03 | [03-spark-databricks-delta.md](modules/03-spark-databricks-delta.md) | Spark internals, Databricks, Delta Lake |
+| 04 | [04-data-modeling-warehousing.md](modules/04-data-modeling-warehousing.md) | Kimball/Inmon, SCDs, medallion, lakehouse |
+| 05 | [05-pipelines-orchestration-streaming.md](modules/05-pipelines-orchestration-streaming.md) | ETL/ELT, Airflow, CDC, Kafka, Structured Streaming |
+| 06 | [06-azure-fabric-platform.md](modules/06-azure-fabric-platform.md) | ADF, Synapse, Fabric, Event Hub (your differentiator) |
+| 07 | [07-gap-areas-dbt-snowflake-scala-airflow.md](modules/07-gap-areas-dbt-snowflake-scala-airflow.md) | Crash courses on your 4 gaps + how to answer honestly |
+| 08 | [08-system-design.md](modules/08-system-design.md) | Framework + 6 worked DE system-design problems |
+| 09 | [09-behavioral-and-star.md](modules/09-behavioral-and-star.md) | STAR stories from YOUR projects, LPs, questions to ask |
+| 10 | [10-mock-interviews.md](modules/10-mock-interviews.md) | 4 full timed mock loops with model answers |
 
 ---
 
@@ -92,7 +92,7 @@ From your applications, you face **four archetypes**, each with a different inte
 - **Days 1–2:** Module 01 SQL — work every problem on paper, then verify. Re-do the 5 patterns until automatic.
 - **Days 3–4:** Module 02 Python/PySpark — implement each problem yourself before reading the answer.
 - **Day 5:** Module 03 Spark internals — shuffles, partitioning, joins, skew, AQE, Delta log.
-- **Weekend:** Mock #1 in [10-mock-interviews.md](10-mock-interviews.md) (timed).
+- **Weekend:** Mock #1 in [10-mock-interviews.md](modules/10-mock-interviews.md) (timed).
 
 ### Week 2 — Modeling, pipelines, your platform
 - **Days 1–2:** Module 04 — SCDs, grain, star vs snowflake, medallion. Draw schemas by hand.

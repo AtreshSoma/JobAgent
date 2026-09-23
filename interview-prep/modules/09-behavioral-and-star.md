@@ -73,7 +73,7 @@ metric ready.
 ## 15 behavioral questions with model answers (mapped to your stories)
 
 **1. Tell me about yourself.** → Use the 60-second positioning statement in the
-[README](README.md#7-your-60-second-positioning-statement-memorize).
+[README](../README.md#7-your-60-second-positioning-statement-memorize).
 
 **2. Most challenging technical problem you solved?**
 > Story A. Emphasize the *decisions*: why DLT over hand-built notebooks, how I handled 500GB/day and
