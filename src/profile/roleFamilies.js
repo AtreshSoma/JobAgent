@@ -38,7 +38,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { normalizeText } from '../utils/textNormalize.js';
+import { normalizeText, hasNormalizedTerm } from '../utils/textNormalize.js';
 
 /** Where the taxonomy lives, relative to a project root. */
 export const ROLE_FAMILIES_FILE = join('config', 'role_families.json');
@@ -257,11 +257,15 @@ export function tokensRelate(a, b) {
   return i >= TOKEN_PREFIX_MATCH;
 }
 
-/** Whole-word presence test against already-normalized text. */
+/**
+ * Whole-word presence test against already-normalized text.
+ *
+ * Delegates to the shared precompiled, substring-prefiltered matcher: this
+ * used to build a fresh RegExp per term per call, which made one title
+ * classification cost ~930 µs. See `hasNormalizedTerm`.
+ */
 function hasTerm(text, term) {
-  if (!term) return false;
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text);
+  return hasNormalizedTerm(text, term);
 }
 
 /** Normalize free text for matching: punctuation becomes space. */
@@ -284,25 +288,63 @@ function termScore(term, weight) {
  * @returns {Array<{id, label, score, matched: string[]}>} highest score first
  */
 export function scoreFamilies(text, taxonomy = { families: {}, weights: DEFAULT_WEIGHTS }, { kinds } = {}) {
+  return scoreFamiliesByKinds(text, taxonomy, [kinds ?? ALL_KINDS])[0];
+}
+
+/** Every term kind, in scoring order. */
+const ALL_KINDS = Object.freeze(['roles', 'domain', 'skills', 'heads']);
+
+/** Subject-matter kinds: everything except head nouns. */
+const SUBJECT_KINDS = Object.freeze(['roles', 'domain', 'skills']);
+
+/** Term kind -> key in `taxonomy.weights`. */
+const WEIGHT_OF = Object.freeze({ roles: 'role', domain: 'domain', skills: 'skill', heads: 'head' });
+
+/**
+ * Score families for SEVERAL kind-subsets in ONE pass over the taxonomy.
+ *
+ * `classifyTitleAgainstFamilies` needs two views of the same title — every
+ * kind, and subject matter only (no head nouns). Calling `scoreFamilies`
+ * twice walked all ~1,257 terms twice; here each term is tested once and its
+ * hit credited to every view that includes its kind. Results are identical to
+ * separate calls: same terms, same `matched` order, same scores, same sort.
+ *
+ * @param {string} text
+ * @param {object} taxonomy
+ * @param {string[][]} views kind lists; one result array is returned per view
+ * @returns {Array<Array<{id, label, score, matched: string[]}>>}
+ */
+export function scoreFamiliesByKinds(text, taxonomy = { families: {}, weights: DEFAULT_WEIGHTS }, views = [ALL_KINDS]) {
   const haystack = matchText(text);
-  if (!haystack) return [];
-  const use = kinds ?? ['roles', 'domain', 'skills', 'heads'];
-  const weightOf = { roles: 'role', domain: 'domain', skills: 'skill', heads: 'head' };
-  const out = [];
+  const results = views.map(() => []);
+  if (!haystack) return results;
+  const wanted = new Set(views.flat());
   for (const family of Object.values(taxonomy.families ?? {})) {
-    let score = 0;
-    const matched = [];
-    for (const kind of use) {
-      const weight = taxonomy.weights?.[weightOf[kind]] ?? DEFAULT_WEIGHTS[weightOf[kind]] ?? 1;
+    const hits = {};
+    for (const kind of ALL_KINDS) {
+      if (!wanted.has(kind)) continue;
+      const found = [];
       for (const term of family[kind] ?? []) {
-        if (!hasTerm(haystack, term)) continue;
-        score += termScore(term, weight);
-        matched.push(term);
+        if (hasTerm(haystack, term)) found.push(term);
       }
+      hits[kind] = found;
     }
-    if (score > 0) out.push({ id: family.id, label: family.label, score, matched });
+    views.forEach((kinds, v) => {
+      let score = 0;
+      const matched = [];
+      // Walk this view's kinds in its OWN order, so `matched` is exactly what a
+      // separate `scoreFamilies` call would have produced.
+      for (const kind of kinds) {
+        const weight = taxonomy.weights?.[WEIGHT_OF[kind]] ?? DEFAULT_WEIGHTS[WEIGHT_OF[kind]] ?? 1;
+        for (const term of hits[kind] ?? []) {
+          score += termScore(term, weight);
+          matched.push(term);
+        }
+      }
+      if (score > 0) results[v].push({ id: family.id, label: family.label, score, matched });
+    });
   }
-  return out.sort((a, b) => b.score - a.score);
+  return results.map((out) => out.sort((a, b) => b.score - a.score));
 }
 
 /**
@@ -935,13 +977,13 @@ export function classifyTitleAgainstFamilies(title, families = [], taxonomy = { 
     return { verdict: 'defer', signals: ['no-profile-family'], titleFamily: null, profileFamily: null };
   }
 
-  const scored = scoreFamilies(raw, taxonomy);
+  // One pass over the taxonomy yields both views (see scoreFamiliesByKinds).
+  const [scored, subjectAll] = scoreFamiliesByKinds(raw, taxonomy, [ALL_KINDS, SUBJECT_KINDS]);
   const mine = scored.filter((f) => own.has(f.id));
 
   // Subject-matter signal for one of the candidate's families: a role phrase,
   // a domain term or a skill — never a head noun.
-  const subjectMatter = scoreFamilies(raw, taxonomy, { kinds: ['roles', 'domain', 'skills'] })
-    .filter((f) => own.has(f.id));
+  const subjectMatter = subjectAll.filter((f) => own.has(f.id));
 
   if (subjectMatter.length) {
     const best = subjectMatter[0];

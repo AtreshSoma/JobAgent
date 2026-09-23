@@ -56,6 +56,20 @@ export const ADAPTERS = {
   icims,
 };
 
+/**
+ * Is this adapter error entry a DEGRADATION note rather than a failure?
+ *
+ * Adapters flag "budget reached", "kept the teaser", "N stayed summary-only"
+ * with `degraded: true`; configuration hints arrive as `{ note }` with no
+ * `error`. Neither means the source failed.
+ *
+ * @param {object} e
+ * @returns {boolean}
+ */
+export function isNote(e) {
+  return e?.degraded === true || (e?.note != null && e?.error == null);
+}
+
 /** How many independent sources to run concurrently by default. */
 const DEFAULT_SOURCE_CONCURRENCY = 6;
 
@@ -82,7 +96,9 @@ const DEFAULT_HOST_CONCURRENCY = 4;
  * @param {{ onSource?: Function, onError?: Function }} [args.hooks]
  * @returns {Promise<{ jobs: object[], duplicates: object[], errors: object[], perSource: object[] }>}
  */
-export async function runSearch({ jobboards, ctx = {}, candidate, scoring, existsInDb, hooks = {} } = {}) {
+export async function runSearch({
+  jobboards, ctx = {}, candidate, scoring, exclusions = null, existsInDb, hooks = {}, annotateDiscovery = true,
+} = {}) {
   const defaults = jobboards?.defaults ?? {};
   const rateLimiter = ctx.rateLimiter ?? createRateLimiter({
     minIntervalMs: defaults.rateLimitMs ?? 3000,
@@ -92,8 +108,13 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   // ONE gate for the whole run, shared by every source. Politeness has to be
   // accounted per host — the per-source ceilings above cannot see that two
   // different sources are pointed at the same server.
+  //
+  // `defaults.perHostConcurrency` ({ "api.lever.co": 2, ... }) overrides the
+  // ceiling for named hosts; a source may also configure its own hosts on this
+  // gate (the Workday adapter does, from `source.hostConcurrency`).
   const hostGate = ctx.hostGate ?? createHostGate({
     maxConcurrent: ctx.hostConcurrency ?? defaults.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
+    perHost: defaults.perHostConcurrency ?? {},
   });
 
   // Concurrency ceilings are politeness limits, never evasion. Source-level
@@ -158,7 +179,7 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
       hooks.onSource?.({
         phase: result.cancelled === true ? 'cancelled' : 'end',
         source: source.id, adapter: source.adapter, found: jobs.length,
-        errors: sourceErrors.length, durationMs, cached: result.cached === true,
+        errors: sourceErrors.filter((e) => !isNote(e)).length, notes: sourceErrors.filter(isNote).length, durationMs, cached: result.cached === true,
       });
       return {
         jobs, errors: sourceErrors, cancelled: result.cancelled === true,
@@ -196,7 +217,16 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
       source: source.id,
       adapter: source.adapter,
       found: payload.jobs.length,
-      errors: payload.errors.length,
+      // FAILURES and DEGRADATIONS counted apart. "Budget reached, kept the
+      // teaser" and "N descriptions stayed summary-only" are notes about
+      // fidelity, not failures, but they were counted as errors — so a healthy,
+      // merely budgeted source looked broken and could not be told apart from
+      // one that returned nothing.
+      errors: payload.errors.filter((e) => !isNote(e)).length,
+      notes: payload.errors.filter(isNote).length,
+      // A COMPLETE listing: ran, was not cancelled, raised no real error. Only
+      // such a run may be read as "this source no longer lists X" (expiry).
+      succeeded: r.ok && payload.cancelled !== true && !payload.errors.some((e) => !isNote(e)),
       cancelled: payload.cancelled === true,
       durationMs: payload.durationMs ?? null,
       cached: payload.cached === true,
@@ -209,7 +239,7 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   // has finished. Recording never throws.
   timings?.record?.(perSource);
 
-  const { unique, duplicates } = deduplicate(collected, { existsInDb });
+  const { unique, duplicates } = deduplicate(collected, { existsInDb, geography: exclusions?.geography ?? null });
 
   // Tag provenance kind (discovery vs url-reader vs manual) on every job so the
   // report can never conflate real discovery with URL-readers.
@@ -219,7 +249,12 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
 
   // Attach permissive discovery signals to every surviving job (non-destructive:
   // classification never drops a job — exclusions/scoring decide downstream).
-  if (candidate) {
+  //
+  // `annotateDiscovery: false` defers this to the caller. The pipeline passes
+  // it: classifying ran over all ~65k unique jobs BEFORE the freshness gate
+  // dropped ~92% of them, so almost all of that work was thrown away. The
+  // pipeline classifies lazily, only for jobs that survive to be recorded.
+  if (candidate && annotateDiscovery) {
     for (const job of unique) {
       const discovery = classifyDiscovery(job, { candidate, scoring });
       job.rawMetadata = { ...(job.rawMetadata ?? {}), discovery };

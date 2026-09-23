@@ -90,10 +90,10 @@
  */
 
 import { normalizeJob, htmlToText } from '../normalize.js';
-import { buildProfileVocabulary, classifyTitleFit } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, classifyTitleFit } from '../../scoring/profileFit.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { normalizeText } from '../../utils/textNormalize.js';
 import { usLocationSignal } from '../../utils/usGeography.js';
 
@@ -165,6 +165,31 @@ const DEFAULT_MAX_DETAIL_FETCHES = 25;
  * @param {boolean} [options.strict=true] when false, keep everything
  * @returns {(title: string) => boolean}
  */
+/**
+ * The title gate for a company-first board adapter (Greenhouse, Lever, Ashby).
+ *
+ * Those three mapped EVERY posting on every board — full description HTML,
+ * htmlToText, normalizeJob — and carried it through dedupe, freshness and the
+ * rest of the run, only for the family gate to reject an Accounts Payable or
+ * Nurse posting much later. SmartRecruiters and Oracle already gated on the
+ * list's own title first. The gate only rejects titles that positively name
+ * ANOTHER family (see classifyTitleFit), so unfamiliar titles are kept; with no
+ * candidate profile it keeps everything. `options.strictTitleMatch: false`
+ * disables it per source.
+ *
+ * @param {object} source jobboards entry
+ * @param {object} ctx adapter context (reads ctx.candidate)
+ * @returns {(title: string) => boolean}
+ */
+export function earlyTitleGate(source = {}, ctx = {}) {
+  if (!ctx.candidate) return () => true;
+  return makeTitleGate({
+    titles: source.options?.titles ?? ctx.candidate?.targetTitles ?? [],
+    strict: source.options?.strictTitleMatch !== false,
+    candidate: ctx.candidate,
+  });
+}
+
 export function makeTitleGate({ titles = [], strict = true, candidate = null } = {}) {
   if (!strict) return () => true;
 
@@ -174,7 +199,7 @@ export function makeTitleGate({ titles = [], strict = true, candidate = null } =
   // ~11% of the scoring signal and the gate runs before the other ~89% has
   // even been fetched. Measured over 55,293 scored postings, the old question
   // discarded 12.6% of everything the scorer itself rated 60+.
-  const vocab = candidate ? buildProfileVocabulary(candidate) : null;
+  const vocab = profileVocabularyFor(candidate);
   if (vocab) {
     return (title) => classifyTitleFit(title, vocab).verdict !== 'reject';
   }
@@ -883,12 +908,8 @@ const PROVIDERS = {
 export const PROVIDER_IDS = Object.freeze(Object.keys(PROVIDERS));
 
 async function fetchJson(fetchImpl, url, label, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'application/json' }) },
-    requestTimeoutMs,
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(
+    fetchImpl, url, { headers: discoveryHeaders({ Accept: 'application/json' }) }, requestTimeoutMs, label,
   );
-  if (!res.ok) throw httpError(res, label, url);
-  return res.json();
 }

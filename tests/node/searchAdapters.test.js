@@ -923,10 +923,13 @@ describe('discovery signal tagging (Greenhouse & Lever via runSearch)', () => {
     expect(jobs[0].rawMetadata.sourceKind).toBe('discovery');
   });
 
-  it('labels an off-target Lever job as no_match but still returns it', async () => {
+  it('labels an off-target Lever job as no_match when the early title gate is off', async () => {
     const jobboards = {
       defaults: { rateLimitMs: 0, maxRetries: 0 },
-      sources: [{ id: 'lv', adapter: 'lever', enabled: true, priority: 1, boards: ['globex'] }],
+      sources: [{
+        id: 'lv', adapter: 'lever', enabled: true, priority: 1, boards: ['globex'],
+        options: { strictTitleMatch: false },
+      }],
     };
     const fetchImpl = vi.fn().mockResolvedValue(jsonResponse([
       { id: 'y', text: 'Marketing Manager', hostedUrl: 'http://l',
@@ -935,6 +938,23 @@ describe('discovery signal tagging (Greenhouse & Lever via runSearch)', () => {
     const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
     expect(jobs).toHaveLength(1);
     expect(jobs[0].rawMetadata.discovery.match).toBe('no_match');
+  });
+
+  it('title-gates Greenhouse/Lever/Ashby postings before mapping them (M7)', async () => {
+    // Previously every posting on every board was mapped and carried through
+    // the whole run; now a title that positively names another family is
+    // dropped at the adapter, like SmartRecruiters and Oracle already did.
+    const listing = [
+      { id: 'y', text: 'Marketing Manager', hostedUrl: 'http://l/y', descriptionPlain: 'Brand campaigns' },
+      { id: 'z', text: 'Senior Data Engineer', hostedUrl: 'http://l/z', descriptionPlain: 'Spark and SQL' },
+    ];
+    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse(listing));
+    const jobboards = {
+      defaults: { rateLimitMs: 0, maxRetries: 0 },
+      sources: [{ id: 'lv', adapter: 'lever', enabled: true, priority: 1, boards: ['globex'] }],
+    };
+    const { jobs } = await runSearch({ jobboards, ctx: { fetchImpl }, candidate });
+    expect(jobs.map((j) => j.title)).toEqual(['Senior Data Engineer']);
   });
 });
 

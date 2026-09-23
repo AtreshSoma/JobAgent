@@ -92,7 +92,8 @@ describe('end-to-end pipeline (fixtures only, fully offline)', () => {
     expect(result.counters.jobs_prepared).toBeGreaterThanOrEqual(1);
 
     // All four pipeline artifacts exist and parse.
-    for (const file of ['found_jobs.json', 'scored_jobs.json', 'queued_jobs.json', 'unknown_date_review.json']) {
+    // scored_jobs.json is no longer written by default (nothing reads it).
+    for (const file of ['found_jobs.json', 'queued_jobs.json', 'unknown_date_review.json']) {
       expect(existsSync(join(root, 'data', file))).toBe(true);
       JSON.parse(readFileSync(join(root, 'data', file), 'utf8'));
     }

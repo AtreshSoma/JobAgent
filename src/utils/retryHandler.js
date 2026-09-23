@@ -32,10 +32,38 @@ export function defaultIsRetryable(err) {
     'ENOTFOUND',
     'EPIPE',
   ]);
-  if (err.code && transientCodes.has(err.code)) return true;
+  const code = errorCode(err);
+  if (code && transientCodes.has(code)) return true;
 
   return false;
 }
+
+/**
+ * The low-level error code, wherever the runtime put it.
+ *
+ * Node's fetch (undici) does not set `code` on the error it throws: it throws
+ * `TypeError: fetch failed` and hangs the socket error off `cause`. Reading
+ * only `err.code` meant a DNS failure was classified by prose, not by code.
+ *
+ * @param {any} err
+ * @returns {string|null}
+ */
+export function errorCode(err) {
+  return err?.code ?? err?.cause?.code ?? null;
+}
+
+/**
+ * A host that does not resolve.
+ *
+ * Worth exactly ONE retry — a resolver blip is real, and it clears in a second.
+ * Beyond that it is a typo'd or decommissioned host (a careers domain that
+ * moved), and spending the full backoff curve on it is ~8s of wall clock per
+ * request that can never succeed.
+ */
+const DNS_FAILURE_CODES = new Set(['ENOTFOUND']);
+
+/** Retries allowed for a DNS failure, whatever `maxRetries` says. */
+const MAX_DNS_RETRIES = 1;
 
 /**
  * Run `fn` with retries.
@@ -67,7 +95,8 @@ export async function withRetry(fn, {
     try {
       return await fn();
     } catch (err) {
-      const isLast = attempt >= maxRetries;
+      const dnsExhausted = DNS_FAILURE_CODES.has(errorCode(err)) && attempt >= MAX_DNS_RETRIES;
+      const isLast = attempt >= maxRetries || dnsExhausted;
       if (isLast || !isRetryable(err)) {
         // Record what we actually spent so the failure can report it honestly
         // instead of the RCA panel always printing "Retries spent: 0".

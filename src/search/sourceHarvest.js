@@ -87,20 +87,44 @@ export function harvestCoordinates(rows = []) {
  * @returns {Set<string>}
  */
 export function configuredCoordinateKeys(jobboards = {}) {
+  return scanConfiguredCoordinates(jobboards).keys;
+}
+
+/**
+ * Coordinates listed MORE THAN ONCE inside the adapters' own board/tenant
+ * lists — each one is a board fetched twice per run. `harvestSources --apply`
+ * refuses to write a config that has any it did not already have.
+ *
+ * @param {object} jobboards
+ * @returns {string[]}
+ */
+export function duplicateCoordinateKeys(jobboards = {}) {
+  return scanConfiguredCoordinates(jobboards).duplicates;
+}
+
+/** One pass over the config: every covered key, and the adapter-list repeats. */
+function scanConfiguredCoordinates(jobboards = {}) {
   const keys = new Set();
+  const duplicates = new Set();
+  // Only an ADAPTER list can hold a duplicate; a careers entry pinning the same
+  // board as an adapter is a legitimate second route, not a double write.
+  const add = (key) => {
+    if (keys.has(key)) duplicates.add(key);
+    keys.add(key);
+  };
   for (const source of jobboards.sources ?? []) {
     const adapter = source.adapter;
     if (adapter === 'workday') {
       for (const t of source.tenants ?? []) {
         if (!t?.host || !t?.tenant || !t?.site) continue;
-        keys.add(coordinateKey({ ats: 'workday', host: t.host, tenant: t.tenant, site: t.site }));
+        add(coordinateKey({ ats: 'workday', host: t.host, tenant: t.tenant, site: t.site }));
       }
       continue;
     }
     if (adapter === 'oracleRecruiting') {
       for (const t of source.tenants ?? []) {
         if (!t?.host || !t?.siteNumber) continue;
-        keys.add(coordinateKey({ ats: 'oracleRecruiting', host: t.host, siteNumber: t.siteNumber }));
+        add(coordinateKey({ ats: 'oracleRecruiting', host: t.host, siteNumber: t.siteNumber }));
       }
       continue;
     }
@@ -108,7 +132,7 @@ export function configuredCoordinateKeys(jobboards = {}) {
       // Portals are configured either as a bare host string or { host, company }.
       for (const b of source.boards ?? []) {
         const host = typeof b === 'string' ? b : b?.host;
-        if (host) keys.add(coordinateKey({ ats: 'icims', host }));
+        if (host) add(coordinateKey({ ats: 'icims', host }));
       }
       continue;
     }
@@ -120,7 +144,7 @@ export function configuredCoordinateKeys(jobboards = {}) {
     if (!['greenhouse', 'lever', 'ashby', 'smartrecruiters', 'rippling'].includes(adapter)) continue;
     for (const board of source.boards ?? []) {
       const slug = typeof board === 'string' ? board : board?.slug;
-      if (slug) keys.add(coordinateKey({ ats: adapter, slug }));
+      if (slug) add(coordinateKey({ ats: adapter, slug }));
     }
   }
   // Careers-page entries can also pin an ATS coordinate.
@@ -137,7 +161,7 @@ export function configuredCoordinateKeys(jobboards = {}) {
       }
     }
   }
-  return keys;
+  return { keys, duplicates: [...duplicates] };
 }
 
 /**

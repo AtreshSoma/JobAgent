@@ -29,8 +29,12 @@ import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { createSourceTimings } from '../search/sourceTimings.js';
+import { createDetailCache } from '../search/detailBudget.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
-import { buildProfileVocabulary, classifyTitleFit } from '../scoring/profileFit.js';
+import { profileVocabularyFor, classifyTitleFit } from '../scoring/profileFit.js';
+import { postedPay } from '../scoring/searchConstraints.js';
+import { postedOnAgrees } from '../search/adapters/workday.js';
+import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob } from '../scoring/scorer.js';
@@ -185,21 +189,32 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   // Snapshot of what the database knew BEFORE this run, so `jobs_new` below is
   // a genuine before/after comparison rather than a guess. Ids only — the rows
   // themselves are large and only membership is needed.
+  //
+  // EVERY mode. `listJobIds()` defaults to the profile scope, so a posting a
+  // role search had already stored counted as "new" again on the next profile
+  // run (and vice versa) — the row existed; only its owner differed.
   const knownIdsBefore = new Set(
     typeof db.listJobIds === 'function'
-      ? db.listJobIds()
+      ? db.listJobIds({ mode: 'all' })
       : (db.listJobs?.({}) ?? []).map((r) => r.id),
   );
   // Descriptions bought by an earlier run, reusable by ANY adapter with a
   // detail budget — not just Workday. `workdayDetailCache` stays as an alias so
   // the Workday adapter's existing parameter name keeps resolving.
-  const detailCache = db.getReusableDetail
-    ? (jobId) => db.getReusableDetail(jobId)
-    : (db.getReusableWorkdayDetail ? (jobId) => db.getReusableWorkdayDetail(jobId) : null);
+  //
+  // The cache returns the stored LOCATION too (and a by-URL lookup for sources
+  // whose id only exists after a detail read) — see src/search/detailBudget.js.
+  const detailCache = deps.detailCache !== undefined ? deps.detailCache : createDetailCache(db);
+  const sourceTimings = deps.sourceTimings ?? createSourceTimings({ root: config.root });
   const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
     scoring: config.scoring,
+    // Dedupe keeps the copy that passes the US-only gate (M2).
+    exclusions: config.exclusions,
+    // Discovery signals are computed lazily below, only for jobs that are
+    // recorded — not for the ~92% the freshness gate drops.
+    annotateDiscovery: false,
     ctx: {
       ...(deps.searchCtx ?? {}),
       root: config.root,
@@ -213,7 +228,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       // Lets the orchestrator claim the slowest sources first and leaves a
       // per-source timing record behind for diagnosis. Injectable so tests
       // never touch the filesystem.
-      sourceTimings: deps.sourceTimings ?? createSourceTimings({ root: config.root }),
+      sourceTimings,
     },
     hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
@@ -231,11 +246,58 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     meta: { found: jobs.length, duplicates: duplicates.length, errors: errors.length },
   });
 
-  // Freshness gate: prioritize recent postings. Stale (and optionally undated)
-  // jobs are filtered out BEFORE scoring/preparation. Config-driven; the 3-day
-  // fallback widens the window automatically when the strict window is thin.
-  const freshness = applyFreshnessFilter(jobs, config.runtime ?? {}, { now });
-  const freshJobs = freshness.kept;
+  // What the database already knows about each returned posting, read ONCE
+  // through a narrow projection (no jd_text). Used to reconcile relative dates
+  // and blank locations, to decide retention, and to skip unchanged stale rows.
+  const readStored = createStoredRowReader(db);
+  const storedById = new Map();
+  const storedOf = (id) => {
+    if (!storedById.has(id)) storedById.set(id, readStored(id));
+    return storedById.get(id);
+  };
+  const stats = { retained: 0, staleSkippedUnchanged: 0, expired: 0, validThroughExpired: 0, rescored: 0, touched: 0 };
+  for (const job of jobs) reconcileWithStored(job, storedOf(job.id), now);
+
+  /*
+   * THE FRESHNESS MODEL (F8). Four controls used to overlap; they now mean:
+   *
+   *   discovery window  runtime.jobFreshnessMode (env JOB_FRESHNESS_MODE,
+   *                     code default LAST_7_DAYS) — gates NEW rows only: a
+   *                     posting not already on the board is admitted only if it
+   *                     was posted inside the window.
+   *   retention window  exclusions.staleness.skipOlderThanDays (45) — a row
+   *                     ALREADY scored / needs_description is kept and re-judged
+   *                     on every rediscovery until it is older than this, when
+   *                     the exclusion stage retires it as stale_posting.
+   *   freshness points  graded against the discovery window (1.0 at day 0,
+   *                     0.5 at its edge, falling to 0 at the retention limit) —
+   *                     see freshnessFactor in src/scoring/scorer.js.
+   *   maxAgeDays        per-source fetch-side optimisation only (Oracle, iCIMS,
+   *                     Rippling, atsSearch skip requisitions older than this
+   *                     before paying for details); it never decides retention.
+   *
+   * The window used to gate EVERY rediscovered job, so a Queue-tier row turned
+   * 4 days old was re-discarded as "stale: > 3d window" (92 Queue-tier rows
+   * lost) while exclusions.staleness said it had 45 days to live.
+   */
+  const retained = [];
+  const unretained = [];
+  for (const job of jobs) {
+    const s = storedOf(job.id);
+    if (s && RETAINED_STATUSES.has(s.status) && !isProtectedJobRow(s)) retained.push(job);
+    else unretained.push(job);
+  }
+  stats.retained = retained.length;
+  const freshness = applyFreshnessFilter(unretained, config.runtime ?? {}, { now });
+  const freshJobs = [...retained, ...freshness.kept];
+  const freshnessModel = {
+    discoveryDays: freshness.windowDays,
+    retentionDays: Number(config.exclusions?.staleness?.skipOlderThanDays) || 45,
+  };
+  if (!Number.isFinite(freshnessModel.discoveryDays)) freshnessModel.discoveryDays = freshnessModel.retentionDays;
+
+  // Every write below is batched into chunked transactions (P5).
+  const writer = createWriter(db);
   if (freshness.dropped.length || freshness.review.length) {
     logger.event(EVENT_TYPES.FRESHNESS_FILTERED, {
       message: `Freshness ${freshness.mode}: kept ${freshJobs.length}, dropped ${freshness.dropped.length}`
@@ -252,7 +314,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   }
 
   // Built once per run — the vocabulary is pure and derived from the profile.
-  const profileVocab = config.candidate ? buildProfileVocabulary(config.candidate) : null;
+  const profileVocab = profileVocabularyFor(config.candidate);
   const counters = { ...emptyCounters(), jobs_found: jobs.length };
   // What was ACTUALLY new this run. `jobs_found` is every posting every source
   // returned, which on a mature corpus is dominated by rows we already had, so
@@ -263,6 +325,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   counters.jobs_suppressed_applied = suppressed.applied;
   counters.jobs_suppressed_url_owned = suppressed.urlOwned;
   if (searchCancelled) counters.jobs_cancelled += 1;
+  let loopCancelled = false;
   const scoredJobs = [];
   // Full-visibility audit trail of every discovered job and what happened to it.
   const discovered = [];
@@ -286,19 +349,32 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   // thousands of undated rows as expired, and hid them from the "needs date
   // check" review the UI offers. Undated drops therefore keep their own honest
   // reason and are tagged so the dashboard can count them.
+  //
+  // PERFORMANCE (P5). This is ~92% of everything a run returns, so it is kept
+  // cheap: no discovery classification (the row is not in found_jobs.json and
+  // the report only counts it), no rewrite of a row already stored as the
+  // same kind of discard with the same posting, and no jd_text in the write —
+  // a stale discard's description is never read again, and writing ~8 KB per
+  // row for 60k rows per run was the bulk of the write volume. The text is
+  // released from memory as soon as the row's employment category is known.
+  const markers = config.exclusions?.employmentTypes;
   for (const { job, reason } of freshness.dropped) {
     counters.jobs_discarded += 1;
     counters.jobs_discarded_stale += 1;
     const undated = reason === UNDATED_REASON;
     if (undated) counters.jobs_unknown_date_review += 1;
     const discardReason = undated ? reason : `stale: ${reason}`;
-    const discovery = job.rawMetadata?.discovery
-      ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'discarded', discard_reason: discardReason }, config.exclusions?.employmentTypes, runMode);
-    discovered.push(discoveredRow(job, discovery, {
-      keptForScoring: false, discardReason, lifecycle: LIFECYCLE.HARD_DISCARDED,
-    }));
-    reportRows.push(reportRow(job, discovery, { status: 'discarded', discard_reason: discardReason }));
+    const s = storedOf(job.id);
+    if (s && s.status === 'discarded' && sameDiscardKind(s.discard_reason, discardReason) && postingUnchanged(s, job)) {
+      stats.staleSkippedUnchanged += 1;
+    } else {
+      const employmentCategory = classifyEmployment(job, markers).category;
+      writer.write(() => persistJob(db, job, {
+        status: 'discarded', discard_reason: discardReason, employment_category: employmentCategory,
+      }, markers, runMode, { omitJd: true }));
+    }
+    job.jdText = undefined;
+    reportRows.push(reportRow(job, UNCLASSIFIED, { status: 'discarded', discard_reason: discardReason }));
   }
 
   // Record undated jobs in the SEPARATE review bucket. They are NOT scored,
@@ -307,7 +383,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     counters.jobs_unknown_date_review += 1;
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
-    persistJob(db, job, { status: 'unknown_date_review', discard_reason: 'unknown posting date' }, config.exclusions?.employmentTypes, runMode);
+    writer.write(() => persistJob(db, job, { status: 'unknown_date_review', discard_reason: 'unknown posting date' }, markers, runMode));
     const dRow = discoveredRow(job, discovery, {
       keptForScoring: false, discardReason: 'unknown posting date',
       lifecycle: LIFECYCLE.UNKNOWN_DATE_REVIEW,
@@ -322,6 +398,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   for (const job of freshJobs) {
     if (deps.shouldCancel?.()) {
       counters.jobs_cancelled += 1;
+      loopCancelled = true;
       break;
     }
     // Find New Jobs is incremental: an unchanged record that already has a
@@ -341,17 +418,27 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       && existing?.scoring_fingerprint === configFingerprint
       && materiallyUnchanged(existing, job)) {
       counters.jobs_skipped_unchanged += 1;
+      // Still LISTED: bump updated_at so the expiry pass (M3), which reads
+      // "not seen for N successful runs" from updated_at, never retires a row
+      // merely because nothing about it changed.
+      if (RETAINED_STATUSES.has(existing.status)) {
+        stats.touched += 1;
+        writer.write(() => touchJob(db, job.id));
+      }
       continue;
     }
     const discovery = job.rawMetadata?.discovery
       ?? classifyDiscovery(job, { candidate: config.candidate, scoring: config.scoring });
 
-    // 1. Hard exclusions.
-    const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
+    // 1. Hard exclusions — and the posting's own end date (M3). A JSON-LD
+    // `validThrough` in the past is the employer saying the posting is closed.
+    const exclusion = validThroughExpired(job, now)
+      ?? applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
     if (exclusion.excluded) {
       counters.jobs_discarded += 1;
       counters.jobs_discarded_excluded += 1;
-      persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason }, config.exclusions?.employmentTypes, runMode);
+      if (exclusion.category === 'expired') stats.validThroughExpired += 1;
+      writer.write(() => persistJob(db, job, { status: 'discarded', discard_reason: exclusion.reason }, markers, runMode, { omitJd: true }));
       logger.event(EVENT_TYPES.EXCLUSION_MATCHED, {
         jobId: job.id, message: exclusion.reason, meta: { category: exclusion.category },
       });
@@ -364,7 +451,9 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
 
     // 2. Sponsorship + 3. Score + 4. Tier.
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
-    const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
+    const score = scoreJob(job, {
+      scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel,
+    });
     // A posting whose TITLE gave no signal reached scoring only because the
     // gate now defers instead of rejecting. That recovers real roles, but such
     // a posting must clear a higher bar than one whose title already matched —
@@ -385,7 +474,11 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     });
     reportRows.push(row);
 
-    persistJob(db, job, {
+    const neverRead = job.rawMetadata?.summaryOnly === true;
+    const unread = tier === TIERS.DISCARD && neverRead && titleVerdict !== 'reject';
+    // ONE write per job. The unread case below used to write the scored verdict
+    // and then immediately overwrite it; the final fields are decided first.
+    const verdict = {
       score: score.total, tier, sponsorship: sponsorship.status,
       // The evidence behind the sponsorship verdict, so the badge is auditable
       // rather than an unexplained assertion.
@@ -396,7 +489,14 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       // incremental skip above so a stale score can never pass as current.
       scoring_fingerprint: configFingerprint,
       status: tier === TIERS.DISCARD && !keepBelowThreshold ? 'discarded' : 'scored',
-    }, config.exclusions?.employmentTypes, runMode);
+      ...payFields(job),
+      ...(unread ? {
+        status: 'needs_description',
+        discard_reason: 'not judged: the description was never fetched (summary only)',
+        tier: null,
+      } : {}),
+    };
+    writer.write(() => persistJob(db, job, verdict, markers, runMode));
     logger.event(EVENT_TYPES.SCORE_EXPLAINED, {
       jobId: job.id, message: `${score.total}/100 -> ${tier}`,
       meta: { score: score.total, tier, sponsorship: sponsorship.status, sponsorshipGated, posted: formatPostedRelative(job.postedAt, now) },
@@ -414,15 +514,8 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     // "below score threshold" states a fit conclusion the system never earned.
     // They are recorded as unread instead, so `npm run enrich` can fetch the
     // descriptions and score them for real.
-    const neverRead = job.rawMetadata?.summaryOnly === true;
-    if (tier === TIERS.DISCARD && neverRead && titleVerdict !== 'reject') {
+    if (unread) {
       counters.jobs_unread += 1;
-      persistJob(db, job, {
-        status: 'needs_description',
-        discard_reason: 'not judged: the description was never fetched (summary only)',
-        score: score.total,
-        tier: null,
-      }, config.exclusions?.employmentTypes, runMode);
       discovered.push(discoveredRow(job, discovery, {
         keptForScoring: false,
         discardReason: 'description not fetched',
@@ -454,6 +547,9 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     // eligible tiers, so normal runs are unchanged.
     const shouldPrepare = typeof deps.prepareFilter === 'function' ? deps.prepareFilter(job) : true;
     if (mode !== 'DRY_RUN' && PREPARE_TIERS.has(tier) && shouldPrepare) {
+      // The queued verdict must land BEFORE the packet's 'prepared' write, or
+      // the next flush would overwrite 'prepared' with 'scored'.
+      writer.flush();
       packetPath = await preparePacket({ config, db, logger, job, score, tier, deps, counters });
       if (packetPath) {
         lifecycle = LIFECYCLE.PREPARED;
@@ -473,6 +569,33 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     discovered.push(dRow);
     scored.push(dRow);
     if (queuedTier) queued.push(dRow);
+  }
+
+  // A duplicate collapsed into another record this run is still LISTED; its own
+  // stored row (from a run where it was the survivor) must not age into
+  // expiry for it. Only active rows need the touch.
+  for (const { job } of duplicates) {
+    if (!job?.id || !knownIdsBefore.has(job.id)) continue;
+    const s = storedOf(job.id);
+    if (s && RETAINED_STATUSES.has(s.status)) {
+      stats.touched += 1;
+      writer.write(() => touchJob(db, job.id));
+    }
+  }
+  writer.flush();
+
+  // M3 — retire rows their source stopped listing. Profile runs only: a role
+  // search runs different queries, so its silence proves nothing about a
+  // profile row. Skipped entirely on a cancelled run.
+  if (!searchCancelled && !loopCancelled && runMode.discovery_mode === 'profile') {
+    stats.expired = expireUnlisted({ db, perSource, sourceTimings, writer });
+    writer.flush();
+  }
+
+  // F10 — re-judge active rows scored under a different configuration, from
+  // their stored text (no network).
+  if (!searchCancelled && !loopCancelled && deps.rescoreStale !== false) {
+    stats.rescored = rescoreStale({ db, config, now, fingerprint: configFingerprint }).rescored;
   }
 
   // Order every actionable list freshest-first (last-24h > sponsorship > score >
@@ -502,6 +625,9 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   return {
     counters, scoredJobs, discovered, scored, queued, review: reviewRows,
     report, errors, artifacts, perSource, cancelled: searchCancelled,
+    // Diagnostics that have no run_log column: retained-past-window rows,
+    // unchanged stale rows not rewritten, expiries, re-scores, touches.
+    stats,
   };
 }
 
@@ -785,22 +911,166 @@ function defaultWrite(dir, path, text) {
   // Atomic: readers must never observe a torn cover letter / artifact.
   writeFileAtomic(path, text, 'utf8');
 }
-
 /** Statuses owned by discovery/scoring — the only ones the guard applies to. */
-const DISCOVERY_STATUSES = new Set(['discarded', 'scored', 'unknown_date_review']);
+const DISCOVERY_STATUSES = new Set(['discarded', 'scored', 'unknown_date_review', 'needs_description']);
+
+/**
+ * Statuses of a row that is ON THE BOARD (or waiting to be read) and therefore
+ * retained past the discovery window until the retention window retires it.
+ * `queued` is a lifecycle, not a stored status: a Queue-tier row is 'scored'.
+ */
+const RETAINED_STATUSES = new Set(['scored', 'needs_description']);
+
+/** Placeholder discovery result for rows recorded without classification. */
+const UNCLASSIFIED = Object.freeze({ match: 'unknown', signals: [], reasons: ['not classified: dropped before scoring'] });
+
+/** Consecutive successful source runs a row may be missing from before it expires. */
+export const EXPIRE_AFTER_MISSED_RUNS = 3;
+
+/** Rows per write transaction. */
+const WRITE_CHUNK = 500;
+
+/** Verdict columns a role search may never write onto a profile-owned row (F9). */
+const VERDICT_COLUMNS = [
+  'score', 'tier', 'sponsorship', 'sponsorship_signals', 'matched_keywords', 'missing_keywords',
+  'explanation', 'scoring_fingerprint', 'status', 'discard_reason',
+];
+
+/**
+ * Batch writes into chunked transactions (P5).
+ *
+ * Every upsert used to be its own implicit transaction — a journal sync per
+ * row, ~65k per run. `db.transaction(fn)` is feature-detected; without it
+ * writes run immediately, exactly as before. Writes are queued as thunks and
+ * committed every WRITE_CHUNK rows; `flush()` must be called before any await
+ * that could observe the rows (packet preparation) and at the end of a run.
+ *
+ * @param {object} db
+ * @param {number} [chunk]
+ * @returns {{write: (fn: () => void) => void, flush: () => void}}
+ */
+export function createWriter(db, chunk = WRITE_CHUNK) {
+  const transactional = typeof db?.transaction === 'function';
+  let queue = [];
+  const flush = () => {
+    if (!queue.length) return;
+    const batch = queue;
+    queue = [];
+    db.transaction(() => { for (const fn of batch) fn(); });
+  };
+  return {
+    write(fn) {
+      if (!transactional) { fn(); return; }
+      queue.push(fn);
+      if (queue.length >= chunk) flush();
+    },
+    flush,
+  };
+}
+
+/**
+ * A narrow reader for what discovery needs to know about a stored row — never
+ * jd_text. Uses the raw connection when exposed (`db.db.prepare`), else
+ * `getJob`, so it works against every Database shape the tests use.
+ *
+ * @param {object} db
+ * @returns {(id: string) => object|null}
+ */
+function createStoredRowReader(db) {
+  const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
+  if (raw) {
+    let stmt = null;
+    return (id) => {
+      try {
+        stmt ??= raw.prepare(`SELECT id, status, discard_reason, posted_at, title, company, location, url,
+            applied, application_packet_path, user_decision, discovery_mode, updated_at
+          FROM jobs WHERE id = ?`);
+        return stmt.get(id) ?? null;
+      } catch {
+        return null;
+      }
+    };
+  }
+  return (id) => db?.getJob?.(id) ?? null;
+}
+
+/**
+ * Bring a freshly discovered job into agreement with what is already stored,
+ * where the listing carries LESS information than the store (in place):
+ *
+ *  - a relative Workday date that still agrees with the stored one keeps the
+ *    stored date (P8), so an unchanged requisition is not rewritten;
+ *  - a blank location takes the stored one (S8a), so a listing that collapsed
+ *    "2 Locations" to '' neither erases the place nor escapes the US gate.
+ */
+function reconcileWithStored(job, stored, now) {
+  if (!stored || !job) return;
+  if (job.rawMetadata?.postedAtApprox && stored.posted_at
+    && postedOnAgrees(job.rawMetadata.postedOnLabel, stored.posted_at, now)) {
+    job.postedAt = stored.posted_at;
+  }
+  if (!String(job.location ?? '').trim() && String(stored.location ?? '').trim()) {
+    job.location = String(stored.location).trim();
+    job.rawMetadata = { ...(job.rawMetadata ?? {}), locationFromStore: true };
+  }
+}
+
+/** Two discard reasons of the same kind ("stale: …" vs "stale: …"). */
+function sameDiscardKind(a, b) {
+  const kind = (r) => String(r ?? '').split(':')[0].trim();
+  return Boolean(a) && kind(a) === kind(b);
+}
+
+/** Identity fields of a posting, stored vs incoming (no jd_text needed). */
+function postingUnchanged(row, job) {
+  return String(row.company ?? '') === String(job.company ?? '')
+    && String(row.title ?? '') === String(job.title ?? '')
+    && String(row.url ?? '') === String(job.url ?? '')
+    && String(row.posted_at ?? '') === String(job.postedAt ?? '');
+}
 
 /** Material fields whose change warrants re-scoring an already-seen posting. */
 function materiallyUnchanged(row, job) {
   return String(row.company ?? '') === String(job.company ?? '')
     && String(row.title ?? '') === String(job.title ?? '')
-    && String(row.location ?? '') === String(job.location ?? '')
+    // A blank incoming location never overwrites the stored one, so it cannot
+    // be a material change either.
+    && (!String(job.location ?? '').trim() || String(row.location ?? '') === String(job.location ?? ''))
     && String(row.url ?? '') === String(job.url ?? '')
     && String(row.jd_text ?? '') === String(job.jdText ?? '')
     && String(row.posted_at ?? '') === String(job.postedAt ?? '')
     && String(row.employment_type ?? '') === String(job.employmentType ?? '');
 }
 
-function persistJob(db, job, fields = {}, markers = {}, mode = null) {
+/** Refresh only `updated_at` — "still listed" — without touching any value. */
+function touchJob(db, id) {
+  db.upsertJob({ id });
+}
+
+/**
+ * An exclusion-shaped verdict when the posting's own `validThrough` has passed.
+ * @returns {object|null}
+ */
+function validThroughExpired(job, now) {
+  const raw = job?.rawMetadata?.validThrough;
+  if (!raw) return null;
+  const at = Date.parse(String(raw));
+  if (!Number.isFinite(at) || at >= now.getTime()) return null;
+  const reason = `expired: validThrough ${String(raw).slice(0, 10)} has passed`;
+  return { excluded: true, category: 'expired', reason, matched: [reason], flags: [] };
+}
+
+/**
+ * compensation_text for a posting that has no compensation field but states
+ * pay in its description (M4), so the board shows what the score used.
+ */
+function payFields(job) {
+  if (job.rawMetadata?.compensation) return {};
+  const pay = postedPay(job);
+  return pay?.source === 'description' && pay.text ? { compensation_text: pay.text } : {};
+}
+
+function persistJob(db, job, fields = {}, markers = {}, mode = null, { omitJd = false } = {}) {
   const patch = { ...fields };
   // Downgrade guard: a re-discovered job the human already invested in
   // (decision, packet, approval, assist outcome, submission) keeps its status —
@@ -837,20 +1107,32 @@ function persistJob(db, job, fields = {}, markers = {}, mode = null) {
     if (owner === null) {
       patch.discovery_mode = 'role_search';
       patch.search_query = mode.search_query ?? null;
+    } else if (owner === 'profile') {
+      // F9 — THE VERDICT BELONGS TO THE OWNER TOO. A role search judges the
+      // posting against the same profile vocabulary but with keepBelowThreshold
+      // and its own ad-hoc intent; writing its score/tier/status over a
+      // profile-owned row was measured turning 93 Priority rows into Apply. The
+      // search may refresh the posting's text and metadata, nothing else.
+      for (const col of VERDICT_COLUMNS) delete patch[col];
     }
   }
+  const location = String(job.location ?? '').trim();
   db.upsertJob({
     id: job.id,
     source: job.source,
     company: job.company,
     title: job.title,
-    location: job.location,
+    // A blank location is "the listing did not say", never "the place is
+    // unknown now" — omitted, so the stored place survives (S8a).
+    ...(location ? { location: job.location } : {}),
     url: job.url,
-    jd_text: job.jdText,
+    // Stale and excluded discards never have their description read again, so
+    // the text is not written (P5); the stored text, if any, is left as is.
+    ...(omitJd ? {} : { jd_text: job.jdText }),
     posted_at: job.postedAt,
     applicant_count: job.applicantCount,
     employment_type: job.employmentType,
-    employment_category: classifyEmployment(job, markers).category,
+    employment_category: patch.employment_category ?? classifyEmployment(job, markers).category,
     // 1 when the description was never fetched, so downstream can tell
     // "judged and rejected" apart from "never read".
     summary_only: job.rawMetadata?.summaryOnly === true ? 1 : 0,
@@ -859,4 +1141,184 @@ function persistJob(db, job, fields = {}, markers = {}, mode = null) {
       : {}),
     ...patch,
   });
+}
+
+/**
+ * M3 — retire rows their source has stopped listing.
+ *
+ * A row is expired when its source completed a FULL listing (no real error,
+ * not cancelled) in each of its last EXPIRE_AFTER_MISSED_RUNS recorded runs and
+ * the row was not seen in any of them. "Seen" is `updated_at`: every returned
+ * posting is written or touched during the run, so a row whose updated_at is
+ * older than the earliest of those runs was absent from all of them. A source
+ * with any unsuccessful run inside that span is skipped — a failed board
+ * proves nothing about its postings.
+ *
+ * Only active rows (scored / needs_description) are touched, never a row the
+ * human invested in. Lifecycle has no 'expired' status, so the row becomes
+ * `discarded` with reason "expired: not listed by source for N runs".
+ *
+ * @returns {number} rows expired
+ */
+export function expireUnlisted({
+  db, perSource = [], sourceTimings, writer = null, runs = EXPIRE_AFTER_MISSED_RUNS,
+} = {}) {
+  const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
+  if (!raw || typeof sourceTimings?.historyOf !== 'function') return 0;
+  // Aggregate adapters (atsSearch, careers, apify, adzuna) write rows under the
+  // DIRECT sources' names. If one of them did not complete this run, a row it
+  // alone still lists was not touched, so no source name may be expired.
+  if (perSource.some((e) => !adapterSourceName(e?.adapter) && e?.succeeded !== true)) return 0;
+  const w = writer ?? createWriter(db);
+  let expired = 0;
+  const reason = `expired: not listed by source for ${runs} runs`;
+  // Every configured source of an adapter must qualify: two Workday sources
+  // both write `source = 'workday'`, and one failing says nothing about the
+  // other's rows.
+  const byAdapter = new Map();
+  for (const entry of perSource) {
+    const name = adapterSourceName(entry?.adapter);
+    if (!name || !entry.source) continue;
+    if (!byAdapter.has(name)) byAdapter.set(name, []);
+    byAdapter.get(name).push(entry);
+  }
+  for (const [sourceName, entries] of byAdapter) {
+    let cutoff = null;
+    let qualifies = true;
+    for (const entry of entries) {
+      const history = sourceTimings.historyOf(entry.source).filter((h) => !h.cancelled && !h.cached);
+      const recent = history.slice(0, runs);
+      if (!entry.succeeded || recent.length < runs || recent.some((h) => h.ok !== true)) { qualifies = false; break; }
+      // `at` is stamped when the SEARCH ends, before any row is written, so a
+      // row seen in the oldest of these runs has updated_at >= its `at`.
+      const at = recent[runs - 1].at;
+      if (!at) { qualifies = false; break; }
+      cutoff = cutoff === null || at < cutoff ? at : cutoff;
+    }
+    if (!qualifies || !cutoff) continue;
+    let rows;
+    try {
+      rows = raw.prepare(`SELECT id, applied, application_packet_path, user_decision, status FROM jobs
+        WHERE source = ? AND status IN ('scored', 'needs_description')
+          AND coalesce(updated_at, '') < ?
+          AND (discovery_mode IS NULL OR discovery_mode = 'profile')`).all(sourceName, cutoff);
+    } catch {
+      continue;
+    }
+    for (const row of rows) {
+      if (isProtectedJobRow(row)) continue;
+      expired += 1;
+      w.write(() => db.upsertJob({ id: row.id, status: 'discarded', discard_reason: reason }));
+    }
+  }
+  w.flush();
+  return expired;
+}
+
+/**
+ * The `jobs.source` value an adapter writes. Adapter ids and source names are
+ * the same for every direct adapter; the aggregate adapters (careers,
+ * atsSearch, apify, manualUrls) write rows under OTHER sources' names, so a
+ * run of theirs says nothing about which rows are still listed — they are
+ * never used for expiry.
+ */
+function adapterSourceName(adapter) {
+  return ['workday', 'greenhouse', 'lever', 'ashby', 'smartrecruiters', 'rippling',
+    'oracleRecruiting', 'icims', 'amazonJobs'].includes(adapter)
+    ? adapter
+    : null;
+}
+
+/**
+ * F10 — re-judge active rows whose stored verdict was produced by a DIFFERENT
+ * configuration, from their stored description. No network.
+ *
+ * Rows: status scored / needs_description with scoring_fingerprint ≠ the
+ * current one. Each goes through the same exclusions → sponsorship → score →
+ * tier chain as discovery, so a changed profile, weight, taxonomy or
+ * sponsorship list takes effect on the whole board at once instead of only on
+ * postings that happen to be re-listed. Role-search rows keep their
+ * below-threshold visibility. Protected rows keep their status (the persist
+ * guard), but their verdict columns refresh.
+ *
+ * Exported for the `rescore` CLI command and called at the end of every
+ * pipeline run and on profile activation.
+ *
+ * @param {object} args
+ * @param {object} args.db
+ * @param {object} args.config loadConfig() bundle
+ * @param {Date} [args.now]
+ * @param {string} [args.fingerprint] precomputed scoringFingerprint(config)
+ * @param {number} [args.limit] cap per call (default: all)
+ * @returns {{rescored: number, discarded: number, unread: number}}
+ */
+export function rescoreStale({ db, config, now = new Date(), fingerprint, limit = Infinity } = {}) {
+  const out = { rescored: 0, discarded: 0, unread: 0 };
+  const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
+  if (!raw || !config?.scoring) return out;
+  const current = fingerprint ?? scoringFingerprint(config);
+  let rows;
+  try {
+    rows = raw.prepare(`SELECT id, source, company, title, location, url, jd_text, posted_at,
+        applicant_count, employment_type, compensation_text, summary_only, discovery_mode, search_query
+      FROM jobs
+      WHERE status IN ('scored', 'needs_description')
+        AND coalesce(scoring_fingerprint, '') <> ?`).all(current);
+  } catch {
+    return out;
+  }
+  const vocab = config.candidate ? profileVocabularyFor(config.candidate) : null;
+  const freshnessModel = {
+    discoveryDays: FRESHNESS_WINDOW_DAYS[config.runtime?.jobFreshnessMode ?? 'LAST_7_DAYS'] ?? 7,
+    retentionDays: Number(config.exclusions?.staleness?.skipOlderThanDays) || 45,
+  };
+  if (!Number.isFinite(freshnessModel.discoveryDays)) freshnessModel.discoveryDays = freshnessModel.retentionDays;
+  const markers = config.exclusions?.employmentTypes;
+  const writer = createWriter(db);
+  for (const row of rows.slice(0, Number.isFinite(limit) ? limit : rows.length)) {
+    const job = {
+      id: row.id, source: row.source, company: row.company, title: row.title,
+      location: row.location ?? '', url: row.url, jdText: row.jd_text ?? '',
+      postedAt: row.posted_at, applicantCount: row.applicant_count,
+      employmentType: row.employment_type ?? '', compensationText: row.compensation_text ?? '',
+      rawMetadata: { summaryOnly: Number(row.summary_only) === 1 },
+    };
+    const keepBelow = row.discovery_mode === 'role_search';
+    const mode = row.discovery_mode === 'role_search'
+      ? { discovery_mode: 'role_search', search_query: row.search_query ?? null }
+      : { discovery_mode: 'profile', search_query: null };
+    const exclusion = applyExclusions(job, config.exclusions ?? {}, { now, candidate: config.candidate });
+    let fields;
+    if (exclusion.excluded) {
+      out.discarded += 1;
+      fields = { status: 'discarded', discard_reason: exclusion.reason, scoring_fingerprint: current };
+    } else {
+      const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
+      const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel });
+      const titleVerdict = vocab ? classifyTitleFit(job.title, vocab).verdict : null;
+      const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
+      const unread = tier === TIERS.DISCARD && job.rawMetadata.summaryOnly && titleVerdict !== 'reject';
+      if (unread) out.unread += 1;
+      else if (tier === TIERS.DISCARD && !keepBelow) out.discarded += 1;
+      fields = {
+        score: score.total, tier, sponsorship: sponsorship.status,
+        sponsorship_signals: sponsorship.signals ?? [],
+        matched_keywords: score.matchedKeywords, missing_keywords: score.missingKeywords,
+        explanation, scoring_fingerprint: current,
+        status: tier === TIERS.DISCARD && !keepBelow ? 'discarded' : 'scored',
+        discard_reason: tier === TIERS.DISCARD && !keepBelow ? 'below near-miss threshold' : null,
+        ...(unread ? {
+          status: 'needs_description',
+          discard_reason: 'not judged: the description was never fetched (summary only)',
+          tier: null,
+        } : {}),
+      };
+    }
+    out.rescored += 1;
+    // `mode` is passed only to keep ownership stable; a row's own owner is
+    // re-judging it, so the F9 guard (role search over a profile row) never fires.
+    writer.write(() => persistJob(db, job, fields, markers, mode.discovery_mode === 'role_search' ? null : mode));
+  }
+  writer.flush();
+  return out;
 }

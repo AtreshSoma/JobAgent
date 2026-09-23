@@ -8,7 +8,8 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout } from '../../utils/httpClient.js';
+import { earlyTitleGate } from './atsSearch.js';
 
 export const adapterId = 'greenhouse';
 
@@ -35,6 +36,7 @@ export async function run(source = {}, ctx = {}) {
   const { fetchImpl = fetch, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const boards = Array.isArray(source.boards) ? source.boards : [];
   const concurrency = ctx.boardConcurrency ?? DEFAULT_BOARD_CONCURRENCY;
+  const titleGate = earlyTitleGate(source, ctx);
   const jobs = [];
   const errors = [];
 
@@ -56,7 +58,8 @@ export async function run(source = {}, ctx = {}) {
         () => (hostGate ? hostGate.run(url, call) : call()),
         { maxRetries },
       );
-      return { jobs: (data.jobs ?? []).map((j) => mapJob(j, token)), error: null };
+      // Title-gated BEFORE mapping: see earlyTitleGate.
+      return { jobs: (data.jobs ?? []).filter((j) => titleGate(j?.title)).map((j) => mapJob(j, token)), error: null };
     } catch (err) {
       return {
         jobs: [],
@@ -74,9 +77,8 @@ export async function run(source = {}, ctx = {}) {
 }
 
 async function fetchJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(fetchImpl, url, {}, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'Greenhouse', url);
-  return res.json();
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, {}, requestTimeoutMs, 'Greenhouse');
 }
 
 /**

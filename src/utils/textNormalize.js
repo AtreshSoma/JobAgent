@@ -146,6 +146,29 @@ function compiledPhrasePattern(normalizedPhrase) {
 }
 
 /**
+ * Whole-term presence in ALREADY-NORMALIZED text, compiled once per term.
+ *
+ * PERFORMANCE. `profileFit.js` and `roleFamilies.js` each had a private
+ * `hasTerm` that built `new RegExp(...)` on every call. Title classification
+ * tests ~1,257 taxonomy terms per title, twice, so one title cost ~930 µs and
+ * sorting 150 titles inside a comparator cost ~1.2 s. Two changes, identical
+ * semantics (boundary `[^a-z0-9]`, same as `compiledPhrasePattern`):
+ *
+ *   - a plain `includes` prefilter — a term that is not even a substring cannot
+ *     match on a word boundary, and for a short title that is nearly every term;
+ *   - the boundary regex is compiled once and memoized.
+ *
+ * @param {string} text normalized (lowercased) haystack
+ * @param {string} term normalized needle
+ * @returns {boolean}
+ */
+export function hasNormalizedTerm(text, term) {
+  if (!term || !text) return false;
+  if (!text.includes(term)) return false;
+  return compiledPhrasePattern(term).test(text);
+}
+
+/**
  * Case-insensitive, boundary-aware phrase containment (see
  * `compiledPhrasePattern` for why this is not plain substring matching).
  * @param {unknown} haystack

@@ -28,9 +28,10 @@
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError } from '../../utils/httpClient.js';
+import { fetchJsonWithTimeout } from '../../utils/httpClient.js';
 import { createHostGate } from '../../utils/hostGate.js';
-import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, titleFitPriority } from '../../scoring/profileFit.js';
+import { hydrateFromDetailCache } from '../detailBudget.js';
 
 export const adapterId = 'workday';
 
@@ -337,9 +338,21 @@ export async function run(source = {}, ctx = {}) {
   const hostGate = ctx.hostGate ?? createHostGate({
     maxConcurrent: source.hostConcurrency ?? ctx.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
   });
+  // A SHARED gate (the orchestrator always passes one) ignored the source's own
+  // `hostConcurrency`, so the measured 8-per-pod ceiling documented above ran at
+  // the global default of 4. Configure this source's pods on the shared gate —
+  // only when the source states a value, so a user who lowered the global
+  // ceiling is never silently overruled.
+  if (ctx.hostGate && Number.isFinite(source.hostConcurrency) && typeof hostGate.configure === 'function') {
+    for (const t of tenants) {
+      const host = String(t?.host ?? '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      if (host) hostGate.configure(host, source.hostConcurrency);
+    }
+  }
   const jobs = [];
   const errors = [];
   let cancelled = false;
+  let reusedTotal = 0;
 
   // Search phrases for tenants that do not pin their own. Derived from the
   // candidate's target titles so the profile is the single source of truth —
@@ -357,17 +370,17 @@ export async function run(source = {}, ctx = {}) {
       return { jobs: [], errors: [{ tenant: tenant?.tenant ?? null, error: cfg.error }] };
     }
     try {
-      const { jobs: found, errors: detailErrors, cancelled: tenantCancelled = false } = await fetchTenant(cfg, {
+      const { jobs: found, errors: detailErrors, cancelled: tenantCancelled = false, reused = 0 } = await fetchTenant(cfg, {
         fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs: source.rateLimitMs,
         requestTimeoutMs, pageConcurrency, detailConcurrency, hostSpacingMs,
         maxDetailFetches, workdayDetailCache: ctx.workdayDetailCache, shouldCancel: ctx.shouldCancel,
         targetTitles: ctx.candidate?.targetTitles ?? [],
-        profileVocab: ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null,
+        profileVocab: profileVocabularyFor(ctx.candidate),
         abortSignal: ctx.abortSignal, maxPagesPerTerm,
       });
       return {
         jobs: found, errors: detailErrors.map((e) => ({ tenant: cfg.tenant, site: cfg.site, ...e })),
-        cancelled: tenantCancelled,
+        cancelled: tenantCancelled, reused,
       };
     } catch (err) {
       return {
@@ -385,13 +398,14 @@ export async function run(source = {}, ctx = {}) {
     jobs.push(...r.jobs);
     errors.push(...r.errors);
     cancelled ||= r.cancelled === true;
+    reusedTotal += r.reused ?? 0;
   }
 
   if (tenants.length === 0) {
     errors.push({ note: 'Workday source enabled but no tenants configured. Add { host, tenant, site } entries to `tenants`.' });
   }
 
-  return { jobs, errors, cancelled };
+  return { jobs, errors, cancelled, reused: reusedTotal };
 }
 
 /**
@@ -542,18 +556,11 @@ async function fetchTenant(cfg, ctx) {
 
   // A previously stored full description is just as accurate as fetching the
   // same immutable requisition again. Hydrate it before spending detail budget.
-  if (workdayDetailCache) {
-    for (const job of out) {
-      const cached = typeof workdayDetailCache === 'function'
-        ? workdayDetailCache(job.id)
-        : workdayDetailCache.get?.(job.id);
-      if (!cached?.jdText) continue;
-      job.jdText = cached.jdText;
-      if (cached.postedAt) job.postedAt = cached.postedAt;
-      job.rawMetadata.summaryOnly = false;
-      job.rawMetadata.detailReused = true;
-    }
-  }
+  //
+  // The stored LOCATION comes back with it (see hydrateFromDetailCache): the
+  // list row blanks "2 Locations", and hydrating only the text left thousands
+  // of offshore requisitions with a JD and no location for the US gate to read.
+  const reused = hydrateFromDetailCache(out, workdayDetailCache);
 
   // Enrich only uncached jobs, within the configured per-tenant budget.
   // PUBLIC detail endpoint — concurrently (bounded).
@@ -570,11 +577,14 @@ async function fetchTenant(cfg, ctx) {
     // full descriptions for four arbitrary requisitions while genuinely on-target
     // ones stayed summary-only. Sorting by title relevance first costs nothing
     // extra (same request count) and makes those few fetches the useful ones.
+    //
+    // Priorities are computed ONCE per job before sorting (decorate-sort):
+    // inside the comparator they ran O(n log n) times — ~1 s per 150 titles.
     const pairs = out
-      .map((job, i) => ({ job, posting: postings[i] }))
+      .map((job, i) => ({ job, posting: postings[i], i }))
       .filter(({ job }) => job.rawMetadata?.summaryOnly !== false)
-      .sort((a, b) => detailPriority(b.job, targetTitles, profileVocab)
-        - detailPriority(a.job, targetTitles, profileVocab))
+      .map((pair) => ({ ...pair, p: detailPriority(pair.job, targetTitles, profileVocab) }))
+      .sort((a, b) => (b.p - a.p) || (a.i - b.i))
       .slice(0, maxDetailFetches);
     const notes = await mapWithConcurrency(pairs, detailConcurrency, ({ job, posting }) => {
       if (shouldCancel?.()) { cancelled = true; return null; }
@@ -586,7 +596,7 @@ async function fetchTenant(cfg, ctx) {
     if (failed.length > 0) errors.push(summarizeDetailFailures(failed, cfg, out.length));
   }
 
-  return { jobs: out, errors, cancelled };
+  return { jobs: out, errors, cancelled, reused };
 }
 
 /**
@@ -636,7 +646,8 @@ function pageBody(cfg, offset, searchText = cfg.searchText) {
 }
 
 async function postJson(fetchImpl, url, body, requestTimeoutMs, signal) {
-  const res = await fetchWithTimeout(fetchImpl, url, {
+  // One deadline for headers AND body — see fetchJsonWithTimeout.
+  return fetchJsonWithTimeout(fetchImpl, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(body),
@@ -644,9 +655,7 @@ async function postJson(fetchImpl, url, body, requestTimeoutMs, signal) {
     // cancelled run aborts the request already on the wire instead of waiting
     // out the full requestTimeoutMs.
     ...(signal ? { signal } : {}),
-  }, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'Workday', url);
-  return res.json();
+  }, requestTimeoutMs, 'Workday');
 }
 
 /**
@@ -753,9 +762,7 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
 }
 
 async function getJson(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(fetchImpl, url, { headers: { Accept: 'application/json' } }, requestTimeoutMs);
-  if (!res.ok) throw httpError(res, 'Workday detail', url);
-  return res.json();
+  return fetchJsonWithTimeout(fetchImpl, url, { headers: { Accept: 'application/json' } }, requestTimeoutMs, 'Workday detail');
 }
 
 /**
@@ -781,21 +788,61 @@ async function getJson(fetchImpl, url, requestTimeoutMs) {
  * @returns {string|null} ISO-8601 date, or null when there is nothing to read
  */
 export function parseWorkdayPostedOn(postedOn, now = new Date()) {
+  const range = postedOnRange(postedOn);
+  if (!range) return null;
+  // A UTC DATE, never a timestamp. This returned `now − N days` with the
+  // current time of day, so the same unchanged requisition got a new
+  // `posted_at` on every run — measured: 23,614 rows rewritten per run, each
+  // one failing `materiallyUnchanged` and paying for a full re-score. The label
+  // is day-accurate, so the date is all the precision it supports.
+  return utcDate(new Date(now.getTime() - range.days * DAY_MS));
+}
+
+/** One day in milliseconds. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** `YYYY-MM-DD` of a Date in UTC. */
+function utcDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * What a relative label claims: N days ago, and whether N is a lower bound.
+ * @param {unknown} postedOn
+ * @returns {{days: number, atLeast: boolean}|null}
+ */
+function postedOnRange(postedOn) {
   const s = String(postedOn ?? '').trim().toLowerCase();
   if (!s) return null;
-
-  const daysAgo = (n) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
-
-  if (/\bposted\s+today\b/.test(s)) return now.toISOString();
-  if (/\bposted\s+yesterday\b/.test(s)) return daysAgo(1);
-
-  const days = /\bposted\s+(\d+)\+?\s*days?\s+ago\b/.exec(s);
-  if (days) return daysAgo(Number(days[1]));
-
-  const months = /\bposted\s+(\d+)\+?\s*months?\s+ago\b/.exec(s);
-  if (months) return daysAgo(Number(months[1]) * 30);
-
+  if (/\bposted\s+today\b/.test(s)) return { days: 0, atLeast: false };
+  if (/\bposted\s+yesterday\b/.test(s)) return { days: 1, atLeast: false };
+  const days = /\bposted\s+(\d+)(\+?)\s*days?\s+ago\b/.exec(s);
+  if (days) return { days: Number(days[1]), atLeast: days[2] === '+' };
+  const months = /\bposted\s+(\d+)(\+?)\s*months?\s+ago\b/.exec(s);
+  if (months) return { days: Number(months[1]) * 30, atLeast: true };
   return null;
+}
+
+/**
+ * Does a previously stored posting date still agree with today's label?
+ *
+ * "Posted 30+ Days Ago" is satisfied by ANY date at least 30 days back, and
+ * "Posted 5 Days Ago" by a date within a day of five days back (the label
+ * rolls over at the tenant's midnight, not ours). When it agrees, the stored
+ * date is kept, so a requisition that has not changed is not rewritten.
+ *
+ * @param {unknown} postedOn today's relative label
+ * @param {string|null} stored the stored posted_at
+ * @param {Date} [now]
+ * @returns {boolean}
+ */
+export function postedOnAgrees(postedOn, stored, now = new Date()) {
+  const range = postedOnRange(postedOn);
+  const at = Date.parse(String(stored ?? ''));
+  if (!range || !Number.isFinite(at)) return false;
+  const ageDays = (Date.parse(utcDate(now)) - Date.parse(utcDate(new Date(at)))) / DAY_MS;
+  if (range.atLeast) return ageDays >= range.days - 1;
+  return Math.abs(ageDays - range.days) <= 1;
 }
 
 /**
@@ -821,7 +868,15 @@ export function mapJob(p, cfg, { now = new Date() } = {}) {
   // judge, so offshore multi-location reqs passed a US-only gate untouched.
   const rawLocation = String(p.locationsText ?? p.location ?? '');
   const isAggregate = /^\s*\d+\s+locations?\s*$/i.test(rawLocation);
-  const location = isAggregate ? '' : rawLocation;
+  // The primary place is ALSO in the requisition's own path —
+  // `/job/Hyderabad/Data-Engineer_ATCI-…`, `/job/US-CA-Santa-Clara/…` — so a
+  // blanked aggregate (or a tenant that sends no location at all) still has a
+  // real place for the geography gate. Measured: the only two Apply-tier
+  // Workday rows on the live board were Accenture `/job/Hyderabad/…` postings
+  // stored with an EMPTY location. The detail endpoint, when read, replaces
+  // this with the full list of places.
+  const fromPath = (isAggregate || !rawLocation.trim()) ? locationFromExternalPath(externalPath) : '';
+  const location = isAggregate ? fromPath : (rawLocation.trim() ? rawLocation : fromPath);
   const jdText = htmlToText([p.title, location, ...bullets].filter(Boolean).join('. '));
 
   // An exact date if the tenant sends one; otherwise derive it from the
@@ -849,11 +904,37 @@ export function mapJob(p, cfg, { now = new Date() } = {}) {
       // job has NO usable location rather than a fake one. Recording the
       // original label keeps the drop auditable.
       ...(isAggregate ? { locationAggregate: rawLocation } : {}),
+      // Marks the location as the path's PRIMARY place only, so a stored
+      // detail location (every place) is allowed to replace it on hydration.
+      ...(fromPath && location === fromPath ? { locationFromUrl: true } : {}),
       // Be honest about where the date came from: derived from "Posted N Days
       // Ago" is day-accurate, not timestamp-accurate.
       ...(approx ? { postedAtApprox: true, postedOnLabel: String(p.postedOn) } : {}),
     },
   });
+}
+
+/**
+ * The primary location a Workday requisition path names, or ''.
+ *
+ * Workday paths are `/job/<Location-Slug>/<Title-Slug>_<ReqId>`. A path with a
+ * single segment (`/job/Sr-Product-Manager_REQ1`) carries no place and yields
+ * ''. Hyphens become spaces except in a leading ISO country prefix
+ * (`IN-KA-Bangalore`, `PH-00-Taguig`), which the US gate reads in that shape.
+ *
+ * @param {string} externalPath
+ * @returns {string}
+ */
+export function locationFromExternalPath(externalPath) {
+  const m = /^\/?job\/([^/]+)\/[^/]+$/i.exec(String(externalPath ?? '').trim());
+  if (!m) return '';
+  let slug;
+  try { slug = decodeURIComponent(m[1]); } catch { slug = m[1]; }
+  slug = slug.replace(/-+$/, '').trim();
+  if (!slug || /^\d+$/.test(slug)) return '';
+  // Keep a `CC-RR-City` country prefix intact; everything else reads as words.
+  if (/^[A-Za-z]{2,3}-[A-Za-z0-9]{1,3}-\S/.test(slug)) return slug;
+  return slug.replace(/-+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
 /**

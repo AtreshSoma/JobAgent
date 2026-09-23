@@ -14,7 +14,7 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 import { candidateNeedsSponsorship } from './exclusionFilter.js';
-import { excludedLocationMatch } from './searchConstraints.js';
+import { excludedLocationMatch, postedPay } from './searchConstraints.js';
 import { seniorityRank } from '../profile/roleFamilies.js';
 
 /**
@@ -94,9 +94,14 @@ const SENIORITY_PATTERNS = [
  * @param {object} [args.candidate] parsed config/candidate.json (for alignment + geo + seniority)
  * @param {string[]} [args.resumeKeywords] keywords present in the master resume (optional)
  * @param {Date} [args.now]
+ * @param {{discoveryDays: number, retentionDays: number}} [args.freshnessModel] grade
+ *   freshness against the discovery window (see freshnessFactor); omitted, the
+ *   legacy scoring.freshness curve applies
  * @returns {object} score result with breakdown, matched/missing keywords
  */
-export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date() } = {}) {
+export function scoreJob(job = {}, {
+  scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date(), freshnessModel = null,
+} = {}) {
   const weights = scoring.weights;
   const kw = scoring.keywords;
   const text = normalizeText([job.title, job.jdText].join(' \n '));
@@ -162,7 +167,7 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   breakdown.geographyFit = scoreGeography(job, candidate, weights.geographyFit);
 
   // Freshness.
-  breakdown.freshness = scoreFreshness(job, scoring.freshness ?? {}, weights.freshness, now);
+  breakdown.freshness = scoreFreshness(job, scoring.freshness ?? {}, weights.freshness, now, freshnessModel);
 
   // Direct ATS availability.
   breakdown.directAtsAvailability = {
@@ -176,7 +181,13 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
     text, candidate, resumeKeywords, weights.resumeKeywordAlignment,
   );
 
-  const raw = Object.values(breakdown).reduce((s, b) => s + b.points, 0);
+  // Pay fit: a PENALTY ONLY, and only when both sides are stated. It carries no
+  // weight in the denominator, so every posting that states no pay — most of
+  // them — scores exactly as it did before this existed.
+  const payFit = scorePay(job, candidate, weights.payFit);
+  if (payFit) breakdown.payFit = payFit;
+
+  const raw = Math.max(0, Object.values(breakdown).reduce((s, b) => s + b.points, 0));
   // The denominator is the STRUCTURAL weights plus whatever categories were
   // declared. It cannot be `Object.values(weights)`: on a legacy config the
   // categories derive their weights from that same object, so summing both
@@ -345,7 +356,12 @@ function scoreSeniority(job, text, candidateSeniority, weight) {
   // raw "Junior Data Engineer" would otherwise detect nothing, fall through to
   // the body, and pick up the VERB "lead" — scoring a junior role as a step up.
   let detected = detectSeniority(String(job?.title ?? '').toLowerCase());
-  if (detected === null) detected = detectSeniority(text);
+  // The body is consulted ONLY for an explicit, structured level statement.
+  // Running the title patterns over the whole JD read "reports to our CTO" as
+  // executive, "partner with the VP" as executive, "the hiring manager" and
+  // "you will lead" as lead — so an unleveled title took whatever rank its
+  // boilerplate happened to mention. Anything else is "unstated" (0.6).
+  if (detected === null) detected = detectStatedSeniority(text);
 
   let factor;
   if (detected === null) {
@@ -396,6 +412,31 @@ function detectSeniority(text) {
 }
 
 /**
+ * Structured level statements a DESCRIPTION may make: "this is a senior-level
+ * role", "Level: Senior", "Seniority: Mid-Senior", "Career level: Entry".
+ * Prose ("lead the design", "reports to the CTO") never counts.
+ */
+const STATED_SENIORITY_PATTERNS = [
+  /\bthis\s+is\s+an?\s+([a-z]+(?:[\s-][a-z]+)?)[\s-]level\s+(?:role|position|opportunity|job)\b/,
+  /\b(?:job|career|experience|position|role)?\s*(?:level|seniority)\s*[:\-–]\s*([a-z]+(?:[\s-][a-z]+)?)/,
+];
+
+/**
+ * The level a description STATES, or null. See STATED_SENIORITY_PATTERNS.
+ * @param {string} text normalized title + description
+ * @returns {number|null}
+ */
+function detectStatedSeniority(text) {
+  for (const re of STATED_SENIORITY_PATTERNS) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const rank = detectSeniority(m[1]);
+    if (rank !== null) return rank;
+  }
+  return null;
+}
+
+/**
  * Sponsorship feasibility points. `Denied` scores ZERO — below Unconfirmed,
  * which still earns partial credit for being merely unknown. An explicit refusal
  * is worse than silence, so it must never out-score it.
@@ -436,9 +477,64 @@ function scoreGeography(job, candidate, weight) {
   return { points: round2(weight * factor), weight, matched };
 }
 
-function scoreFreshness(job, freshness, weight, now) {
+/** Raw points a posting that pays well under target can lose, by default. */
+const DEFAULT_PAY_PENALTY = 6;
+
+/**
+ * Pay versus the candidate's stated preference.
+ *
+ * Reads the posting's compensation field, or a strict pay-transparency
+ * sentence in its description (`postedPay`). Compared against
+ * `salaryPreference.targetAnnualUSD`, falling back to `minAnnualUSD`. A top of
+ * range at or above the target costs nothing; below it the penalty grows
+ * linearly and is complete at 25% under. (A top of range below the FLOOR is a
+ * hard exclusion in searchConstraints.js, not a penalty.)
+ *
+ * @returns {{points: number, weight: 0, matched: string[]}|null} null when either side is unstated
+ */
+function scorePay(job, candidate, weight) {
+  const target = Number(candidate?.salaryPreference?.targetAnnualUSD)
+    || Number(candidate?.salaryPreference?.minAnnualUSD) || 0;
+  if (!(target > 0)) return null;
+  const pay = postedPay(job);
+  if (!pay) return null;
+  const max = Number.isFinite(Number(weight)) && Number(weight) >= 0 ? Number(weight) : DEFAULT_PAY_PENALTY;
+  const label = `posted pay up to ${Math.round(pay.max).toLocaleString('en-US')} (${pay.source})`;
+  if (pay.max >= target) return { points: 0, weight: 0, matched: [`${label} meets target`] };
+  const shortfall = Math.min(1, (target - pay.max) / (0.25 * target));
+  return { points: -round2(max * shortfall), weight: 0, matched: [`${label} below target ${target.toLocaleString('en-US')}`] };
+}
+
+/**
+ * Freshness factor relative to the DISCOVERY window (F8).
+ *
+ * The legacy curve (full points up to scoring.freshness.flagOlderThanDays = 7,
+ * half to 14) was dead weight once discovery itself only admits postings
+ * inside a 7-day window: every new row scored full marks. Graded against the
+ * window instead, points fall from 1.0 at day 0 to 0.5 at the window's edge,
+ * and a row RETAINED past the window (already on the board) keeps falling to
+ * 0 at the retention limit (exclusions.staleness.skipOlderThanDays), where the
+ * exclusion stage retires it anyway.
+ *
+ * @param {number} age days
+ * @param {{discoveryDays: number, retentionDays: number}} model
+ * @returns {number} 0..1
+ */
+export function freshnessFactor(age, { discoveryDays, retentionDays }) {
+  const d = Number.isFinite(discoveryDays) && discoveryDays > 0 ? discoveryDays : 7;
+  const r = Number.isFinite(retentionDays) && retentionDays > d ? retentionDays : d * 2;
+  if (age <= 0) return 1;
+  if (age <= d) return 1 - 0.5 * (age / d);
+  if (age >= r) return 0;
+  return 0.5 * (1 - (age - d) / (r - d));
+}
+
+function scoreFreshness(job, freshness, weight, now, model = null) {
   const age = ageInDays(job.postedAt, now);
   if (age === null) return { points: round2(weight * 0.5), weight, matched: ['posted date unknown'] };
+  if (model && Number.isFinite(model.discoveryDays)) {
+    return { points: round2(weight * freshnessFactor(age, model)), weight, matched: [`${age} days old`] };
+  }
   const flagDays = freshness.flagOlderThanDays ?? 7;
   const skipDays = freshness.skipOlderThanDays ?? 14;
   let factor;

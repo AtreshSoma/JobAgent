@@ -28,16 +28,18 @@
  * config is made before any write.
  */
 
-import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
+import { readFileSync, existsSync, copyFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
 import {
-  harvestCoordinates, configuredCoordinateKeys, coordinateKey, mergeCoordinates,
+  harvestCoordinates, configuredCoordinateKeys, coordinateKey, mergeCoordinates, duplicateCoordinateKeys,
 } from '../src/search/sourceHarvest.js';
 import { mapWithConcurrency } from '../src/utils/concurrency.js';
 import { fetchWithTimeout, discoveryHeaders } from '../src/utils/httpClient.js';
+import { writeFileAtomic } from '../src/utils/fsSafe.js';
+import { SCHEMA_FILES, validateConfig } from '../src/config/validateConfig.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_PATH = join(ROOT, 'config', 'jobboards.json');
@@ -240,6 +242,31 @@ async function validate(entries) {
 
 /* ------------------------------------------------------------------ */
 
+/**
+ * Why the merged config must not be written, or [] when it may.
+ *
+ * Checks the schema the loader enforces (so a harvest can never produce a
+ * config that stops every later run at startup) and refuses NEW duplicate
+ * coordinates — a board listed twice is fetched twice every run. Duplicates
+ * that were already present are reported by `npm run doctor`, not blocked here.
+ *
+ * @param {object} merged config about to be written
+ * @param {object} before config as read
+ * @returns {string[]}
+ */
+export function checkHarvestedConfig(merged, before = {}) {
+  const problems = [];
+  const schema = JSON.parse(readFileSync(join(ROOT, 'config', 'schemas', SCHEMA_FILES.jobboards), 'utf8'));
+  const result = validateConfig('jobboards', merged, schema);
+  if (!result.valid) problems.push(result.message);
+  const existing = new Set(duplicateCoordinateKeys(before));
+  const introduced = duplicateCoordinateKeys(merged).filter((k) => !existing.has(k));
+  if (introduced.length) {
+    problems.push(`${introduced.length} board(s) would be listed twice: ${introduced.slice(0, 5).join(', ')}`);
+  }
+  return problems;
+}
+
 async function main() {
   const args = parseArgs(process.argv);
 
@@ -331,9 +358,20 @@ async function main() {
   }
 
   const { config, added, skipped } = mergeCoordinates(jobboards, coords);
+  // Validate BEFORE touching the file: a merge that breaks the schema, or that
+  // introduces a board listed twice, must never replace a working config.
+  const problems = checkHarvestedConfig(config, jobboards);
+  if (problems.length) {
+    console.error('\n  Refusing to write config/jobboards.json:');
+    for (const p of problems) console.error(`    - ${p}`);
+    process.exitCode = 1;
+    return;
+  }
   const backup = `${CONFIG_PATH}.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`;
   copyFileSync(CONFIG_PATH, backup);
-  writeFileSync(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
+  // Atomic: a run starting mid-write must read the old config or the new one,
+  // never a truncated file.
+  writeFileAtomic(CONFIG_PATH, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 
   console.log(`\n  Wrote ${CONFIG_PATH}`);
   console.log(`  Backup: ${backup}`);
@@ -342,7 +380,10 @@ async function main() {
   console.log('\n  Run `npm run doctor` to confirm the config still validates.');
 }
 
-main().catch((err) => {
-  console.error(`harvestSources failed: ${err.stack ?? err.message}`);
-  process.exitCode = 1;
-});
+// Run only when executed directly, so tests can import checkHarvestedConfig.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(`harvestSources failed: ${err.stack ?? err.message}`);
+    process.exitCode = 1;
+  });
+}

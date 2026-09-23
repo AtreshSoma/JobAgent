@@ -5,7 +5,7 @@
  * the user) reads:
  *
  *   data/found_jobs.json   — every discovered job + what happened to it
- *   data/scored_jobs.json  — every job that was scored (not hard-discarded)
+ *   data/scored_jobs.json  — every job that was scored (opt-in: deps.writeScoredJobs)
  *   data/queued_jobs.json  — only jobs strong enough for action (Priority/Apply/Queue)
  *
  * All three carry the same lifecycle vocabulary (src/lifecycle.js) and a shared
@@ -78,7 +78,9 @@ function writeArtifact(root, filename, doc, deps = {}) {
   const writeImpl = deps.writeFileImpl ?? defaultWrite;
   const dir = join(root, 'data');
   const path = join(dir, filename);
-  writeImpl(dir, path, JSON.stringify(doc, null, 2));
+  // Compact: found_jobs.json was ~40% whitespace at indent 2, and these files
+  // are machine-read (harvestSources, the dashboard) — `jq .` pretty-prints.
+  writeImpl(dir, path, JSON.stringify(doc));
   return path;
 }
 
@@ -142,10 +144,14 @@ export function writeUnknownDateReview(root, payload, deps = {}) {
 }
 
 /** Convenience: write all artifacts in one call. */
+//
+// data/scored_jobs.json is no longer written by default: nothing in src/ or
+// scripts/ reads it (the board reads SQLite), and it duplicated found_jobs.json.
+// `deps.writeScoredJobs: true` restores it for anyone who still wants the file.
 export function writeAllArtifacts(root, payload, deps = {}) {
   return {
     found: writeFoundJobs(root, payload, deps),
-    scored: writeScoredJobs(root, payload, deps),
+    scored: deps.writeScoredJobs === true ? writeScoredJobs(root, payload, deps) : null,
     queued: writeQueuedJobs(root, payload, deps),
     unknownDateReview: writeUnknownDateReview(root, payload, deps),
   };

@@ -91,7 +91,48 @@ export function httpError(res, label, url) {
   return err;
 }
 
+/** Body-reading methods a Response exposes — every one of them can stall. */
+const BODY_METHODS = ['json', 'text', 'arrayBuffer', 'blob', 'formData'];
+
+/** The retryable error a timeout surfaces as, whichever phase it fired in. */
+function timeoutError(ms, phase = 'request') {
+  const e = new Error(phase === 'body'
+    ? `Response body timed out after ${ms}ms`
+    : `Request timed out after ${ms}ms`);
+  e.code = 'ETIMEDOUT';
+  e.retryable = true;
+  return e;
+}
+
+/** The labelled, non-retryable error a caller-initiated abort surfaces as. */
+function cancelledError() {
+  const e = new Error('cancelled: the run was stopped');
+  // Keep `name` so the documented "an external abort stays an abort" contract
+  // holds for existing consumers (linkHealth, failureRca), and add the
+  // labelling on top rather than replacing it.
+  e.name = 'AbortError';
+  e.code = 'RUN_CANCELLED';
+  e.retryable = false;
+  e.cancelled = true;
+  return e;
+}
+
 /**
+ * fetch() whose timeout covers the WHOLE exchange — headers AND body.
+ *
+ * REGRESSION GUARD. The timer used to be cleared in a `finally` the moment the
+ * headers arrived, so `await res.json()` ran with no deadline at all. A server
+ * that answers 200 and then stalls mid-body (reproduced with a local server that
+ * writes headers and never ends the response) hung the adapter forever, and the
+ * whole discovery run with it — `withRetry` never helps because a hang never
+ * throws. The deadline now stays armed until the body has been read, and a
+ * stalled body read rejects with the same retryable ETIMEDOUT a stalled connect
+ * does.
+ *
+ * The response's body methods are wrapped in place, so every existing
+ * `res.json()` / `res.text()` caller is covered without a migration; new code
+ * should prefer {@link fetchJsonWithTimeout} / {@link fetchTextWithTimeout}.
+ *
  * @param {typeof fetch} fetchImpl
  * @param {string|URL} url
  * @param {RequestInit} [init]
@@ -114,35 +155,108 @@ export async function fetchWithTimeout(fetchImpl, url, init = {}, timeoutMs) {
     else external.addEventListener('abort', onAbort, { once: true });
   }
 
-  const timer = setTimeout(() => controller.abort(), ms);
+  let timedOut = false;
+  /** @type {Array<(err: Error) => void>} pending body reads to fail on timeout */
+  const bodyWaiters = [];
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+    for (const fail of bodyWaiters.splice(0)) fail(timeoutError(ms, 'body'));
+  }, ms);
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    clearTimeout(timer);
+    if (external) external.removeEventListener?.('abort', onAbort);
+  };
+
+  let res;
   try {
-    return await fetchImpl(url, { ...init, signal: controller.signal });
+    res = await fetchImpl(url, { ...init, signal: controller.signal });
   } catch (err) {
+    release();
     // An abort due to OUR timer becomes a clean, retryable timeout error.
-    if (err?.name === 'AbortError' && !external?.aborted) {
-      const e = new Error(`Request timed out after ${ms}ms`);
-      e.code = 'ETIMEDOUT';
-      e.retryable = true;
-      throw e;
-    }
+    if (err?.name === 'AbortError' && !external?.aborted) throw timeoutError(ms);
     // An abort from the CALLER's signal is a deliberate cancellation, not a
     // fault. Surfaced as a labelled, non-retryable error carrying `cancelled`
     // so a stopped run reports "stopped on request" instead of a wall of raw
     // DOMExceptions — one per request the cancel legitimately dropped.
-    if (err?.name === 'AbortError' && external?.aborted) {
-      const e = new Error('cancelled: the run was stopped');
-      // Keep `name` so the documented "an external abort stays an abort"
-      // contract holds for existing consumers (linkHealth, failureRca), and add
-      // the labelling on top rather than replacing it.
-      e.name = 'AbortError';
-      e.code = 'RUN_CANCELLED';
-      e.retryable = false;
-      e.cancelled = true;
-      throw e;
-    }
+    if (err?.name === 'AbortError' && external?.aborted) throw cancelledError();
     throw err;
-  } finally {
-    clearTimeout(timer);
-    if (external) external.removeEventListener?.('abort', onAbort);
   }
+
+  const methods = res && typeof res === 'object'
+    ? BODY_METHODS.filter((m) => typeof res[m] === 'function')
+    : [];
+  if (!methods.length) {
+    // Nothing left that could stall (a test double, or a body-less response).
+    release();
+    return res;
+  }
+  // The timer must not keep an otherwise-finished process alive just because a
+  // caller chose not to read a body (an error status it threw on). While a read
+  // IS in flight the socket keeps the loop alive, so the timer still fires.
+  timer.unref?.();
+
+  for (const name of methods) {
+    const original = res[name];
+    const guarded = (...args) => {
+      if (timedOut) return Promise.reject(timeoutError(ms, 'body'));
+      const read = new Promise((resolve, reject) => {
+        bodyWaiters.push(reject);
+        Promise.resolve()
+          .then(() => original.apply(res, args))
+          .then(resolve, (err) => {
+            if (timedOut) reject(timeoutError(ms, 'body'));
+            else if (err?.name === 'AbortError' && external?.aborted) reject(cancelledError());
+            else reject(err);
+          });
+      });
+      return read.finally(release);
+    };
+    try {
+      Object.defineProperty(res, name, { value: guarded, configurable: true, writable: true });
+    } catch {
+      // A frozen response cannot be guarded; fall back to the old behaviour
+      // rather than failing a request that already succeeded.
+      release();
+      return res;
+    }
+  }
+  return res;
+}
+
+/**
+ * Request and parse JSON under ONE deadline, throwing `httpError` on a non-2xx
+ * status. This is the helper adapters should reach for: the body read — the
+ * half of the exchange that used to run unguarded — cannot be forgotten here.
+ *
+ * @param {typeof fetch} fetchImpl
+ * @param {string|URL} url
+ * @param {RequestInit} [init]
+ * @param {number} [timeoutMs]
+ * @param {string} [label] names the source in error messages ("Workday detail")
+ * @returns {Promise<any>}
+ */
+export async function fetchJsonWithTimeout(fetchImpl, url, init = {}, timeoutMs, label = 'HTTP') {
+  const res = await fetchWithTimeout(fetchImpl, url, init, timeoutMs);
+  if (!res.ok) throw httpError(res, label, url);
+  return res.json();
+}
+
+/**
+ * Text counterpart of {@link fetchJsonWithTimeout}.
+ *
+ * @param {typeof fetch} fetchImpl
+ * @param {string|URL} url
+ * @param {RequestInit} [init]
+ * @param {number} [timeoutMs]
+ * @param {string} [label]
+ * @returns {Promise<string>}
+ */
+export async function fetchTextWithTimeout(fetchImpl, url, init = {}, timeoutMs, label = 'HTTP') {
+  const res = await fetchWithTimeout(fetchImpl, url, init, timeoutMs);
+  if (!res.ok) throw httpError(res, label, url);
+  return res.text();
 }

@@ -91,22 +91,57 @@ function isThrottleStatus(status) {
 }
 
 /**
+ * Sleep that a cancelled run can interrupt.
+ *
+ * A cooldown after a 429 can be a full minute. A plain `sleepFn` made every
+ * caller queued behind that cooldown sit it out even after the user pressed
+ * Stop, which is exactly the "Stopping…" stall the signal exists to prevent.
+ *
+ * @param {(ms: number) => Promise<void>} sleepFn
+ * @param {number} ms
+ * @param {AbortSignal} [signal]
+ * @returns {Promise<void>}
+ */
+function abortableSleep(sleepFn, ms, signal) {
+  if (!signal) return sleepFn(ms);
+  if (signal.aborted) return Promise.reject(new RunCancelledError());
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(new RunCancelledError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    sleepFn(ms).then(
+      () => { signal.removeEventListener('abort', onAbort); resolve(); },
+      (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
+    );
+  });
+}
+
+/**
  * @param {object} [options]
  * @param {number} [options.maxConcurrent=4] in-flight requests allowed per host
+ * @param {Record<string, number>} [options.perHost] per-host ceilings that
+ *   override `maxConcurrent` — keyed by hostname or URL, normalized through
+ *   `hostKeyFor` so a Workday tenant host configures its whole pod
  * @param {number} [options.minSpacingMs=0] minimum gap between request STARTS per host
  * @param {number} [options.baseCooldownMs=2000] cooldown when a 429 carries no Retry-After
  * @param {number} [options.maxCooldownMs=60000] cap on any single cooldown
  * @param {number} [options.breakerThreshold=4] consecutive throttles before the breaker opens
+ * @param {number} [options.breakerWindow=20] recent outcomes the rolling ratio is read over
+ * @param {number} [options.breakerMinSamples=10] outcomes needed before the ratio may trip
+ * @param {number} [options.breakerRatio=0.5] throttled share of the window that opens it
  * @param {number} [options.breakerOpenMs=60000] how long the breaker stays open
  * @param {() => number} [options.now]
  * @param {(ms: number) => Promise<void>} [options.sleepFn]
  */
 export function createHostGate({
   maxConcurrent = 4,
+  perHost = {},
   minSpacingMs = 0,
   baseCooldownMs = 2000,
   maxCooldownMs = 60000,
   breakerThreshold = 4,
+  breakerWindow = 20,
+  breakerMinSamples = 10,
+  breakerRatio = 0.5,
   breakerOpenMs = 60000,
   now = () => Date.now(),
   sleepFn = sleep,
@@ -114,15 +149,65 @@ export function createHostGate({
   /**
    * @typedef {object} HostState
    * @property {number} inFlight
-   * @property {Array<() => void>} queue waiters for a slot
+   * @property {Array<{grant: () => void, cancelled: boolean}>} queue waiters for a slot
    * @property {number} nextStartAt earliest ms at which a request may start
    * @property {Promise<void>} startTail serializes actual request starts
-   * @property {number} consecutiveThrottles
+   * @property {number} consecutiveThrottles drives the exponential cooldown
+   * @property {boolean[]} outcomes rolling window, true = throttled
    * @property {number} openUntil breaker open until this ms (0 = closed)
    * @property {number} throttleEvents total 429/503 seen (for reporting)
    */
   /** @type {Map<string, HostState>} */
   const hosts = new Map();
+
+  /**
+   * PER-HOST CEILINGS.
+   *
+   * The orchestrator builds ONE gate for the whole run and hands it to every
+   * adapter, which is right for politeness but made a source's own
+   * `hostConcurrency` unreachable: the Workday adapter only builds its own gate
+   * when none is supplied, and one always was, so its measured 8-in-flight pod
+   * ceiling (see workday.js DEFAULT_HOST_CONCURRENCY) silently ran at the
+   * global 4. Overrides let a source raise or lower ITS hosts without changing
+   * anyone else's budget.
+   */
+  const limits = new Map();
+  const clampLimit = (n) => {
+    const v = Math.trunc(Number(n));
+    return Number.isFinite(v) && v >= 1 ? v : null;
+  };
+  for (const [host, n] of Object.entries(perHost ?? {})) {
+    const v = clampLimit(n);
+    if (v) limits.set(hostKeyFor(host.includes('://') ? host : `https://${host}`), v);
+  }
+  const limitFor = (key) => limits.get(key) ?? maxConcurrent;
+
+  /**
+   * Set the in-flight ceiling for one host (or Workday pod).
+   *
+   * Waiters already queued are admitted immediately if the ceiling rose, so a
+   * late configure never strands work behind a limit that no longer applies.
+   *
+   * @param {string} host hostname or URL
+   * @param {number} n requests allowed in flight (>= 1)
+   * @returns {number|null} the ceiling now in effect, or null when `n` was invalid
+   */
+  function configure(host, n) {
+    const v = clampLimit(n);
+    if (!v || !host) return null;
+    const key = hostKeyFor(String(host).includes('://') ? host : `https://${host}`);
+    limits.set(key, v);
+    const s = hosts.get(key);
+    if (s) {
+      while (s.inFlight < v && s.queue.length) {
+        const next = s.queue.shift();
+        if (next.cancelled) continue;
+        s.inFlight += 1;
+        next.grant();
+      }
+    }
+    return v;
+  }
 
   function stateFor(key) {
     let s = hosts.get(key);
@@ -133,6 +218,7 @@ export function createHostGate({
         nextStartAt: 0,
         startTail: Promise.resolve(),
         consecutiveThrottles: 0,
+        outcomes: [],
         openUntil: 0,
         throttleEvents: 0,
       };
@@ -141,22 +227,73 @@ export function createHostGate({
     return s;
   }
 
-  async function acquire(s) {
-    if (s.inFlight < maxConcurrent) {
+  /**
+   * Wait for an in-flight slot on this host.
+   *
+   * The wait itself is abortable: a cancelled run must not keep hundreds of
+   * callers parked behind one pod's queue until the slot happens to free.
+   */
+  async function acquire(s, key, signal) {
+    if (s.inFlight < limitFor(key)) {
       s.inFlight += 1;
       return;
     }
     // The releaser hands its slot straight to us, so we must NOT increment
     // again — doing so would let in-flight drift above the ceiling.
-    await new Promise((resolve) => s.queue.push(resolve));
+    await new Promise((resolve, reject) => {
+      const waiter = { cancelled: false, grant: null };
+      const onAbort = () => {
+        waiter.cancelled = true;
+        const at = s.queue.indexOf(waiter);
+        if (at !== -1) s.queue.splice(at, 1);
+        reject(new RunCancelledError());
+      };
+      waiter.grant = () => {
+        signal?.removeEventListener?.('abort', onAbort);
+        resolve();
+      };
+      s.queue.push(waiter);
+      signal?.addEventListener?.('abort', onAbort, { once: true });
+    });
   }
 
   function release(s) {
-    const next = s.queue.shift();
-    // Hand the slot to a waiter (in-flight unchanged) rather than freeing it and
-    // racing a fresh caller for it.
-    if (next) next();
-    else s.inFlight -= 1;
+    // Hand the slot to a live waiter (in-flight unchanged) rather than freeing
+    // it and racing a fresh caller for it.
+    while (s.queue.length) {
+      const next = s.queue.shift();
+      if (next.cancelled) continue;
+      next.grant();
+      return;
+    }
+    s.inFlight -= 1;
+  }
+
+  /** Record one outcome in the host's rolling window. */
+  function noteOutcome(s, throttled) {
+    s.outcomes.push(throttled);
+    if (s.outcomes.length > breakerWindow) s.outcomes.shift();
+  }
+
+  /**
+   * Should the breaker open for this host now?
+   *
+   * TWO RULES, EITHER SUFFICES.
+   *
+   * 1. A streak of `breakerThreshold` consecutive throttles — the host is
+   *    refusing everything right now.
+   * 2. A rolling throttle RATIO over the last `breakerWindow` outcomes. The
+   *    streak alone was reset by any single success, so a pod answering
+   *    429, 200, 429, 200 … — throttling half of everything — never opened the
+   *    breaker and every retry kept landing on it. The ratio needs
+   *    `breakerMinSamples` outcomes first, so one early blip beside a success
+   *    still cannot trip it.
+   */
+  function shouldOpen(s) {
+    if (s.consecutiveThrottles >= breakerThreshold) return true;
+    if (s.outcomes.length < breakerMinSamples) return false;
+    const throttled = s.outcomes.reduce((n, t) => n + (t ? 1 : 0), 0);
+    return throttled / s.outcomes.length >= breakerRatio;
   }
 
   /** True while the host's breaker is open (auto-closes when it expires). */
@@ -164,9 +301,12 @@ export function createHostGate({
     const s = hosts.get(key);
     if (!s || s.openUntil === 0) return false;
     if (now() >= s.openUntil) {
-      // Half-open: let the next caller through and see what happens.
+      // Half-open: let the next caller through and see what happens. The window
+      // is cleared too — its throttles are what opened the breaker, and keeping
+      // them would re-open it on the very first probe.
       s.openUntil = 0;
       s.consecutiveThrottles = 0;
+      s.outcomes = [];
       return false;
     }
     return true;
@@ -186,6 +326,7 @@ export function createHostGate({
     const s = stateFor(key);
     s.consecutiveThrottles += 1;
     s.throttleEvents += 1;
+    noteOutcome(s, true);
     // Honor Retry-After when the server sent one; otherwise back off
     // exponentially in the number of throttles we've already taken.
     const backoff = Number.isFinite(retryAfterMs) && retryAfterMs > 0
@@ -193,7 +334,7 @@ export function createHostGate({
       : Math.min(baseCooldownMs * 2 ** (s.consecutiveThrottles - 1), maxCooldownMs);
     const cooldown = Math.min(backoff, maxCooldownMs);
     s.nextStartAt = Math.max(s.nextStartAt, now() + cooldown);
-    if (s.consecutiveThrottles >= breakerThreshold) {
+    if (shouldOpen(s)) {
       s.openUntil = now() + breakerOpenMs;
     }
   }
@@ -221,7 +362,7 @@ export function createHostGate({
     if (isOpenKey(key)) throw new HostCircuitOpenError(key);
     const s = stateFor(key);
 
-    await acquire(s);
+    await acquire(s, key, signal);
     try {
       // Re-check after queueing: the run may have been cancelled, or the host may
       // have started throttling, while we waited for a slot — either way there is
@@ -240,19 +381,24 @@ export function createHostGate({
         await previousStart;
       }
 
-      const startAt = Math.max(s.nextStartAt, now());
-      const waitMs = startAt - now();
-      if (waitMs > 0) await sleepFn(waitMs);
-      if (spacing > 0) s.nextStartAt = now() + spacing;
-
       try {
+        const startAt = Math.max(s.nextStartAt, now());
+        const waitMs = startAt - now();
+        // A cooldown can be a minute long; a cancelled run must not sit it out.
+        if (waitMs > 0) await abortableSleep(sleepFn, waitMs, signal);
+        if (signal?.aborted) throw new RunCancelledError();
+        if (spacing > 0) s.nextStartAt = now() + spacing;
+
         // Calling fn starts its synchronous portion before the next spaced
         // caller is released. The network operation itself remains concurrent.
         const operation = fn();
         releaseStart?.();
         releaseStart = null;
         const out = await operation;
-        s.consecutiveThrottles = 0; // a clean response means we're within budget
+        // A clean response ends the STREAK (that only drives the cooldown
+        // curve) but not the rolling window — see shouldOpen.
+        s.consecutiveThrottles = 0;
+        noteOutcome(s, false);
         return out;
       } catch (err) {
         const status = Number(err?.status ?? err?.statusCode ?? NaN);
@@ -275,10 +421,11 @@ export function createHostGate({
         throttleEvents: s.throttleEvents,
         circuitOpen: s.openUntil > now(),
         inFlight: s.inFlight,
+        maxConcurrent: limitFor(key),
       };
     }
     return out;
   }
 
-  return { run, isOpen, snapshot, hostKeyFor };
+  return { run, isOpen, snapshot, hostKeyFor, configure, limitFor: (host) => limitFor(hostKeyFor(host)) };
 }

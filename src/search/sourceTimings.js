@@ -21,8 +21,10 @@
  * run proceeds in configured order, exactly as before.
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+import { writeFileAtomic } from '../utils/fsSafe.js';
 
 /** Weight given to the newest observation. Adapts quickly, ignores one blip. */
 const EMA_ALPHA = 0.5;
@@ -58,10 +60,10 @@ export function createSourceTimings({
 } = {}) {
   const path = timingsPath(root);
   const read = readFileImpl ?? ((p) => readFileSync(p, 'utf8'));
-  const write = writeFileImpl ?? ((p, data) => {
-    mkdirSync(dirname(p), { recursive: true });
-    writeFileSync(p, data, 'utf8');
-  });
+  // Atomic (temp + rename): two runs, or a crash mid-write, used to be able to
+  // leave a torn file — which the reader then treated as "no timings" and the
+  // whole scheduling history was lost.
+  const write = writeFileImpl ?? ((p, data) => writeFileAtomic(p, data, 'utf8'));
 
   /** @type {Record<string, {emaMs:number, lastMs:number, at:string, history:Array<object>}>} */
   let state = {};
@@ -99,7 +101,7 @@ export function createSourceTimings({
    * A CANCELLED source is recorded but not folded into the average — it stopped
    * early, so its duration says nothing about how long the work takes.
    *
-   * @param {Array<{source:string, durationMs:number|null, found?:number, errors?:number, cancelled?:boolean, cached?:boolean}>} perSource
+   * @param {Array<{source:string, durationMs:number|null, found?:number, errors?:number, notes?:number, cancelled?:boolean, cached?:boolean}>} perSource
    */
   function record(perSource) {
     if (!Array.isArray(perSource) || perSource.length === 0) return;
@@ -119,6 +121,12 @@ export function createSourceTimings({
           ms,
           found: Number(entry.found) || 0,
           errors: Number(entry.errors) || 0,
+          // Degradations (budget reached, teaser kept) are not failures; kept
+          // apart so a healthy-but-budgeted source never reads as erroring.
+          ...(Number(entry.notes) ? { notes: Number(entry.notes) } : {}),
+          // Whether this run returned a COMPLETE listing — the expiry pass
+          // only counts such runs as evidence a posting is gone.
+          ...(typeof entry.succeeded === 'boolean' ? { ok: entry.succeeded } : {}),
           ...(entry.cancelled ? { cancelled: true } : {}),
           ...(entry.cached ? { cached: true } : {}),
         },
@@ -133,5 +141,15 @@ export function createSourceTimings({
     }
   }
 
-  return { expectedMs, record, path };
+  /**
+   * Recorded runs for a source, newest first (bounded by HISTORY_LIMIT).
+   * @param {string} sourceId
+   * @returns {Array<{at: string, ms: number, found: number, errors: number, ok?: boolean}>}
+   */
+  function historyOf(sourceId) {
+    const h = state[sourceId]?.history;
+    return Array.isArray(h) ? h.map((x) => ({ ...x })) : [];
+  }
+
+  return { expectedMs, record, historyOf, path };
 }

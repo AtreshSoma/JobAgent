@@ -35,7 +35,8 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
-import { readJson, CONFIG_FILES } from '../config/loadConfig.js';
+import { readJson, CONFIG_FILES, loadConfig } from '../config/loadConfig.js';
+import { rescoreStale } from '../pipeline/index.js';
 import { SCHEMA_FILES, createValidator, validateConfig } from '../config/validateConfig.js';
 import { normalizeProfile, fromCandidateConfig, slugify } from './model.js';
 import { validateAnswerEntry } from '../config/screeningAnswerRules.js';
@@ -193,10 +194,12 @@ export function deleteProfile(root, id) {
  * @param {object} [options]
  * @param {object} [options.taxonomy]
  * @param {boolean} [options.dryRun] compute everything, write nothing
+ * @param {object} [options.db] Database handle; when given, stored verdicts are
+ *   re-judged under the new profile (rescoreStale) and the count returned as `rescored`
  * @returns {{id, label, written: string[], families, searchPhrases, targetTitles,
  *            seniorityExclusions: string[], dryRun: boolean}}
  */
-export function activateProfile(root, id, { taxonomy, dryRun = false } = {}) {
+export function activateProfile(root, id, { taxonomy, dryRun = false, db = null } = {}) {
   const safe = safeId(id);
   const profile = readProfile(root, safe);
   if (!profile) throw new Error(`no profile named "${safe}"`);
@@ -317,6 +320,20 @@ export function activateProfile(root, id, { taxonomy, dryRun = false } = {}) {
       + `(${err.message}). Every file was rolled back to its previous contents, so the configuration `
       + 'is still the one that was active before — no half-switched profile was left behind.',
     );
+  }
+
+  // F10 — THE BOARD FOLLOWS THE PROFILE. A switch changes the fingerprint of
+  // every stored verdict, and until now those verdicts stayed on the board,
+  // labelled current, until each posting happened to be listed again. Given a
+  // database handle, every active row is re-judged from its stored text right
+  // here (no network). Never fatal: the profile IS active either way.
+  if (db) {
+    try {
+      const config = loadConfig({ root, loadEnv: false, env: {} });
+      summary.rescored = rescoreStale({ db, config }).rescored;
+    } catch (err) {
+      summary.rescoreError = err.message;
+    }
   }
   return summary;
 }

@@ -81,7 +81,12 @@ describe('outputs', () => {
       discovered: [], scored: [], queued: [], duplicates: [], errors: [], counters: emptyCounters(),
     });
     expect(out.found.endsWith('found_jobs.json')).toBe(true);
-    expect(out.scored.endsWith('scored_jobs.json')).toBe(true);
+    // scored_jobs.json is opt-in now: nothing reads it.
+    expect(out.scored).toBeNull();
+    const withScored = writeAllArtifacts(root, {
+      discovered: [], scored: [], queued: [], duplicates: [], errors: [], counters: emptyCounters(),
+    }, { writeScoredJobs: true });
+    expect(withScored.scored.endsWith('scored_jobs.json')).toBe(true);
     expect(out.queued.endsWith('queued_jobs.json')).toBe(true);
   });
 

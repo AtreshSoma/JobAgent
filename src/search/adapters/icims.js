@@ -39,9 +39,10 @@
 import { parseJsonLdJobs, normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchWithTimeout, httpError, discoveryHeaders } from '../../utils/httpClient.js';
+import { fetchTextWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { makeTitleGate, makeAgeGate } from './atsSearch.js';
-import { buildProfileVocabulary, titleFitPriority } from '../../scoring/profileFit.js';
+import { profileVocabularyFor, sortByTitleFit } from '../../scoring/profileFit.js';
+import { lookupDetail, jobFromCachedDetail } from '../detailBudget.js';
 
 export const adapterId = 'icims';
 
@@ -115,11 +116,13 @@ export async function run(source = {}, ctx = {}) {
   // now permissive (unknown titles are kept for the description to judge), so
   // without ordering the budget would be consumed by speculative rows before
   // reaching a certain match. Same request count, better spent.
-  const vocab = ctx.candidate ? buildProfileVocabulary(ctx.candidate) : null;
+  const vocab = profileVocabularyFor(ctx.candidate);
+  const detailCache = ctx.detailCache ?? ctx.workdayDetailCache ?? null;
 
   const jobs = [];
   const errors = [];
   let cancelled = false;
+  let reused = 0;
 
   const request = async (url) => {
     if (rateLimiter) await rateLimiter.wait(`icims:${new URL(url).host}`, source.rateLimitMs);
@@ -175,9 +178,22 @@ export async function run(source = {}, ctx = {}) {
     }
 
     // Gate on the listing's own title before spending a detail request.
-    const candidates = unique.filter((row) => titleGate(row.title));
+    const gated = unique.filter((row) => titleGate(row.title));
+    // Postings read on an earlier run are rebuilt from the stored row (looked up
+    // by URL — an iCIMS job id depends on what the detail page says) and cost no
+    // request, so the budget below lands on postings never read before.
+    const fromCache = [];
+    const candidates = [];
+    for (const row of gated) {
+      const hit = lookupDetail(detailCache, { url: row.url, source: 'icims' });
+      const job = hit ? jobFromCachedDetail(hit, {
+        source: 'icims', url: row.url, title: row.title, rawMetadata: { portal: board.host },
+      }) : null;
+      if (job && ageGate(job.postedAt)) fromCache.push(job);
+      else if (!job) candidates.push(row);
+    }
     if (vocab) {
-      candidates.sort((a, b) => titleFitPriority(b.title, vocab) - titleFitPriority(a.title, vocab));
+      candidates.splice(0, candidates.length, ...sortByTitleFit(candidates, (row) => row.title, vocab));
     }
     const budgeted = maxDetailFetches > 0 ? candidates.slice(0, maxDetailFetches) : [];
     const dropped = candidates.length - budgeted.length;
@@ -209,12 +225,13 @@ export async function run(source = {}, ctx = {}) {
           + 'Raise it, or narrow the target titles, to cover them.',
       });
     }
-    return { jobs: detailed.filter(Boolean), errors: boardErrors };
+    return { jobs: [...fromCache, ...detailed.filter(Boolean)], errors: boardErrors, reused: fromCache.length };
   });
 
   for (const r of perBoard) {
     if (!r) continue;
     jobs.push(...(r.jobs ?? []));
+    reused += Number(r.reused) || 0;
     errors.push(...(r.errors ?? []));
     cancelled ||= r.cancelled === true;
   }
@@ -226,7 +243,7 @@ export async function run(source = {}, ctx = {}) {
     });
   }
 
-  return { jobs, errors, cancelled };
+  return { jobs, errors, cancelled, reused };
 }
 
 /** Accept either a bare host string or a `{ host, company }` object. */
@@ -328,14 +345,8 @@ export function cleanLocation(location) {
 }
 
 async function fetchText(fetchImpl, url, requestTimeoutMs) {
-  const res = await fetchWithTimeout(
-    fetchImpl,
-    url,
-    { headers: discoveryHeaders({ Accept: 'text/html,application/xhtml+xml' }) },
-    requestTimeoutMs,
-  );
-  if (!res.ok) throw httpError(res, 'iCIMS', url);
-  return res.text();
+  // One deadline for headers AND body — see fetchTextWithTimeout.
+  return fetchTextWithTimeout(fetchImpl, url, { headers: discoveryHeaders({ Accept: 'text/html,application/xhtml+xml' }) }, requestTimeoutMs, 'iCIMS');
 }
 
 /**

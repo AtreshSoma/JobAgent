@@ -101,7 +101,10 @@ export function classifyDiscovery(job = {}, { candidate = {}, scoring = {} } = {
   const wantSeniority = normalizeText(candidate.seniority);
   if (wantSeniority) {
     const terms = SENIORITY_TERMS[wantSeniority] ?? [wantSeniority];
-    const senHit = terms.some((t) => bodyText.includes(normalizeText(t)));
+    // Whole-word: substring matching found "sr" in "Israel"/"sre", "jr" in
+    // "jrnl" and "lead" in "leadership"/"misleading", so nearly every posting
+    // carried a seniority signal and the signal meant nothing.
+    const senHit = matchedPhrases(bodyText, terms).length > 0;
     if (senHit) signals.push(`seniority:${wantSeniority}`);
   }
 

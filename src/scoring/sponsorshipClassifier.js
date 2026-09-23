@@ -25,7 +25,7 @@
  * "Unconfirmed" (which reads as "unknown, go verify") in those paths.
  */
 
-import { normalizeText } from '../utils/textNormalize.js';
+import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import {
   affirmativeSponsorshipHits,
   detectSponsorshipDenial,
@@ -68,7 +68,13 @@ export function classifySponsorship(job = {}, sponsorshipConfig = {}) {
     return { status: SPONSORSHIP.CONFIRMED, signals: affirmed };
   }
 
-  const likelyHits = likely.filter((name) => company.includes(normalizeText(name)));
+  // WHOLE-WORD employer match. This was `company.includes(name)`, so the
+  // configured "ey" matched Honeywell, Cooley, Stanley and Berkeley Research
+  // Group, and "sap"/"ibm"/"meta"/"tcs"/"hcl" had the same exposure inside
+  // longer names — every one of them earned a "Likely" sponsorship badge and
+  // the weighted points that come with it. Boundary-aware matching (the same
+  // rule keyword scoring uses) keeps "EY", "IBM Corporation", "Meta Platforms".
+  const likelyHits = matchedPhrases(company, likely);
   if (likelyHits.length) {
     return { status: SPONSORSHIP.LIKELY, signals: likelyHits };
   }
