@@ -36,6 +36,8 @@ function startupHarness(overrides = {}) {
     JobLogger: FakeJobLogger,
     createPinoLogger: () => ({ logger: {} }),
     findFreePort: async (port) => port,
+    // Never ask the real 4646: a developer usually has a dashboard running there.
+    probeRunningDashboard: async () => null,
     startDashboard: async () => dash,
     installProcessSafetyNet: () => {
       events.push('safety.install');

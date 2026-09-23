@@ -9,8 +9,10 @@
  *      trace for a predictable setup problem.
  *   2. Open/migrate the local SQLite database (schema + indexes apply
  *      idempotently on open).
- *   3. Pick a free port (the requested one, else the next free one — a second
- *      launch never crashes with EADDRINUSE).
+ *   3. Pick a port. If a Job Agent dashboard already answers on the requested
+ *      one, open THAT and exit 0 — a second double-click must not start a
+ *      second server on the same database. Only when the port is busy with
+ *      something else is the next free port used (never EADDRINUSE).
  *   4. Start the dashboard bound to 127.0.0.1 and wait until it answers HTTP.
  *   5. Open the user's default browser at the dashboard URL.
  *   6. Shut down cleanly on Ctrl+C (server closed, database checkpointed).
@@ -62,6 +64,39 @@ export async function findFreePort(start, tries = 20) {
     if (await portIsFree(p)) return p;
   }
   throw new Error(`no free port found in ${start}-${start + tries - 1} — close other apps or set DASHBOARD_PORT`);
+}
+
+/**
+ * Is a Job Agent dashboard already answering on this port?
+ *
+ * The launchers are double-clicked, and a second double-click used to start a
+ * SECOND dashboard on 4647 against the same database — two servers, two run
+ * locks, one SQLite file. Asking the busy port first turns that into "it's
+ * already running, here it is".
+ *
+ * Identified by the shape of GET /api/run/status (the run-state object), not
+ * merely by a 200: some other local app answering on 4646 must not be mistaken
+ * for us, or the user would be sent to the wrong page and no dashboard started.
+ *
+ * @param {number} port
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=1000] a JobAgent answers this instantly
+ * @param {typeof fetch} [options.fetchImpl]
+ * @returns {Promise<string|null>} the dashboard URL, or null
+ */
+export async function probeRunningDashboard(port, { timeoutMs = 1000, fetchImpl = fetch } = {}) {
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    const res = await fetchImpl(`${url}/api/run/status`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    const body = await res.json();
+    const looksLikeUs = body && typeof body === 'object'
+      && typeof body.running === 'boolean' && 'phase' in body && 'cancelRequested' in body;
+    return looksLikeUs ? url : null;
+  } catch {
+    // Refused, timed out, not JSON: nothing of ours is there.
+    return null;
+  }
 }
 
 /** Wait until the dashboard answers HTTP (it should immediately; be sure). */
@@ -208,6 +243,24 @@ export async function runApp({ parsed, env, deps = {} } = {}) {
     return { ok: false, problems: [err.message] };
   }
 
+  const noOpen = parsed.flags.has('no-open') || env.APP_NO_OPEN === 'true';
+
+  // Already running? Reuse it instead of starting a second server on the next
+  // port. Checked before the database is opened: a second instance must not
+  // touch the store the first one is serving.
+  const existingUrl = await (deps.probeRunningDashboard ?? probeRunningDashboard)(requestedPort);
+  if (existingUrl) {
+    ui.success(`Job Agent is already running at ${ui.c.bold(existingUrl)}`);
+    if (!noOpen) {
+      const opened = (deps.openBrowser ?? openBrowser)(existingUrl, {
+        onError: (err) => ui.warn(`Could not open the browser automatically: ${err.message}. Open ${existingUrl} yourself.`),
+      });
+      if (opened === false) ui.warn(`Could not open the browser automatically. Open ${existingUrl} yourself.`);
+    }
+    ui.note('Stop that one (Ctrl+C in its window) first if you meant to restart it.');
+    return { ok: true, url: existingUrl, port: requestedPort, alreadyRunning: true };
+  }
+
   const loggerModule = await import('../logging/jobLogger.js');
   const JobLoggerImpl = deps.JobLogger ?? loggerModule.JobLogger;
   const createPinoLoggerImpl = deps.createPinoLogger ?? loggerModule.createPinoLogger;
@@ -241,7 +294,6 @@ export async function runApp({ parsed, env, deps = {} } = {}) {
     await (deps.waitForReady ?? waitForReady)(dash.url);
 
     // 5. Browser.
-    const noOpen = parsed.flags.has('no-open') || env.APP_NO_OPEN === 'true';
     if (!noOpen) {
       const opened = (deps.openBrowser ?? openBrowser)(dash.url, {
         onError: (err) => ui.warn(`Could not open the browser automatically: ${err.message}. Open ${dash.url} yourself.`),
