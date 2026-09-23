@@ -66,6 +66,9 @@ describe('db — versioned migrations (PRAGMA user_version)', () => {
       FROM jobs WHERE ${clause.sql}`);
     expect(stats).toMatch(/COVERING INDEX idx_jobs_stats/);
     expect(stats).not.toMatch(/TEMP B-TREE/);
+    const docs = plan(db, `SELECT id FROM jobs WHERE resume_docx_path IS NOT NULL OR resume_path IS NOT NULL
+      OR resume_pdf_path IS NOT NULL OR cover_letter_path IS NOT NULL OR application_packet_path IS NOT NULL`);
+    expect(docs).toMatch(/idx_jobs_documents/);
     db.close();
   });
 

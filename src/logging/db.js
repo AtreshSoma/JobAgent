@@ -397,6 +397,14 @@ const PERF_INDEXES = Object.freeze([
       discard_reason, application_packet_path)`],
 ]);
 
+/**
+ * "This row has a generated document." Shared, verbatim, by idx_jobs_documents
+ * and listDocumentJobs: SQLite only uses a partial index when the query's WHERE
+ * implies the index's, and textual identity is the reliable way to ensure it.
+ */
+const DOCUMENT_ROW_PREDICATE = 'resume_docx_path IS NOT NULL OR resume_path IS NOT NULL '
+  + 'OR resume_pdf_path IS NOT NULL OR cover_letter_path IS NOT NULL OR application_packet_path IS NOT NULL';
+
 /** Add a column only when it is missing (ALTER TABLE has no IF NOT EXISTS). */
 function addColumnIfMissing(db, table, column, type) {
   const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
@@ -445,6 +453,11 @@ export const MIGRATIONS = Object.freeze([
       // /api/runs can answer "which board failed last night?" after a restart.
       addColumnIfMissing(db, 'run_log', 'per_source', 'TEXT');
       addColumnIfMissing(db, 'run_log', 'jobs_discarded_stale', 'INTEGER');
+      // The few hundred rows with a generated document. A PARTIAL index whose
+      // WHERE is exactly listDocumentJobs' predicate, so the Documents view and
+      // the master-resume staleness count stop scanning the whole table
+      // (measured live without it: ~1.0 s each, reading every inline jd_text).
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_documents ON jobs(id) WHERE ${DOCUMENT_ROW_PREDICATE}`);
     },
   },
 ]);
@@ -857,6 +870,36 @@ export class Database {
     ).all(...clause.params);
   }
 
+  /**
+   * Summary rows that carry a generated document (tailored resume, cover
+   * letter or packet), every discovery mode — the Documents view and the
+   * master-resume staleness count.
+   *
+   * Both used to decorate or scan the WHOLE table to find the few hundred rows
+   * with a file on disk; measured live that was 897 ms and 785 ms per request.
+   * @returns {object[]}
+   */
+  listDocumentJobs() {
+    return this.prepareCached(`SELECT ${this._summaryColumns} FROM jobs
+      WHERE ${DOCUMENT_ROW_PREDICATE}`).all();
+  }
+
+  /**
+   * Recorded assist blockers of every row the board shows as needing help
+   * (blocked / failed / cancelled, not submitted or closed by the user).
+   * A few dozen rows found through idx_jobs_status — the stats scan never
+   * reads assist_blockers, and adding it there would break the covering index.
+   * @returns {{id: string, status: string, assist_blockers: string|null}[]}
+   */
+  listAttentionBlockers({ mode = 'profile', query = null } = {}) {
+    const clause = this._modeClause(mode, query);
+    return this.prepareCached(`SELECT id, status, assist_blockers FROM jobs
+      WHERE status IN ('assist_blocked', 'failed', 'cancelled')
+        AND COALESCE(applied, 0) <> 1
+        AND (user_decision IS NULL OR user_decision NOT IN ('rejected', 'archived'))${whereMode(clause, 'AND')}`)
+      .all(...clause.params);
+  }
+
   /** Total rows in the jobs table, within one discovery mode. */
   countJobs({ mode = 'profile', query = null } = {}) {
     const clause = this._modeClause(mode, query);
@@ -1078,22 +1121,24 @@ export class Database {
    * @param {object} [options]
    * @param {string} [options.reason] recorded on the event
    * @param {Record<string, any>} [options.patch] extra columns to write
+   * @param {'system'|'human'} [options.actor] a human may report a submission from any
+   *   non-terminal state (see lifecycle HUMAN_REACHABLE)
    * @returns {{id: string, from: string|null, to: string}}
    * @throws {Error} statusCode 404 for an unknown id, 409 for an illegal move
    */
-  setJobStatus(id, to, { reason = '', patch = {} } = {}) {
+  setJobStatus(id, to, { reason = '', patch = {}, actor = 'system' } = {}) {
     return this.transaction(() => {
       const current = this.prepareCached('SELECT status FROM jobs WHERE id = ?').get(id);
       if (!current) throw Object.assign(new Error(`unknown job id: ${id}`), { statusCode: 404 });
       const from = current.status ?? null;
-      try { assertTransition(from, to, reason); }
+      try { assertTransition(from, to, reason, { actor }); }
       catch (err) { throw Object.assign(err, { statusCode: 409 }); }
       this.upsertJob({ ...patch, id, status: to });
       if (from !== to) {
         this.insertEvent({
           id: randomUUID(), job_id: id, event_type: 'status_changed',
           message: `${from ?? '(none)'} -> ${to}${reason ? `: ${reason}` : ''}`,
-          metadata: { from, to, reason: reason || null },
+          metadata: { from, to, reason: reason || null, actor },
         });
       }
       return { id, from, to };
