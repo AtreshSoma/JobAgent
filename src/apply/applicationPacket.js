@@ -22,6 +22,7 @@ import { getPlatform } from './platforms/index.js';
 import { buildPrefillPlan } from './formPrefill.js';
 import { buildUploadPlan } from './fileUpload.js';
 import { nowIso } from '../utils/dates.js';
+import { assertNoTemplateTokens } from '../config/placeholders.js';
 
 /**
  * Who a packet belongs to.
@@ -128,6 +129,15 @@ export function buildApplicationPacket({
 
   const prefill = buildPrefillPlan(formFields, { candidate, screeningAnswers });
   const uploads = buildUploadPlan({ resumePath, coverLetterPath });
+
+  // Nothing addressed to an employer may carry an unfilled `{token}`: not the
+  // cover letter, and not a planned form answer that will be typed into their
+  // ATS verbatim. `generateCoverLetter` already refuses; this is the packet's
+  // own chokepoint for any other composer or answer source.
+  if (coverLetter?.generated) assertNoTemplateTokens(coverLetter.text, 'cover letter');
+  for (const entry of prefill.plan) {
+    assertNoTemplateTokens(entry.value, `answer for "${entry.label}"`);
+  }
 
   const partialPacket = { job, prefill, uploads };
   const fillPlan = platform.prepare(partialPacket);

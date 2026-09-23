@@ -15,6 +15,7 @@
  */
 
 import { humanize, hasBannedContent } from './humanizer.js';
+import { assertNoTemplateTokens } from '../config/placeholders.js';
 
 /**
  * @param {object} job normalized job (title, company, ...)
@@ -44,9 +45,20 @@ export function generateCoverLetter(job, scoreResult, {
   body = humanize(body, humanizerPatterns);
   body = enforceWordCount(body, coverLetter.wordCount);
 
-  const text = [coverLetter.greeting, '', body, '', coverLetter.closing, candidate?.identity?.fullName]
+  // The greeting and sign-off are template text too ("Dear {company} team,"),
+  // so they go through the same fill as the body instead of being pasted raw.
+  const greeting = coverLetter.greeting === undefined ? undefined : fill(coverLetter.greeting, ctx);
+  const closing = coverLetter.closing === undefined ? undefined : fill(coverLetter.closing, ctx);
+  const text = [greeting, '', body, '', closing, candidate?.identity?.fullName]
     .filter((l) => l !== undefined)
     .join('\n');
+
+  // LAST LINE OF DEFENCE. Whatever composed the body (the default template, an
+  // injected composer, or a profile value that itself contains braces), a
+  // letter that still reads "{title}" must never be written to disk as a
+  // document addressed to an employer. Refusing is loud on purpose: a silent
+  // skip would look like "cover letters disabled".
+  assertNoTemplateTokens(text, 'cover letter');
 
   const wordCount = countWords(body);
   return {
@@ -259,7 +271,12 @@ function fill(template, ctx) {
   // Split on sentence ends, keeping the terminator with its sentence.
   const sentences = source.match(/[^.!?]+[.!?]*\s*/g) ?? [source];
   const kept = sentences.filter((s) => s.trim() && !unresolved(s));
-  return kept.join('').replace(/\s+/g, ' ').trim();
+  // The KEPT sentences still carry their tokens and must be substituted too.
+  // They used to be returned raw, so a profile with no stated tenure dropped
+  // the "{years} of experience" sentence and shipped its neighbour verbatim:
+  // "I am applying for the {title} role at {company}." — measured, in a letter
+  // written to disk for a real employer.
+  return substitute(kept.join('')).replace(/\s+/g, ' ').trim();
 }
 
 function countWords(s) {

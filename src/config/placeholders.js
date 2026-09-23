@@ -83,6 +83,14 @@ export const GUARDED_PROFILE_FIELDS = [
   { path: 'identity.links.linkedin', label: 'LinkedIn URL' },
   { path: 'workAuthorization.status', label: 'work authorization status' },
   { path: 'workAuthorization.details', label: 'work authorization details' },
+  // CAREER FACTS reach the employer too. The cover letter quotes
+  // `workHistory[0].highlights[0]` verbatim ("In my current role I ...") and
+  // the resume/profile pages name the employer and school, so an untouched
+  // example profile produced a letter claiming "one-line, metric-backed
+  // achievement bullet" at "Example Corp". `[*]` checks every entry.
+  { path: 'workHistory[*].highlights', label: 'work-history highlight' },
+  { path: 'workHistory[*].employer', label: 'work-history employer' },
+  { path: 'education[*].institution', label: 'education institution' },
 ];
 
 /**
@@ -98,9 +106,38 @@ export function isPlaceholderValue(value) {
   return PLACEHOLDER_PATTERNS.some((re) => re.test(text));
 }
 
-/** Read a dot-notation path off an object. */
-function dig(obj, path) {
-  return path.split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
+/**
+ * Every value at a dot-notation path, with concrete paths.
+ *
+ * `name[*]` expands every element of an array, and a leaf that is itself an
+ * array (a list of highlights) yields each element, so one guard entry covers
+ * every job in a work history rather than only the first.
+ *
+ * @param {object} obj
+ * @param {string} path e.g. 'identity.fullName' or 'workHistory[*].highlights'
+ * @returns {Array<{path: string, value: unknown}>}
+ */
+export function valuesAtPath(obj, path) {
+  let frontier = [{ path: '', value: obj }];
+  for (const segment of path.split('.')) {
+    const wildcard = segment.endsWith('[*]');
+    const key = wildcard ? segment.slice(0, -3) : segment;
+    const next = [];
+    for (const { path: at, value } of frontier) {
+      if (value == null) continue;
+      const child = value[key];
+      const here = at ? `${at}.${key}` : key;
+      if (wildcard) {
+        if (Array.isArray(child)) child.forEach((item, i) => next.push({ path: `${here}[${i}]`, value: item }));
+      } else {
+        next.push({ path: here, value: child });
+      }
+    }
+    frontier = next;
+  }
+  return frontier.flatMap(({ path: at, value }) => (Array.isArray(value)
+    ? value.map((item, i) => ({ path: `${at}[${i}]`, value: item }))
+    : [{ path: at, value }]));
 }
 
 /**
@@ -112,12 +149,50 @@ function dig(obj, path) {
 export function candidatePlaceholders(candidate = {}) {
   const found = [];
   for (const field of GUARDED_PROFILE_FIELDS) {
-    const value = dig(candidate, field.path);
-    if (isPlaceholderValue(value)) {
-      found.push({ ...field, value: String(value).trim() });
+    for (const { path, value } of valuesAtPath(candidate ?? {}, field.path)) {
+      if (isPlaceholderValue(value)) {
+        found.push({ ...field, path, value: String(value).trim() });
+      }
     }
   }
   return found;
+}
+
+/** A `{token}` left behind by a template that was not filled. */
+export const TEMPLATE_TOKEN_RE = /\{\w+\}/;
+
+/**
+ * Every unfilled `{token}` in a piece of text (deduplicated, in order).
+ *
+ * @param {unknown} text
+ * @returns {string[]}
+ */
+export function findTemplateTokens(text) {
+  return [...new Set(String(text ?? '').match(new RegExp(TEMPLATE_TOKEN_RE.source, 'g')) ?? [])];
+}
+
+/**
+ * Refuse an employer-facing document that still contains template tokens.
+ *
+ * Everything else in this module detects shipped EXAMPLE values; this detects
+ * a template the generator failed to fill. Both end the same way: a real
+ * employer reading "{title}" or "{company}" in a letter signed with the
+ * candidate's name. Throws with the offending tokens named so the user knows
+ * which template sentence to fix.
+ *
+ * @param {unknown} text the document text
+ * @param {string} [what='document'] what the text is, for the message
+ * @throws {Error} when any `{token}` remains
+ */
+export function assertNoTemplateTokens(text, what = 'document') {
+  const tokens = findTemplateTokens(text);
+  if (tokens.length) {
+    throw new Error(
+      `Refusing to produce this ${what}: it still contains unfilled template placeholder(s) `
+      + `${tokens.join(', ')}. Fix the template in config/cover_letter.json or the profile value `
+      + 'it draws on; a document addressed to an employer must never ship template text.',
+    );
+  }
 }
 
 /**
