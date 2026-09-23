@@ -211,7 +211,22 @@ const SENTENCE_END = /[.;!?\n\r•·]/;
  * requirement is absent, config-allowed, or softened.
  */
 function checkClearance(text, exclusions) {
-  const clearance = matchedPhrases(text, exclusions.securityClearance ?? []);
+  const clearance = hardClearanceRequirement(text, exclusions);
+  return clearance ? discard('security_clearance', clearance) : null;
+}
+
+/**
+ * The clearance phrases a posting HARD-requires, or null when it requires none
+ * (absent, config-allowed, or every mention softened). The one definition of
+ * "this job needs a clearance" — the exclusion stage discards on it and the
+ * eligibility assessment (src/scoring/eligibility.js) reports it.
+ *
+ * @param {string} text normalized posting text (normalizeText)
+ * @param {object} exclusions parsed config/exclusions.json
+ * @returns {string[]|null}
+ */
+export function hardClearanceRequirement(text, exclusions = {}) {
+  const clearance = matchedPhrases(text, exclusions?.securityClearance ?? []);
   if (!clearance.length) return null;
 
   // Explicit config allowance still wins outright, document-wide.
@@ -226,7 +241,7 @@ function checkClearance(text, exclusions) {
       const idx = text.indexOf(needle, from);
       if (idx === -1) break;
       if (!CLEARANCE_SOFTENERS.some((re) => re.test(sentenceAround(text, idx, needle.length)))) {
-        return discard('security_clearance', clearance);
+        return clearance;
       }
       from = idx + 1;
     }

@@ -82,6 +82,11 @@
         "resumeKeywordAlignment": {
           "type": "number",
           "minimum": 0
+        },
+        "eligibility": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Penalty-only: raw points subtracted when the posting's stated floor (years, degree, clearance) exceeds the candidate's. Not added to the denominator. Default 8."
         }
       }
     },

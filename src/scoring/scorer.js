@@ -17,6 +17,7 @@ import { candidateNeedsSponsorship } from './exclusionFilter.js';
 import { excludedLocationMatch, postedPay } from './searchConstraints.js';
 import { seniorityRank } from '../profile/roleFamilies.js';
 import { matchedTitlePhrases } from './titleMatch.js';
+import { assessEligibility, eligibilityPenalty } from './eligibility.js';
 
 /**
  * Sources considered "direct ATS" for the directAtsAvailability category — a
@@ -98,10 +99,14 @@ const SENIORITY_PATTERNS = [
  * @param {{discoveryDays: number, retentionDays: number}} [args.freshnessModel] grade
  *   freshness against the discovery window (see freshnessFactor); omitted, the
  *   legacy scoring.freshness curve applies
- * @returns {object} score result with breakdown, matched/missing keywords
+ * @param {object} [args.exclusions] parsed config/exclusions.json — lets the
+ *   eligibility assessment report a hard clearance requirement
+ * @returns {object} score result with breakdown, matched/missing keywords and
+ *   `eligibility` ({verdict, reasons}, see src/scoring/eligibility.js)
  */
 export function scoreJob(job = {}, {
   scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date(), freshnessModel = null,
+  exclusions = null,
 } = {}) {
   const weights = scoring.weights;
   const kw = scoring.keywords;
@@ -189,6 +194,13 @@ export function scoreJob(job = {}, {
   const payFit = scorePay(job, candidate, weights.payFit);
   if (payFit) breakdown.payFit = payFit;
 
+  // Eligibility: the posting's stated floor (years, degree, clearance) against
+  // the candidate. Also PENALTY ONLY and outside the denominator — an unknown
+  // candidate or an unstated floor changes nothing.
+  const eligibility = assessEligibility(job, candidate ?? {}, { now, exclusions });
+  const eligibilityFit = eligibilityPenalty(eligibility, weights.eligibility);
+  if (eligibilityFit) breakdown.eligibility = eligibilityFit;
+
   const raw = Math.max(0, Object.values(breakdown).reduce((s, b) => s + b.points, 0));
   // The denominator is the STRUCTURAL weights plus whatever categories were
   // declared. It cannot be `Object.values(weights)`: on a legacy config the
@@ -212,6 +224,7 @@ export function scoreJob(job = {}, {
     matchedKeywords,
     missingKeywords,
     sponsorship: sponsorship?.status ?? 'Unconfirmed',
+    eligibility: { verdict: eligibility.verdict, reasons: eligibility.reasons },
   };
 }
 

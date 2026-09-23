@@ -25,6 +25,7 @@ import { createHash } from 'node:crypto';
 
 import { loadRoleFamilies } from '../profile/roleFamilies.js';
 import { TITLE_MATCH_VERSION } from './titleMatch.js';
+import { ELIGIBILITY_VERSION, candidateYearsOfExperience, candidateDegreeLevel } from './eligibility.js';
 
 /** taxonomy object -> digest, so the taxonomy is hashed once per load. */
 const TAXONOMY_DIGESTS = new WeakMap();
@@ -48,6 +49,11 @@ function taxonomyDigest(config) {
     TAXONOMY_DIGESTS.set(taxonomy, digest);
   }
   return digest;
+}
+
+/** Whole years, as eligibility compares them (see assessEligibility). */
+function wholeYears(years) {
+  return years === null ? null : Math.floor(years);
 }
 
 /** Sort object keys recursively so key ORDER can never change a fingerprint. */
@@ -134,6 +140,16 @@ export function scoringFingerprintMaterial(config = {}) {
     // title points with no config edit at all, so without this the incremental
     // skip would have kept every one of those stale verdicts.
     titleMatcher: TITLE_MATCH_VERSION,
+    // Eligibility compares the posting's floor with the candidate's years and
+    // degree. The DERIVED values are hashed, not the raw work history: a
+    // reworded bullet cannot change a verdict, but a new role, a corrected
+    // start date — or another year of tenure passing — can. The weight is
+    // already covered by `weights`.
+    eligibility: {
+      version: ELIGIBILITY_VERSION,
+      years: wholeYears(candidateYearsOfExperience(candidate)),
+      degree: candidateDegreeLevel(candidate),
+    },
 
     // WHAT IS THROWN AWAY BEFORE JUDGING. An exclusion change does not alter a
     // score, but it does alter whether the row should be on the board at all.
