@@ -337,6 +337,17 @@ export async function run(source = {}, ctx = {}) {
   const hostGate = ctx.hostGate ?? createHostGate({
     maxConcurrent: source.hostConcurrency ?? ctx.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
   });
+  // A SHARED gate (the orchestrator always passes one) ignored the source's own
+  // `hostConcurrency`, so the measured 8-per-pod ceiling documented above ran at
+  // the global default of 4. Configure this source's pods on the shared gate —
+  // only when the source states a value, so a user who lowered the global
+  // ceiling is never silently overruled.
+  if (ctx.hostGate && Number.isFinite(source.hostConcurrency) && typeof hostGate.configure === 'function') {
+    for (const t of tenants) {
+      const host = String(t?.host ?? '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+      if (host) hostGate.configure(host, source.hostConcurrency);
+    }
+  }
   const jobs = [];
   const errors = [];
   let cancelled = false;

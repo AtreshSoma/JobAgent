@@ -92,8 +92,13 @@ export async function runSearch({ jobboards, ctx = {}, candidate, scoring, exist
   // ONE gate for the whole run, shared by every source. Politeness has to be
   // accounted per host — the per-source ceilings above cannot see that two
   // different sources are pointed at the same server.
+  //
+  // `defaults.perHostConcurrency` ({ "api.lever.co": 2, ... }) overrides the
+  // ceiling for named hosts; a source may also configure its own hosts on this
+  // gate (the Workday adapter does, from `source.hostConcurrency`).
   const hostGate = ctx.hostGate ?? createHostGate({
     maxConcurrent: ctx.hostConcurrency ?? defaults.hostConcurrency ?? DEFAULT_HOST_CONCURRENCY,
+    perHost: defaults.perHostConcurrency ?? {},
   });
 
   // Concurrency ceilings are politeness limits, never evasion. Source-level
