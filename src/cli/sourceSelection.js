@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Narrow which discovery sources a run uses, from CLI flags.
  *
@@ -71,7 +72,7 @@ export function withSourceSelection(config, { only, freeOnly } = {}) {
 
 /**
  * Read the selection flags off a parsed argv object.
- * @param {{ flags: Set<string>, options: Record<string, string> }} parsed
+ * @param {{ flags?: Set<string>, options?: Record<string, string> }} [parsed]
  */
 export function selectionFromArgs(parsed = {}) {
   const flags = parsed.flags ?? new Set();

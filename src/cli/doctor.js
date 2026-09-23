@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Doctor / preflight checks.
  *
@@ -227,6 +228,7 @@ function makeCheck(id, label, severity, detail, fix = null) {
  * @param {Function} [options.deps.spawnImpl] spawnSync override (testing)
  * @param {Function} [options.deps.loadConfigImpl] loadConfig override (testing)
  * @param {string} [options.deps.nodeVersion] process.version override (testing)
+ * @param {Function} [options.deps.dependencyDrift] installedVersionDrift override (testing)
  * @returns {Promise<{ checks: object[], summary: {pass:number,warn:number,fail:number}, ok: boolean }>}
  */
 export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps = {} } = {}) {

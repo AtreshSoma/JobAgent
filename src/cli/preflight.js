@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Small, dependency-light startup gate shared by the regular CLI and the
  * one-command dashboard launcher. Keeping it outside index.js avoids a

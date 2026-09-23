@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * `npm run app` — the ONE canonical way to start Job Agent.
  *
@@ -60,7 +61,6 @@ function portIsFree(port) {
  */
 export async function findFreePort(start, tries = 20) {
   for (let p = start; p < start + tries; p += 1) {
-    // eslint-disable-next-line no-await-in-loop
     if (await portIsFree(p)) return p;
   }
   throw new Error(`no free port found in ${start}-${start + tries - 1} — close other apps or set DASHBOARD_PORT`);
@@ -89,6 +89,7 @@ export async function probeRunningDashboard(port, { timeoutMs = 1000, fetchImpl 
   try {
     const res = await fetchImpl(`${url}/api/run/status`, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) return null;
+    /** @type {any} */
     const body = await res.json();
     const looksLikeUs = body && typeof body === 'object'
       && typeof body.running === 'boolean' && 'phase' in body && 'cancelRequested' in body;
@@ -166,10 +167,10 @@ export function createShutdownSignalWait(proc = process) {
  * stack trace. Returns lines to print, or null when the error is not a
  * recognizable setup problem (caller rethrows those).
  * @param {Error} err
- * @param {string} root project root
+ * @param {string} [_root] project root (unused; kept for callers)
  * @returns {string[]|null}
  */
-export function explainConfigError(err, root) {
+export function explainConfigError(err, _root) {
   const msg = String(err?.message ?? err);
   const lines = [];
   if (/candidate\.json/i.test(msg) && /ENOENT|no such file|not found/i.test(msg)) {
@@ -203,7 +204,7 @@ export function explainConfigError(err, root) {
  * @param {object} [args.deps] injection points (tests)
  * @returns {Promise<object>} { ok, url?, port?, problems? }
  */
-export async function runApp({ parsed, env, deps = {} } = {}) {
+export async function runApp({ parsed, env, deps = {} }) {
   const loadConfigImpl = deps.loadConfig ?? (await import('../config/loadConfig.js')).loadConfig;
   const openDatabaseImpl = deps.openDatabase ?? (await import('../logging/db.js')).openDatabase;
 
@@ -273,7 +274,7 @@ export async function runApp({ parsed, env, deps = {} } = {}) {
   let dash = null;
   let uninstallSafetyNet = null;
   let signalWait = null;
-  let port = null;
+  let port;
   let reachedShutdown = false;
 
   try {
@@ -328,6 +329,7 @@ export async function runApp({ parsed, env, deps = {} } = {}) {
     }
     // Preserve the original startup/readiness error. If normal shutdown itself
     // failed, surface that cleanup error instead of claiming a clean stop.
+    // eslint-disable-next-line no-unsafe-finally -- deliberate: only after a clean body
     if (reachedShutdown && cleanupError) throw cleanupError;
     if (!reachedShutdown && cleanupError) {
       try { logger?.error?.(`startup cleanup also failed: ${cleanupError.message}`); } catch { /* preserve startup error */ }

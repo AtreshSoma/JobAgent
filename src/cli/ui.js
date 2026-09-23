@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Console reporter — clean, human-friendly terminal output.
  *

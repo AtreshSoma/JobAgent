@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * WATCH — continuous, incremental discovery to catch brand-new postings fast.
  *
@@ -50,7 +51,7 @@ export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 5;
  * @param {object} [args.deps] { runPrepareAppsFn, searchFn, tailorFn, now, stamp }
  * @returns {Promise<{ newMatches: object[], counters: object, knownBefore: number }>}
  */
-export async function runWatchCycle({ config, db, logger, options = {}, deps = {} } = {}) {
+export async function runWatchCycle({ config, db, logger, options = {}, deps = {} }) {
   const runPrepareAppsFn = deps.runPrepareAppsFn ?? runPrepareApps;
   const freshAlertMinutes = Number.isFinite(options.freshAlertMinutes)
     ? options.freshAlertMinutes : DEFAULT_FRESH_ALERT_MINUTES;
@@ -107,7 +108,7 @@ export async function runWatchCycle({ config, db, logger, options = {}, deps = {
  * @returns {Promise<{ cycles: number, totalNew: number, failed: boolean,
  *   consecutiveFailures: number, lastError: string|null }>}
  */
-export async function runWatch({ config, db, logger, options = {}, deps = {} } = {}) {
+export async function runWatch({ config, db, logger, options = {}, deps = {} }) {
   const intervalMinutes = clampInterval(options.intervalMinutes);
   const intervalMs = intervalMinutes * 60_000;
   const freeOnly = options.freeOnly === true;

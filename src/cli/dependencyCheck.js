@@ -1,3 +1,4 @@
+// @ts-check
 /**
  * Are the installed node_modules the ones package-lock.json describes?
  *

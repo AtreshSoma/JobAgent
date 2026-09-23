@@ -396,6 +396,7 @@ async function runCommand(command, parsed, env) {
           let cleanupError = null;
           try { await dash.close(); } catch (err) { cleanupError ??= err; }
           try { uninstallSafetyNet(); } catch (err) { cleanupError ??= err; }
+          // eslint-disable-next-line no-unsafe-finally -- deliberate: only when the body succeeded
           if (!bodyError && cleanupError) throw cleanupError;
         }
         return { command, url: dash.url, stopped: true };
@@ -738,7 +739,7 @@ function summarizeScore(r, config) {
   ]);
 }
 
-function summarizePrepare(r, db, config) {
+function summarizePrepare(r, db, _config) {
   ui.blank();
   ui.stats([
     ['Queued', r.counters.jobs_queued],
@@ -770,7 +771,7 @@ function summarizePrepare(r, db, config) {
   }
 }
 
-function summarizeAssist(r, db) {
+function summarizeAssist(r, _db) {
   // Count what actually happened: skipped approvals never increment
   // jobs_assisted, so subtracting them (the old approach) could go negative.
   const ready = (r.results ?? []).filter((x) => x.status === 'ready_for_submit').length;

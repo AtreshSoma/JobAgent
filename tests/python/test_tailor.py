@@ -1,6 +1,5 @@
 """Tests for the deterministic resume tailor."""
 import hashlib
-from collections import Counter
 
 import pytest
 
