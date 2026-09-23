@@ -24,10 +24,11 @@
 </head>
 <body>
 
-<!-- Without this, reaching the board by keyboard means tabbing past the whole
+<!-- Without this, reaching the work by keyboard means tabbing past the whole
      header, eight tabs, a health strip and thirteen filter controls — on every
-     page load. -->
-<a class="skip-link" href="#boardwrap">Skip to the job board</a>
+     page load. It targets the main element because the landing view is now Today, not
+     the board. -->
+<a class="skip-link" href="#main">Skip to main content</a>
 
 <div id="offline" role="alert">
   ⚠ Lost connection to the dashboard server — it may have stopped.
@@ -78,8 +79,10 @@
       <button class="ghost" data-action="toggle-menu" aria-haspopup="true" aria-expanded="false" aria-controls="mainMenu">More ▾</button>
       <div class="menu-pop" id="mainMenu" role="menu">
         <button role="menuitem" data-action="run" data-phase="score" title="Recompute fit for jobs already on the board, from their stored descriptions. No network.">↻ Re-score existing jobs</button>
-        <hr>
+        <hr role="separator">
         <button role="menuitem" data-action="open-reports">📊 View reports…</button>
+        <button role="menuitem" data-action="open-runs"
+          title="Recent discovery, scoring and prepare runs: what each found, how long it took, which sources failed.">🕘 Run history…</button>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">🧾 Master resume…</button>
         <button role="menuitem" data-action="open-profile"
@@ -87,7 +90,7 @@
         <button role="menuitem" data-action="open-documents">📄 Resume library…</button>
         <button role="menuitem" data-action="export-jobs">⬇ Export all jobs + scores (CSV)</button>
         <button role="menuitem" data-action="export-tracker">⬇ Export application tracker (CSV)</button>
-        <hr>
+        <hr role="separator">
         <button role="menuitem" data-action="open-health">🩺 System health…</button>
         <a role="menuitem" class="btn" href="/learn/" target="_blank" rel="noopener">🎓 Interview Prep</a>
         <button role="menuitem" data-action="open-keys">⌨ Keyboard shortcuts</button>
@@ -108,12 +111,42 @@
      several of the same numbers in a second visual language and cost ~90px of
      chrome before any job was visible. -->
 <div class="pipeline">
-  <div class="tabs" id="tabs" role="tablist" aria-label="Workflow stage"></div>
+  <!-- TODAY OR THE BOARD. The board answers "what is there?"; Today answers
+       "what should I do first?" — at most ten jobs, one action each. It is the
+       landing view; the full board is one click away and the choice is
+       remembered. The stage tabs only mean something on the board, so they
+       are shown with it. -->
+  <div class="pipeline-row">
+    <div class="viewswitch" role="group" aria-label="View">
+      <button type="button" data-action="set-view" data-view="today" aria-pressed="true">Today
+        <span class="badge" id="todayCount" hidden></span></button>
+      <button type="button" data-action="set-view" data-view="board" aria-pressed="false">All jobs</button>
+    </div>
+    <div class="tabs" id="tabs" role="tablist" aria-label="Workflow stage" hidden></div>
+  </div>
   <div class="health" id="health"><span class="muted">Loading…</span></div>
 </div>
 
-<main class="layout">
-  <section aria-labelledby="boardHeading">
+<main class="layout" id="main" tabindex="-1">
+  <div class="workarea">
+  <!-- Facts about the TOOL that block work ("Auto-fill can't start: the
+       browser is not installed"). Above both views, because they are true in
+       both, and calm rather than red: they are setup, not emergencies. -->
+  <div id="systemNotices" class="notices"></div>
+
+  <section id="todayView" class="today" aria-labelledby="todayHeading">
+    <div class="today-head">
+      <div>
+        <h2 id="todayHeading">Today</h2>
+        <p class="today-sub muted" id="todaySub">The few jobs worth your time right now, in order.</p>
+      </div>
+      <button type="button" class="small ghost" data-action="set-view" data-view="board">Open the full board →</button>
+    </div>
+    <div id="setupChecklist"></div>
+    <ol class="today-list" id="todayList" aria-labelledby="todayHeading"></ol>
+  </section>
+
+  <section id="boardView" aria-labelledby="boardHeading" hidden>
     <h2 id="boardHeading" class="sr-only">Job board</h2>
     <!-- WHICH LIST AM I LOOKING AT?
          The board can show two entirely separate things: the personalized
@@ -299,7 +332,13 @@
       </div>
     </div>
 
-    <div class="activefilters" id="activeFilters"></div>
+    <!-- The chips say WHAT the board is scoped to; the status line beside them
+         says how FRESH it is ("Updated 12 s ago", "Refreshing…"). Deliberately
+         not a live region — it ticks every ten seconds. -->
+    <div class="boardbar">
+      <div class="activefilters" id="activeFilters"></div>
+      <span class="boardstatus" id="boardStatus"></span>
+    </div>
 
     <!-- Filtering is the core loop of this page and it happened in total silence
          for anyone not looking at the pager: typing in the search box swaps the
@@ -349,9 +388,9 @@
           <div class="menu-label" role="presentation">Density</div>
           <button type="button" role="menuitemradio" aria-checked="true" data-action="set-density" data-density="comfortable">Comfortable</button>
           <button type="button" role="menuitemradio" aria-checked="false" data-action="set-density" data-density="compact">Compact</button>
-          <hr>
+          <hr role="separator">
           <div class="menu-label" role="presentation">Columns</div>
-          <div id="columnToggles"></div>
+          <div id="columnToggles" role="group" aria-label="Columns"></div>
         </div>
       </span>
       <label class="pagesize" for="pageSize"><span>Rows</span>
@@ -442,7 +481,7 @@
 
       <section class="card" aria-labelledby="cardSponsor">
         <div class="card-head">
-          <h3 id="cardSponsor">Can you apply?</h3>
+          <h3 id="cardSponsor">Can you apply? <span class="faint">sponsorship verdicts</span></h3>
           <p class="card-lead" id="sponsorLead"></p>
         </div>
         <table class="minitable">
@@ -470,6 +509,7 @@
       </section>
     </div>
   </section>
+  </div>
 
   <aside aria-label="Job detail">
     <div class="rail-sticky">
@@ -533,11 +573,16 @@
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
 
 <!-- ───────────────────────── dialogs ───────────────────────── -->
+<!-- Each small dialog's body is a <form>, so Enter submits it from any
+     field — "Search job boards" ignored Enter entirely — and the one submit
+     handler (actions.js, `data-submit`) is the only path to the action, which is
+     what makes a second Enter or click a no-op while the first is in flight. -->
 <dialog id="dlgAddUrl" class="narrow" aria-labelledby="dlgAddUrlTitle">
   <div class="dlg-head">
     <h2 id="dlgAddUrlTitle">Add a job by URL</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-add-url">
   <div class="dlg-body">
     <p class="muted mt0">Paste a public job posting URL from any career site. It is read,
       scored against your profile, and added to the board. Sites that block automated reads are reported honestly.</p>
@@ -546,9 +591,10 @@
     <div id="addUrlMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" id="addUrlGo" data-action="submit-add-url">Add &amp; score</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="addUrlGo">Add &amp; score</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgJobSearch" class="narrow" aria-labelledby="dlgJobSearchTitle">
@@ -556,6 +602,7 @@
     <h2 id="dlgJobSearchTitle">Search job boards</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-job-search">
   <div class="dlg-body">
     <p class="muted mt0">Search the job boards for <strong>any</strong> role, whether or not it
       has anything to do with your profile.</p>
@@ -571,9 +618,10 @@
     <div id="jobSearchMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" id="jobSearchGo" data-action="submit-job-search">Search</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="jobSearchGo">Search</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgSubmit" class="narrow" aria-labelledby="dlgSubmitTitle">
@@ -581,6 +629,7 @@
     <h2 id="dlgSubmitTitle">Record your submission</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="confirm-submitted">
   <div class="dlg-body">
     <p class="muted mt0" id="dlgSubmitJob"></p>
     <label for="submitConf">Confirmation number <span class="faint">(optional — from the ATS page or email)</span></label>
@@ -591,9 +640,10 @@
       <b>submitted</b>. Without one it is recorded as <b>reported, pending verification</b> — never silently counted as applied.</p>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" data-action="confirm-submitted">✓ I submitted this myself</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary">✓ I submitted this myself</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgLink" class="narrow" aria-labelledby="dlgLinkTitle">
@@ -601,6 +651,7 @@
     <h2 id="dlgLinkTitle">Replace the application URL</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-link">
   <div class="dlg-body">
     <p class="muted mt0">Paste the direct employer or ATS application URL. Aggregator links
       (LinkedIn, Indeed, Dice…) cannot be auto-filled reliably, so they are rejected here.</p>
@@ -609,9 +660,10 @@
     <div id="linkMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" data-action="submit-link">Save URL</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary">Save URL</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgResume" aria-labelledby="dlgResumeTitle">
@@ -637,6 +689,14 @@
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
   <div class="dlg-body" id="reportsBody"></div>
+</dialog>
+
+<dialog id="dlgRuns" class="sheet" aria-labelledby="dlgRunsTitle">
+  <div class="dlg-head">
+    <h2 id="dlgRunsTitle">Run history</h2>
+    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="runsBody"></div>
 </dialog>
 
 <dialog id="dlgMaster" aria-labelledby="dlgMasterTitle">
@@ -700,6 +760,17 @@
   <div class="dlg-body" id="healthBody"></div>
 </dialog>
 
+<!-- Job detail, on layouts too narrow for the side rail (<=1240px). One
+     #detail element is MOVED here rather than rendered twice, so both layouts
+     share one renderer, one set of ids and one note editor. -->
+<dialog id="dlgDetail" class="detail-sheet" aria-labelledby="dlgDetailTitle">
+  <div class="dlg-head">
+    <h2 id="dlgDetailTitle" tabindex="-1">Job detail</h2>
+    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close job detail">✕</button>
+  </div>
+  <div class="dlg-body" id="dlgDetailBody"></div>
+</dialog>
+
 <!-- Every shortcut below already worked; none of them were discoverable, which
      makes them shortcuts only for the person who wrote them. `?` is the
      conventional key for this, so it needs no advertising of its own. -->
@@ -731,13 +802,15 @@
     <h2 id="dlgConfirmTitle">Confirm</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="confirm-go">
   <div class="dlg-body"><div id="confirmBody"></div></div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" id="confirmGo">Continue</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="confirmGo">Continue</button>
   </div>
+  </form>
 </dialog>
 
-<script type="module" src="/assets/js/app.js"></script>
+<script type="module" src="/assets/js/main.js"></script>
 </body>
 </html>

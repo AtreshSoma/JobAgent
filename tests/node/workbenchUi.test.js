@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { POSTED_WINDOWS } from '../../src/dashboard/data.js';
 
@@ -7,7 +7,13 @@ const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 const html = read('../../src/dashboard/public/index.html');
 const css = read('../../src/dashboard/public/assets/css/app.css');
-const app = read('../../src/dashboard/public/assets/js/app.js');
+// The front end is ES modules now (assets/js/*.js, entry main.js). The
+// assertions below are about the shipped code as a whole, so they read every
+// module; each function still lives whole in one file, so slices between two
+// function names stay within that file.
+const jsDir = new URL('../../src/dashboard/public/assets/js/', import.meta.url);
+const app = readdirSync(jsDir).filter((f) => f.endsWith('.js')).sort()
+  .map((f) => readFileSync(new URL(f, jsDir), 'utf8')).join('\n');
 
 describe('dashboard shell structure', () => {
   it('exposes every element id the application script binds to', () => {
@@ -151,7 +157,8 @@ describe('dashboard shell structure', () => {
     // Smaller controls and a hairline rule, not a second full-height toolbar.
     expect(lane).toMatch(/border-top:/);
     expect(lane).toMatch(/height: 30px/);
-    expect(lane).toMatch(/font-size: 12\.5px/);
+    // Secondary on the type scale (--fs-sm), below the primary lane's --fs-md.
+    expect(lane).toMatch(/font-size: var\(--fs-sm\)/);
   });
 
   it('declares the base control styles BEFORE the lane-2 overrides', () => {
@@ -214,7 +221,7 @@ describe('dashboard shell structure', () => {
 
   it('links its stylesheet and module script rather than inlining them', () => {
     expect(html).toContain('<link rel="stylesheet" href="/assets/css/app.css">');
-    expect(html).toContain('<script type="module" src="/assets/js/app.js"></script>');
+    expect(html).toContain('<script type="module" src="/assets/js/main.js"></script>');
   });
 });
 
@@ -348,7 +355,7 @@ describe('accessibility', () => {
   });
 
   it('reloads the selected job after a re-tailor refresh', () => {
-    expect(app).toMatch(/async function refreshAll\(\)[\s\S]*if \(state\.selectedId\) await selectJob\(state\.selectedId\)/);
+    expect(app).toMatch(/async function refreshAll\([^)]*\)[\s\S]*if \(state\.selectedId\) await selectJob\(state\.selectedId\)/);
   });
 
   it('marks up tabs and live regions for assistive tech', () => {
@@ -656,7 +663,8 @@ describe('job role links to the posting', () => {
   const cell = app.slice(app.indexOf('function nameCellFor'), app.indexOf('function hostLabel'));
 
   it('makes the role itself the link, opened safely in a new tab', () => {
-    expect(cell).toContain("href: job.url");
+    // Through safeHref: only an absolute http(s) URL ever becomes an href.
+    expect(cell).toContain('safeHref(job.url)');
     expect(cell).toContain("target: '_blank'");
     // noreferrer as well as noopener: these are third-party job boards.
     expect(cell).toContain("rel: 'noopener noreferrer'");
@@ -728,5 +736,46 @@ describe('status reason is readable, not tooltip-only', () => {
     // Clamped so a long reason cannot make rows different heights.
     expect(css).toContain('.statusreason');
     expect(css).toContain('text-overflow: ellipsis');
+  });
+});
+
+describe('mutations are single-flight and dialogs submit on Enter', () => {
+  it('sends the X-Job-Agent header on every non-GET, from the one api helper', () => {
+    expect(app).toContain("if (method !== 'GET' && method !== 'HEAD') headers['X-Job-Agent'] = '1';");
+    // No mutation bypasses it with a bare fetch.
+    const code = app.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(code).not.toMatch(/fetch\([^)]*method:\s*'(?:POST|PUT|DELETE)'/);
+  });
+
+  it('guards mutating buttons with withBusy instead of per-handler flags', () => {
+    expect(app).toContain('async function withBusy(button, fn');
+    expect(app).toContain('const BUSY_ACTIONS = new Set([');
+    for (const action of ['submit-add-url', 'submit-link', 'confirm-submitted', 'run', 'decide']) {
+      expect(app).toContain(`'${action}'`);
+    }
+  });
+
+  it('wraps each small dialog in a form whose submit is the only path to its action', () => {
+    for (const action of ['submit-add-url', 'submit-job-search', 'confirm-submitted', 'submit-link', 'confirm-go']) {
+      expect(html).toContain(`<form method="dialog" class="dlg-form" data-submit="${action}">`);
+      // The submit button must NOT also carry the action, or one click fires it twice.
+      expect(html).not.toContain(`type="submit" class="small primary" data-action="${action}"`);
+    }
+    expect(app).toContain("document.addEventListener('submit'");
+    // The hand-rolled Enter handlers are gone: the form does it for every field.
+    expect(app).not.toContain("$('addUrlInput').addEventListener('keydown'");
+  });
+});
+
+describe('no data-driven HTML', () => {
+  it('el() has no innerHTML escape hatch', () => {
+    expect(app).not.toContain("k === 'html'");
+    expect(app).not.toMatch(/\.innerHTML\s*=/);
+  });
+
+  it('only puts absolute http(s) job URLs into hrefs', () => {
+    expect(app).toContain('function safeHref(url)');
+    expect(app).toContain("parsed.protocol === 'http:' || parsed.protocol === 'https:'");
+    expect(app).not.toMatch(/href: job\.url\b/);
   });
 });

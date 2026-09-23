@@ -12,10 +12,14 @@
   <div class="layout">
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
-      <div class="brand" role="button" onclick="location.hash='#/home'">
+      <!-- A real link, not a div with an inline onclick: the page is served
+           under `script-src 'self'`, which blocks inline handlers outright, so
+           the old brand "button" silently did nothing. A hash href needs no
+           script at all and is keyboard-reachable for free. -->
+      <a class="brand" href="#/home" aria-label="Interview Academy — home">
         <div class="logo">DE</div>
         <div class="title">Interview Academy<small id="academyScope">Interview preparation</small></div>
-      </div>
+      </a>
       <div class="search-wrap">
         <input class="search" id="search" type="text" placeholder="Search topics…  ( / )" autocomplete="off" />
       </div>

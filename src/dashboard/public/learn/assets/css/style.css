@@ -99,7 +99,7 @@ a:hover { text-decoration: underline; }
   border-right: 1px solid rgba(255,255,255,.05);
 }
 .brand {
-  padding: 20px 20px 14px;
+  padding: 20px 20px 14px; color: inherit; text-decoration: none;
   display: flex; align-items: center; gap: 12px;
   border-bottom: 1px solid rgba(255,255,255,.06);
 }
@@ -331,6 +331,9 @@ tbody tr:nth-child(even) { background: color-mix(in srgb, var(--bg) 55%, transpa
   display: flex; flex-direction: column; overflow: hidden; font-family: var(--font); color: inherit;
 }
 .path-card:hover { border-color: var(--brand); transform: translateY(-4px); box-shadow: var(--shadow-md); }
+/* The cards and the brand are links now (see app.js renderHome): keep them
+   reading as cards, not as underlined body copy. */
+a.path-card, a.path-card:hover, a.brand:hover { text-decoration: none; color: inherit; }
 .path-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .path-card .ic { width: 46px; height: 46px; border-radius: 12px; background: var(--brand-l); color: var(--brand-d); display: grid; place-items: center; font-size: 23px; }
 .path-card h4 { margin: 0 0 6px; font-size: 16px; color: var(--text); letter-spacing: -.2px; }
@@ -388,6 +391,7 @@ tbody tr:nth-child(even) { background: color-mix(in srgb, var(--bg) 55%, transpa
 .crumb a { color: var(--text-faint); }
 .crumb a:hover { color: var(--brand); }
 a.btn, a.btn:hover { text-decoration: none; color: #fff; }
+.hero a.btn.light, .hero a.btn.light:hover { color: var(--brand-d); }
 a.btn.ghost { color: var(--text-soft); }
 
 /* Active nav group (syllabus open) */
