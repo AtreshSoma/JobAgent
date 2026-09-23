@@ -198,3 +198,24 @@ describe('jobs_new counts rows of every discovery mode as known', () => {
     expect(res.counters.jobs_new).toBe(0);
   });
 });
+
+describe('rescoreStale reads a blank stored Workday location from the URL', () => {
+  it('retires an offshore requisition stored before the location fix', async () => {
+    const { openDatabase } = await import('../../src/logging/db.js');
+    const { rescoreStale } = await import('../../src/pipeline/index.js');
+    const { loadTestConfig } = await import('./helpers/testConfig.js');
+    const db = openDatabase({ path: ':memory:' });
+    const config = loadTestConfig();
+    db.upsertJob({
+      id: 'wd-hyd', source: 'workday', company: 'Accenture', title: 'Data Engineer', location: '', status: 'scored',
+      url: 'https://accenture.wd103.myworkdayjobs.com/AccentureCareers/job/Hyderabad/Data-Engineer_ATCI-1',
+      jd_text: 'Build pipelines with Python, SQL, Spark and Azure Data Factory. '.repeat(20),
+      posted_at: new Date().toISOString(), scoring_fingerprint: 'old',
+    });
+    rescoreStale({ db, config });
+    const row = db.getJob('wd-hyd');
+    expect(row.status).toBe('discarded');
+    expect(row.discard_reason).toMatch(/geography|outside the US|Hyderabad/i);
+    db.close();
+  });
+});

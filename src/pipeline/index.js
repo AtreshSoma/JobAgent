@@ -33,7 +33,7 @@ import { createDetailCache } from '../search/detailBudget.js';
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { profileVocabularyFor, classifyTitleFit } from '../scoring/profileFit.js';
 import { postedPay } from '../scoring/searchConstraints.js';
-import { postedOnAgrees } from '../search/adapters/workday.js';
+import { postedOnAgrees, locationFromExternalPath } from '../search/adapters/workday.js';
 import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
@@ -1231,6 +1231,26 @@ function adapterSourceName(adapter) {
 }
 
 /**
+ * A place for a stored Workday row whose location was saved blank.
+ *
+ * Discovery now recovers it from the posting URL (`/job/<Location>/…`), but
+ * only when a job is rediscovered. Rows stored before that kept '', which the
+ * US-only gate reads as "unknown, keep": on 2026-09-23 three Accenture
+ * `/job/Hyderabad/…` requisitions were still on the board at score 72–79.
+ * Re-scoring reads the same URL segment so stored rows are judged on it too.
+ */
+function storedWorkdayLocation(row) {
+  if (!/\.myworkdayjobs\.com\//i.test(String(row.url ?? ''))) return '';
+  try {
+    const path = new URL(row.url).pathname;
+    const at = path.indexOf('/job/');
+    return at < 0 ? '' : locationFromExternalPath(path.slice(at));
+  } catch {
+    return '';
+  }
+}
+
+/**
  * F10 — re-judge active rows whose stored verdict was produced by a DIFFERENT
  * configuration, from their stored description. No network.
  *
@@ -1279,7 +1299,7 @@ export function rescoreStale({ db, config, now = new Date(), fingerprint, limit 
   for (const row of rows.slice(0, Number.isFinite(limit) ? limit : rows.length)) {
     const job = {
       id: row.id, source: row.source, company: row.company, title: row.title,
-      location: row.location ?? '', url: row.url, jdText: row.jd_text ?? '',
+      location: row.location || storedWorkdayLocation(row), url: row.url, jdText: row.jd_text ?? '',
       postedAt: row.posted_at, applicantCount: row.applicant_count,
       employmentType: row.employment_type ?? '', compensationText: row.compensation_text ?? '',
       rawMetadata: { summaryOnly: Number(row.summary_only) === 1 },
