@@ -29,102 +29,23 @@ import { applicationStatePath } from '../apply/applicationState.js';
 import { isSponsorshipGated, configureGateThreshold, gateThreshold } from '../scoring/explainScore.js';
 import { extractDocxText } from '../resume/docxText.js';
 import { usLocationSignal, US_STATE_COUNT } from '../utils/usGeography.js';
+import {
+  APP_STATUS, APP_STATUS_LABELS, LIFECYCLE_TO_APP_STATUS, deriveAppStatus, fitBucket,
+  gradeFromScore, FIT_LABELS, postedConfidence, resumeStatusOf,
+} from '../domain/appStatus.js';
+import { candidateTimeZone, dayOf } from '../domain/time.js';
 
-/** Derived application statuses shown on the board (ordered by precedence). */
-export const APP_STATUS = Object.freeze({
-  SUBMITTED: 'submitted',          // human submitted it, or auto-submit verified it (applied = 1)
-  ARCHIVED: 'archived',            // user archived it
-  REJECTED: 'rejected',            // user rejected it (or rejected the packet)
-  SKIPPED: 'skipped',              // user skipped it during assisted apply
-  BLOCKED: 'blocked',              // assist hit login/captcha/unknown fields
-  FAILED: 'failed',                // unexpected assist/component error; retry after RCA
-  CANCELLED: 'cancelled',          // user cancelled at a safe resumable checkpoint
-  SUBMIT_UNVERIFIED: 'submit_unverified', // auto-submit clicked; no confirmation detected — verify!
-  READY_FOR_SUBMIT: 'ready_for_submit', // form filled; awaiting the human's click
-  APPROVED: 'approved',            // packet approved; ready for assisted fill
-  NEEDS_REVIEW: 'needs_review',    // packet prepared; awaiting human approval
-  SHORTLISTED: 'shortlisted',      // user shortlisted; not yet prepared/approved
-  DATE_UNCONFIRMED: 'date_unconfirmed', // no parseable posting date; flagged for review
-  DISCARDED: 'discarded',          // pipeline hard-excluded or below threshold
-  NEEDS_DESCRIPTION: 'needs_description', // found, but the JD was never fetched — NOT judged
-  SCORED: 'scored',                // scored, no action yet
-  DISCOVERED: 'discovered',        // found, not yet scored
-});
+// The status vocabulary and the pure per-row rules moved to src/domain so the
+// tracker, reports and CLI can use them without importing this whole data
+// layer. Re-exported (alongside real local imports) so every existing import
+// site keeps working unchanged.
+export {
+  APP_STATUS, APP_STATUS_LABELS, LIFECYCLE_TO_APP_STATUS, deriveAppStatus, fitBucket,
+  gradeFromScore, FIT_LABELS, postedConfidence, resumeStatusOf,
+};
 
 /** User decisions accepted by applyDecision(). */
 export const USER_DECISIONS = Object.freeze(['shortlisted', 'rejected', 'archived', 'clear']);
-
-/**
- * Derive the single board status for a job + its latest approval row.
- * Precedence: actual submission > user archive/reject > assist outcomes >
- * approval state > user shortlist > pipeline state.
- *
- * @param {object} job jobs-table row
- * @param {object|null} approval latest approval_queue row
- * @returns {string} an APP_STATUS value
- */
-export function deriveAppStatus(job = {}, approval = null) {
-  if (Number(job.applied) === 1) return APP_STATUS.SUBMITTED;
-  if (job.user_decision === 'archived') return APP_STATUS.ARCHIVED;
-  if (job.user_decision === 'rejected') return APP_STATUS.REJECTED;
-  if (job.status === 'skipped') return APP_STATUS.SKIPPED;
-  if (job.status === 'assist_blocked') return APP_STATUS.BLOCKED;
-  if (job.status === 'failed') return APP_STATUS.FAILED;
-  if (job.status === 'cancelled') return APP_STATUS.CANCELLED;
-  if (job.status === 'submit_unverified') return APP_STATUS.SUBMIT_UNVERIFIED;
-  if (job.status === 'ready_for_submit') return APP_STATUS.READY_FOR_SUBMIT;
-  if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return APP_STATUS.REJECTED;
-  if (approval?.approval_status === APPROVAL_STATUS.APPROVED) return APP_STATUS.APPROVED;
-  if (approval?.approval_status === APPROVAL_STATUS.PENDING) return APP_STATUS.NEEDS_REVIEW;
-  if (job.user_decision === 'shortlisted') return APP_STATUS.SHORTLISTED;
-  if (job.status === 'unknown_date_review') return APP_STATUS.DATE_UNCONFIRMED;
-  if (job.status === 'discarded') return APP_STATUS.DISCARDED;
-  // `needs_description` is written to jobs.status by the pipeline for rows whose
-  // JD was never fetched, precisely so they are NOT reported as judged. With no
-  // case here they fell through to the score/tier test below and surfaced as
-  // "Scored" — 5,029 unread rows inside a tile reporting 5,175, so 97% of what
-  // the board called "Scored" was never read. A provisional score is set on
-  // these rows; it is not a verdict.
-  if (job.status === 'needs_description') return APP_STATUS.NEEDS_DESCRIPTION;
-  if (typeof job.score === 'number' || job.tier) return APP_STATUS.SCORED;
-  return APP_STATUS.DISCOVERED;
-}
-
-/**
- * Every lifecycle status this presentation layer knows how to render.
- *
- * `deriveAppStatus` is a chain of `if`s with a fallthrough, which is why a
- * status could be introduced by one writer and silently mishandled here: a row
- * whose status nothing matched simply fell through to SCORED. That is exactly
- * how 4,732 rows the pipeline had deliberately marked unread came to be
- * reported as judged.
- *
- * Keeping the mapping explicit lets a test assert exhaustiveness over
- * LIFECYCLE_VALUES, so adding a status without deciding how it is DISPLAYED
- * fails the suite rather than quietly mislabelling rows in production.
- *
- * A status maps to `null` when it is deliberately not a distinct board status
- * (it is represented by approval/user-decision precedence instead).
- */
-export const LIFECYCLE_TO_APP_STATUS = Object.freeze({
-  found: APP_STATUS.DISCOVERED,
-  hard_discarded: APP_STATUS.DISCARDED,
-  discarded: APP_STATUS.DISCARDED,
-  needs_description: APP_STATUS.NEEDS_DESCRIPTION,
-  unknown_date_review: APP_STATUS.DATE_UNCONFIRMED,
-  scored: APP_STATUS.SCORED,
-  near_miss: APP_STATUS.SCORED,
-  queued: APP_STATUS.SCORED,
-  prepared: APP_STATUS.NEEDS_REVIEW,
-  assist_started: APP_STATUS.APPROVED,
-  assist_blocked: APP_STATUS.BLOCKED,
-  ready_for_submit: APP_STATUS.READY_FOR_SUBMIT,
-  submit_unverified: APP_STATUS.SUBMIT_UNVERIFIED,
-  submitted: APP_STATUS.SUBMITTED,
-  skipped: APP_STATUS.SKIPPED,
-  cancelled: APP_STATUS.CANCELLED,
-  failed: APP_STATUS.FAILED,
-});
 
 // The sponsorship gate is a SCORING concept; it lives in scoring/explainScore.js
 // next to the rule that creates it. Re-exported here (alongside a real local
@@ -132,71 +53,6 @@ export const LIFECYCLE_TO_APP_STATUS = Object.freeze({
 // existing dashboard consumer and its tests keep one import site.
 export { isSponsorshipGated, configureGateThreshold, gateThreshold };
 
-/**
- * Map a scoring tier to a fit bucket.
- *
- * FIT measures how well the ROLE matches the candidate; sponsorship
- * feasibility is reported separately. A 75+ job the sponsorship gate parked
- * in Queue is therefore still a STRONG fit (with sponsorshipGated: true and a
- * "verify sponsorship" action) — hiding those as "medium" made 10k-job sources
- * read as producing zero strong matches.
- *
- * The gate flag is only a PROXY for "this Queue row really scored Apply" — and
- * that proxy does not hold for a row whose sponsorship is `Denied`: such a row
- * was not parked pending verification, it was refused outright. Passing
- * sponsorship through keeps a refused job out of "Best matches".
- *
- * @param {string|null} tier
- * @param {number|null} [score] pass the job's score to classify gated rows
- * @param {string|null} [sponsorship] pass the job's sponsorship status
- * @returns {'strong'|'medium'|'weak'|'no_fit'|'unscored'}
- */
-export function fitBucket(tier, score = null, sponsorship = null) {
-  if (tier === 'Priority' || tier === 'Apply') return 'strong';
-  if (tier === 'Queue') return isSponsorshipGated({ tier, score, sponsorship }) ? 'strong' : 'medium';
-  if (tier === 'Near miss') return 'weak';
-  if (tier === 'Discard') return 'no_fit';
-  return 'unscored';
-}
-
-/**
- * Letter grade for a 0-100 score — a compact, career-ops-style signal of how
- * worth-your-time a role is. The system is a FILTER, not spray-and-pray: grades
- * D/F are de-emphasized in the UI so you focus on the few A/B roles.
- *
- * @param {number|null} score
- * @returns {{ letter: string, label: string, recommend: boolean }|null}
- */
-export function gradeFromScore(score) {
-  if (typeof score !== 'number' || Number.isNaN(score)) return null;
-  if (score >= 85) return { letter: 'A', label: 'Excellent fit', recommend: true };
-  if (score >= 75) return { letter: 'B', label: 'Strong fit', recommend: true };
-  if (score >= 65) return { letter: 'C', label: 'Possible fit', recommend: true };
-  if (score >= 50) return { letter: 'D', label: 'Weak fit', recommend: false };
-  return { letter: 'F', label: 'Poor fit', recommend: false };
-}
-
-/**
- * Confidence in a job's posting date. Aggregator feeds often omit or mangle the
- * date; those are flagged so a stale role is never mistaken for a fresh one.
- * @param {object} job
- * @returns {'confirmed'|'unconfirmed'}
- */
-export function postedConfidence(job = {}) {
-  if (job.status === 'unknown_date_review') return 'unconfirmed';
-  return job.posted_at ? 'confirmed' : 'unconfirmed';
-}
-
-/**
- * Resume packet readiness for a job, for an at-a-glance column.
- * @param {object} job
- * @returns {'tailored'|'prepared'|'none'}
- */
-export function resumeStatusOf(job = {}) {
-  if (job.resume_pdf_path || job.resume_docx_path || job.resume_path) return 'tailored';
-  if (job.application_packet_path) return 'prepared';
-  return 'none';
-}
 
 /**
  * The happy-path pipeline a job advances through, plus terminal off-ramps. Used
@@ -469,45 +325,6 @@ function listSummaryRows(db, scope = discoveryScope()) {
   return typeof db.listJobsSummary === 'function' ? db.listJobsSummary(args) : db.listJobs(args);
 }
 
-/**
- * The calendar day a timestamp falls on, IN THE CANDIDATE'S TIMEZONE.
- *
- * This used to be `String(value).slice(0, 10)` over an ISO-8601 UTC timestamp,
- * i.e. the UTC day. For a US Eastern user that rolls over at 7–8 pm local, so
- * "Discovered today", "Prepared today", "Submitted today" and "New qualified
- * today" all reset to zero while the evening's work was still happening.
- * Measured live at 00:07 UTC: `discoveredToday: 0` next to
- * `discoveredLast24h: 15954`, 35 minutes after a run.
- *
- * The zone comes from `candidate.location.timezone`, which is already a
- * required profile field. `en-CA` is used only because it formats as
- * YYYY-MM-DD, which is what every caller compares.
- *
- * @param {unknown} value ISO timestamp
- * @param {string} [timeZone] IANA zone; UTC slicing is kept as the fallback
- * @returns {string} YYYY-MM-DD
- */
-function dayOf(value, timeZone) {
-  const raw = String(value ?? '');
-  if (!raw) return '';
-  if (!timeZone) return raw.slice(0, 10);
-  const at = new Date(raw);
-  if (Number.isNaN(at.getTime())) return raw.slice(0, 10);
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(at);
-  } catch {
-    // An unknown/invalid zone must not break the dashboard.
-    return raw.slice(0, 10);
-  }
-}
-
-/** The candidate's IANA timezone, or null to fall back to UTC. */
-function candidateTimeZone(config) {
-  const tz = config?.candidate?.location?.timezone;
-  return typeof tz === 'string' && tz.trim() ? tz.trim() : null;
-}
 
 /**
  * Was this row dropped purely because its posting date was unreadable?
@@ -661,6 +478,7 @@ function boardRow(job, approval, now) {
   const score = typeof job.score === 'number' ? job.score : null;
   const haystack = `${job.location ?? ''} ${job.employment_type ?? ''} ${job.title ?? ''}`.toLowerCase();
   const locationSignal = usLocationSignal(job.location);
+  const fit = fitBucket(job.tier, score, job.sponsorship ?? null);
   return {
     id: job.id,
     company: job.company,
@@ -671,9 +489,9 @@ function boardRow(job, approval, now) {
     url: job.url,
     source: job.source || 'unknown',
     score,
-    grade: gradeFromScore(score),
+    grade: gradeFromScore(score, fit),
     tier: job.tier ?? null,
-    fit: fitBucket(job.tier, score, job.sponsorship ?? null),
+    fit,
     sponsorshipGated: isSponsorshipGated(job),
     sponsorship: job.sponsorship ?? null,
     // The prose the verdict was read from, so a human can check the badge
@@ -909,7 +727,7 @@ function computeDashboardStats(db, now, timeZone = null) {
     const viewRow = {
       appStatus: status,
       fit,
-      grade: gradeFromScore(typeof job.score === 'number' ? job.score : null),
+      grade: gradeFromScore(typeof job.score === 'number' ? job.score : null, fit),
       postedLast24h,
       sponsorshipGated: gated,
     };
