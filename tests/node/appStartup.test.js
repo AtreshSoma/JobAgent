@@ -255,7 +255,10 @@ describe('browser and launcher safety', () => {
     const sh = readFileSync(join(ROOT, 'start-job-agent.sh'), 'utf8');
 
     expect(cmd).toContain('cd /d "%~dp0"');
-    expect(cmd).toContain('if not exist "node_modules"');
+    // Every launcher delegates dependency freshness to one shared script.
+    expect(cmd).toContain('node scripts\\prepareLaunch.mjs');
+    expect(ps).toContain('node scripts/prepareLaunch.mjs');
+    expect(sh).toContain('node scripts/prepareLaunch.mjs');
     expect(ps).toContain('Set-Location -Path $PSScriptRoot');
     expect(sh).toContain('cd -- "$(dirname "$0")"');
     expect(compat).toContain('call "%~dp0start-job-agent.cmd" "--port=%PORT%"');

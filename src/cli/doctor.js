@@ -4,7 +4,8 @@
  * Validates everything the pipeline depends on BEFORE a run, so failures
  * surface as one readable checklist instead of a mid-run crash:
  *
- *   - Node.js version (>= 22.5, required for the node:sqlite built-in)
+ *   - Node.js version (>= 22.13, the first 22.x with node:sqlite unflagged)
+ *   - installed node_modules match package-lock.json (stale install => WARN)
  *   - SQLite access (in-memory smoke test + the real data/applied_jobs.db)
  *   - configuration files load and validate against their JSON schemas
  *   - candidate profile completeness (required fields hard-fail; truthful
@@ -37,11 +38,16 @@ import {
 import { loadConfig, PROJECT_ROOT } from '../config/loadConfig.js';
 import { ui } from './ui.js';
 import { findPlaceholders } from '../config/placeholders.js';
+import { MIN_NODE_VERSION, nodeVersionSupported, installedVersionDrift } from './dependencyCheck.js';
 
 export const SEVERITY = Object.freeze({ PASS: 'pass', WARN: 'warn', FAIL: 'fail' });
 
-/** Minimum supported Node.js major version (node:sqlite landed in 22.5). */
+/**
+ * Minimum supported Node.js major version. Kept for callers; the real check
+ * is the full MIN_NODE_VERSION (22.13.0 — node:sqlite without a flag).
+ */
 export const MIN_NODE_MAJOR = 22;
+export { MIN_NODE_VERSION };
 
 /** Output directories that must exist and be writable. */
 export const OUTPUT_DIRS = ['data', 'logs', 'reports', 'applications/output', 'resumes/output'];
@@ -229,14 +235,31 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
   const checks = [];
 
   /* ── Node.js version ─────────────────────────────────────────────────── */
+  // Full semver, not the major alone: 22.5-22.12 pass a major check but still
+  // need --experimental-sqlite, so they failed later with a confusing import
+  // error instead of here with the fix.
   const nodeVersion = deps.nodeVersion ?? process.version;
-  const major = Number(String(nodeVersion).replace(/^v/, '').split('.')[0]);
-  if (Number.isFinite(major) && major >= MIN_NODE_MAJOR) {
-    checks.push(makeCheck('node', 'Node.js version', SEVERITY.PASS, `${nodeVersion} (>= ${MIN_NODE_MAJOR} required)`));
+  if (nodeVersionSupported(nodeVersion)) {
+    checks.push(makeCheck('node', 'Node.js version', SEVERITY.PASS, `${nodeVersion} (>= ${MIN_NODE_VERSION} required)`));
   } else {
     checks.push(makeCheck('node', 'Node.js version', SEVERITY.FAIL,
-      `${nodeVersion} is below the required Node ${MIN_NODE_MAJOR}`,
-      `Install Node ${MIN_NODE_MAJOR}+ (node:sqlite requires Node 22.5 or newer).`));
+      `${nodeVersion} is too old: >= 22.13 required`,
+      `Install Node ${MIN_NODE_VERSION} or newer (node:sqlite is only available without a flag from 22.13).`));
+  }
+
+  /* ── Installed dependencies match package-lock.json ─────────────────── */
+  const depDrift = (deps.dependencyDrift ?? installedVersionDrift)(root);
+  if (!depDrift) {
+    checks.push(makeCheck('dependencies', 'Installed dependencies', SEVERITY.WARN,
+      'package.json / package-lock.json could not be read', 'Run: npm ci'));
+  } else if (depDrift.drift.length === 0) {
+    checks.push(makeCheck('dependencies', 'Installed dependencies', SEVERITY.PASS,
+      `${depDrift.checked} direct dependencies match package-lock.json`));
+  } else {
+    checks.push(makeCheck('dependencies', 'Installed dependencies', SEVERITY.WARN,
+      `${depDrift.drift.length} differ from package-lock.json: `
+      + depDrift.drift.map((d) => `${d.name} ${d.installed ?? 'missing'} (lockfile ${d.locked})`).join(', '),
+      'Run: npm ci  (node_modules is stale — usually after a git pull that changed package-lock.json)'));
   }
 
   /* ── SQLite (built-in module + real database file) ───────────────────── */

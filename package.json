@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Local-first automated job search, resume tailoring, and human-approved application assistant.",
   "engines": {
-    "node": ">=22.5"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "help": "node src/index.js help",
