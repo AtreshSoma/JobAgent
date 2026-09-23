@@ -35,7 +35,7 @@ import {
 } from './browser.js';
 import { fillFields, requiredFieldsSatisfied, verifyFilledFields } from './fieldResolver.js';
 import {
-  scanFields, resolveFormScope, detectValidationErrors, unfilledRequiredControls,
+  scanFields, resolveFormScope, detectValidationErrors, unfilledRequiredControls, applicationFields,
 } from './domScanner.js';
 import { fillScannedFields, isSensitiveChoiceLabel } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
@@ -549,7 +549,10 @@ export async function assistApply({
       for (const err of fill.errors ?? []) stepBlockers.push(`field ${err.field}: ${err.error}`);
 
       // 2b. Dynamic, type-aware fill of whatever is actually on the page now.
-      const scanned = await scanFields(scope);
+      // Only the application's own controls: a header search box or a
+      // newsletter signup is neither filled nor counted as "this page has a
+      // form" (see applicationFields / allowApplyStart below).
+      const scanned = applicationFields(await scanFields(scope));
       const dyn = await fillScannedFields(scope, scanned, { candidate, screeningAnswers, alreadyFilled: stepFilledKeys });
       for (const f of dyn.filled ?? []) {
         completedThisStep.push(f);
@@ -561,7 +564,7 @@ export async function assistApply({
       // A checkbox/radio/select can reveal a conditional question. Re-scan
       // once after applying the first dynamic batch and fill only newly visible
       // controls (stepFilledKeys prevents duplicate actions).
-      const conditionalScan = await scanFields(scope);
+      const conditionalScan = applicationFields(await scanFields(scope));
       const conditional = await fillScannedFields(scope, conditionalScan, {
         candidate, screeningAnswers, alreadyFilled: stepFilledKeys,
       });
@@ -720,6 +723,8 @@ export async function assistApply({
       // the eventual resume/contact controls yet. We may safely advance through
       // Apply/Start/Next/Continue, then re-scan the new DOM. A final Submit is
       // still excluded by findAdvanceControl and remains human-gated.
+      // `scanned` already excludes search boxes, consent banners and signup
+      // forms: a JD landing page with a header search box is still fieldless.
       const advance = await findAdvanceControl(scope, {
         allowApplyStart: scanned.length === 0 && result.filled.length === 0,
       });
@@ -1081,7 +1086,8 @@ async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
     if (scope && scope !== page && typeof scope.content === 'function') {
       html += await scope.content();
     }
-    const fields = await scanFields(scope);
+    // A confirmation page with a site search box still has "no form left".
+    const fields = applicationFields(await scanFields(scope));
     formGone = Array.isArray(fields) && fields.length === 0;
   } catch { formGone = false; }
 

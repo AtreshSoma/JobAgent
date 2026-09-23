@@ -69,6 +69,32 @@ function collectFields() {
     return null;
   };
 
+  // Controls that are on the page but are NOT the application: a site search
+  // box, a cookie/consent banner, a newsletter or job-alert signup. Reporting
+  // them as ordinary fields meant a JD landing page with a header search box
+  // "had fields", so its "Apply now" button was never allowed as the way in,
+  // and the filler typed the candidate's email into the newsletter form.
+  const SEARCHY = /search|keyword|query|\bq\b|find.?jobs/i;
+  const SIGNUP = /newsletter|subscribe|subscription|job.?alert|talent.?(?:community|network)|get.?notified|sign.?up.?for|mailing.?list/i;
+  const incidentalReason = (el) => {
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const hint = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' ');
+    if (type === 'search' || el.closest('[role="search"], search')) return 'search';
+    if (el.closest('header, nav, [role="banner"], [role="navigation"]') && SEARCHY.test(hint)) return 'search';
+    if (el.closest('[id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], [id*="onetrust" i], [class*="gdpr" i]')) {
+      return 'consent-banner';
+    }
+    const form = el.closest('form');
+    const box = form || el.closest('[class*="newsletter" i], [id*="newsletter" i], [class*="subscribe" i]');
+    if (box) {
+      const text = [box.id, box.className, box.getAttribute('action'), box.getAttribute('aria-label'),
+        (box.textContent || '').slice(0, 400)].join(' ');
+      const size = box.querySelectorAll('input:not([type="hidden"]), select, textarea').length;
+      if (SIGNUP.test(text) && size <= 3) return 'signup';
+    }
+    return null;
+  };
+
   const out = [];
   const seenRadioGroups = new Set();
   const controls = Array.from(document.querySelectorAll('input, textarea, select'));
@@ -166,9 +192,30 @@ function collectFields() {
     });
   }
 
+  // Tag (never drop) incidental controls, so callers decide what to ignore.
+  for (const field of out) {
+    let el = null;
+    try { el = field.selector ? document.querySelector(field.selector) : null; } catch { el = null; }
+    if (!el && field.kind === 'radio' && field.options?.[0]?.selector) {
+      try { el = document.querySelector(field.options[0].selector); } catch { el = null; }
+    }
+    const reason = el ? incidentalReason(el) : null;
+    if (reason) field.incidental = reason;
+  }
   return out;
 }
 /* c8 ignore stop */
+
+/**
+ * The scanned fields that belong to the application itself (drops site
+ * search, consent banners and newsletter/job-alert signups).
+ *
+ * @param {Array<object>} fields scanFields() result
+ * @returns {Array<object>}
+ */
+export function applicationFields(fields = []) {
+  return (Array.isArray(fields) ? fields : []).filter((f) => !f?.incidental);
+}
 
 /**
  * Scan the current page for fillable form fields.
