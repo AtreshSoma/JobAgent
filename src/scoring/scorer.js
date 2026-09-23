@@ -94,9 +94,14 @@ const SENIORITY_PATTERNS = [
  * @param {object} [args.candidate] parsed config/candidate.json (for alignment + geo + seniority)
  * @param {string[]} [args.resumeKeywords] keywords present in the master resume (optional)
  * @param {Date} [args.now]
+ * @param {{discoveryDays: number, retentionDays: number}} [args.freshnessModel] grade
+ *   freshness against the discovery window (see freshnessFactor); omitted, the
+ *   legacy scoring.freshness curve applies
  * @returns {object} score result with breakdown, matched/missing keywords
  */
-export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date() } = {}) {
+export function scoreJob(job = {}, {
+  scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date(), freshnessModel = null,
+} = {}) {
   const weights = scoring.weights;
   const kw = scoring.keywords;
   const text = normalizeText([job.title, job.jdText].join(' \n '));
@@ -162,7 +167,7 @@ export function scoreJob(job = {}, { scoring, sponsorship, candidate = {}, resum
   breakdown.geographyFit = scoreGeography(job, candidate, weights.geographyFit);
 
   // Freshness.
-  breakdown.freshness = scoreFreshness(job, scoring.freshness ?? {}, weights.freshness, now);
+  breakdown.freshness = scoreFreshness(job, scoring.freshness ?? {}, weights.freshness, now, freshnessModel);
 
   // Direct ATS availability.
   breakdown.directAtsAvailability = {
@@ -500,9 +505,36 @@ function scorePay(job, candidate, weight) {
   return { points: -round2(max * shortfall), weight: 0, matched: [`${label} below target ${target.toLocaleString('en-US')}`] };
 }
 
-function scoreFreshness(job, freshness, weight, now) {
+/**
+ * Freshness factor relative to the DISCOVERY window (F8).
+ *
+ * The legacy curve (full points up to scoring.freshness.flagOlderThanDays = 7,
+ * half to 14) was dead weight once discovery itself only admits postings
+ * inside a 7-day window: every new row scored full marks. Graded against the
+ * window instead, points fall from 1.0 at day 0 to 0.5 at the window's edge,
+ * and a row RETAINED past the window (already on the board) keeps falling to
+ * 0 at the retention limit (exclusions.staleness.skipOlderThanDays), where the
+ * exclusion stage retires it anyway.
+ *
+ * @param {number} age days
+ * @param {{discoveryDays: number, retentionDays: number}} model
+ * @returns {number} 0..1
+ */
+export function freshnessFactor(age, { discoveryDays, retentionDays }) {
+  const d = Number.isFinite(discoveryDays) && discoveryDays > 0 ? discoveryDays : 7;
+  const r = Number.isFinite(retentionDays) && retentionDays > d ? retentionDays : d * 2;
+  if (age <= 0) return 1;
+  if (age <= d) return 1 - 0.5 * (age / d);
+  if (age >= r) return 0;
+  return 0.5 * (1 - (age - d) / (r - d));
+}
+
+function scoreFreshness(job, freshness, weight, now, model = null) {
   const age = ageInDays(job.postedAt, now);
   if (age === null) return { points: round2(weight * 0.5), weight, matched: ['posted date unknown'] };
+  if (model && Number.isFinite(model.discoveryDays)) {
+    return { points: round2(weight * freshnessFactor(age, model)), weight, matched: [`${age} days old`] };
+  }
   const flagDays = freshness.flagOlderThanDays ?? 7;
   const skipDays = freshness.skipOlderThanDays ?? 14;
   let factor;

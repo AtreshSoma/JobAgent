@@ -84,7 +84,10 @@ describe('runPipeline', () => {
     const foundPath = join(root, 'data', 'found_jobs.json');
     expect(existsSync(foundPath)).toBe(true);
     const found = JSON.parse(readFileSync(foundPath, 'utf8'));
-    expect(found.jobs.length).toBe(sampleJobs.length);
+    // Freshness-dropped (stale) rows are counted but no longer listed (P3): they
+    // were ~92% of the file and nothing reads them back.
+    expect(result.counters.jobs_discarded_stale).toBeGreaterThanOrEqual(1);
+    expect(found.jobs.length).toBe(sampleJobs.length - result.counters.jobs_discarded_stale);
     expect(found.jobs.every((j) => ['strong', 'weak', 'no_match', 'unknown'].includes(j.discoveryMatch))).toBe(true);
     // Report carries a per-source breakdown.
     const summary = JSON.parse(readFileSync(result.report.files.json, 'utf8'));

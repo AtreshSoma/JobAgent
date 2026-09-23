@@ -23,6 +23,32 @@
 
 import { createHash } from 'node:crypto';
 
+import { loadRoleFamilies } from '../profile/roleFamilies.js';
+
+/** taxonomy object -> digest, so the taxonomy is hashed once per load. */
+const TAXONOMY_DIGESTS = new WeakMap();
+
+/**
+ * Short digest of the role-family taxonomy in effect for this config: an
+ * injected `config.roleFamilies`, else config/role_families.json under
+ * `config.root`. Null when none can be read (never throws).
+ */
+function taxonomyDigest(config) {
+  let taxonomy;
+  try {
+    taxonomy = config.roleFamilies ?? loadRoleFamilies(config.root);
+  } catch {
+    return null;
+  }
+  if (!taxonomy || typeof taxonomy !== 'object') return null;
+  let digest = TAXONOMY_DIGESTS.get(taxonomy);
+  if (!digest) {
+    digest = createHash('sha1').update(JSON.stringify(stable(taxonomy))).digest('hex').slice(0, 12);
+    TAXONOMY_DIGESTS.set(taxonomy, digest);
+  }
+  return digest;
+}
+
 /** Sort object keys recursively so key ORDER can never change a fingerprint. */
 function stable(value) {
   if (Array.isArray(value)) return value.map(stable);
@@ -74,6 +100,20 @@ export function scoringFingerprint(config = {}) {
     sponsorshipGate: scoring.sponsorshipGate ?? {},
     freshness: scoring.freshness ?? {},
     evidenceAliases: scoring.evidenceAliases ?? {},
+    // Sponsorship vocabulary decides Confirmed/Likely, which carries weighted
+    // points AND the Apply gate — editing likelySponsors used to leave every
+    // stored verdict looking current.
+    sponsorship: {
+      affirmativePhrases: scoring.sponsorship?.affirmativePhrases ?? [],
+      likelySponsors: scoring.sponsorship?.likelySponsors ?? [],
+    },
+    payFitWeight: scoring.weights?.payFit ?? null,
+    // The role-family taxonomy decides title accept/defer/reject, which gates
+    // the near-miss tier; it is data in config/role_families.json, so it is
+    // hashed rather than inlined.
+    roleFamilies: taxonomyDigest(config),
+    // Freshness points are graded against the discovery window (F8).
+    discoveryWindow: config.runtime?.jobFreshnessMode ?? null,
 
     // WHAT IS THROWN AWAY BEFORE JUDGING. An exclusion change does not alter a
     // score, but it does alter whether the row should be on the board at all.
@@ -88,6 +128,8 @@ export function scoringFingerprint(config = {}) {
       geographyMismatch: exclusions.geographyMismatch ?? [],
       geography: exclusions.geography ?? {},
       staleness: exclusions.staleness ?? {},
+      // Employment classification feeds the employment-type constraint.
+      employmentTypes: exclusions.employmentTypes ?? {},
     },
   };
 
