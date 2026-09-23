@@ -150,7 +150,9 @@ export function readJson(filePath) {
  */
 export function loadConfig({ root = PROJECT_ROOT, loadEnv = true, env = process.env } = {}) {
   if (loadEnv) {
-    dotenv.config({ path: join(root, '.env') });
+    // quiet: dotenv >= 17 prints an "injected env" banner to STDOUT by
+    // default, which would corrupt `doctor --json` and every piped command.
+    dotenv.config({ path: join(root, '.env'), quiet: true });
   }
 
   const configDir = join(root, 'config');

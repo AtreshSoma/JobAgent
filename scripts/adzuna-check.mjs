@@ -9,7 +9,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: join(__dirname, '..', '.env') });
+dotenv.config({ path: join(__dirname, '..', '.env'), quiet: true });
 
 const { run, buildSearchUrl, stripQuery } = await import('../src/search/adapters/adzuna.js');
 

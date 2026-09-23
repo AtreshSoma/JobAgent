@@ -57,13 +57,12 @@
   "dependencies": {
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
-    "dotenv": "^16.4.5",
-    "pino": "^9.4.0",
-    "pino-pretty": "^11.2.2",
+    "dotenv": "^17.4.2",
+    "pino": "^10.3.1",
     "playwright": "~1.56.1"
   },
   "devDependencies": {
     "marked": "^18.0.6",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.11"
   }
 }
