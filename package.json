@@ -8,6 +8,7 @@
     "node": ">=22.5"
   },
   "scripts": {
+    "help": "node src/index.js help",
     "app": "node src/index.js app",
     "start": "node src/index.js go",
     "go": "node src/index.js go",
@@ -19,6 +20,7 @@
     "find": "node src/index.js prepare-apps",
     "discover": "node src/index.js discover",
     "score": "node src/index.js score",
+    "rescore": "node src/index.js rescore",
     "prepare-apps": "node src/index.js prepare-apps",
     "assist": "node src/index.js assist",
     "apply": "node src/index.js apply",

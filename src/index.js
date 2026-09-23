@@ -18,7 +18,11 @@
  *
  *   2. Legacy mode flag (kept for compatibility):
  *        node src/index.js --mode=DRY_RUN | PREPARE | LIVE_ASSIST
+ *        node src/index.js --mode          (uses RUN_MODE from .env)
  *        node src/index.js --report
+ *
+ *   `help` / `--help` / `-h` (and a bare invocation) print the command list,
+ *   generated from COMMAND_TABLE below; `--version` prints the version.
  *
  * No CLI COMMAND ever submits an application. The browser assist fills forms and
  * advances through safe navigation (Next/Continue/Review) but always stops
@@ -62,6 +66,7 @@ import { parseDashboardPort } from './cli/app.js';
 import { ui } from './cli/ui.js';
 import { formatPostedRelative } from './utils/dates.js';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -98,21 +103,97 @@ function atsLabel(row) {
 
 const VALID_MODES = new Set(['DRY_RUN', 'PREPARE', 'LIVE_ASSIST']);
 
-/** Phase commands handled by the dispatcher (vs. the legacy mode path). */
-const COMMANDS = new Set([
-  'go', 'start', 'dashboard', 'ui',
-  'discover', 'score', 'prepare-apps', 'assist', 'apply', 'watch', 'end-to-end', 'live-submit',
-  'approvals', 'approve', 'reject', 'packets', 'packet', 'report',
+/**
+ * THE command table. Dispatch, `help`, and the unknown-command message are all
+ * derived from it, so a command cannot exist without being listed (or be listed
+ * without existing) — the hand-written usage text drifted from the dispatcher,
+ * and `--help` itself fell through to a live discovery run.
+ *
+ * `kind` decides how a command is dispatched:
+ *   phase      — runCommand(): needs a healthy config + database
+ *   standalone — must work when config/db are broken. `doctor` diagnoses those
+ *                files; `profiles` REWRITES them, and the config it is about to
+ *                replace may be exactly what is wrong — requiring a healthy
+ *                load first would lock a user out of the command that fixes it.
+ *   app / help — handled before any config is loaded
+ *
+ * @type {ReadonlyArray<{name: string, kind: string, group: string, summary: string,
+ *   usage?: string, aliases?: string[], hidden?: boolean}>}
+ */
+export const COMMAND_TABLE = Object.freeze([
+  { name: 'app', kind: 'app', group: 'Start', summary: 'Start the dashboard and open it in your browser (what the launchers run)' },
+  { name: 'go', aliases: ['start'], kind: 'phase', group: 'Start', summary: 'Guided run: preflight, discover, score, prepare, then assist' },
+  { name: 'dashboard', aliases: ['ui'], kind: 'phase', group: 'Start', summary: 'Start only the local dashboard server (no browser, no port fallback)' },
+  { name: 'doctor', aliases: ['preflight'], kind: 'standalone', group: 'Setup', summary: 'Preflight checklist (--json for machine-readable output)' },
+  { name: 'profiles', kind: 'standalone', group: 'Setup', usage: 'profiles [<sub>]', summary: 'Search profiles: show, activate, preview, from-resume, migrate, delete' },
+  { name: 'discover', kind: 'phase', group: 'Pipeline', summary: 'Search enabled job boards -> data/found_jobs.json (--source=<id> narrows)' },
+  { name: 'score', kind: 'phase', group: 'Pipeline', summary: 'Discover + score against your profile -> scored/queued jobs' },
+  { name: 'rescore', kind: 'phase', group: 'Pipeline', summary: 'Re-score stored jobs whose score predates the current profile/scoring config' },
+  { name: 'prepare-apps', kind: 'phase', group: 'Pipeline', summary: 'Tailor resumes and build application packets for strong matches' },
+  { name: 'end-to-end', kind: 'phase', group: 'Pipeline', summary: 'Discover -> score -> prepare -> assist (always stops before submit)' },
+  { name: 'watch', kind: 'phase', group: 'Pipeline', summary: 'Poll for new strong matches (--interval=N --free-only --once --max-failures=N)' },
+  { name: 'approvals', kind: 'phase', group: 'Review', summary: 'List packets awaiting your review (--all for every status)' },
+  { name: 'approve', kind: 'phase', group: 'Review', usage: 'approve <approvalId>', summary: 'Record your approval of a packet' },
+  { name: 'reject', kind: 'phase', group: 'Review', usage: 'reject <approvalId>', summary: 'Record your rejection of a packet' },
+  { name: 'packets', kind: 'phase', group: 'Review', summary: 'List prepared packets' },
+  { name: 'packet', kind: 'phase', group: 'Review', usage: 'packet <jobId|packetId>', summary: 'Show one packet' },
+  { name: 'report', kind: 'phase', group: 'Review', summary: 'Regenerate the CSV/HTML/JSON report from the database' },
+  { name: 'assist', kind: 'phase', group: 'Apply', summary: 'Open a browser and fill approved applications; stops before Submit' },
+  { name: 'apply', kind: 'phase', group: 'Apply', summary: 'Apply one-by-one: fill, pause for you, next (--all: every approved packet)' },
+  { name: 'help', kind: 'help', group: 'Other', aliases: ['-h', '--help'], summary: 'Show this list (--version prints the version)' },
+  // Kept only so old muscle memory gets an explanation instead of "unknown
+  // command". It never submits anything.
+  { name: 'live-submit', kind: 'phase', group: 'Other', summary: 'Removed; explains the replacement', hidden: true },
 ]);
 
+/** All names (primary + aliases) of the table entries of one kind. */
+function namesOfKind(kind) {
+  return COMMAND_TABLE.filter((c) => c.kind === kind).flatMap((c) => [c.name, ...(c.aliases ?? [])]);
+}
+
+/** Phase commands handled by the dispatcher (vs. the legacy mode path). */
+const COMMANDS = new Set(namesOfKind('phase'));
+
+/** Commands that must work even when config/db are broken (see COMMAND_TABLE). */
+const STANDALONE_COMMANDS = new Set(namesOfKind('standalone'));
+
+/** This package's version, for `--version` and the help banner. Never fatal. */
+export function packageVersion() {
+  try {
+    return JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version ?? 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 /**
- * Commands that must work even when config/db are broken.
- *
- * `doctor`/`preflight` diagnose those files; `profiles` REWRITES them, and the
- * config it is about to replace may be exactly what is wrong — so requiring a
- * healthy load first would lock a user out of the one command that fixes it.
+ * Grouped help text, built from COMMAND_TABLE so it cannot drift.
+ * @returns {string}
  */
-const STANDALONE_COMMANDS = new Set(['doctor', 'preflight', 'profiles']);
+export function helpText() {
+  const visible = COMMAND_TABLE.filter((c) => !c.hidden);
+  const label = (c) => c.usage ?? [c.name, ...(c.aliases ?? [])].join(' | ');
+  const width = Math.max(...visible.map((c) => label(c).length));
+  const lines = [
+    `Job Agent ${packageVersion()} — local-first job search assistant`,
+    '',
+    'Usage:  node src/index.js <command> [options]      (or: npm run <command>)',
+  ];
+  for (const group of new Set(visible.map((c) => c.group))) {
+    lines.push('', `${group}:`);
+    for (const c of visible.filter((x) => x.group === group)) {
+      lines.push(`  ${label(c).padEnd(width)}  ${c.summary}`);
+    }
+  }
+  lines.push(
+    '',
+    'Legacy one-shot pipeline run (needs an explicit mode; a bare --mode uses RUN_MODE from .env):',
+    `  --mode=${[...VALID_MODES].join(' | ')}      --report`,
+    '',
+    'No CLI command submits an application. New machine? Start with: npm run setup, then npm run doctor',
+  );
+  return `${lines.join('\n')}\n`;
+}
 
 /** Parse `--key=value` / `--flag` / positional args into an object. */
 export function parseArgs(argv = []) {
@@ -130,16 +211,48 @@ export function parseArgs(argv = []) {
   return out;
 }
 
-/** Resolve the effective run mode from CLI + env (legacy mode path). */
+/**
+ * Resolve the effective run mode from CLI + env (legacy mode path).
+ *
+ * An unrecognized value is an ERROR, not DRY_RUN: `--mode=PREPAER` used to
+ * start a full live discovery under a mode nobody asked for. The removed
+ * LIVE_SUBMIT is rejected the same way rather than silently downgraded.
+ * Matching is case-insensitive, like RUN_MODE in getRuntimeSettings.
+ *
+ * @param {{options: object, flags: Set<string>}} parsed parseArgs() output
+ * @param {NodeJS.ProcessEnv} [env=process.env]
+ * @returns {string} DRY_RUN | PREPARE | LIVE_ASSIST | REPORT
+ */
 export function resolveMode({ options, flags }, env = process.env) {
   if (flags.has('report')) return 'REPORT';
-  const requested = options.mode ?? env.RUN_MODE ?? 'DRY_RUN';
-  return VALID_MODES.has(requested) ? requested : 'DRY_RUN';
+  const fromFlag = options.mode !== undefined;
+  const raw = fromFlag ? options.mode : (env.RUN_MODE ?? 'DRY_RUN');
+  const requested = String(raw).trim().toUpperCase();
+  if (VALID_MODES.has(requested)) return requested;
+  const source = fromFlag ? `--mode=${raw}` : `RUN_MODE=${raw} (from the environment or .env)`;
+  throw new Error(`unknown run mode ${source}. Use one of: ${[...VALID_MODES].join(', ')}.`);
+}
+
+/** True when argv explicitly asks for the legacy one-shot pipeline run. */
+function wantsLegacyMode(parsed) {
+  return parsed.flags.has('report') || parsed.flags.has('mode') || parsed.options.mode !== undefined;
 }
 
 export async function main(argv = process.argv.slice(2), env = process.env) {
   const parsed = parseArgs(argv);
   const command = parsed.positionals[0];
+
+  // Answered before anything is loaded, so they work on a broken install.
+  // `-h` is matched as a positional: parseArgs only understands `--` flags.
+  if (parsed.flags.has('version')) {
+    const version = packageVersion();
+    process.stdout.write(`${version}\n`);
+    return { command: 'version', version };
+  }
+  if (parsed.flags.has('help') || command === 'help' || command === '-h') {
+    process.stdout.write(helpText());
+    return { command: 'help' };
+  }
 
   // `app` is the canonical one-command startup. Like doctor, it must not
   // assume config is healthy — it translates setup problems into a friendly
@@ -176,8 +289,19 @@ export async function main(argv = process.argv.slice(2), env = process.env) {
   // A positional that isn't a known command is almost certainly a typo. Never
   // silently fall through to a full legacy pipeline run — fail with guidance.
   if (command) {
-    const known = [...STANDALONE_COMMANDS, ...COMMANDS].sort().join(', ');
-    throw new Error(`unknown command "${command}". Known commands: ${known}`);
+    const known = COMMAND_TABLE.filter((c) => !c.hidden).map((c) => c.name).sort().join(', ');
+    throw new Error(`unknown command "${command}". Known commands: ${known}. `
+      + 'Run "node src/index.js help" for what each one does.');
+  }
+
+  // A BARE INVOCATION PRINTS HELP. It used to fall into the legacy path and
+  // start a live DRY_RUN discovery across every enabled source — paid Apify
+  // actors included — which is the most expensive thing this tool does, set off
+  // by typing its name to find out what it does. The legacy path needs an
+  // explicit `--mode`/`--report` now.
+  if (!wantsLegacyMode(parsed)) {
+    process.stdout.write(helpText());
+    return { command: 'help' };
   }
   return runLegacyMode(parsed, env);
 }
@@ -351,6 +475,11 @@ async function runCommand(command, parsed, env) {
           process.off('SIGTERM', onSignal);
         }
       }
+      case 'rescore': {
+        ui.heading('Rescore');
+        const r = await runRescore({ config, db, logger });
+        return { command, ...r };
+      }
       case 'live-submit': {
         ui.heading('Live Submit');
         ui.warn('live-submit has been removed. This assistant never auto-submits.');
@@ -451,8 +580,13 @@ async function runCommand(command, parsed, env) {
 
 /** Legacy `--mode=` / `--report` behavior. */
 async function runLegacyMode(parsed, env) {
-  const mode = resolveMode(parsed, env);
+  // A bad explicit --mode is reported as the typo it is, before any config
+  // problem that happens to exist can mask it.
+  if (parsed.options.mode !== undefined) resolveMode(parsed, env);
+  // loadConfig loads .env into process.env — only AFTER it can a bare `--mode`
+  // see the RUN_MODE the user put there.
   const config = loadConfig({ env });
+  const mode = resolveMode(parsed, env);
   const runId = randomUUID();
   const { logger: pino } = createPinoLogger({ runId, level: env.LOG_LEVEL ?? 'info' });
   const db = openDatabase({});
@@ -505,6 +639,42 @@ async function runLegacyMode(parsed, env) {
  * @returns {{ ok: boolean, problems: string[] }}
  */
 export { quickPreflight };
+
+/**
+ * `rescore` — re-score stored jobs whose score is stale for the current
+ * profile/scoring config, via `rescoreStale` from src/pipeline/index.js.
+ *
+ * The export is looked up at call time, not imported statically: a static
+ * import of a missing named export is a SyntaxError that would take down EVERY
+ * command, where this degrades to one clear message for the one command that
+ * needs it.
+ *
+ * @param {object} args
+ * @param {object} args.config
+ * @param {object} args.db
+ * @param {object} args.logger
+ * @param {() => Promise<object>} [args.importPipeline] module loader (tests)
+ * @returns {Promise<{ok: boolean, [k: string]: any}>}
+ */
+export async function runRescore({ config, db, logger, importPipeline = () => import('./pipeline/index.js') }) {
+  const pipeline = await importPipeline();
+  if (typeof pipeline.rescoreStale !== 'function') {
+    ui.fail('This build has no rescoreStale() in src/pipeline/index.js, so there is nothing to run.');
+    ui.note('Update Job Agent (git pull && npm ci) — or run "npm run score" for a full re-score.');
+    process.exitCode = 1;
+    return { ok: false, reason: 'rescoreStale export missing' };
+  }
+  ui.step('Re-scoring stored jobs against the current profile and scoring config…');
+  const result = (await pipeline.rescoreStale({ config, db, logger })) ?? {};
+  // Show whatever counts the implementation reports, without depending on
+  // its exact field names.
+  const source = result.counters && typeof result.counters === 'object' ? result.counters : result;
+  const rows = Object.entries(source).filter(([, v]) => typeof v === 'number');
+  ui.blank();
+  if (rows.length) ui.stats(rows);
+  else ui.success('Rescore finished.');
+  return { ok: true, ...result };
+}
 
 /* ────────────────────────── console summaries ────────────────────────── */
 

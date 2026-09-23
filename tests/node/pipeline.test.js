@@ -30,7 +30,8 @@ describe('CLI arg parsing', () => {
   it('resolves modes with fallback', () => {
     expect(resolveMode(parseArgs(['--mode=PREPARE']), {})).toBe('PREPARE');
     expect(resolveMode(parseArgs(['--report']), {})).toBe('REPORT');
-    expect(resolveMode(parseArgs(['--mode=BOGUS']), {})).toBe('DRY_RUN');
+    // An unknown mode is an error now, never a silent DRY_RUN (see cliEntry.test.js).
+    expect(() => resolveMode(parseArgs(['--mode=BOGUS']), {})).toThrow(/unknown run mode/);
     expect(resolveMode(parseArgs([]), { RUN_MODE: 'LIVE_ASSIST' })).toBe('LIVE_ASSIST');
   });
 
