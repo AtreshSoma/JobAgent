@@ -31,6 +31,9 @@ const PRESENT_RE = /\b(present|current|now|to\s*date)\b/i;
 /** "8+ years of experience", "over 10 years" — a stated total beats arithmetic. */
 const STATED_YEARS_RE = /\b(?:over|more\s+than|nearly|about|approx(?:imately)?\.?\s*)?(\d{1,2})\s*\+?\s*years?\b[^.]{0,40}\b(?:of\s+)?(?:progressive\s+|professional\s+|hands[- ]on\s+|relevant\s+)?experience\b/i;
 
+/** "with 10+ years designing …", "brings over 8 years in …" (summary lines only). */
+const SUMMARY_YEARS_RE = /\b(?:with|brings|bringing|having)\s+(?:over\s+|more\s+than\s+|nearly\s+|about\s+)?(\d{1,2})\s*\+?\s*years?\b(?:\s+of)?\s+(?:[a-z-]+ing\b|in\b|across\b|within\b)/i;
+
 /** Lines that evidence people leadership. Phrasing, not job title. */
 const LEADERSHIP_RE = [
   /\b(led|leading|lead)\s+(a\s+)?(team|group|squad|crew|staff|department|function)/i,
@@ -108,6 +111,17 @@ export function yearsOfExperience(text, sections, now = new Date()) {
   const stated = STATED_YEARS_RE.exec(text);
   if (stated) {
     const years = Number(stated[1]);
+    if (years > 0 && years <= 60) return years;
+  }
+  // The other common way a summary states it: "Senior Data Engineer with 10+
+  // years designing and delivering …" — no word "experience" follows. Missing
+  // it (2026-09-23) made the letter say "8+ years" beside a resume that says
+  // "10+ years". Read ONLY in the summary/header, where such a line describes
+  // the career; in a bullet "a team with 5 years of history" does not.
+  const intro = sections.filter((s) => s.kind === 'summary' || s.kind === 'header').flatMap((s) => s.lines).join('\n');
+  const withYears = SUMMARY_YEARS_RE.exec(intro);
+  if (withYears) {
+    const years = Number(withYears[1]);
     if (years > 0 && years <= 60) return years;
   }
   const experience = sections.filter((s) => s.kind === 'experience').flatMap((s) => s.lines);

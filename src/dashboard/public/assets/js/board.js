@@ -236,14 +236,17 @@ export function rowFor(job) {
   // which decides whether the date can be trusted at all — reached neither a
   // screen reader nor a touch user. `role="img"` + a label makes it a real
   // graphic with a real name.
-  const postedCell = el('td', { class: 'nowrap', 'data-label': 'Posted' },
-    el('span', {
-      class: `dot ${job.postedConfidence}`,
-      role: 'img',
-      'aria-label': `posting date ${job.postedConfidence}`,
-      title: `Posting date ${job.postedConfidence}`,
-    }),
-    job.postedLabel);
+  // The date stays on one line; the "new" chip may wrap under it. With the
+  // whole cell nowrap, "Today" + chip overflowed and rendered as "Today …".
+  const postedCell = el('td', { class: 'posted-cell', 'data-label': 'Posted' },
+    el('span', { class: 'nowrap' },
+      el('span', {
+        class: `dot ${job.postedConfidence}`,
+        role: 'img',
+        'aria-label': `posting date ${job.postedConfidence}`,
+        title: `Posting date ${job.postedConfidence}`,
+      }),
+      job.postedLabel));
   if (job.postedLast24h) postedCell.append(' ', el('span', { class: 'chip good', text: 'new' }));
   tr.append(postedCell);
 
@@ -530,7 +533,10 @@ export const STATUS_LABELS = {
 };
 
 export function statusLabel(job) {
-  return job.attention?.label || STATUS_LABELS[job.appStatus] || job.appStatus.replace(/_/g, ' ');
+  // The server's label is the one the tracker and Today use; the raw status
+  // ("scored") only ever showed because this map lacked an entry for it.
+  const raw = String(job.appStatus ?? '').replace(/_/g, ' ');
+  return job.attention?.label || job.statusLabel || STATUS_LABELS[job.appStatus] || raw.charAt(0).toUpperCase() + raw.slice(1);
 }
 
 export function renderPager(page) {

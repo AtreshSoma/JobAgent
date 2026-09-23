@@ -190,6 +190,8 @@ describe('refreshBackgroundFromResume — replaces the template background, neve
       expect(saved.background.education[0].institution).toBe('University of Texas at Austin');
       expect(JSON.stringify(saved.background)).not.toMatch(/Example Corp|Example University|metric-backed achievement/);
       expect(saved.searchIntent.targetRoles).toEqual(['Staff Data Engineer']);
+      // Synced FROM this resume, so the "resume has moved on" prompt is answered.
+      expect(saved.acknowledgedResume).toMatch(/^[0-9a-f]{32}$/);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -204,5 +206,31 @@ describe('refreshBackgroundFromResume — replaces the template background, neve
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('Today reasons never just repeat the status chip', () => {
+  it('says what is waiting for a packet to review and for a shortlisted job', () => {
+    const db = openDatabase({ path: ':memory:' });
+    db.upsertJob({ id: 'r', title: 'R', company: 'A', status: 'prepared', score: 80, tier: 'Apply', application_packet_path: '/x/p.json' });
+    db.insertApproval({ id: 'ap-r', job_id: 'r', packet_path: '/x/p.json', approval_status: 'pending_review' });
+    db.upsertJob({ id: 's', title: 'S', company: 'B', status: 'queued', score: 70, tier: 'Queue', user_decision: 'shortlisted' });
+    const items = todayQueue(db, { now: NOW }).items;
+    const reasonOf = (id) => items.find((i) => i.id === id)?.reason;
+    expect(reasonOf('r')).toMatch(/tailored resume and cover letter are ready/);
+    expect(reasonOf('s')).toMatch(/not prepared yet/);
+    for (const item of items) expect(item.reason.toLowerCase()).not.toBe(String(item.statusLabel).toLowerCase());
+    db.close();
+  });
+});
+
+describe('years of experience: the candidate\'s own stated number wins', () => {
+  it('reads "with 10+ years designing …" from the summary, but never a number inside a bullet', async () => {
+    const { yearsOfExperience } = await import('../../src/profile/fromResume.js');
+    const summary = ['Priya Raghunathan', 'SUMMARY', 'Senior Data Engineer with 10+ years designing enterprise data platforms.',
+      'EXPERIENCE', 'Data Engineer | Acme', 'Austin | 2019 - Present'];
+    expect(yearsOfExperience(summary.join('\n'), splitSections(summary), NOW)).toBe(10);
+    const bullet = ['EXPERIENCE', 'Data Engineer | Acme', 'Austin | 2019 - Present', 'Migrated a team with 5 years of history onto Snowflake.'];
+    expect(yearsOfExperience(bullet.join('\n'), splitSections(bullet), NOW)).not.toBe(5);
   });
 });

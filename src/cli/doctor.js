@@ -383,7 +383,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
     } else {
       checks.push(makeCheck('profile-optional', 'Candidate profile (optional fields)', SEVERITY.WARN,
         `empty: ${optional.map((g) => `${g.label} (${g.path})`).join(', ')}`,
-        'These are left blank on forms (surfaced as blockers when an ATS requires them). Fill them in config/candidate.json only if real.'));
+        'These are left blank on forms (surfaced as blockers when an ATS requires them). Fill them in the dashboard under More → Application profile (config/candidate.json is regenerated from your search profile), and only with real values.'));
     }
 
     /* ── Active search profile ──────────────────────────────────────────

@@ -518,8 +518,15 @@ export async function refreshBackgroundFromResume(root, resumePath, { extractDoc
     changed.push(key);
   }
   Object.assign(next, { source: 'resume', sourceFile: resumePath, extractedAt: now.toISOString() });
-  if (!changed.length) return { ok: true, id: active.id, changed: [] };
-  saveProfile(root, { ...active, background: next, updatedAt: now.toISOString() });
+  // The user just synced this profile FROM this resume, so the "your resume
+  // has moved on — create a profile from it?" prompt is answered: asking
+  // again offered to duplicate the very profile it had just filled.
+  const resumeFingerprint = fingerprintResume(paragraphs);
+  if (!changed.length) {
+    if (active.acknowledgedResume !== resumeFingerprint) saveProfile(root, { ...active, acknowledgedResume: resumeFingerprint });
+    return { ok: true, id: active.id, changed: [] };
+  }
+  saveProfile(root, { ...active, background: next, acknowledgedResume: resumeFingerprint, updatedAt: now.toISOString() });
   const activated = activateProfile(root, active.id, { db });
   return { ok: true, id: active.id, changed, activated };
 }

@@ -644,7 +644,9 @@ export function actionPlan(job) {
       buttons: [
         openPosting(),
         el('button', { class: 'small primary', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: '★ Shortlist' }),
-        autofillButton(job.id, '⚡ Auto-fill anyway'),
+        // PREPARE, not auto-fill: filling an application whose tailored resume
+        // nobody has read skipped the review step the whole workflow rests on.
+        el('button', { class: 'small', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare anyway' }),
       ],
     };
   }

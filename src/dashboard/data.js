@@ -2112,6 +2112,15 @@ function todayTopUp(row) {
   return null;
 }
 
+/** What is waiting, for a status whose own reason would just repeat its label. */
+const TODAY_CONTEXT = Object.freeze({
+  [APP_STATUS.NEEDS_REVIEW]: 'Its tailored resume and cover letter are ready. Read them, then approve.',
+  [APP_STATUS.SHORTLISTED]: 'You shortlisted this. Its tailored resume and cover letter are not prepared yet.',
+  [APP_STATUS.APPROVED]: 'Approved. Auto-fill opens the application and stops before Submit.',
+  [APP_STATUS.READY_FOR_SUBMIT]: 'The form is filled in the open browser. Review it and click Submit yourself.',
+  [APP_STATUS.CANCELLED]: 'Auto-fill was paused. Resume it from where it stopped.',
+});
+
 /** Why this row is on the list, in one line. */
 function todayReason(row, action) {
   if (action.rank === 8) return `Strong fit posted ${row.postedLabel ?? 'in the last 24 hours'}`;
@@ -2126,7 +2135,14 @@ function todayReason(row, action) {
       row.postedLabel ? `posted ${row.postedLabel}` : null].filter(Boolean);
     return parts.join(' · ') || 'Undecided match';
   }
-  const text = row.statusReason ? stripBannerChars(row.statusReason) : (row.statusLabel ?? row.appStatus);
+  const label = row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus;
+  let text = row.statusReason ? stripBannerChars(row.statusReason) : '';
+  // The card already shows the status as a chip; a reason that only repeats
+  // it ("Review resume" under a "Review resume" chip) says nothing. Say what
+  // is actually waiting instead.
+  if (!text || text.trim().toLowerCase() === String(label).trim().toLowerCase()) {
+    text = TODAY_CONTEXT[row.appStatus] ?? '';
+  }
   return text.length > TODAY_REASON_MAX ? `${text.slice(0, TODAY_REASON_MAX - 1)}…` : text;
 }
 
