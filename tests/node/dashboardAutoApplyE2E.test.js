@@ -66,6 +66,8 @@ describe('dashboard Auto-fill browser flow', () => {
     });
     try {
       await page.goto(dash.url, { waitUntil: 'networkidle' });
+      // The dashboard lands on Today; the board is the "All jobs" view.
+      await page.getByRole('button', { name: 'All jobs', exact: true }).click();
       await page.getByRole('row', { name: /Acme.*Data Engineer/ }).click();
       await page.getByRole('button', { name: /Auto-fill application/ }).first().click();
 
