@@ -7,7 +7,7 @@
  * the run reported a total that made a successful run indistinguishable from a
  * failed one. These tests pin each of those.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import { makeJobId } from '../../src/search/normalize.js';
 import { emptyCounters } from '../../src/outputs.js';

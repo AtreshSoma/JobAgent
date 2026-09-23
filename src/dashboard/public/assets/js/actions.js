@@ -6,7 +6,7 @@ import { api, postJson } from './api.js';
 import { applyFilterObject, clearFilter, filterValue, resetFilters, setFilterValue } from './filters.js';
 import { loadSections, renderTabs } from './analytics.js';
 import { loadBoard } from './board.js';
-import { cssEscape, loadDetail, note, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
+import { cssEscape, loadDetail, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
 import { closeDialog, openDialog, runPendingConfirm } from './dialogs.js';
 import { autofillOne, checkLink, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
 import { setView, todayAct } from './today.js';

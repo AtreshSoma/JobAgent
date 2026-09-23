@@ -4,7 +4,7 @@ import { $, el, esc, fmt, relTime, safeHref } from './dom.js';
 import { state } from './state.js';
 import { api } from './api.js';
 import { filterParams, renderActiveFilters, TABS } from './filters.js';
-import { bar, renderTabs } from './analytics.js';
+import { renderTabs } from './analytics.js';
 import { cssEscape, isAggregatorUrl } from './detail.js';
 import { syncSelectAll } from './selection.js';
 import { hasActiveFilters } from './main.js';

@@ -20,7 +20,7 @@
 
 import { execFileSync } from 'node:child_process';
 import {
-  existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync,
+  existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync,
 } from 'node:fs';
 import { join, dirname, basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -4,9 +4,9 @@ import { $, el, toast, withBusy } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { statusLabel } from './board.js';
-import { DECISION_REASONS, note, reasonLabel, renderDetail, verdictLabel } from './detail.js';
+import { DECISION_REASONS, reasonLabel, renderDetail, verdictLabel } from './detail.js';
 import { confirmAction, openDialog } from './dialogs.js';
-import { decide, scheduleRefresh } from './mutations.js';
+import { scheduleRefresh } from './mutations.js';
 import { autofillBlockedReason } from './today.js';
 import { pollRun } from './runs.js';
 

@@ -6,7 +6,6 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
 import { openDialog } from './dialogs.js';
-import { decide } from './mutations.js';
 import { autofillBlockedReason, BROWSER_MISSING } from './today.js';
 
 /* ──────────────────────── detail rail ──────────────────────── */

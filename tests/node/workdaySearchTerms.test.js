@@ -14,7 +14,7 @@
  *  - `total` is reported on the FIRST page only; later pages return 0.
  *  - `limit` above 20 returns no rows at all.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 import * as workday from '../../src/search/adapters/workday.js';
 import { deriveSearchTerms } from '../../src/search/adapters/workday.js';

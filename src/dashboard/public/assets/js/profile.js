@@ -3,7 +3,7 @@
 import { $, el, fmt, relTime, slowProgress, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
-import { cssEscape, note } from './detail.js';
+import { cssEscape } from './detail.js';
 import { openDialog } from './dialogs.js';
 import { setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';

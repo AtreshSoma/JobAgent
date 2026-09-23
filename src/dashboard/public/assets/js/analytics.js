@@ -5,7 +5,6 @@ import { state } from './state.js';
 import { api } from './api.js';
 import { TABS } from './filters.js';
 import { renderBoardStatus } from './board.js';
-import { note } from './detail.js';
 import { renderHealthProfileFlag } from './profile.js';
 
 /* ───────────────────────── pipeline health ─────────────────────────

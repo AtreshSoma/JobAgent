@@ -2,7 +2,7 @@
 
 import { $, toast } from './dom.js';
 import { state } from './state.js';
-import { api, postJson } from './api.js';
+import { postJson } from './api.js';
 import { loadSections, loadStats } from './analytics.js';
 import { captureRowFocus, loadBoard, restoreRowFocus, rowFor, scheduleBoardReload } from './board.js';
 import { cssEscape, isAggregatorUrl, loadDetail, renderDetail, selectJob } from './detail.js';

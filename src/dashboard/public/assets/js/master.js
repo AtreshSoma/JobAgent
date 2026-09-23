@@ -2,9 +2,7 @@
 
 import { $, el, fmt, shortStamp, slowProgress, toast } from './dom.js';
 import { api, postJson } from './api.js';
-import { note } from './detail.js';
 import { openDialog } from './dialogs.js';
-import { download } from './profile.js';
 
 /* ───────────────────────── master resume ───────────────────────── */
 
