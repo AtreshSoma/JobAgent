@@ -24,6 +24,7 @@
 import { createHash } from 'node:crypto';
 
 import { loadRoleFamilies } from '../profile/roleFamilies.js';
+import { TITLE_MATCH_VERSION } from './titleMatch.js';
 
 /** taxonomy object -> digest, so the taxonomy is hashed once per load. */
 const TAXONOMY_DIGESTS = new WeakMap();
@@ -68,6 +69,20 @@ function stable(value) {
  * @returns {string} 16 hex characters
  */
 export function scoringFingerprint(config = {}) {
+  return createHash('sha1')
+    .update(JSON.stringify(stable(scoringFingerprintMaterial(config))))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+/**
+ * The inputs `scoringFingerprint` hashes, exposed so a test can assert WHAT is
+ * fingerprinted (e.g. a matcher version) rather than only that a hash moved.
+ *
+ * @param {object} config loadConfig() bundle
+ * @returns {object}
+ */
+export function scoringFingerprintMaterial(config = {}) {
   const candidate = config.candidate ?? {};
   const scoring = config.scoring ?? {};
   const exclusions = config.exclusions ?? {};
@@ -114,6 +129,11 @@ export function scoringFingerprint(config = {}) {
     roleFamilies: taxonomyDigest(config),
     // Freshness points are graded against the discovery window (F8).
     discoveryWindow: config.runtime?.jobFreshnessMode ?? null,
+    // MATCHING SEMANTICS, not only matching inputs. Folding "Data Engineering"
+    // into "Data Engineer" moved 7 of 6,185 live scored rows from 0 to full
+    // title points with no config edit at all, so without this the incremental
+    // skip would have kept every one of those stale verdicts.
+    titleMatcher: TITLE_MATCH_VERSION,
 
     // WHAT IS THROWN AWAY BEFORE JUDGING. An exclusion change does not alter a
     // score, but it does alter whether the row should be on the board at all.
@@ -132,9 +152,5 @@ export function scoringFingerprint(config = {}) {
       employmentTypes: exclusions.employmentTypes ?? {},
     },
   };
-
-  return createHash('sha1')
-    .update(JSON.stringify(stable(material)))
-    .digest('hex')
-    .slice(0, 16);
+  return material;
 }
