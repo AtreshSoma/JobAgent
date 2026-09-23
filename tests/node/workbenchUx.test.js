@@ -131,3 +131,49 @@ describe('menus follow the menu-button pattern (U5)', () => {
     expect(app).toContain("const menu = from?.closest?.('.menu-pop');");
   });
 });
+
+describe('Today is the landing view (U7)', () => {
+  it('offers Today and the full board as one switch, remembering the choice', () => {
+    expect(html).toContain('data-action="set-view" data-view="today"');
+    expect(html).toContain('data-action="set-view" data-view="board"');
+    expect(html).toContain('id="todayView"');
+    expect(html).toContain('id="boardView"');
+    expect(app).toContain("savePreference('view', view)");
+    expect(app).toContain("setView(readPreference('view') === 'board' ? 'board' : 'today', { save: false });");
+  });
+
+  it('reads /api/today and falls back to todaysPriorities without failed rows', () => {
+    expect(app).toContain("apiOptional('/api/today')");
+    expect(app).toContain("api('/api/sections?only=todaysPriorities')");
+    expect(app).toContain(".filter((row) => row.appStatus !== 'failed')");
+    expect(app).toContain('.slice(0, 10)');
+  });
+
+  it('maps every nextAction kind to one primary button', () => {
+    const act = app.slice(app.indexOf('async function todayAct'), app.indexOf('/* ─────────────────────── setup checklist'));
+    for (const kind of ['prepare', 'approve', 'autofill', 'answer', 'submit', 'fix_setup']) {
+      expect(act).toContain(`case '${kind}'`);
+    }
+    // review (and anything unknown) opens the job in the rail.
+    expect(act).toContain('default: await selectJob(id, { user: true });');
+  });
+
+  it('shows system notices with a copyable fix, and gates Auto-fill on a missing browser', () => {
+    expect(html).toContain('id="systemNotices"');
+    expect(app).toContain("'data-action': 'copy-text'");
+    expect(app).toContain("notices.some((n) => n.code === 'browser_unavailable')");
+    expect(app).toContain('function autofillBlockedReason');
+    // Every Auto-fill entry point consults it.
+    expect(app).toContain('const blocked = autofillBlockedReason();');
+    expect(app).toContain("if (autofillBlockedReason()) { toast(autofillBlockedReason(), 'bad'); return; }");
+  });
+
+  it('says what to do next when there is nothing to do', () => {
+    expect(app).toContain('Nothing needs you right now');
+    expect(app).toContain("'data-phase': 'discover', text: 'Find new jobs'");
+  });
+
+  it('renames the stage tab that used to share the name', () => {
+    expect(app).toContain("['today', 'Priority', true]");
+  });
+});

@@ -24,10 +24,11 @@
 </head>
 <body>
 
-<!-- Without this, reaching the board by keyboard means tabbing past the whole
+<!-- Without this, reaching the work by keyboard means tabbing past the whole
      header, eight tabs, a health strip and thirteen filter controls — on every
-     page load. -->
-<a class="skip-link" href="#boardwrap">Skip to the job board</a>
+     page load. It targets the main element because the landing view is now Today, not
+     the board. -->
+<a class="skip-link" href="#main">Skip to main content</a>
 
 <div id="offline" role="alert">
   ⚠ Lost connection to the dashboard server — it may have stopped.
@@ -108,12 +109,42 @@
      several of the same numbers in a second visual language and cost ~90px of
      chrome before any job was visible. -->
 <div class="pipeline">
-  <div class="tabs" id="tabs" role="tablist" aria-label="Workflow stage"></div>
+  <!-- TODAY OR THE BOARD. The board answers "what is there?"; Today answers
+       "what should I do first?" — at most ten jobs, one action each. It is the
+       landing view; the full board is one click away and the choice is
+       remembered. The stage tabs only mean something on the board, so they
+       are shown with it. -->
+  <div class="pipeline-row">
+    <div class="viewswitch" role="group" aria-label="View">
+      <button type="button" data-action="set-view" data-view="today" aria-pressed="true">Today
+        <span class="badge" id="todayCount" hidden></span></button>
+      <button type="button" data-action="set-view" data-view="board" aria-pressed="false">All jobs</button>
+    </div>
+    <div class="tabs" id="tabs" role="tablist" aria-label="Workflow stage" hidden></div>
+  </div>
   <div class="health" id="health"><span class="muted">Loading…</span></div>
 </div>
 
-<main class="layout">
-  <section aria-labelledby="boardHeading">
+<main class="layout" id="main" tabindex="-1">
+  <div class="workarea">
+  <!-- Facts about the TOOL that block work ("Auto-fill can't start: the
+       browser is not installed"). Above both views, because they are true in
+       both, and calm rather than red: they are setup, not emergencies. -->
+  <div id="systemNotices" class="notices"></div>
+
+  <section id="todayView" class="today" aria-labelledby="todayHeading">
+    <div class="today-head">
+      <div>
+        <h2 id="todayHeading">Today</h2>
+        <p class="today-sub muted" id="todaySub">The few jobs worth your time right now, in order.</p>
+      </div>
+      <button type="button" class="small ghost" data-action="set-view" data-view="board">Open the full board →</button>
+    </div>
+    <div id="setupChecklist"></div>
+    <ol class="today-list" id="todayList" aria-labelledby="todayHeading"></ol>
+  </section>
+
+  <section id="boardView" aria-labelledby="boardHeading" hidden>
     <h2 id="boardHeading" class="sr-only">Job board</h2>
     <!-- WHICH LIST AM I LOOKING AT?
          The board can show two entirely separate things: the personalized
@@ -476,6 +507,7 @@
       </section>
     </div>
   </section>
+  </div>
 
   <aside aria-label="Job detail">
     <div class="rail-sticky">

@@ -59,6 +59,16 @@ const state = {
   roleQuery: null,
   /** Last link-check result per job id, so a re-render does not erase it. */
   linkHealth: new Map(),
+  /** 'today' (the action queue) or 'board'. */
+  view: 'today',
+  /** Last /api/today payload (or its derived fallback). */
+  today: null,
+  /** Tool-level blockers from /api/today, e.g. browser_unavailable. */
+  systemNotices: [],
+  /** True while the automation browser is missing: every Auto-fill waits. */
+  browserUnavailable: false,
+  /** Last /api/health (doctor) payload, fetched once when idle. */
+  health: null,
 };
 
 const FILTER_IDS = [
@@ -119,7 +129,9 @@ const SORT_DIRECTION = {
 
 const TABS = [
   ['all', 'All jobs', false],
-  ['today', 'Today', true],
+  // "Priority", not "Today": the landing view is called Today now, and two
+  // different things wearing one name is how a count stops being trusted.
+  ['today', 'Priority', true],
   ['best', 'Best matches', false],
   ['shortlisted', 'Shortlisted', false],
   ['needs_review', 'Needs review', true],
@@ -1581,6 +1593,8 @@ const STATUS_LABELS = {
   submitted: 'Submitted',
   submit_unverified: 'Verify submission',
   date_unconfirmed: 'Date unconfirmed',
+  blocked: 'Needs you',
+  failed: 'Failed',
 };
 
 function statusLabel(job) {
@@ -2150,11 +2164,21 @@ function nextBestAction(job) {
   return box;
 }
 
-const autofillButton = (id, label = '⚡ Auto-fill application') => el('button', {
-  class: 'small primary', 'data-action': 'autofill-one', 'data-id': id,
-  title: 'Prepare a packet if needed, approve it, open the posting, fill everything it can — and stop before Submit.',
-  text: label,
-});
+const autofillButton = (id, label = '⚡ Auto-fill application') => {
+  const blocked = autofillBlockedReason();
+  return el('button', {
+    class: 'small primary', 'data-action': 'autofill-one', 'data-id': id,
+    disabled: Boolean(blocked),
+    title: blocked ?? 'Prepare a packet if needed, approve it, open the posting, fill everything it can — and stop before Submit.',
+    text: label,
+  });
+};
+
+/** Where the filler's inputs live — offered wherever an auto-fill can stall. */
+const setupLinks = () => [
+  el('button', { class: 'small ghost', 'data-action': 'open-profile', title: 'What the filler types, and how it answers form questions', text: '👤 Application profile' }),
+  el('button', { class: 'small ghost', 'data-action': 'open-master', title: 'The resume every tailored version is built from', text: '🧾 Master resume' }),
+];
 
 function actionPlan(job) {
   const postingHref = safeHref(job.url);
@@ -2192,6 +2216,7 @@ function actionPlan(job) {
       text: 'Approved. Open it in a browser — it fills the form and stops before Submit.',
       buttons: [el('button', {
         class: 'small primary', 'data-action': 'assist', 'data-id': job.id, text: '▶ Fill in browser',
+        disabled: Boolean(autofillBlockedReason()), title: autofillBlockedReason(),
       }), el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': job.id, text: '👁 Resume' })],
     };
   }
@@ -2221,10 +2246,20 @@ function actionPlan(job) {
         ],
       };
     }
+    // A missing browser is the cause, not this job: say so here rather than
+    // offering a retry that is certain to fail the same way.
+    if (state.browserUnavailable || BROWSER_MISSING.test(job.statusReason ?? '')) {
+      return {
+        text: 'Auto-fill could not start a browser. Install it once (npx playwright install chromium in the JobAgent folder), then retry.',
+        buttons: [autofillButton(job.id, '↻ Retry auto-fill'), openPosting()],
+      };
+    }
+    // Most stalls are a question the profile cannot answer or a field it
+    // leaves blank — so the two places that fix them sit next to the retry.
     return {
       text: job.attention?.summary
         || 'The assistant stopped because this step needs you. Complete it in the browser, then retry auto-fill.',
-      buttons: [openPosting(), autofillButton(job.id, '↻ Retry auto-fill')],
+      buttons: [openPosting(), autofillButton(job.id, '↻ Retry auto-fill'), ...setupLinks()],
     };
   }
   if (job.sponsorshipGated) {
@@ -2303,6 +2338,11 @@ function resumeCard(job) {
         class: 'small ghost', 'data-action': 'open-master',
         title: 'View, edit, or replace the master resume every tailored version is built from.',
         text: '🧾 Master resume',
+      }),
+      el('button', {
+        class: 'small ghost', 'data-action': 'open-profile',
+        title: 'The details and answers the form filler uses on every application.',
+        text: '👤 Application profile',
       })));
     return card;
   }
@@ -2691,6 +2731,7 @@ async function runPhase(phase) {
 }
 
 async function autofillOne(id) {
+  if (autofillBlockedReason()) { toast(autofillBlockedReason(), 'bad'); return; }
   if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
   const job = state.known.get(id);
   if (job && isAggregatorUrl(job.url)) {
@@ -2738,10 +2779,312 @@ function announceDecision(_id, decision) {
   toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
 }
 
-/* Views: only the board exists so far. */
-function setView() {}
-function loadToday() { return Promise.resolve(); }
-function scheduleTodayReload() {}
+/* ─────────────────────────── Today ───────────────────────────
+ * The landing view: at most ten jobs, each with the ONE next action that
+ * moves it forward. The board shows everything and asks the user to work out
+ * what matters; this answers that question first, and the board stays one
+ * click away.
+ *
+ * Contract: GET /api/today -> { generatedAt, items: [{ id, title, company,
+ * location, score, grade, tier, appStatus, statusLabel, reason, nextAction:
+ * { kind, label } }], systemNotices: [{ code, severity, message, fix }] }.
+ * A server without the route gets the same view derived from
+ * /api/sections?only=todaysPriorities, minus failed rows (a failure is not a
+ * next step — its cause is, and that surfaces as a notice).
+ */
+
+const VIEWS = ['today', 'board'];
+
+function setView(view, { save = true } = {}) {
+  if (!VIEWS.includes(view)) return;
+  const changed = state.view !== view;
+  state.view = view;
+  $('todayView').hidden = view !== 'today';
+  $('boardView').hidden = view !== 'board';
+  $('tabs').hidden = view !== 'board';
+  for (const button of document.querySelectorAll('[data-action="set-view"][aria-pressed]')) {
+    button.setAttribute('aria-pressed', String(button.dataset.view === view));
+  }
+  if (save) savePreference('view', view);
+  if (changed && view === 'today') loadToday();
+}
+
+let todayInFlight = null;
+let todayTimer = null;
+
+function scheduleTodayReload(delay = 350) {
+  clearTimeout(todayTimer);
+  todayTimer = setTimeout(loadToday, delay);
+}
+
+function loadToday() {
+  if (todayInFlight) return todayInFlight;
+  todayInFlight = (async () => {
+    let data = null;
+    try { data = await apiOptional('/api/today'); } catch { data = null; }
+    if (!data) data = await deriveToday();
+    state.today = data;
+    for (const item of data.items ?? []) {
+      state.known.set(item.id, { ...(state.known.get(item.id) ?? {}), ...item });
+    }
+    setSystemNotices(data.systemNotices ?? []);
+    renderToday();
+  })().finally(() => { todayInFlight = null; });
+  return todayInFlight;
+}
+
+/** What an older server's todaysPriorities row asks for next. */
+function derivedNextAction(row) {
+  switch (row.appStatus) {
+    case 'needs_review': return { kind: 'review', label: 'Review resume' };
+    case 'approved': return { kind: 'autofill', label: 'Auto-fill' };
+    case 'ready_for_submit': return { kind: 'submit', label: 'Record submission' };
+    case 'submit_unverified': return { kind: 'submit', label: 'Verify submission' };
+    case 'blocked': case 'cancelled': return { kind: 'review', label: 'See what stopped it' };
+    case 'shortlisted': return { kind: 'prepare', label: 'Prepare resume' };
+    default:
+      return row.sponsorshipGated
+        ? { kind: 'review', label: 'Check sponsorship' }
+        : { kind: 'review', label: 'Review' };
+  }
+}
+
+function derivedReason(row) {
+  const reasons = {
+    needs_review: 'Packet prepared — review the tailored resume before it is used.',
+    approved: 'Approved — ready to fill the application.',
+    ready_for_submit: 'Filled and waiting for you to press Submit.',
+    submit_unverified: 'Submitted automatically, but no confirmation page was seen.',
+    blocked: 'Stopped at a step only you can do.',
+    cancelled: 'You stopped the fill; it resumes from where it was.',
+    shortlisted: 'Shortlisted — needs a tailored resume.',
+  };
+  if (reasons[row.appStatus]) return reasons[row.appStatus];
+  const bits = [row.grade?.label ?? fitLabel(row.fit)];
+  if (row.sponsorshipGated) bits.push('sponsorship unconfirmed — verify before applying');
+  if (row.postedLast24h) bits.push('posted in the last 24h');
+  return bits.filter(Boolean).join(' · ');
+}
+
+const BROWSER_NOTICE = {
+  code: 'browser_unavailable',
+  severity: 'error',
+  message: 'Auto-fill can’t start: the Playwright browser isn’t installed.',
+  fix: 'Run `npx playwright install chromium` in the JobAgent folder, then retry.',
+};
+const BROWSER_MISSING = /Executable doesn't exist|playwright install/i;
+
+async function deriveToday() {
+  const [sections, failed] = await Promise.all([
+    api('/api/sections?only=todaysPriorities').catch(() => null),
+    // The one failure worth a notice is a missing browser: every auto-fill
+    // fails the same way until it is installed, and the rows say so.
+    api('/api/jobs?appStatus=failed&hideClosed=false&limit=50&fields=board').catch(() => null),
+  ]);
+  const items = (sections?.todaysPriorities ?? [])
+    .filter((row) => row.appStatus !== 'failed')
+    .slice(0, 10)
+    .map((row) => ({ ...row, reason: derivedReason(row), nextAction: derivedNextAction(row) }));
+  const browserDown = (failed?.jobs ?? []).some((job) => BROWSER_MISSING.test(job.statusReason ?? ''));
+  return { generatedAt: new Date().toISOString(), derived: true, items, systemNotices: browserDown ? [BROWSER_NOTICE] : [] };
+}
+
+/* ── system notices ── */
+
+function setSystemNotices(list) {
+  const notices = [...list];
+  // The doctor's browser check is a second witness to the same problem.
+  const browserCheck = state.health?.checks?.find((c) => c.id === 'browser');
+  if (browserCheck?.status === 'fail' && !notices.some((n) => n.code === 'browser_unavailable')) {
+    notices.push(BROWSER_NOTICE);
+  }
+  state.systemNotices = notices;
+  const unavailable = notices.some((n) => n.code === 'browser_unavailable');
+  const changed = unavailable !== state.browserUnavailable;
+  state.browserUnavailable = unavailable;
+  renderNotices();
+  if (changed) {
+    // Every Auto-fill control reads this flag; redraw the ones on screen.
+    syncSelectionBar();
+    if (state.detailJob) renderDetail(state.detailJob);
+    renderToday();
+  }
+}
+
+/** Render a `fix` string, setting `code` spans as code with a Copy button. */
+function fixLine(fix) {
+  const line = el('div', { class: 'notice-fix' });
+  const parts = String(fix ?? '').split(/`([^`]+)`/);
+  parts.forEach((part, i) => { if (part) line.append(i % 2 ? el('code', { text: part }) : part); });
+  const command = parts[1];
+  if (command) {
+    line.append(' ', el('button', {
+      type: 'button', class: 'small ghost', 'data-action': 'copy-text', 'data-text': command,
+      'aria-label': `Copy the command ${command}`, text: 'Copy',
+    }));
+  }
+  return line;
+}
+
+function renderNotices() {
+  const host = $('systemNotices');
+  host.textContent = '';
+  for (const notice of state.systemNotices ?? []) {
+    host.append(el('div', { class: `notice ${notice.severity === 'error' ? 'is-error' : 'is-warn'}`, role: 'status' },
+      el('span', { class: 'notice-mark', 'aria-hidden': 'true', text: '!' }),
+      el('div', { class: 'notice-body' },
+        el('b', { text: notice.message }),
+        notice.fix ? fixLine(notice.fix) : null)));
+  }
+}
+
+/** Why an Auto-fill control is unavailable, or null when it can be used. */
+function autofillBlockedReason() {
+  return state.browserUnavailable
+    ? 'Auto-fill can’t start until the Playwright browser is installed — see the notice at the top of the page.'
+    : null;
+}
+
+/* ── cards ── */
+
+function renderToday() {
+  const list = $('todayList');
+  if (!list) return;
+  const items = state.today?.items ?? [];
+  list.textContent = '';
+  const count = $('todayCount');
+  count.hidden = items.length === 0;
+  count.textContent = String(items.length);
+  $('todaySub').textContent = items.length
+    ? `${items.length} job${items.length === 1 ? '' : 's'} worth your time right now, most important first.`
+    : 'Nothing is waiting on you.';
+
+  if (!items.length) {
+    list.append(el('li', { class: 'today-empty' },
+      el('div', { class: 'big', text: state.today ? 'Nothing needs you right now' : 'Loading…' }),
+      state.today ? el('p', { class: 'muted' },
+        'New strong matches, packets to review and applications waiting on you land here. '
+        + 'Run discovery to look for new postings — or, if runs keep finding nothing, widen what your search profile asks for.') : null,
+      state.today ? el('div', { class: 'row-gap empty-actions' },
+        el('button', { type: 'button', class: 'small primary', 'data-action': 'run', 'data-phase': 'discover', text: 'Find new jobs' }),
+        el('button', { type: 'button', class: 'small', 'data-action': 'open-master', text: 'Widen my search…' }),
+        el('button', { type: 'button', class: 'small ghost', 'data-action': 'set-view', 'data-view': 'board', text: 'Open the full board' })) : null));
+    return;
+  }
+
+  for (const item of items) list.append(todayCard(item));
+  markCurrentRow(state.selectedId);
+}
+
+function todayCard(item) {
+  const grade = item.grade;
+  const card = el('li', { class: `tcard${item.id === state.selectedId ? ' current' : ''}`, 'data-id': item.id });
+  card.append(el('span', {
+    class: `grade ${grade ? grade.letter : 'none'}`,
+    role: 'img',
+    'aria-label': grade ? `grade ${grade.letter}, ${grade.label}` : 'not scored yet',
+    text: grade ? grade.letter : '—',
+  }));
+
+  const main = el('div', { class: 'tcard-main' });
+  // The title opens the job in the rail; the one primary button does the work.
+  main.append(el('button', {
+    type: 'button', class: 'tcard-title', 'data-action': 'today-review', 'data-id': item.id,
+    title: 'Open this job’s details',
+    text: item.title || 'Title not identified',
+  }));
+  const meta = el('div', { class: 'tcard-meta' });
+  meta.append(el('span', { class: 'co', text: item.company || 'Company on posting' }));
+  if (item.location) meta.append(el('span', { class: 'faint', text: ` · ${item.location}` }));
+  main.append(meta);
+  const chips = el('div', { class: 'tcard-chips' });
+  // The server's own label, never re-derived: see verdictLabel.
+  chips.append(el('span', {
+    class: `chip ${item.fit ?? ''}`.trim(),
+    text: [grade?.label ?? fitLabel(item.fit), item.score != null ? String(item.score) : null].filter(Boolean).join(' · '),
+  }));
+  if (item.statusLabel || item.appStatus) {
+    chips.append(el('span', { class: `chip st-${item.appStatus}`, text: item.statusLabel ?? statusLabel(item) }));
+  }
+  main.append(chips);
+  if (item.reason) main.append(el('p', { class: 'tcard-reason', text: item.reason }));
+  card.append(main);
+
+  const next = item.nextAction ?? derivedNextAction(item);
+  const attrs = {
+    type: 'button', class: 'small primary tcard-go', 'data-action': 'today-act',
+    'data-id': item.id, 'data-kind': next.kind, text: next.label,
+  };
+  const blocked = next.kind === 'autofill' ? autofillBlockedReason() : null;
+  if (blocked) Object.assign(attrs, { disabled: true, title: blocked });
+  card.append(el('div', { class: 'tcard-act' }, el('button', attrs)));
+  return card;
+}
+
+/** Run a Today card's next action. */
+async function todayAct(target) {
+  const id = target.dataset.id;
+  switch (target.dataset.kind) {
+    case 'prepare': await prepareOne(id); break;
+    case 'approve': await simpleAction(id, 'approve', 'Packet approved'); break;
+    case 'autofill': await autofillOne(id); break;
+    case 'answer': await openProfile(); break;
+    case 'submit': openSubmitDialog(id); break;
+    case 'fix_setup': await openHealth(); break;
+    default: await selectJob(id, { user: true });
+  }
+  scheduleTodayReload(600);
+}
+
+/* ─────────────────────── setup checklist ───────────────────────
+ * /api/health runs the doctor on demand. Its failing checks were visible only
+ * inside System health, so a fresh install with placeholder profile values
+ * and no browser looked "fine" until the first Auto-fill failed. Fetched once
+ * when the page is idle, and shown as a short checklist on Today, each item
+ * linked to the dialog that fixes it.
+ */
+
+/** Check id -> the control that fixes it. */
+const SETUP_FIX = {
+  browser: { kind: 'copy' },
+  profile: { action: 'open-profile', label: 'Open application profile' },
+  'profile-placeholders': { action: 'open-profile', label: 'Open application profile' },
+  'profile-active': { action: 'open-master', label: 'Open master resume' },
+  resume: { action: 'open-master', label: 'Open master resume' },
+};
+
+async function loadHealthChecks() {
+  try { state.health = await api('/api/health'); } catch { return; }
+  setSystemNotices(state.today?.systemNotices ?? []);
+  renderSetupChecklist();
+}
+
+function renderSetupChecklist() {
+  const host = $('setupChecklist');
+  if (!host) return;
+  host.textContent = '';
+  const failing = (state.health?.checks ?? []).filter((c) => c.status === 'fail');
+  if (!failing.length) return;
+  const card = el('section', { class: 'setup-card', 'aria-labelledby': 'setupTitle' });
+  card.append(el('h3', { id: 'setupTitle', text: `Setup checklist — ${failing.length} to fix` }));
+  const list = el('ul', { class: 'setup-list' });
+  for (const check of failing) {
+    const fix = SETUP_FIX[check.id] ?? { action: 'open-health', label: 'See details' };
+    const item = el('li', {},
+      el('span', { class: 'setup-mark', 'aria-hidden': 'true' }),
+      el('div', { class: 'setup-text' },
+        el('b', { text: check.label ?? check.id }),
+        check.detail ? el('div', { class: 'faint clamp-2', title: check.detail, text: check.detail }) : null,
+        fix.kind === 'copy' && check.fix ? fixLine(check.fix) : null));
+    if (fix.action) {
+      item.append(el('button', { type: 'button', class: 'small', 'data-action': fix.action, text: fix.label }));
+    }
+    list.append(item);
+  }
+  card.append(list);
+  host.append(card);
+}
+
 
 /* ───────────────────────── selection ───────────────────────── */
 
@@ -2765,10 +3108,11 @@ function syncSelectionBar() {
   $('selbar').dataset.open = String(n > 0);
   $('cmpBtn').disabled = n < 2;
   const autofill = $('autoApplyBtn');
-  autofill.disabled = n === 0 || state.running;
-  autofill.title = state.running
+  const blocked = autofillBlockedReason();
+  autofill.disabled = n === 0 || state.running || Boolean(blocked);
+  autofill.title = blocked ?? (state.running
     ? 'A run is in progress — wait for it to finish'
-    : 'Prepare if needed, approve, open each posting, and fill it — always stopping before Submit.';
+    : 'Prepare if needed, approve, open each posting, and fill it — always stopping before Submit.');
 }
 
 function clearSelection() {
@@ -2798,6 +3142,7 @@ async function selectedJobs() {
 }
 
 async function batchAutofill() {
+  if (autofillBlockedReason()) { toast(autofillBlockedReason(), 'bad'); return; }
   if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
   const jobs = await selectedJobs();
   if (!jobs.length) return;
@@ -4539,19 +4884,7 @@ const ACTIONS = {
   'prepare-one': (target) => prepareOne(target.dataset.id),
   'check-link': (target) => checkLink(target.dataset.id),
   'preview-resume': (target) => openResumePreview(target.dataset.id),
-  'copy-id': async (target) => {
-    const id = target.dataset.id;
-    try { await navigator.clipboard.writeText(id); }
-    catch {
-      const area = el('textarea', {});
-      area.value = id;
-      document.body.append(area);
-      area.select();
-      document.execCommand('copy');
-      area.remove();
-    }
-    toast('Job id copied');
-  },
+  'copy-id': (target) => copyText(target.dataset.id, 'Job id copied'),
   'save-note': () => saveNote(),
 
   'open-add-url': () => {
@@ -4568,15 +4901,11 @@ const ACTIONS = {
     openDialog(dialog);
   },
   'submit-link': submitLink,
-  'open-submit-dialog': (target) => {
-    const dialog = $('dlgSubmit');
-    dialog.dataset.jobId = target.dataset.id;
-    const job = state.known.get(target.dataset.id);
-    $('dlgSubmitJob').textContent = job ? `${job.company} — ${job.title}` : target.dataset.id;
-    $('submitConf').value = '';
-    $('submitNote').value = '';
-    openDialog(dialog);
-  },
+  'open-submit-dialog': (target) => openSubmitDialog(target.dataset.id),
+  'set-view': (target) => setView(target.dataset.view),
+  'today-review': (target) => selectJob(target.dataset.id, { user: true }),
+  'today-act': (target) => todayAct(target),
+  'copy-text': (target) => copyText(target.dataset.text, 'Copied'),
   'confirm-submitted': confirmSubmitted,
   'confirm-go': runPendingConfirm,
   'close-dialog': (target) => closeDialog(target.closest('dialog')),
@@ -4607,6 +4936,30 @@ function dispatchAction(name, target, event) {
   return BUSY_ACTIONS.has(name)
     ? withBusy(target, () => action(target, event))
     : action(target, event);
+}
+
+function openSubmitDialog(id) {
+  const dialog = $('dlgSubmit');
+  dialog.dataset.jobId = id;
+  const job = state.known.get(id);
+  $('dlgSubmitJob').textContent = job ? `${job.company} — ${job.title}` : id;
+  $('submitConf').value = '';
+  $('submitNote').value = '';
+  openDialog(dialog);
+}
+
+/** Clipboard, with the execCommand fallback for a non-secure context. */
+async function copyText(text, message) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const area = el('textarea', {});
+    area.value = text;
+    document.body.append(area);
+    area.select();
+    document.execCommand('copy');
+    area.remove();
+  }
+  toast(message);
 }
 
 async function submitAddUrl() {
@@ -5301,6 +5654,8 @@ if (readPreference('analyticsOpen') === '1') {
 }
 SHEET_QUERY.addEventListener('change', placeDetail);
 placeDetail();
+// Today is the landing view unless the user last chose the board.
+setView(readPreference('view') === 'board' ? 'board' : 'today', { save: false });
 applyViewPrefs();
 renderTabs();
 syncSortIndicator();
@@ -5310,7 +5665,11 @@ refreshAll({ force: true }).then(() => {
 });
 // The profile pill is an extra: fetched once the page is idle, not on the
 // critical path, and again only when a dialog or an auto-fill run changes it.
-(window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500)))(() => loadProfileFlag());
+(window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500)))(() => {
+  loadProfileFlag();
+  // The doctor spawns Python and probes the browser, so it waits for idle too.
+  loadHealthChecks();
+});
 pollRun();
 scheduleBackgroundRefresh();
 syncSelectionBar();

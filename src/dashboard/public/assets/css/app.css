@@ -506,6 +506,26 @@ button.stat:hover { background: none; border-color: transparent; }
 .stat.bad { color: var(--bad); }
 .stat.attn + .stat::before, .stat.bad + .stat::before { display: none; }
 
+/* ─────────────────── view switch ───────────────────
+   Today | All jobs, ahead of the stage tabs it gates. A segmented control,
+   not two more tabs: it changes WHAT kind of page this is, the tabs change
+   which slice of the board is shown. */
+.pipeline-row { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.viewswitch {
+  display: inline-flex; flex: none; padding: 3px; gap: 2px;
+  border: 1px solid var(--line); border-radius: var(--r-full); background: var(--surface-2);
+}
+.viewswitch button {
+  border: 0; background: transparent; color: var(--text-dim);
+  padding: 4px 14px; border-radius: var(--r-full); font-size: 13px; font-weight: 600;
+}
+.viewswitch button:hover { color: var(--text); background: var(--surface-3); }
+.viewswitch button[aria-pressed="true"] { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
+.viewswitch .badge {
+  background: var(--accent); color: var(--accent-ink); border-radius: var(--r-full);
+  padding: 0 7px; font-size: 11px; line-height: 17px; min-width: 20px; text-align: center;
+}
+
 /* ─────────────────── tabs ─────────────────── */
 .tabs {
   display: flex; gap: var(--s1); padding: 0;
@@ -579,6 +599,94 @@ button.stat:hover { background: none; border-color: transparent; }
   letter-spacing: .55px; margin: var(--s4) 0 var(--s2);
 }
 .card h3:first-child, .panel h3:first-child { margin-top: 0; }
+
+/* ─────────────────── Today ───────────────────
+   One card per job: grade, what it is, why it is here, and exactly one
+   primary action. Calm surfaces; the only saturated colour on a card is its
+   grade and its button. */
+.workarea { min-width: 0; }
+.today-head {
+  display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s3);
+  flex-wrap: wrap; margin: 0 0 var(--s3);
+}
+.today-head h2 { margin: 0; font-size: 18px; }
+.today-sub { margin: 2px 0 0; font-size: 13px; }
+.today-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.tcard {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start;
+  gap: var(--s3); padding: var(--s3) var(--s4);
+  background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+}
+.tcard:hover { border-color: var(--line); }
+.tcard.current { border-color: color-mix(in srgb, var(--accent) 55%, transparent); box-shadow: inset 3px 0 0 var(--accent), var(--shadow-sm); }
+.tcard-main { min-width: 0; }
+.tcard-title {
+  all: unset; cursor: pointer; font-weight: 650; font-size: 14px; color: var(--text);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  overflow-wrap: break-word; border-radius: var(--r-xs);
+}
+.tcard-title:hover { color: var(--accent); text-decoration: underline; }
+.tcard-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tcard-meta {
+  font-size: 12px; color: var(--text-dim); margin-top: 2px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 1; overflow: hidden;
+}
+.tcard-meta .co { font-weight: 550; }
+.tcard-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tcard-reason { margin: 6px 0 0; font-size: 13px; color: var(--text-dim); }
+.tcard-act { align-self: center; }
+.today-empty {
+  text-align: center; color: var(--text-dim); padding: 40px 16px;
+  background: var(--surface); border: 1px dashed var(--line); border-radius: var(--r-md);
+}
+.today-empty .big { font-size: 16px; color: var(--text); font-weight: 650; margin-bottom: 6px; }
+.today-empty p { max-width: 56ch; margin: 0 auto; text-wrap: pretty; }
+@media (max-width: 560px) {
+  .tcard { grid-template-columns: auto minmax(0, 1fr); padding: var(--s3); }
+  .tcard-act { grid-column: 1 / -1; }
+  .tcard-go { width: 100%; justify-content: center; min-height: 36px; }
+}
+
+/* ─────────────────── notices + setup ─────────────────── */
+.notices:empty { display: none; }
+.notices { display: flex; flex-direction: column; gap: var(--s2); margin-bottom: var(--s3); }
+.notice {
+  display: flex; gap: var(--s3); align-items: flex-start;
+  padding: var(--s3) var(--s4); border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line);
+  border-left: 3px solid var(--warn);
+}
+.notice.is-error { border-left-color: var(--bad); }
+.notice-mark {
+  flex: none; width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
+  font-size: 12px; font-weight: 800; background: var(--warn-soft); color: var(--warn);
+}
+.notice.is-error .notice-mark { background: var(--bad-soft); color: var(--bad); }
+.notice-body { min-width: 0; font-size: 13px; }
+.notice-fix { margin-top: 3px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.notice-fix code, .setup-list code {
+  font-family: var(--mono); font-size: 12px; background: var(--surface-2);
+  border: 1px solid var(--line-soft); border-radius: var(--r-xs); padding: 1px 6px;
+}
+.setup-card {
+  background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-md);
+  padding: var(--s3) var(--s4); margin-bottom: var(--s3);
+}
+.setup-card h3 { margin: 0 0 var(--s2); font-size: 13px; }
+.setup-list { list-style: none; margin: 0; padding: 0; }
+.setup-list li {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--s2) var(--s3);
+  align-items: center; padding: 7px 0; border-top: 1px solid var(--line-soft); font-size: 13px;
+}
+.setup-list li:first-child { border-top: 0; }
+.setup-mark { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--bad); }
+.setup-text { min-width: 0; }
+.setup-text .faint { font-size: 12px; }
+@media (max-width: 560px) {
+  .setup-list li { grid-template-columns: auto minmax(0, 1fr); }
+  .setup-list li > button { grid-column: 2; justify-self: start; }
+}
 
 /* ─────────────────── board mode banner ───────────────────
    Shown only while the board is displaying a ROLE SEARCH rather than the
