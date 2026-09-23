@@ -394,15 +394,17 @@ describe('dashboard batch actions + CSV export', () => {
         writeJobTrackerImpl: () => { trackerWrites += 1; return { path: '/fake/root/data/job_tracker.csv' }; },
         readTextImpl: () => 'Company,Job Role\nAcme,Senior Data Engineer',
         // The tracker rewrite is coalesced off the request path (it is an
-        // O(all jobs) export). Keep the window tiny so tests stay fast.
-        trackerDebounceMs: 5,
+        // O(all jobs) export). Keep the window small so tests stay fast, but
+        // wider than a cold first request (~20 ms on a JIT-cold server), or a
+        // "burst" straddles two windows and the coalescing test flakes.
+        trackerDebounceMs: 60,
       },
     });
   });
   afterEach(async () => { await dash.close(); db.close(); });
 
   /** Wait past the tracker debounce window so the coalesced write has run. */
-  const settleTracker = () => new Promise((r) => setTimeout(r, 30));
+  const settleTracker = () => new Promise((r) => setTimeout(r, 150));
 
   it('refreshes the tracker CSV after a human-gated action', async () => {
     await post('/api/jobs/j1/approve');
