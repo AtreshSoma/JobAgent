@@ -16,6 +16,7 @@ import { fillFields, verifyFilledFields } from '../../src/automation/fieldResolv
 import { applyValue } from '../../src/automation/fieldFiller.js';
 import { findAdvanceControl, findSubmitControl } from '../../src/automation/navigator.js';
 import { uploadFiles } from '../../src/automation/uploadRunner.js';
+import { browserUnavailable } from './helpers/browser.js';
 
 const FIXTURE = pathToFileURL(join(process.cwd(), 'tests', 'node', 'fixtures', 'ats_application_forms.html')).href;
 const RESUME = join(process.cwd(), 'tests', 'node', 'fixtures', 'sample_resume.txt');
@@ -43,7 +44,7 @@ describe('ATS application contract fixtures (real local browser, no submit)', ()
 
   beforeAll(async () => {
     try { session = await createBrowserSession({ headless: true }); }
-    catch { available = false; }
+    catch (err) { available = browserUnavailable(err); }
   }, 60000);
 
   afterAll(async () => { await session?.close?.(); }, 30000);

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createBrowserSession, openApplicationPage } from '../../src/automation/browser.js';
 import { fillFields, requiredFieldsSatisfied } from '../../src/automation/fieldResolver.js';
 import { uploadFiles } from '../../src/automation/uploadRunner.js';
+import { browserUnavailable } from './helpers/browser.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const FORM_URL = pathToFileURL(join(FIXTURES, 'apply_form.html')).href;
@@ -36,8 +37,8 @@ describe('browser automation against a local fixture form', () => {
   beforeAll(async () => {
     try {
       session = await createBrowserSession({ headless: true });
-    } catch {
-      available = false;
+    } catch (err) {
+      available = browserUnavailable(err);
     }
   }, 60000);
 

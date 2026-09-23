@@ -19,6 +19,7 @@ import { createBrowserSession, openApplicationPage } from '../../src/automation/
 import { detectValidationErrors } from '../../src/automation/domScanner.js';
 import { assistApply } from '../../src/automation/applyRunner.js';
 import { loadTestConfig } from './helpers/testConfig.js';
+import { browserUnavailable } from './helpers/browser.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const FORM_URL = pathToFileURL(join(FIXTURES, 'validation_error_form.html')).href;
@@ -32,8 +33,8 @@ describe('validation-error detection (real browser)', () => {
   beforeAll(async () => {
     try {
       session = await createBrowserSession({ headless: true });
-    } catch {
-      available = false;
+    } catch (err) {
+      available = browserUnavailable(err);
     }
   }, 60000);
 

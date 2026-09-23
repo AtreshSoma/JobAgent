@@ -5,38 +5,112 @@ on:
   push:
     branches: [main]
 
+# Read-only token: CI never needs to write to the repository.
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR makes the older run pointless.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   node-tests:
-    name: vitest (Node ${{ matrix.node }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    name: node ${{ matrix.node }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    # Only the "current" (odd, non-LTS) Node line may fail without failing CI.
+    continue-on-error: ${{ matrix.experimental == true }}
     strategy:
+      fail-fast: false
       matrix:
-        # node:sqlite (used for the local job store) requires Node >= 22.5,
-        # so that is the real minimum — Node 20 cannot run this codebase.
-        node: [22]
+        # node:sqlite (the local job store) works without a flag from 22.13.0,
+        # which is the real minimum (package.json engines). 22.x and 24.x are
+        # the supported LTS lines; 25.x is an early warning, Ubuntu only.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['22.x', '24.x']
+        include:
+          - os: ubuntu-latest
+            node: '25.x'
+            experimental: true
+    env:
+      # One browser path on every OS, so the cache key and path agree.
+      # (.cache/ is gitignored.)
+      PLAYWRIGHT_BROWSERS_PATH: ${{ github.workspace }}/.cache/ms-playwright
+      # Browser tests self-skip without Chromium locally; in CI a skip would be
+      # a silent hole, so make them fail instead (tests/node/helpers/browser.js).
+      REQUIRE_BROWSER: '1'
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+
+      - name: Resolve Playwright version
+        id: pw
+        shell: bash
+        run: echo "version=$(node -p "require('./node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Cache Playwright browsers
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.PLAYWRIGHT_BROWSERS_PATH }}
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
       # Chromium for the browser-automation tests (they drive local file://
-      # fixtures only — no live job sites). Without it those tests self-skip,
-      # which is exactly the silent gap CI exists to close.
-      - run: npx playwright install --with-deps chromium
+      # fixtures only — never a live job site). On Ubuntu --with-deps also
+      # installs the system libraries, which the cache does not hold.
+      - name: Install Chromium (Ubuntu, with system deps)
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+      - name: Install Chromium
+        if: runner.os != 'Linux'
+        run: npx playwright install chromium
+
+      # Seeds the gitignored personal config from the examples (placeholders),
+      # which verify's "required files" check expects on a clean clone.
+      - run: npm run setup
+      - run: npm run verify
+
+      # Smoke, not a pass: the example config is expected to FAIL doctor
+      # (placeholder profile values). What must hold is that --json emits
+      # valid JSON with the documented shape and nothing else on stdout.
+      - name: doctor --json smoke
+        shell: bash
+        run: |
+          node src/index.js doctor --json > doctor.json || true
+          node -e "const r = JSON.parse(require('fs').readFileSync('doctor.json', 'utf8')); if (!Array.isArray(r.checks) || typeof r.ok !== 'boolean') { console.error('unexpected doctor --json shape'); process.exit(1); } console.log('doctor --json: ' + JSON.stringify(r.summary));"
+
       - run: npm test
 
   python-tests:
-    name: pytest
+    name: pytest (Python 3.12)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install -r requirements.txt
       - run: python -m pytest
+
+  lint:
+    name: lint + typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.x'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: python -m pip install ruff
+      # `npm run lint` runs eslint, then ruff when it is installed.
+      - run: npm run lint
+      - run: npm run typecheck

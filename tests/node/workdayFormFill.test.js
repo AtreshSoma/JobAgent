@@ -20,6 +20,7 @@ import { createBrowserSession, openApplicationPage } from '../../src/automation/
 import { scanFields, resolveFormScope } from '../../src/automation/domScanner.js';
 import { fillScannedFields } from '../../src/automation/fieldFiller.js';
 import { loadTestConfig } from './helpers/testConfig.js';
+import { browserUnavailable } from './helpers/browser.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const FORM_URL = pathToFileURL(join(FIXTURES, 'workday_style_form.html')).href;
@@ -33,8 +34,8 @@ describe('Workday-style form filling (real browser)', () => {
   beforeAll(async () => {
     try {
       session = await createBrowserSession({ headless: true });
-    } catch {
-      available = false;
+    } catch (err) {
+      available = browserUnavailable(err);
     }
   }, 60000);
 

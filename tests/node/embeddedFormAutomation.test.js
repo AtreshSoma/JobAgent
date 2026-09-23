@@ -7,6 +7,7 @@ import { scanFields, resolveFormScope } from '../../src/automation/domScanner.js
 import { fillFields } from '../../src/automation/fieldResolver.js';
 import { fillScannedFields } from '../../src/automation/fieldFiller.js';
 import { uploadFiles } from '../../src/automation/uploadRunner.js';
+import { browserUnavailable } from './helpers/browser.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const HOST_URL = pathToFileURL(join(FIXTURES, 'embed_host.html')).href;
@@ -40,8 +41,8 @@ describe('embedded iframe form filling (real browser)', () => {
   beforeAll(async () => {
     try {
       session = await createBrowserSession({ headless: true });
-    } catch {
-      available = false;
+    } catch (err) {
+      available = browserUnavailable(err);
     }
   }, 60000);
 
