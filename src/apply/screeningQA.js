@@ -378,7 +378,7 @@ export function answerScreeningQuestion(question, screeningAnswers, { choices, c
   const answer = String(best.answer ?? '');
   // Safety net: refuse to emit any answer that CONTRADICTS the candidate's own
   // stated work authorization — in either direction.
-  if (isForbidden(answer, candidate?.workAuthorization?.requiresSponsorship)) {
+  if (isForbidden(answer, candidateRequiresSponsorship(candidate))) {
     return askUser(defaults);
   }
 
@@ -601,4 +601,15 @@ function askUser(defaults) {
     type: null,
     confidence: 0,
   };
+}
+
+/**
+ * The candidate's stated sponsorship requirement, from the current field or
+ * the legacy top-level one — the SAME read the runner and field filler make.
+ * The planner reading only the new field disagreed with them for legacy
+ * profiles (safe, but inconsistent: truthful answers went to the human).
+ * @returns {boolean|null|undefined}
+ */
+export function candidateRequiresSponsorship(candidate) {
+  return candidate?.workAuthorization?.requiresSponsorship ?? candidate?.sponsorshipRequired;
 }

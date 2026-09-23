@@ -10,6 +10,12 @@
   // "Yes" for a candidate who needs it. Mirrors EXTENSION_MANUAL_LABEL in
   // src/extension/companion.js.
   const WORK_AUTH = /\b(sponsor\w*|visas?|authori[sz]\w*|citizen\w*)\b/i;
+  // "How many years of experience do you have WITH SAP ABAP?" names a subject.
+  // The local answer list only holds a career TOTAL, so answering it here
+  // would state that total as experience with a skill the candidate may never
+  // have used — the fabrication the server-side answerer already refuses.
+  const YEARS_QUESTION = /\b(how many|number of|total)\s+years?\b|\byears?\s+of\s+(?:\w+\s+){0,2}experience\b/i;
+  const NAMES_SUBJECT = /\byears?\b.*\b(?:with|in|using|on|doing|as an?|of hands-on)\s+(?!total\b|the industry\b|this field\b|your career\b)\S/i;
   const SKIP_TYPES = new Set(['hidden', 'password', 'submit', 'button', 'reset', 'image']);
   const ALIASES = {
     firstName: ['first name', 'given name'], lastName: ['last name', 'surname', 'family name'],
@@ -70,6 +76,9 @@
       if (LEGAL.test(label) || type === 'checkbox') { blockers.push(`Review checkbox/attestation manually: ${label}`); mark(el, 'review'); continue; }
       if (type !== 'file' && WORK_AUTH.test(label)) {
         blockers.push(`Answer this work-authorization question yourself: ${label}`); mark(el, 'review'); continue;
+      }
+      if (type !== 'file' && YEARS_QUESTION.test(label) && NAMES_SUBJECT.test(label)) {
+        blockers.push(`Answer this experience question yourself (it asks about a specific skill): ${label}`); mark(el, 'review'); continue;
       }
 
       if (type === 'file') {

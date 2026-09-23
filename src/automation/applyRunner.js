@@ -1040,7 +1040,13 @@ export function watchForHumanSubmission({
   };
 
   function onNavigate(frame) {
-    try { if (frame && typeof page.mainFrame === 'function' && frame !== page.mainFrame()) { /* iframe */ } } catch { /* ignore */ }
+    // Only the PAGE navigating is evidence the human moved on. An ad, analytics
+    // or chat-widget iframe loading used to set `navigated` too — and that flag
+    // is what lets a confirmation phrase already on screen ("Thanks for
+    // applying to other roles" in a sidebar) count as this job's submission.
+    try {
+      if (frame && typeof page.mainFrame === 'function' && frame !== page.mainFrame()) return;
+    } catch { return; }
     navigated = true;
     // Give the new document a moment to render its confirmation text.
     const t = setTimeout(check, 250);

@@ -66,13 +66,19 @@ export function livenessTarget(job = {}) {
   }
   // Greenhouse: the board token is in the job id ("greenhouse:<board>::…")
   // because employer-hosted pages (databricks.com/…?gh_jid=…) do not name it.
-  const gh = id.match(/^greenhouse:([^:]+)::/);
-  const ghJob = u?.searchParams.get('gh_jid') ?? url.match(/\/jobs\/(\d+)/)?.[1] ?? id.match(/::(\d+)$/)?.[1];
-  if (gh && ghJob) return { ats: 'greenhouse', board: gh[1], jobId: ghJob };
+  // A Greenhouse-hosted URL names its board outright; prefer it.
   if (u && /greenhouse\.io$/i.test(u.hostname)) {
     const m = u.pathname.match(/^\/([^/]+)\/jobs\/(\d+)/);
-    if (m) return { ats: 'greenhouse', board: m[1], jobId: m[2] };
+    if (m) return { ats: 'greenhouse', board: m[1], jobId: m[2], boardFromUrl: true };
   }
+  // Otherwise the id's prefix is the normalized COMPANY NAME, not the board
+  // token ("doordash usa" for board `doordashusa`, "backblaze external
+  // website" for `backblaze`). Board tokens are lower-case alphanumerics, so
+  // the name is squashed to that shape — and checkPostingLiveness confirms the
+  // board exists before a 404 on the job may mean "closed".
+  const gh = id.match(/^greenhouse:([^:]+)::/);
+  const ghJob = u?.searchParams.get('gh_jid') ?? url.match(/\/jobs\/(\d+)/)?.[1] ?? id.match(/::(\d+)$/)?.[1];
+  if (gh && ghJob) return { ats: 'greenhouse', board: gh[1].toLowerCase().replace(/[^a-z0-9]/g, ''), jobId: ghJob };
   return null;
 }
 
@@ -137,11 +143,24 @@ export async function checkPostingLiveness(job, { fetchImpl = fetch, timeoutMs =
         return { state: 'unknown', via: 'smartrecruiters', httpStatus: status };
       }
       case 'greenhouse': {
-        const api = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(target.board)}/jobs/${target.jobId}`;
-        const { status } = await getJson(fetchImpl, api, opts);
+        const board = `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(target.board)}`;
+        const { status } = await getJson(fetchImpl, `${board}/jobs/${target.jobId}`, opts);
         if (status === 200) return { state: 'open', via: 'greenhouse', httpStatus: status };
-        if (status === 404) return { state: 'closed', via: 'greenhouse', httpStatus: status };
-        return { state: 'unknown', via: 'greenhouse', httpStatus: status };
+        if (status !== 404) return { state: 'unknown', via: 'greenhouse', httpStatus: status };
+        // Greenhouse answers a WRONG BOARD with the same 404 as a closed job.
+        // Treating that as "closed" retired live postings whose company name
+        // differs from its board token (found in pre-merge review, 2026-09-23).
+        // So a 404 counts only once the board itself is known to exist.
+        const key = `greenhouse-board:${target.board}`;
+        let exists = cache?.get(key);
+        if (exists === undefined) {
+          const probe = await getJson(fetchImpl, board, opts);
+          exists = probe.status === 200;
+          cache?.set(key, exists);
+        }
+        return exists
+          ? { state: 'closed', via: 'greenhouse', httpStatus: status }
+          : { state: 'unknown', via: 'greenhouse', httpStatus: status, detail: `no Greenhouse board named "${target.board}"` };
       }
       case 'lever': {
         const api = `https://api.lever.co/v0/postings/${encodeURIComponent(target.company)}/${target.postingId}`;

@@ -56,6 +56,32 @@ describe('human-submit detection', () => {
     await page.close();
   }, 30_000);
 
+  it('an iframe loading (ad, analytics, chat widget) does not count as the human moving on', async () => {
+    const page = await browser.newPage();
+    await page.setContent('<aside>Thanks for applying to our other roles!</aside><form><input id="e"></form>');
+    let fired = false;
+    const watch = watchForHumanSubmission({ page, url: 'about:blank', pollMs: 30, onConfirmed: () => { fired = true; } });
+    await watch.ready;
+    // A child frame navigates; the page itself does not.
+    await page.evaluate(() => {
+      const f = document.createElement('iframe');
+      f.srcdoc = '<p>ad</p>';
+      document.body.append(f);
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(fired).toBe(false);
+    watch.stop();
+    await page.close();
+  }, 30_000);
+
+  it('a late watcher report never downgrades a job the user already marked submitted', () => {
+    const db = openDatabase({ path: ':memory:' });
+    db.upsertJob({ id: 'done', title: 'T', status: 'submitted', applied: 1, applied_at: '2026-09-23T10:00:00.000Z' });
+    recordAssistResult(db, 'done', { status: 'ready_for_submit', humanSubmissionDetected: { signals: ['confirmation message'] } });
+    expect(db.getJob('done')).toMatchObject({ status: 'submitted', applied: 1 });
+    db.close();
+  });
+
   it('the runner hands off, detects the human submission and records it as submit_unverified', async () => {
     const page = await browser.newPage();
     await page.setContent(FORM);
@@ -67,7 +93,7 @@ describe('human-submit detection', () => {
         job: { id: 'j1', url: 'https://x.test/apply' }, blockers: [], owner: { candidateName: 'Dana Okafor' },
         fillPlan: { steps: [], uploads: [] }, screeningPlan: { answered: [], needsUser: [] },
       },
-      config: { candidate: { identity: { fullName: 'Dana Okafor' }, contact: { email: 'd@o.dev' } }, screeningAnswers: {}, runtime: {} },
+      config: { candidate: { identity: { fullName: 'Dana Okafor' }, contact: { email: 'dana@example.test' } }, screeningAnswers: {}, runtime: {} },
       // headless:false is what leaves the window with the human.
       options: { headless: false, humanSubmitPollMs: 50 },
       deps: {

@@ -1550,7 +1550,8 @@ function boardPageRows(db, filters = {}) {
   }
 
   // Applied last — see the note above the other filters.
-  if (filters.view && BOARD_VIEWS[filters.view]) {
+  // Object.hasOwn: `view=__proto__` used to index the prototype and 500.
+  if (filters.view && Object.hasOwn(BOARD_VIEWS, filters.view)) {
     rows = rows.filter(BOARD_VIEWS[filters.view]);
   }
 
@@ -1558,7 +1559,7 @@ function boardPageRows(db, filters = {}) {
   // reassigned it, e.g. the "tracked" tile's `includeClosed`-only request) —
   // sort a copy so this doesn't reorder the cached value out from under every
   // other request sharing it until the next invalidation.
-  rows = rows.slice().sort(SORTS[filters.sort] ?? SORTS.score);
+  rows = rows.slice().sort(Object.hasOwn(SORTS, filters.sort ?? '') ? SORTS[filters.sort] : SORTS.score);
   // Shared with the fast path above, so the two can never disagree about what
   // page the caller asked for.
   const { limit, offset } = pageWindow(filters);

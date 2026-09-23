@@ -590,10 +590,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
    * present the user's own typo as "the dashboard is broken".
    */
   function saving(res, work) {
+    const fail = (err) => sendJson(res, err?.statusCode ?? 400, { error: sanitizeErrorMessage(err?.message ?? String(err)) });
     try {
-      return work();
+      const out = work();
+      // An ASYNC handler's throw is a rejected promise, which a plain
+      // try/catch never sees — user-input errors came back as 500s.
+      return out && typeof out.then === 'function' ? out.catch(fail) : out;
     } catch (err) {
-      return sendJson(res, err.statusCode ?? 400, { error: sanitizeErrorMessage(err.message) });
+      return fail(err);
     }
   }
 
@@ -1109,6 +1113,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   }
 
   async function startRun(phase) {
+    // A pipeline run owns the rows; a posting check retiring them underneath
+    // it is exactly the overlap the sweep promises never to cause.
+    postingSweep.controller?.abort();
     if (runState.running) {
       const err = new Error(`a ${runState.phase} run is already in progress`);
       err.statusCode = 409;
@@ -2208,11 +2215,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       if (!titles.length && !skills.length) {
         return sendJson(res, 400, { error: 'nothing was selected to adopt' });
       }
-      const result = adoptResumeEvidence(config.root, { titles, skills });
-      // targetTitles drives every query-first source and Workday's derived
-      // phrases, so the in-memory config must not keep serving the old list.
-      reloadConfig();
-      return sendJson(res, 200, { ...result, suggestions: resumeSuggestions() });
+      if (runState.running) {
+        return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — try again when it finishes` });
+      }
+      return saving(res, () => {
+        const result = adoptResumeEvidence(requireConfigRoot(), { titles, skills });
+        // targetTitles drives every query-first source and Workday's derived
+        // phrases, so the in-memory config must not keep serving the old list —
+        // and verdicts judged against the old titles are re-scored.
+        const warning = reloadConfig();
+        if (!warning) scheduleRescore();
+        return sendJson(res, 200, { ...result, warning, suggestions: resumeSuggestions() });
+      });
     }
     if (req.method === 'POST' && path === '/api/profile/answers') {
       const body = await readBody(req);
@@ -2851,6 +2865,8 @@ function serveStatic(req, res, urlPath) {
   let rel;
   try { rel = decodeURIComponent(urlPath); }
   catch { return sendJson(res, 400, { error: 'malformed URL escape in the request path' }); }
+  // A NUL byte reached statSync and surfaced as a 500.
+  if (rel.includes('\0')) return sendJson(res, 400, { error: 'invalid character in the request path' });
   const abs = normalize(join(PUBLIC_DIR, rel));
   // Same containment helper as the artifact reads, so both use the platform's
   // real path semantics rather than raw string prefixes.

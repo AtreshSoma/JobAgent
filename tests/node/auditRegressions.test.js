@@ -114,7 +114,7 @@ describe('§5 P0 — shipped placeholder values are rejected', () => {
   });
 
   it.each([
-    'Dana Whitfield', 'dana@fastmail.com', 'H-1B', 'Raleigh', '9195551234',
+    'Dana Whitfield', 'dana@example.test', 'H-1B', 'Raleigh', '9195551234',
     'Yes, I will require sponsorship.', 'US Citizen',
   ])('treats a real value as real: %s', (value) => {
     expect(isPlaceholderValue(value)).toBe(false);

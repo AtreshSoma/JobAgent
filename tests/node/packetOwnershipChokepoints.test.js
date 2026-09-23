@@ -24,7 +24,7 @@ import { openDatabase } from '../../src/logging/db.js';
 import { LIFECYCLE } from '../../src/lifecycle.js';
 
 const dana = {
-  candidate: { identity: { fullName: 'Dana Okafor' }, contact: { email: 'dana@okafor.dev' } },
+  candidate: { identity: { fullName: 'Dana Okafor' }, contact: { email: 'dana@example.test' } },
   profile: { id: 'dana-data', label: 'Dana data' },
 };
 

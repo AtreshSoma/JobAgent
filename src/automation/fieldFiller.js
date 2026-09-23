@@ -21,7 +21,7 @@
 
 import { buildPrefillPlan } from '../apply/formPrefill.js';
 import {
-  contradictingSponsorshipClaim, isInvertedSponsorshipQuestion, isSponsorshipTopic,
+  contradictingSponsorshipClaim, isInvertedSponsorshipQuestion, isSponsorshipTopic, candidateRequiresSponsorship,
 } from '../apply/screeningQA.js';
 import { wholeWordIn } from '../utils/textNormalize.js';
 
@@ -363,8 +363,7 @@ export async function fillScannedFields(page, scannedFields = [], { candidate, s
     return { ...nu, required: f?.required === true, kind: f?.kind, options: f?.options ?? [] };
   });
 
-  const requiresSponsorship = candidate?.workAuthorization?.requiresSponsorship
-    ?? candidate?.sponsorshipRequired;
+  const requiresSponsorship = candidateRequiresSponsorship(candidate);
   const filled = [];
   const errors = [];
   for (const entry of plan) {

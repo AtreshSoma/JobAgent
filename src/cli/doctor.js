@@ -386,6 +386,12 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
         'These are left blank on forms (surfaced as blockers when an ATS requires them). Fill them in the dashboard under More → Application profile (config/candidate.json is regenerated from your search profile), and only with real values.'));
     }
 
+    if (config.coverLetter?._missing) {
+      checks.push(makeCheck('cover-letter', 'Cover letter settings', SEVERITY.WARN,
+        'config/cover_letter.json is missing — cover letters are switched off',
+        'Run `npm run setup` to create it from the example, then replace its placeholder values with your own.'));
+    }
+
     /* ── Active search profile ──────────────────────────────────────────
      *
      * WHOSE SEARCH IS THIS? The single most expensive silent failure in this

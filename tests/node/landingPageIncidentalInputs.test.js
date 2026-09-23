@@ -55,7 +55,7 @@ describe('incidental inputs on a landing page', () => {
         fillPlan: { steps: [], uploads: [] }, screeningPlan: { answered: [], needsUser: [] },
       },
       config: {
-        candidate: { identity: { fullName: 'Dana Okafor' }, contact: { email: 'dana@okafor.dev' } },
+        candidate: { identity: { fullName: 'Dana Okafor' }, contact: { email: 'dana@example.test' } },
         screeningAnswers: {}, runtime: {},
       },
       options: { headless: true, statePath: false, maxSteps: 2 },
@@ -68,7 +68,7 @@ describe('incidental inputs on a landing page', () => {
     expect(await page.evaluate(() => window.__applyClicks)).toBe(1);
     expect(await page.inputValue('input[name="q"]')).toBe('');
     expect(await page.inputValue('#alert-email')).toBe('');
-    expect(await page.inputValue('#email')).toBe('dana@okafor.dev');
+    expect(await page.inputValue('#email')).toBe('dana@example.test');
     expect(r.filled.map((f) => f.selector)).toEqual(['#email']);
     await page.close();
   }, 30_000);

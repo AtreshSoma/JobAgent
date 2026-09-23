@@ -690,6 +690,11 @@ function isoDate(now) {
 export function recordAssistResult(db, jobId, result) {
   if (!jobId) return;
   try {
+    // A confirmed submission is terminal. The hand-off watcher (or a stale
+    // extension tab) can report AFTER the user pressed "Mark submitted";
+    // writing its submit_unverified over applied=1 would un-submit the job.
+    const existing = db.getJob?.(jobId);
+    if (existing && (Number(existing.applied) === 1 || existing.status === 'submitted')) return;
     const patch = {
       id: jobId,
       status: result.status,

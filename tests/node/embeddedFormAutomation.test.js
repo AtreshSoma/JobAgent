@@ -27,7 +27,7 @@ const FILL_PLAN = {
 
 const CANDIDATE = {
   identity: { fullName: 'Priya Raghunathan' },
-  contact: { email: 'priya@example.com', phone: '9843127760' },
+  contact: { email: 'priya@example.com', phone: '9195550142' },
   location: { city: 'Morrisville', state: 'North Carolina', country: 'United States' },
 };
 

@@ -8,7 +8,7 @@
  * Configs are the SOURCE OF TRUTH at runtime; nothing here reads prompt text.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
@@ -41,6 +41,11 @@ export const CONFIG_FILES = {
   coverLetter: 'cover_letter.json',
   atsResume: 'ats_resume.json',
 };
+
+/** Config files that may be absent, and the value used when they are. */
+export const OPTIONAL_CONFIG = Object.freeze({
+  coverLetter: Object.freeze({ enabled: false, _missing: true }),
+});
 
 /** Which config names have a schema and must be validated. */
 const VALIDATED = Object.keys(SCHEMA_FILES);
@@ -169,12 +174,21 @@ export function loadConfig({ root = PROJECT_ROOT, loadEnv = true, env = process.
   /** @type {Record<string, any>} */
   const bundle = {};
   for (const [name, file] of Object.entries(CONFIG_FILES)) {
+    // cover_letter.json holds personal facts, so it is gitignored — which means
+    // a fresh clone, or a checkout that predates the split, simply has none.
+    // Refusing to start over an OPTIONAL document helped nobody: cover letters
+    // are switched off instead, and doctor says how to turn them on.
+    if (name in OPTIONAL_CONFIG && !existsSync(join(configDir, file))) {
+      bundle[name] = { ...OPTIONAL_CONFIG[name] };
+      continue;
+    }
     bundle[name] = readJson(join(configDir, file));
   }
 
   // Validate the ones with schemas using a shared Ajv instance.
   const ajv = createValidator();
   for (const name of VALIDATED) {
+    if (bundle[name]?._missing) continue;
     const schema = readJson(join(schemaDir, SCHEMA_FILES[name]));
     assertValidConfig(name, bundle[name], schema, { ajv });
   }

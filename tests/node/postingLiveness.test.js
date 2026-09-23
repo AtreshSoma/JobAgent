@@ -75,6 +75,7 @@ describe('checkPostingLiveness — what each ATS says', () => {
       ['/companies/Acme/postings/1', { status: 200, body: { active: false } }],
       ['/companies/Acme/postings/2', { status: 200, body: { active: true } }],
       ['boards/databricks/jobs/9', { status: 404 }],
+      ['boards/databricks', { status: 200, body: { name: 'Databricks' } }],
       ['api.lever.co/v0/postings/spotify/', { status: 404 }],
       ['recruitingCEJobRequisitionDetails', { status: 200, body: { items: [] } }],
     ]);
@@ -84,6 +85,29 @@ describe('checkPostingLiveness — what each ATS says', () => {
     expect((await checkPostingLiveness({ id: 'greenhouse:databricks::x::9', url: 'https://databricks.com/job?gh_jid=9' }, { fetchImpl: f })).state).toBe('closed');
     expect((await checkPostingLiveness({ url: 'https://jobs.lever.co/spotify/cc5ccf57-b851-4c25-8840-ed4cd0535c12' }, { fetchImpl: f })).state).toBe('closed');
     expect((await checkPostingLiveness({ url: 'https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/1' }, { fetchImpl: f })).state).toBe('closed');
+  });
+
+  it('Greenhouse: a 404 from a board that does not exist is unknown, never closed', async () => {
+    // The job id carries the COMPANY NAME; "DoorDash USA" is board `doordashusa`.
+    const f = fakeFetch([
+      ['boards/doordashusa/jobs/5956528', { status: 404 }],
+      ['boards/doordashusa', { status: 404 }],
+    ]);
+    const job = { id: 'greenhouse:doordash usa::software engineer::5956528', url: 'https://careers.doordash.com/jobs?gh_jid=5956528' };
+    expect(livenessTarget(job)).toMatchObject({ ats: 'greenhouse', board: 'doordashusa', jobId: '5956528' });
+    expect((await checkPostingLiveness(job, { fetchImpl: f })).state).toBe('unknown');
+    // A board named in a greenhouse.io URL is used as-is.
+    expect(livenessTarget({ id: 'greenhouse:scale ai::x::1', url: 'https://job-boards.greenhouse.io/scaleai/jobs/1' }))
+      .toMatchObject({ board: 'scaleai', boardFromUrl: true });
+  });
+
+  it('Greenhouse: the board-existence probe is made once per sweep', async () => {
+    const f = fakeFetch([['/jobs/', { status: 404 }], ['boards/acme', { status: 200, body: {} }]]);
+    const cache = createLivenessCache();
+    for (const n of [1, 2, 3]) {
+      expect((await checkPostingLiveness({ id: `greenhouse:acme::x::${n}`, url: `https://acme.com/j?gh_jid=${n}` }, { fetchImpl: f, cache })).state).toBe('closed');
+    }
+    expect(f.calls.filter((u) => u.endsWith('/boards/acme'))).toHaveLength(1);
   });
 
   it('Ashby: one board read answers every posting on it', async () => {

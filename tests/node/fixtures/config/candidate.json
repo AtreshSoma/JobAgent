@@ -5,17 +5,17 @@
     "preferredName": "Priya",
     "headline": "Senior Data Engineer",
     "links": {
-      "linkedin": "https://www.linkedin.com/in/praghunathan-de/",
-      "github": "https://github.com/praghunathan",
+      "linkedin": "https://www.linkedin.com/in/fixture-priya-de/",
+      "github": "https://github.com/fixture-priya",
       "portfolio": ""
     }
   },
   "contact": {
-    "email": "priya.raghunathan@fastmail.com",
-    "phone": "9843127760"
+    "email": "priya.raghunathan@example.test",
+    "phone": "9195550142"
   },
   "location": {
-    "street": "418 Hillsborough Street",
+    "street": "418 Fixture Test Way",
     "street2": "",
     "city": "Durham",
     "state": "North Carolina",

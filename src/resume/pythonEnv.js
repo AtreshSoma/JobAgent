@@ -73,8 +73,18 @@ export function pythonCandidates(env = process.env, { root = PROJECT_ROOT, platf
   const out = [];
   const venv = root ? venvPython(root, platform) : null;
   if (venv && exists(venv)) out.push(venv);
-  out.push('python3', 'python');
+  out.push(...pathNames(platform));
   return out;
+}
+
+/**
+ * PATH names to try, in order. On Windows `python` first: the python.org
+ * installer provides python.exe, not python3.exe, while a fresh Windows puts a
+ * Microsoft Store STUB named python3.exe on PATH (WindowsApps) that only
+ * prints "Python was not found" — picking it silently disabled tailoring.
+ */
+function pathNames(platform) {
+  return platform === 'win32' ? ['python', 'python3'] : ['python3', 'python'];
 }
 
 /** Is `name` an executable file somewhere on PATH? (no spawn) */
@@ -83,7 +93,10 @@ function onPath(name, env, platform, exists) {
   const exts = platform === 'win32'
     ? String(env?.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').filter(Boolean).concat([''])
     : [''];
-  return dirs.some((dir) => exts.some((ext) => exists(join(dir, `${name}${ext.toLowerCase()}`)) || exists(join(dir, `${name}${ext}`))));
+  return dirs
+    // The App Execution Alias stubs are not interpreters (see pathNames).
+    .filter((dir) => !(platform === 'win32' && /[\\/]WindowsApps[\\/]?$/i.test(dir)))
+    .some((dir) => exts.some((ext) => exists(join(dir, `${name}${ext.toLowerCase()}`)) || exists(join(dir, `${name}${ext}`))));
 }
 
 /**
@@ -103,7 +116,7 @@ export function pythonExe(env = process.env, { root = PROJECT_ROOT, platform = p
   if (env?.PYTHON || env?.PYTHON_EXECUTABLE) return first;
   const venv = root ? venvPython(root, platform) : null;
   if (first === venv) return venv;
-  for (const name of ['python3', 'python']) {
+  for (const name of pathNames(platform)) {
     if (onPath(name, env, platform, exists)) return name;
   }
   return platform === 'win32' ? 'python' : 'python3';
