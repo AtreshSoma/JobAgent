@@ -696,6 +696,13 @@ Board enumeration is free and unmetered forever after, so **each harvested coord
 
 A job whose source completes a full listing in each of its last **three** runs without returning it is retired as `expired: not listed by source for 3 runs`; a past JSON-LD `validThrough` retires it too. Nothing expires when an aggregate source failed that run.
 
+**Closed postings leave the board.** Employers close postings long before the next full sweep notices, and a plain link check cannot tell — Workday serves its *"The page you are looking for doesn't exist"* page with HTTP 200. So the agent asks each posting's **own ATS API** whether it still exists (Workday, SmartRecruiters, Greenhouse, Lever, Oracle Recruiting, Ashby), the same public endpoints discovery already uses. The dashboard checks a few hundred open postings, best-scored first, a minute and a half after it starts and every six hours; **More ▾ → 🔗 Remove closed postings** runs one now, and **Check link** on a job asks the ATS first. A closed posting you never acted on is retired as `expired: the employer closed this posting`; one you shortlisted, prepared or applied to stays, flagged *posting closed*. Anything the ATS cannot answer is left alone — no posting is ever retired on a guess. When this shipped, 109 of the 300 best-scored open jobs on a real board turned out to be closed.
+
+```bash
+npm run postings:check     # dry run: check the 300 best-scored open postings, write nothing
+npm run postings:prune     # check every open posting and retire the closed ones
+```
+
 Every verdict carries a fingerprint of the profile and scoring config that produced it. Rows judged under an older config are **re-scored from their stored descriptions — no network — at the end of each run, in the background after a profile switch, and on demand** with `npm run rescore`. On a real store of ~6,000 active rows this takes about 3 seconds.
 
 Pay is read from the description when the posting has no compensation field (strictly: a `$` figure next to a pay word, annualised from hourly at ×2080, never funding rounds or customer counts). It only ever *subtracts* points, and only when both the posting and your profile state pay; your salary floor applies to it too. Two copies of the same role are merged keeping the **US copy**, not merely the longer description, and Greenhouse, Lever and Ashby boards drop other-field titles before any detail is read.

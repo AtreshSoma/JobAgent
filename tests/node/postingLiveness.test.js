@@ -184,6 +184,17 @@ describe('Check link asks the ATS before trusting an HTTP 200', () => {
     expect(result.message).toMatch(/Workday no longer lists it/);
   });
 
+  it('calls a Workday link without its career-site segment broken, not reachable', async () => {
+    const bad = 'https://cvshealth.wd1.myworkdayjobs.com/job/TX---Work-from-home/Data-Engineer_R0977321';
+    const result = await checkJobLink(bad, {
+      job: { id: 'x', url: bad },
+      fetchImpl: async () => ({ status: 200, headers: { get: () => null }, url: bad }),
+      lookupImpl: async () => [{ address: '93.184.216.34' }],
+    });
+    expect(result.status).toBe('broken');
+    expect(result.message).toMatch(/Replace URL/);
+  });
+
   it('falls back to the HTTP check when the ATS cannot answer', async () => {
     const result = await checkJobLink('https://example.com/jobs/1', {
       job: { id: 'x', url: 'https://example.com/jobs/1' },

@@ -145,7 +145,7 @@ export async function checkLink(id) {
   try {
     const result = await postJson(`/api/jobs/${encodeURIComponent(id)}/check-link`);
     const tone = ['reachable', 'open'].includes(result.status) ? 'good'
-      : ['closed', 'invalid', 'error'].includes(result.status) ? 'bad' : '';
+      : ['closed', 'broken', 'invalid', 'error'].includes(result.status) ? 'bad' : '';
     // An ATS answer is the whole story; the raw HTTP code only helps when we
     // fell back to fetching the page itself.
     const text = result.liveness

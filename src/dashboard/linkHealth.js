@@ -87,6 +87,11 @@ export async function checkJobLink(value, { fetchImpl = fetch, timeoutMs = 12000
       return { ...classified, status: 'open', liveness: live, httpStatus: live.httpStatus ?? null, finalUrl: String(value),
         message: `Posting is open — confirmed by the ${name} job API.` };
     }
+    if (live.state === 'unknown' && /career-site segment/.test(live.detail ?? '')) {
+      return { ...classified, status: 'broken', liveness: live, httpStatus: null, finalUrl: String(value),
+        message: 'This Workday link is missing its career-site segment, so it opens Workday\'s "page doesn\'t exist" '
+          + 'screen. Use "Replace URL" with the link from the employer\'s careers page.' };
+    }
     if (live.state === 'closed') {
       return { ...classified, status: 'closed', liveness: live, httpStatus: live.httpStatus ?? null, finalUrl: String(value),
         message: `The employer has closed this posting — ${name} no longer lists it.` };
