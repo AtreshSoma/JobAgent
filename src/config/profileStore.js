@@ -33,7 +33,7 @@ import {
   validateAnswerEntry, MAX_ANSWER_CHARS, MAX_ANSWER_ENTRIES,
 } from './screeningAnswerRules.js';
 import { valueForField } from '../apply/formPrefill.js';
-import { readActiveProfile, saveProfile } from '../profile/store.js';
+import { readActiveProfile, saveProfile, mergeIntoActiveProfile, activateProfile } from '../profile/store.js';
 
 /**
  * The fields the form filler can actually put on an application, each mapped to
@@ -269,6 +269,7 @@ export function adoptResumeEvidence(root, { titles = [], skills = [] } = {}) {
   const path = candidatePath(root);
   const candidate = existsSync(path) ? readJson(path) : templateCandidate(root);
 
+  const activeId = activeProfileId(root);
   const clean = (v) => String(v ?? '').replace(/\s+/g, ' ').trim();
   const keyOf = (v) => clean(v).toLowerCase();
 
@@ -283,7 +284,10 @@ export function adoptResumeEvidence(root, { titles = [], skills = [] } = {}) {
     currentTitles.push(title);
     addedTitles.push(title);
   }
-  if (currentTitles.length > MAX_TARGET_TITLES) {
+  // With a profile active, candidate.json holds the EXPANDED titles (often at
+  // the cap already); the profile's own roles are what grow, and activation
+  // re-applies the cap when it regenerates the view.
+  if (!activeId && currentTitles.length > MAX_TARGET_TITLES) {
     throw new Error(
       `That would leave ${currentTitles.length} target titles (limit ${MAX_TARGET_TITLES}). `
       + 'Every title is searched against every configured board on every run — remove some first.',
@@ -302,12 +306,28 @@ export function adoptResumeEvidence(root, { titles = [], skills = [] } = {}) {
     other.push(skill);
     addedSkills.push(skill);
   }
-  if (other.length > MAX_STACK_TERMS) {
+  if (!activeId && other.length > MAX_STACK_TERMS) {
     throw new Error(`That would leave ${other.length} terms in technicalStack.other (limit ${MAX_STACK_TERMS}).`);
   }
 
   if (!addedTitles.length && !addedSkills.length) {
     return { path, backup: null, addedTitles: [], addedSkills: [] };
+  }
+
+  /*
+   * WRITE THROUGH THE PROFILE, NOT AROUND IT (F9).
+   *
+   * With a search profile active, candidate.json is a GENERATED view of that
+   * profile: the next activation rewrites it from the profile and silently
+   * discarded every title and skill adopted here. The adoption now lands in the
+   * profile itself (mergeIntoActiveProfile) and the view is regenerated
+   * (activateProfile), so it survives every later switch. Without an active
+   * profile candidate.json IS the source of truth and is edited directly below.
+   */
+  if (activeId) {
+    mergeIntoActiveProfile(root, { roles: addedTitles, skills: addedSkills });
+    activateProfile(root, activeId);
+    return { path, backup: null, addedTitles, addedSkills, profileId: activeId };
   }
 
   candidate.targetTitles = currentTitles;
