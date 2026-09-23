@@ -348,7 +348,7 @@ describe('accessibility', () => {
   });
 
   it('reloads the selected job after a re-tailor refresh', () => {
-    expect(app).toMatch(/async function refreshAll\(\)[\s\S]*if \(state\.selectedId\) await selectJob\(state\.selectedId\)/);
+    expect(app).toMatch(/async function refreshAll\([^)]*\)[\s\S]*if \(state\.selectedId\) await selectJob\(state\.selectedId\)/);
   });
 
   it('marks up tabs and live regions for assistive tech', () => {

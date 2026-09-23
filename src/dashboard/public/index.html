@@ -299,7 +299,13 @@
       </div>
     </div>
 
-    <div class="activefilters" id="activeFilters"></div>
+    <!-- The chips say WHAT the board is scoped to; the status line beside them
+         says how FRESH it is ("Updated 12 s ago", "Refreshing…"). Deliberately
+         not a live region — it ticks every ten seconds. -->
+    <div class="boardbar">
+      <div class="activefilters" id="activeFilters"></div>
+      <span class="boardstatus" id="boardStatus"></span>
+    </div>
 
     <!-- Filtering is the core loop of this page and it happened in total silence
          for anyone not looking at the pager: typing in the search box swaps the

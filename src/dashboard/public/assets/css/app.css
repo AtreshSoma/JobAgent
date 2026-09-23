@@ -857,7 +857,17 @@ button.stat:hover { background: none; border-color: transparent; }
   }
 }
 
-.activefilters { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 var(--s3); }
+.boardbar { display: flex; align-items: flex-start; gap: var(--s3); margin: 0 0 var(--s3); }
+.activefilters { display: flex; flex-wrap: wrap; gap: 6px; flex: 1 1 auto; min-width: 0; }
+.boardstatus {
+  flex: none; margin-left: auto; font-size: 12px; color: var(--text-faint);
+  white-space: nowrap; font-variant-numeric: tabular-nums; min-height: 22px; line-height: 22px;
+}
+.boardstatus.busy::before {
+  content: ''; display: inline-block; width: 8px; height: 8px; margin-right: 6px;
+  border-radius: 50%; border: 1.5px solid var(--accent); border-right-color: transparent;
+  animation: spin .8s linear infinite; vertical-align: -1px;
+}
 .pill {
   display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
   background: var(--accent-soft); color: var(--accent);

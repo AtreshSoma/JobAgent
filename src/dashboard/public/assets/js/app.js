@@ -450,7 +450,7 @@ function resetFilters({ keepTab = false, silent = false } = {}) {
   // `silent` is for callers that are mid-transition and will refresh once
   // themselves — switching board modes clears filters AND changes scope, and
   // refreshing here would fetch the old scope with the new filters first.
-  if (!silent) refreshAll();
+  if (!silent) loadBoard();
 }
 
 /** Apply a metric/next-action filter object. Honors EVERY key it is given. */
@@ -491,7 +491,8 @@ function applyFilterObject(filter = {}) {
   }
   state.page = 1;
   renderTabs();
-  refreshAll();
+  setView('board');
+  loadBoard();
 }
 
 /* ───────────────────────── pipeline health ─────────────────────────
@@ -960,9 +961,41 @@ function bar(value, max) {
   return wrap;
 }
 
-async function loadStats() {
+/*
+ * /api/stats reads the whole corpus — ~6s cold on a 120k-row store — and it
+ * was fetched after EVERY click. It is now single-flight (concurrent callers
+ * share one request) and throttled to once a minute, with a trailing refetch
+ * so a burst of decisions still ends with fresh numbers. `force` is for the
+ * moments the numbers are known to have moved a lot: boot and the end of a run.
+ */
+const STATS_MIN_INTERVAL_MS = 60_000;
+let statsInFlight = null;
+let statsFetchedAt = 0;
+let statsTrailing = null;
+
+function loadStats({ force = false } = {}) {
+  if (statsInFlight) return statsInFlight;
+  const wait = STATS_MIN_INTERVAL_MS - (Date.now() - statsFetchedAt);
+  if (!force && wait > 0) {
+    if (!statsTrailing) statsTrailing = setTimeout(() => { statsTrailing = null; loadStats(); }, wait);
+    return Promise.resolve(state.stats);
+  }
+  clearTimeout(statsTrailing);
+  statsTrailing = null;
+  statsInFlight = fetchStats().finally(() => {
+    statsInFlight = null;
+    statsFetchedAt = Date.now();
+  });
+  return statsInFlight;
+}
+
+async function fetchStats() {
   const stats = await api('/api/stats');
   state.stats = stats;
+  // Served from cache while the server recomputes: say so, and come back for
+  // the real numbers shortly rather than waiting out the throttle.
+  if (stats.stale) setTimeout(() => loadStats({ force: true }), 10_000);
+  renderBoardStatus();
   renderHealth(stats);
   renderTabs();
   renderAnalytics(stats);
@@ -1006,8 +1039,15 @@ function populateStates(stats) {
   }
 }
 
+/**
+ * "What is failing" — the only thing on the page that reads /api/sections —
+ * lives inside the collapsed Discovery health disclosure, so it is fetched
+ * only while that is open, and only the one section it draws. A server that
+ * predates `?only=` returns everything, which reads the same.
+ */
 async function loadSections() {
-  const sections = await api('/api/sections').catch(() => null);
+  if ($('analytics').hidden) return;
+  const sections = await api('/api/sections?only=blockedByReason').catch(() => null);
   if (!sections) return;
   const host = $('blockRows');
   host.textContent = '';
@@ -1036,6 +1076,36 @@ async function loadSections() {
 let boardSeq = 0;
 
 /**
+ * One quiet line saying how fresh the board is. A 2px sweep along the top of
+ * the table was the only sign a query was running, and nothing at all said
+ * how old the numbers were — or that the server was serving cached ones.
+ */
+const boardStatus = { loading: false, updatedAt: 0 };
+
+function renderBoardStatus() {
+  const node = $('boardStatus');
+  if (!node) return;
+  const parts = [];
+  if (boardStatus.loading) parts.push('Refreshing…');
+  else if (boardStatus.updatedAt) {
+    const secs = Math.round((Date.now() - boardStatus.updatedAt) / 1000);
+    parts.push(secs < 5 ? 'Updated just now'
+      : secs < 60 ? `Updated ${secs} s ago` : `Updated ${Math.floor(secs / 60)} min ago`);
+  }
+  if (state.stats?.stale) parts.push('Showing cached numbers — recalculating');
+  node.textContent = parts.join(' · ');
+  node.classList.toggle('busy', boardStatus.loading);
+}
+setInterval(renderBoardStatus, 10_000);
+
+/** Reload the board page once, however many mutations asked for it. */
+let boardReloadTimer = null;
+function scheduleBoardReload(delay = 300) {
+  clearTimeout(boardReloadTimer);
+  boardReloadTimer = setTimeout(loadBoard, delay);
+}
+
+/**
  * How many columns a full-width message row must span.
  *
  * Counted from the header rather than written as a literal. Three separate
@@ -1060,11 +1130,20 @@ async function loadBoard() {
   // without the layout jump of throwing them away.
   $('boardwrap').dataset.loading = 'true';
 
+  boardStatus.loading = true;
+  renderBoardStatus();
   let page;
   try {
-    page = await api(`/api/jobs?${filterParams()}`);
+    // Slim rows: the board draws ~20 fields and the full row carries the
+    // explanation, keyword lists, paths and signals (~2 KB each). The detail
+    // rail fetches the full job by id when it opens one.
+    const params = filterParams();
+    params.set('fields', 'board');
+    page = await api(`/api/jobs?${params}`);
   } catch (err) {
     if (seq !== boardSeq) return;
+    boardStatus.loading = false;
+    renderBoardStatus();
     $('boardwrap').dataset.loading = 'false';
     body.textContent = '';
     body.append(el('tr', {}, el('td', { colspan: boardColSpan(), class: 'empty', text: err.message })));
@@ -1073,6 +1152,9 @@ async function loadBoard() {
   }
   if (seq !== boardSeq) return; // a newer request already won
   $('boardwrap').dataset.loading = 'false';
+  boardStatus.loading = false;
+  boardStatus.updatedAt = Date.now();
+  renderBoardStatus();
 
   // The server may clamp the page (e.g. filters narrowed while on page 7).
   if (page.page && page.page !== state.page) state.page = page.page;
@@ -1243,7 +1325,9 @@ function rowFor(job) {
   // both — narrower, and a 60px click target instead of a 22px one.
   const label = job.resumeStatus === 'tailored' ? 'tailored'
     : job.resumeStatus === 'prepared' ? 'packet' : '—';
-  const hasDoc = Boolean(job.resumeDocxPath || job.resumePdfPath);
+  // Slim board rows may carry a `hasResumeDoc` flag instead of the file paths
+  // (paths are detail-only data); either one means there is something to open.
+  const hasDoc = Boolean(job.hasResumeDoc ?? (job.resumeDocxPath || job.resumePdfPath));
   tr.append(el('td', { class: 'nowrap', 'data-label': 'Resume' }, hasDoc
     ? el('button', {
       class: `rs ${job.resumeStatus} rs-open`, 'data-action': 'preview-resume', 'data-id': job.id,
@@ -2501,22 +2585,33 @@ async function runPendingConfirm() {
 
 let refreshTimer = null;
 
-/** Coalesced background refresh — many actions, one reload. */
+/**
+ * After a mutation: the board page, and the numbers when the throttle allows.
+ *
+ * This used to be a full `refreshAll` — stats, board, sections, profile and
+ * the detail again — after every click: seven requests for one decision, one
+ * of them a ~6s whole-corpus read. The row and the rail are patched from the
+ * mutation's own response; the board page is reloaded to pick up anything that
+ * moved in or out of the current filter.
+ */
 function scheduleRefresh(delay = 350) {
-  clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refreshAll, delay);
+  scheduleBoardReload(delay);
+  loadStats();
+  if (state.view === 'today') scheduleTodayReload(delay);
 }
 
-async function refreshAll() {
+/**
+ * Everything, e.g. at boot, after a run, or on a long-idle tab.
+ * @param {{ force?: boolean }} [options] bypass the stats throttle
+ */
+async function refreshAll({ force = false } = {}) {
   clearTimeout(refreshTimer);
-  await Promise.allSettled([loadStats(), loadBoard()]);
+  await Promise.allSettled([loadStats({ force }), loadBoard(), loadToday()]);
   loadSections();
-  // An auto-fill run is the thing that adds questions to the queue, and every
-  // batch ends with a refresh — so this is where new ones become visible.
-  loadProfileFlag();
   // A prepare/re-tailor run replaces the packet and its tailoring audit on
   // disk. Refresh the open detail rail too; otherwise it keeps displaying the
   // packet object fetched before the run and makes regeneration look inert.
+  // (Reconciled, not rebuilt — see renderDetail.)
   if (state.selectedId) await selectJob(state.selectedId);
 }
 
@@ -2532,21 +2627,52 @@ function patchRow(id, patch) {
   }
 }
 
+/** The status a decision will produce, for the optimistic row update. */
+const DECISION_STATUS = { shortlisted: 'shortlisted', rejected: 'rejected', archived: 'archived' };
+
+/** Apply a decision's result to the row and the open rail without a refetch. */
+function applyDecisionLocally(id, patch) {
+  // A closed job's old blocker is no longer "what to do next" — clearing
+  // attention stops a rejected row still reading "Retry needed".
+  const full = { attention: null, ...patch };
+  patchRow(id, full);
+  if (state.detailJob?.id === id) {
+    state.detailJob = { ...state.detailJob, ...full };
+    renderDetail(state.detailJob);
+  }
+}
+
 async function decide(id, decision) {
+  const known = state.known.get(id);
+  const before = { appStatus: known?.appStatus, userDecision: known?.userDecision ?? null, attention: known?.attention ?? null };
+  // Optimistic: the click shows its result at once, and is rolled back if
+  // the server refuses it.
+  if (DECISION_STATUS[decision]) applyDecisionLocally(id, { appStatus: DECISION_STATUS[decision], userDecision: decision });
   try {
     const result = await postJson(`/api/jobs/${encodeURIComponent(id)}/decision`, { decision });
-    toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
-    patchRow(id, { appStatus: result.appStatus, userDecision: result.userDecision });
-    if (state.selectedId === id) selectJob(id);
+    if (decision === 'clear') {
+      // Clearing returns a job to whatever it was before — only the server
+      // knows that, so this one case re-reads the job.
+      patchRow(id, { appStatus: result.appStatus, userDecision: result.userDecision });
+      if (state.selectedId === id) loadDetail(id);
+    } else {
+      applyDecisionLocally(id, { appStatus: result.appStatus ?? DECISION_STATUS[decision], userDecision: result.userDecision ?? decision });
+    }
+    announceDecision(id, decision, before.userDecision ?? 'clear');
     scheduleRefresh();
-  } catch (err) { toast(err.message, 'bad'); }
+  } catch (err) {
+    if (DECISION_STATUS[decision] && before.appStatus) applyDecisionLocally(id, before);
+    toast(err.message, 'bad');
+  }
 }
 
 async function simpleAction(id, action, okMessage) {
   try {
     await postJson(`/api/jobs/${encodeURIComponent(id)}/${action}`);
     toast(okMessage, 'good');
-    if (state.selectedId === id) selectJob(id);
+    // Approve / reject-packet change the packet, which only the detail
+    // payload carries — one job re-read, reconciled into the rail.
+    if (state.selectedId === id) loadDetail(id);
     scheduleRefresh();
   } catch (err) { toast(err.message, 'bad'); }
 }
@@ -2602,6 +2728,16 @@ async function checkLink(id) {
     toast(err.message, 'bad');
   }
 }
+
+/** Confirm a single decision (replaced by the undo toast in the Today work). */
+function announceDecision(_id, decision) {
+  toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
+}
+
+/* Views: only the board exists so far. */
+function setView() {}
+function loadToday() { return Promise.resolve(); }
+function scheduleTodayReload() {}
 
 /* ───────────────────────── selection ───────────────────────── */
 
@@ -3903,6 +4039,7 @@ const BACKGROUND_REFRESH_MS = 90_000;
 function scheduleBackgroundRefresh() {
   setTimeout(async () => {
     if (document.visibilityState === 'visible' && !state.lastRunStatus?.running) {
+      lastFullRefreshAt = Date.now();
       await refreshAll();
     }
     scheduleBackgroundRefresh();
@@ -4144,21 +4281,49 @@ function setRunDetails(open) {
   if (open) renderRunDetails(state.lastRunStatus);
 }
 
+/*
+ * One poll chain, ever. runPhase / autofill / cancel each call pollRun() to
+ * poll NOW, and every call used to start another self-rescheduling chain — so
+ * after a few actions the page polled several times a second. A generation
+ * token makes any older chain stop at its next await.
+ *
+ * A hidden tab polls every 30s instead of every 1.5-5s, and a tab coming back
+ * into view polls at once rather than waiting out that interval.
+ */
+let pollGen = 0;
+const HIDDEN_POLL_MS = 30_000;
+
 async function pollRun() {
+  const gen = ++pollGen;
   clearTimeout(pollTimer);
   const wasDown = state.serverUp === false;
   let status;
   try {
     status = await api('/api/run/status');
   } catch {
-    pollTimer = setTimeout(pollRun, 2000);
+    if (gen === pollGen) pollTimer = setTimeout(pollRun, document.hidden ? HIDDEN_POLL_MS : 2000);
     return;
   }
+  if (gen !== pollGen) return;
   applyRunGate(status);
-  if (wasDown || (!status.running && wasRunning)) refreshAll();
+  const finished = !status.running && wasRunning;
+  if (wasDown || finished) refreshAll({ force: true });
+  // An auto-fill run is what adds questions to the profile's queue.
+  if (finished && /assist/.test(String(status.lastResult?.phase ?? status.phase ?? ''))) loadProfileFlag();
   wasRunning = status.running;
-  pollTimer = setTimeout(pollRun, status.running ? 1500 : 5000);
+  const delay = document.hidden ? HIDDEN_POLL_MS : status.running ? 1500 : 5000;
+  pollTimer = setTimeout(pollRun, delay);
 }
+
+let lastFullRefreshAt = Date.now();
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) return;
+  pollRun();
+  if (Date.now() - lastFullRefreshAt > BACKGROUND_REFRESH_MS) {
+    lastFullRefreshAt = Date.now();
+    refreshAll();
+  }
+});
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -4202,6 +4367,7 @@ const ACTIONS = {
     target.setAttribute('aria-expanded', String(open));
     target.querySelector('.caret').textContent = open ? '▾' : '▸';
     savePreference('analyticsOpen', open ? '1' : '0');
+    if (open) loadSections();
   },
   'toggle-breakdown': (target) => {
     // Reveals the tail that `fillBreakdown` built and hid. The rows already
@@ -4323,7 +4489,9 @@ const ACTIONS = {
     state.activeTab = target.dataset.tab;
     state.page = 1;
     renderTabs();
-    refreshAll();
+    // A tab is a board query. The stats behind its badge did not change
+    // because a different tab was clicked.
+    loadBoard();
   },
   'toggle-filter-sheet': () => setFilterSheet($('filterbar').dataset.collapsed === 'true'),
   'clear-tab': () => {
@@ -4340,7 +4508,7 @@ const ACTIONS = {
     const id = target.dataset.filter;
     clearFilter(id);
     state.page = 1;
-    refreshAll();
+    loadBoard();
   },
   'reset-filters': () => resetFilters(),
   'set-posted': (target) => {
@@ -4456,8 +4624,8 @@ async function submitAddUrl() {
     const result = await postJson('/api/add-url', { url });
     closeDialog($('dlgAddUrl'));
     toast(`Added ${result.company || 'job'} — scored ${result.score ?? '—'} (${result.tier})`, 'good');
-    await refreshAll();
-    if (result.id) selectJob(result.id);
+    scheduleRefresh(0);
+    if (result.id) selectJob(result.id, { user: true });
   } catch (err) {
     msg.className = 'st-blocked';
     msg.textContent = err.message;
@@ -4557,7 +4725,8 @@ async function enterRoleSearch(query) {
   state.selected.clear();
   resetFilters({ silent: true });
   renderModeBanner();
-  await refreshAll();
+  setView('board');
+  await loadBoard();
 }
 
 /** Return to the personalized board. The role search's rows are left on disk. */
@@ -4567,7 +4736,7 @@ async function exitRoleSearch() {
   state.page = 1;
   state.selected.clear();
   renderModeBanner();
-  await refreshAll();
+  await loadBoard();
 }
 
 /** Discard one role search's rows, then go back to the personalized board. */
@@ -4607,7 +4776,10 @@ async function submitLink() {
     closeDialog(dialog);
     toast('Direct application URL saved.', 'good');
     patchRow(id, { url });
-    if (state.selectedId === id) selectJob(id);
+    if (state.detailJob?.id === id) {
+      state.detailJob = { ...state.detailJob, url };
+      renderDetail(state.detailJob);
+    }
     scheduleRefresh();
   } catch (err) { msg.className = 'st-blocked'; msg.textContent = err.message; }
 }
@@ -4627,7 +4799,7 @@ async function confirmSubmitted() {
       ? 'Recorded as submitted with confirmation evidence.'
       : 'Recorded as reported — pending your verification. Not counted as applied yet.',
     result.verified ? 'good' : '');
-    if (state.selectedId === id) selectJob(id);
+    if (state.selectedId === id) loadDetail(id);
     scheduleRefresh(0);
   } catch (err) { toast(err.message, 'bad'); }
 }
@@ -5049,10 +5221,13 @@ placeDetail();
 applyViewPrefs();
 renderTabs();
 syncSortIndicator();
-refreshAll().then(() => {
+refreshAll({ force: true }).then(() => {
   const initial = jobIdFromHash();
   if (initial) selectJob(initial);
 });
+// The profile pill is an extra: fetched once the page is idle, not on the
+// critical path, and again only when a dialog or an auto-fill run changes it.
+(window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500)))(() => loadProfileFlag());
 pollRun();
 scheduleBackgroundRefresh();
 syncSelectionBar();

@@ -65,3 +65,46 @@ describe('the detail is on screen at every width (U2)', () => {
     expect(app).toContain('selectJob(next, { defer: 120 })');
   });
 });
+
+describe('a click costs one write and one board read (U3)', () => {
+  it('patches the row and rail from the decision response, then reloads only the board page', () => {
+    const decide = app.slice(app.indexOf('async function decide(id, decision)'), app.indexOf('async function simpleAction'));
+    expect(decide).toContain('applyDecisionLocally(id');
+    expect(decide).toContain('scheduleRefresh()');
+    expect(decide).not.toContain('refreshAll');
+    const schedule = app.slice(app.indexOf('function scheduleRefresh('), app.indexOf('async function refreshAll'));
+    expect(schedule).toContain('scheduleBoardReload(delay)');
+    expect(schedule).not.toContain('loadSections');
+    expect(schedule).not.toContain('loadProfileFlag');
+  });
+
+  it('fetches stats single-flight and at most once a minute unless forced', () => {
+    expect(app).toContain('const STATS_MIN_INTERVAL_MS = 60_000;');
+    expect(app).toContain('if (statsInFlight) return statsInFlight;');
+    expect(app).toContain('if (!force && wait > 0)');
+    // A stale (cached) response is labelled and refetched soon.
+    expect(app).toContain('if (stats.stale)');
+    expect(app).toContain('Showing cached numbers — recalculating');
+  });
+
+  it('reads sections only while Discovery health is open, one section at a time', () => {
+    expect(app).toContain("if ($('analytics').hidden) return;");
+    expect(app).toContain("api('/api/sections?only=blockedByReason')");
+  });
+
+  it('asks for slim board rows', () => {
+    expect(app).toContain("params.set('fields', 'board');");
+  });
+
+  it('keeps one poll chain and backs off in a hidden tab', () => {
+    expect(app).toContain('const gen = ++pollGen;');
+    expect(app).toContain('if (gen !== pollGen) return;');
+    expect(app).toContain('const HIDDEN_POLL_MS = 30_000;');
+    expect(app).toContain("document.addEventListener('visibilitychange'");
+  });
+
+  it('shows how fresh the board is', () => {
+    expect(html).toContain('id="boardStatus"');
+    for (const text of ['Refreshing…', 'Updated just now', 's ago']) expect(app).toContain(text);
+  });
+});
