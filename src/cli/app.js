@@ -226,7 +226,7 @@ export async function runApp({ parsed, env, deps = {} } = {}) {
   try {
     // 2. Database (opens + applies schema/index migrations idempotently).
     db = openDatabaseImpl({});
-    const { logger: pino } = createPinoLoggerImpl({ toFile: true, level: env.LOG_LEVEL ?? 'warn' });
+    const { logger: pino } = createPinoLoggerImpl({ toFile: true, level: env.LOG_LEVEL ?? 'info' });
     logger = new JobLoggerImpl({ db, logger: pino });
 
     // 3. Port.
