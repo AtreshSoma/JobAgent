@@ -175,6 +175,14 @@ describe('invalid-configuration startup path', () => {
     expect(generic.join(' ')).toMatch(/required file is missing/);
   });
 
+  it('points every missing seeded config file at `npm run setup`', () => {
+    for (const file of ['candidate.json', 'screening_answers.json', 'cover_letter.json']) {
+      const lines = explainConfigError(new Error(`Config file not found or unreadable: /x/config/${file} (ENOENT)`));
+      expect(lines, file).not.toBeNull();
+      expect(lines.join(' '), file).toMatch(/npm run setup/);
+    }
+  });
+
   it('rethrows an unrecognized error rather than masking it as a setup checklist', () => {
     expect(explainConfigError(new Error('kaboom: totally unexpected'))).toBeNull();
   });

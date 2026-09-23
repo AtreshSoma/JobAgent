@@ -173,14 +173,25 @@ export function createShutdownSignalWait(proc = process) {
 export function explainConfigError(err, _root) {
   const msg = String(err?.message ?? err);
   const lines = [];
-  if (/candidate\.json/i.test(msg) && /ENOENT|no such file|not found/i.test(msg)) {
+  const missing = /ENOENT|no such file|not found/i.test(msg);
+  // One command creates every seeded file (candidate, screening answers,
+  // cover letter, example master resume) and never overwrites; it is the fix
+  // for a missing one, rather than a copy command per file that misses the rest.
+  const setupHint = 'Run:  npm run setup   (creates any missing personal config from the examples; never overwrites)';
+  if (/candidate\.json/i.test(msg) && missing) {
     lines.push('Your candidate profile does not exist yet.');
-    lines.push(`Create it:  copy ${join('config', 'candidate.example.json')} -> ${join('config', 'candidate.json')}`);
+    lines.push(setupHint);
+    lines.push(`(or copy ${join('config', 'candidate.example.json')} -> ${join('config', 'candidate.json')})`);
     lines.push('Then fill in YOUR real details (name, contact, work authorization). Never invent anything.');
-  } else if (/screening_answers\.json/i.test(msg) && /ENOENT|no such file|not found/i.test(msg)) {
+  } else if (/screening_answers\.json/i.test(msg) && missing) {
     lines.push('Your screening answers file does not exist yet.');
-    lines.push(`Create it:  copy ${join('config', 'screening_answers.example.json')} -> ${join('config', 'screening_answers.json')}`);
+    lines.push(setupHint);
+    lines.push(`(or copy ${join('config', 'screening_answers.example.json')} -> ${join('config', 'screening_answers.json')})`);
     lines.push('Fill it with YOUR truthful answers (sponsorship, authorization, notice period).');
+  } else if (/cover_letter\.json/i.test(msg) && missing) {
+    lines.push('Your cover-letter settings file does not exist yet.');
+    lines.push(setupHint);
+    lines.push('Then set YOUR years of experience and work-authorization sentence in config/cover_letter.json.');
   } else if (/schema|validation|invalid/i.test(msg)) {
     lines.push('A configuration file failed validation:');
     lines.push(msg);

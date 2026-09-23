@@ -4,7 +4,7 @@
 
 Local-first job discovery, deterministic scoring, human-approved applications
 
-![Node](https://img.shields.io/badge/Node-22.5+-57606a?style=flat-square&labelColor=1f2328&logo=nodedotjs&logoColor=white) ![Python](https://img.shields.io/badge/Python-3.12-57606a?style=flat-square&labelColor=1f2328&logo=python&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-node:sqlite-57606a?style=flat-square&labelColor=1f2328&logo=sqlite&logoColor=white) ![Playwright](https://img.shields.io/badge/Playwright-Chromium-57606a?style=flat-square&labelColor=1f2328&logo=playwright&logoColor=white)
+![Node](https://img.shields.io/badge/Node-22.13+-57606a?style=flat-square&labelColor=1f2328&logo=nodedotjs&logoColor=white) ![Python](https://img.shields.io/badge/Python-3.12-57606a?style=flat-square&labelColor=1f2328&logo=python&logoColor=white) ![SQLite](https://img.shields.io/badge/SQLite-node:sqlite-57606a?style=flat-square&labelColor=1f2328&logo=sqlite&logoColor=white) ![Playwright](https://img.shields.io/badge/Playwright-Chromium-57606a?style=flat-square&labelColor=1f2328&logo=playwright&logoColor=white)
 
 It finds the roles, scores the fit, tailors the resume, and fills the form.<br>
 **You click Submit.**
@@ -81,7 +81,7 @@ The default path never submits. Once it has filled and uploaded everything it ca
 
 | Dependency | Version | Why |
 | --- | :---: | --- |
-| **Node.js** | **≥ 22.5** | The built-in `node:sqlite` module needs it |
+| **Node.js** | **≥ 22.13** | The built-in `node:sqlite` module works without a flag from 22.13 (22.x and 24.x are tested in CI; `.nvmrc` pins 22.13) |
 | **Python** | 3.12 | Resume editing through `python-docx` |
 | **Playwright Chromium** | *`npx playwright install chromium`* | Browser-assisted form filling |
 | MS Word | *optional* | Only for `docx2pdf` PDF export |
@@ -89,13 +89,31 @@ The default path never submits. Once it has filled and uploaded everything it ca
 ### Installation
 
 ```bash
-npm install                        # Node dependencies (the Playwright LIBRARY)
+npm ci                             # Node dependencies, exactly as package-lock.json pins them
 npx playwright install chromium    # the BROWSER itself — a separate download
-pip install -r requirements.txt    # Python dependencies (docx2pdf is optional)
+npm run setup                      # seed your personal config from the examples (never overwrites)
 cp .env.example .env               # then edit it. DRY_RUN needs no secrets
 ```
 
-`npm install` does **not** download the browser. This repo has no `postinstall`
+**Python (resume tailoring).** Use a virtual environment. On macOS (Homebrew)
+and recent Debian/Ubuntu a bare `pip install` into the system Python is refused
+with `externally-managed-environment` (PEP 668) — that is the OS protecting
+itself, and a venv is the fix, not `--break-system-packages`:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt          # Windows: .venv\Scripts\pip install -r requirements.txt
+echo "PYTHON=.venv/bin/python" >> .env              # Windows: PYTHON=.venv\Scripts\python.exe
+```
+
+Python **3.12** is the supported version everywhere (CI runs 3.12).
+
+The launchers below do the Node half for you: they re-run `npm ci` whenever
+`package-lock.json` has changed since the last install (not only when
+`node_modules` is missing), seed missing config, and offer to download
+Chromium.
+
+`npm ci` does **not** download the browser. This repo has no `postinstall`
 hook, so the Chromium binary has to be fetched by the second command above;
 without it, discovery and scoring work fine and anything that opens a browser
 fails at the point of use. `npm run doctor` reports whether it is present.
@@ -104,14 +122,13 @@ fails at the point of use. `npm run doctor` reports whether it is present.
 
 Three things need your input before the first real run.
 
-**1. Your profile.** Copy the templates and fill them in with real information.
+**1. Your profile.** Create your personal files from the shipped examples, then fill them in with real information:
 
 ```bash
-cp config/candidate.example.json config/candidate.json
-cp config/screening_answers.example.json config/screening_answers.json
+npm run setup          # npm run setup:check reports what is missing without writing
 ```
 
-Both files are **gitignored**, because they hold your personal data. You can also edit the contact fields from the dashboard under **More ▾ → 👤 Application profile…**
+It creates, **only when absent**, `config/candidate.json`, `config/screening_answers.json`, `config/cover_letter.json` (your years of experience and work-authorization sentence for cover letters) and a synthetic `resumes/base/MASTER_RESUME.docx`. They start as **placeholders**: `npm run doctor` fails, and nothing is prepared or submitted, until you replace the template values. All of them are **gitignored**, because they hold your personal data. You can also edit the contact fields from the dashboard under **More ▾ → 👤 Application profile…**
 
 **2. Your master resume.** Put it at `resumes/base/MASTER_RESUME.docx`. It is opened **read-only** and never overwritten, and tailored copies go to `resumes/output/`. From **More ▾ → 🧾 Master resume…** you can read the document's real extracted text, so you see what tailoring actually reads rather than just the filename. You can download it to edit, then upload a replacement. Uploads are validated before they land, so a renamed PDF or a file with no readable text gets refused, and the version being replaced is kept in `resumes/base/history/` for one-click rollback.
 
@@ -146,7 +163,7 @@ You get one readable checklist covering Node version, SQLite, config schemas, re
 <table>
 <tr><th width="50%">🖥️ The dashboard (recommended)</th><th width="50%">⌨️ The guided CLI</th></tr>
 <tr valign="top">
-<td>On Windows, double-click <code>start-dashboard.cmd</code>. It installs dependencies on the first run, starts the server from the right place no matter where you launched it from, and opens your browser once it is ready. Pass a port to override the default, like <code>start-dashboard.cmd 5000</code>.<br><br>On any platform:<br><br><code>npm run app</code> picks a free port, prints the URL, and opens a browser.<br><br><code>npm run dashboard</code> starts the server only, at <code>http://127.0.0.1:4646</code>.</td>
+<td>Use the launcher for your platform. Each one checks Node, refreshes dependencies when the lockfile changed, seeds missing config, starts the server from the right folder, and opens your browser:<br><br>• <b>Windows:</b> double-click <code>start-job-agent.cmd</code> (or <code>start-dashboard.cmd</code>; pass a port like <code>start-dashboard.cmd 5000</code>)<br>• <b>PowerShell (any OS):</b> <code>pwsh ./Start-JobAgent.ps1</code><br>• <b>macOS / Linux:</b> <code>./start-job-agent.sh</code><br><br>Launching again while it runs just opens the running dashboard — it never starts a second one.<br><br>On any platform:<br><br><code>npm run app</code> does the same as the launchers minus the dependency step.<br><br><code>npm run dashboard</code> starts the server only, at <code>http://127.0.0.1:4646</code>.</td>
 <td><code>npm start</code> runs the whole flow as one interactive session.<br><br>It finds, scores, and prepares in a single pass, lists the prepared packets, and asks which ones to approve. Type <kbd>a</kbd> for all, <kbd>n</kbd> for none, or a range like <code>1,3</code> or <code>1-2</code>.<br><br>Then it offers to open a browser and fill them, stopping before submit. It refreshes the Excel tracker at <code>data/job_tracker.csv</code> along the way.</td>
 </tr>
 </table>
@@ -679,9 +696,13 @@ If a pod ever starts returning 429s, the gate's Retry-After handling and circuit
 
 Watch mode polls every `WATCH_INTERVAL_MINUTES`, default 20. With a large board list, either keep that above your run time or use `--free-only` against a trimmed config.
 
+A failed cycle no longer ends the watch: it is logged and retried after 1, 2, 4… minutes (capped at the interval). After `WATCH_MAX_FAILURES` (default 5, or `--max-failures=N`) failures in a row, watch gives up and exits 1, so a cron job or a terminal sees it. `WATCH_NOTIFY=1` (or `--notify`) also raises a desktop notification for new matches (macOS Notification Center, Linux `notify-send`, a terminal bell elsewhere). Press Ctrl+C once to stop after the current step, twice to quit immediately.
+
 Cancelling is immediate, measured at about **120ms**. In-flight requests abort and queued work gets dropped, while everything already found is kept.
 
 ## 💻 Command reference
+
+`npm run help` (or `node src/index.js --help`) prints every command, grouped, with a one-line description; it is generated from the dispatcher's own table, so it is always current. `--version` prints the version. Running `node src/index.js` with no command prints the same help — it never starts a discovery run.
 
 ### One command (recommended)
 
@@ -716,6 +737,7 @@ Prefer `npm start` above. These are for running a single phase.
 ```bash
 npm run discover       # search only          -> data/found_jobs.json
 npm run score          # + score              -> scored_jobs.json + queued_jobs.json
+npm run rescore        # re-score stored jobs whose score predates the current profile/scoring
 npm run prepare-apps   # + tailor + packets   -> applications/output/ + approval queue
 npm run assist         # open browser + fill, STOP before submit
 npm run end-to-end     # prepare-apps then assist (stops at approval boundary)
@@ -743,6 +765,9 @@ npm run dashboard      # dashboard server only
 npm run doctor         # preflight checks (env, config, resume, browsers, dirs)
 npm run report         # regenerate reports from stored data
 npm run verify         # repo health + safety check (asserts submit stays human-gated)
+npm run setup          # create missing personal config from the examples (never overwrites)
+npm run lint           # eslint, then ruff if installed (python -m pip install ruff)
+npm run typecheck      # JSDoc type check (tsc) of the files marked // @ts-check
 npm run db:maintenance # checkpoint the SQLite WAL (+ --vacuum to compact)
 npm run tracker        # refresh the Excel tracker at data/job_tracker.csv
 npm test               # Node test suite (vitest)
@@ -867,7 +892,7 @@ docs/             SUPPORT_MATRIX.md, the evidence-backed capability statement
 
 | Layer | Technology |
 | --- | --- |
-| Orchestration, connectors, scoring, form-prep | **Node.js 22.5+** |
+| Orchestration, connectors, scoring, form-prep | **Node.js 22.13+** |
 | Resume editing, audit, tailoring | **Python 3.12 with python-docx** |
 | Storage | **SQLite** through the built-in `node:sqlite`, so no native build step, and not `better-sqlite3` |
 | Browser assist | **Playwright** driving real Chromium, with page guards, stopping before submit. Never used to scrape or evade |
@@ -881,7 +906,11 @@ npm run verify     # repo health + safety gates (asserts submit stays human-gate
 npm run doctor     # environment preflight
 npm test           # Node suite (vitest)
 npm run test:py    # Python suite (pytest)
+npm run lint       # eslint + ruff
+npm run typecheck  # tsc over JSDoc
 ```
+
+CI (`.github/workflows/ci.yml`) runs the Node suite on **Ubuntu, Windows and macOS × Node 22.x and 24.x** (plus 25.x on Ubuntu as an allowed failure), with Chromium installed and `REQUIRE_BROWSER=1` so a browser test that cannot launch **fails** instead of silently skipping. It also runs `npm run verify`, a `doctor --json` smoke (valid JSON, expected to report the placeholder profile), pytest on Python 3.12, and lint + typecheck.
 
 <div align="center">
 
@@ -892,9 +921,12 @@ npm run test:py    # Python suite (pytest)
 The badge above is generated by the CI run itself, so it cannot drift. It
 replaces a hand-written one that advertised "1,388 passed · 96 files" — a state
 no fresh clone could reach, because ~24 test files read gitignored config and
-27 of 96 files failed to load on a bare checkout. `npm test` now seeds those
-files from their `.example` templates (see `npm run setup`), so a clean clone
-and CI run the same suite the author's machine does.
+27 of 96 files failed to load on a bare checkout. The suite now runs in a
+throwaway workspace (`JOB_AGENT_ROOT`, built by `tests/node/globalSetup.js`)
+holding the shared config plus fictional fixture profile files and the
+synthetic example resume — so a clean clone, CI and a developer's machine run
+the same suite, and no test reads your real profile or writes your real
+database.
 
 Run-level failures and partial source failures show up in the Activity/RCA drawer with sanitized symptoms, likely cause, retry guidance, retryability, and whether partial results are still valid. **Secrets and screening answers never appear** in those entries.
 
@@ -932,7 +964,7 @@ Run-level failures and partial source failures show up in the Activity/RCA drawe
 | | Phase | Scope |
 |:--:|---|---|
 | ✅ | **1** Scaffold | Directories, config, schemas, project metadata |
-| ✅ | **2** Config and utilities | Loaders, validation, rate limit, retry, credentials, notifier, text, dates |
+| ✅ | **2** Config and utilities | Loaders, validation, rate limit, retry, credentials (with secret scrubbing), text, dates; the notifier backs `npm run watch`'s opt-in desktop alerts (`WATCH_NOTIFY=1`) |
 | ✅ | **3** Storage and observability | Database (`node:sqlite`), logging (pino), report generator |
 | ✅ | **4** Search and normalization | Official ATS APIs, public-page JSON-LD, dedupe |
 | ✅ | **5** Filtering and scoring | Exclusions, sponsorship classifier, scorer, explain and tier gate |

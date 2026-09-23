@@ -35,7 +35,13 @@ visa sponsorship**. It finds jobs, de-dupes, filters disqualifiers, classifies
 sponsorship, scores 0–100, tiers, tailors the resume (never fabricating),
 drafts cover letters, detects the ATS, builds a form-fill + upload plan, queues
 an application packet for **human approval**, and can assist form-filling in a
-real browser but **never clicks the final Submit**. A dashboard is the primary
+real browser, stopping before the final Submit. No CLI command submits. The one
+exception is an explicit, per-run-confirmed auto-submit route on the local
+dashboard (`POST /api/auto-submit-batch`): it requires `confirmed: true` for
+that run, a fresh server-side eligibility check with zero blockers, and a
+uniquely resolved submit control, and a click only counts as submitted when
+`verifySubmission()` finds confirmation evidence (otherwise it is recorded as
+`submit_unverified`). A dashboard is the primary
 cockpit. Read `README.md`, `src/`, `config/`, and the tests first, then confirm
 the real goal and current behavior before proposing anything.
 
