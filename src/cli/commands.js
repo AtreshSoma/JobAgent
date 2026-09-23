@@ -550,7 +550,7 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
   const approvals = db.listApprovals({ status: APPROVAL_STATUS.APPROVED });
   const results = [];
   const counters = { ...emptyCounters(), jobs_skipped_already_applied: 0 };
-  let dailyCount = db.countAppliedOn?.(isoDate(deps.now)) ?? 0;
+  let dailyCount = db.countAppliedOnLocalDay?.(deps.now ?? new Date(), config?.candidate?.location?.timezone ?? null) ?? db.countAppliedOn?.(isoDate(deps.now)) ?? 0;
 
   for (const approval of approvals) {
     // Idempotency guard: never re-assist a job that was already submitted — or

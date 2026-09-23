@@ -1249,7 +1249,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         const autoSubmit = runOpts.autoSubmit === true;
         // Seed the daily cap from what was already submitted today, and bump
         // it as this batch submits, so one batch can never blow past the cap.
-        let dailyCount = db.countAppliedOn?.(new Date().toISOString().slice(0, 10)) ?? 0;
+        let dailyCount = db.countAppliedOnLocalDay?.(nowDate(), config?.candidate?.location?.timezone ?? null) ?? db.countAppliedOn?.(new Date().toISOString().slice(0, 10)) ?? 0;
         for (const { jobId, packet, approval } of queue) {
           // The queue is a snapshot; honor what the human did SINCE it was
           // built. Cancel stops between jobs (never mid-fill), and a job the

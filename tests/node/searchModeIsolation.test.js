@@ -22,7 +22,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { openDatabase } from '../../src/logging/db.js';
+import { openDatabase, applyVersionedMigrations } from '../../src/logging/db.js';
 import { startDashboard } from '../../src/dashboard/server.js';
 import { loadConfig } from '../../src/config/loadConfig.js';
 import { runQuerySearch } from '../../src/cli/commands.js';
@@ -172,6 +172,10 @@ describe('personalized discovery and role search stay independent', () => {
     // anything but 'profile' would empty the board on upgrade.
     db.upsertJob({ id: 'legacy-1', title: 'Senior Data Engineer', status: 'scored', score: 77 });
     db.db.prepare('UPDATE jobs SET discovery_mode = NULL WHERE id = ?').run('legacy-1');
+    // Simulate the upgrade: an unmigrated (v0) store, then the v1 backfill.
+    db.db.exec('PRAGMA user_version = 0');
+    applyVersionedMigrations(db.db);
+    expect(db.getJob('legacy-1').discovery_mode).toBe('profile');
 
     const board = boardPage(db, { now: new Date(), includeClosed: true });
     expect(board.jobs.map((j) => j.id)).toContain('legacy-1');
