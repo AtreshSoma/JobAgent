@@ -1,0 +1,179 @@
+/** Writes and what they refresh: decisions, single-job actions, runs, link checks. */
+
+import { $, toast } from './dom.js';
+import { state } from './state.js';
+import { api, postJson } from './api.js';
+import { loadSections, loadStats } from './analytics.js';
+import { captureRowFocus, loadBoard, restoreRowFocus, rowFor, scheduleBoardReload } from './board.js';
+import { cssEscape, isAggregatorUrl, loadDetail, renderDetail, selectJob } from './detail.js';
+import { autofillBlockedReason, loadToday, scheduleTodayReload } from './today.js';
+import { offerUndo } from './selection.js';
+import { pollRun } from './runs.js';
+
+/* ───────────────────── mutations + refresh ───────────────────── */
+
+export let refreshTimer = null;
+
+/**
+ * After a mutation: the board page, and the numbers when the throttle allows.
+ *
+ * This used to be a full `refreshAll` — stats, board, sections, profile and
+ * the detail again — after every click: seven requests for one decision, one
+ * of them a ~6s whole-corpus read. The row and the rail are patched from the
+ * mutation's own response; the board page is reloaded to pick up anything that
+ * moved in or out of the current filter.
+ */
+export function scheduleRefresh(delay = 350) {
+  scheduleBoardReload(delay);
+  loadStats();
+  if (state.view === 'today') scheduleTodayReload(delay);
+}
+
+/**
+ * Everything, e.g. at boot, after a run, or on a long-idle tab.
+ * @param {{ force?: boolean }} [options] bypass the stats throttle
+ */
+export async function refreshAll({ force = false } = {}) {
+  clearTimeout(refreshTimer);
+  await Promise.allSettled([loadStats({ force }), loadBoard(), loadToday()]);
+  loadSections();
+  // A prepare/re-tailor run replaces the packet and its tailoring audit on
+  // disk. Refresh the open detail rail too; otherwise it keeps displaying the
+  // packet object fetched before the run and makes regeneration look inert.
+  // (Reconciled, not rebuilt — see renderDetail.)
+  if (state.selectedId) await selectJob(state.selectedId);
+}
+
+/** Update one row's derived fields locally so the UI responds immediately. */
+export function patchRow(id, patch) {
+  const known = state.known.get(id);
+  if (known) state.known.set(id, { ...known, ...patch });
+  const tr = $('rows').querySelector(`tr.job[data-id="${cssEscape(id)}"]`);
+  if (tr && known) {
+    const focus = captureRowFocus();
+    tr.replaceWith(rowFor({ ...known, ...patch }));
+    restoreRowFocus(focus);
+  }
+}
+
+/** The status a decision will produce, for the optimistic row update. */
+export const DECISION_STATUS = { shortlisted: 'shortlisted', rejected: 'rejected', archived: 'archived' };
+
+/** Apply a decision's result to the row and the open rail without a refetch. */
+export function applyDecisionLocally(id, patch) {
+  // A closed job's old blocker is no longer "what to do next" — clearing
+  // attention stops a rejected row still reading "Retry needed".
+  const full = { attention: null, ...patch };
+  patchRow(id, full);
+  if (state.detailJob?.id === id) {
+    state.detailJob = { ...state.detailJob, ...full };
+    renderDetail(state.detailJob);
+  }
+}
+
+export async function decide(id, decision) {
+  const known = state.known.get(id);
+  const before = { appStatus: known?.appStatus, userDecision: known?.userDecision ?? null, attention: known?.attention ?? null };
+  // Optimistic: the click shows its result at once, and is rolled back if
+  // the server refuses it.
+  if (DECISION_STATUS[decision]) applyDecisionLocally(id, { appStatus: DECISION_STATUS[decision], userDecision: decision });
+  try {
+    const result = await postJson(`/api/jobs/${encodeURIComponent(id)}/decision`, { decision });
+    if (decision === 'clear') {
+      // Clearing returns a job to whatever it was before — only the server
+      // knows that, so this one case re-reads the job.
+      patchRow(id, { appStatus: result.appStatus, userDecision: result.userDecision });
+      if (state.selectedId === id) loadDetail(id);
+    } else {
+      applyDecisionLocally(id, { appStatus: result.appStatus ?? DECISION_STATUS[decision], userDecision: result.userDecision ?? decision });
+    }
+    announceDecision(id, decision, before.userDecision ?? 'clear');
+    scheduleRefresh();
+  } catch (err) {
+    if (DECISION_STATUS[decision] && before.appStatus) applyDecisionLocally(id, before);
+    toast(err.message, 'bad');
+  }
+}
+
+export async function simpleAction(id, action, okMessage) {
+  try {
+    await postJson(`/api/jobs/${encodeURIComponent(id)}/${action}`);
+    toast(okMessage, 'good');
+    // Approve / reject-packet change the packet, which only the detail
+    // payload carries — one job re-read, reconciled into the rail.
+    if (state.selectedId === id) loadDetail(id);
+    scheduleRefresh();
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+export async function runPhase(phase) {
+  if (state.running) { toast('A run is already in progress.', 'bad'); return; }
+  try {
+    await postJson('/api/run', { phase });
+    toast(`${phase} started…`);
+    pollRun();
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+export async function autofillOne(id) {
+  if (autofillBlockedReason()) { toast(autofillBlockedReason(), 'bad'); return; }
+  if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  const job = state.known.get(id);
+  if (job && isAggregatorUrl(job.url)) {
+    toast('Use the direct employer/ATS URL for auto-fill. Open the listing and save its Apply URL.', 'bad');
+    return;
+  }
+  try {
+    await postJson(`/api/jobs/${encodeURIComponent(id)}/auto-apply`, {});
+    toast('Auto-fill started — it stops before Submit.');
+    pollRun();
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+export async function prepareOne(id) {
+  if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  try {
+    await postJson('/api/prepare-batch', { jobIds: [id] });
+    toast('Preparing the tailored resume + packet…');
+    pollRun();
+  } catch (err) { toast(err.message, 'bad'); }
+}
+
+export async function checkLink(id) {
+  const box = $('linkHealth');
+  if (box) { box.className = 'linkhealth'; box.textContent = 'Checking the saved posting link…'; }
+  try {
+    const result = await postJson(`/api/jobs/${encodeURIComponent(id)}/check-link`);
+    const tone = result.status === 'reachable' ? 'good'
+      : ['closed', 'invalid', 'error'].includes(result.status) ? 'bad' : '';
+    const text = `${result.message}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`;
+    state.linkHealth.set(id, { tone, text });
+    if (box) { box.className = `linkhealth ${tone}`.trim(); box.textContent = text; }
+    // Always surface it as a toast too: the inline slot only exists while the
+    // detail rail is open, and the old build silently dropped the result.
+    toast(text, tone);
+  } catch (err) {
+    state.linkHealth.set(id, { tone: 'bad', text: err.message });
+    if (box) { box.className = 'linkhealth bad'; box.textContent = err.message; }
+    toast(err.message, 'bad');
+  }
+}
+
+/**
+ * Say what a single decision did — with a way back when it closed the job.
+ *
+ * Reject and Archive in the rail used to write immediately with nothing but a
+ * "Marked rejected" toast; one mis-click lost the job from the board with no
+ * recovery short of finding it under Closed jobs. They now get the same undo
+ * the batch actions have, plus the optional one-click reason.
+ */
+export function announceDecision(id, decision, wasDecision) {
+  if (decision !== 'rejected' && decision !== 'archived') {
+    toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
+    return;
+  }
+  const job = state.known.get(id);
+  const name = job?.title ? `“${job.title}”` : 'this job';
+  offerUndo(`${decision === 'rejected' ? 'Rejected' : 'Archived'} ${name}`,
+    new Map([[id, wasDecision]]), { reasonFor: { jobIds: [id], decision } });
+}

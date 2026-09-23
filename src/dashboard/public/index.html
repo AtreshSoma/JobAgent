@@ -575,7 +575,7 @@
 <!-- ───────────────────────── dialogs ───────────────────────── -->
 <!-- Each small dialog's body is a <form>, so Enter submits it from any
      field — "Search job boards" ignored Enter entirely — and the one submit
-     handler (app.js, `data-submit`) is the only path to the action, which is
+     handler (actions.js, `data-submit`) is the only path to the action, which is
      what makes a second Enter or click a no-op while the first is in flight. -->
 <dialog id="dlgAddUrl" class="narrow" aria-labelledby="dlgAddUrlTitle">
   <div class="dlg-head">
@@ -811,6 +811,6 @@
   </form>
 </dialog>
 
-<script type="module" src="/assets/js/app.js"></script>
+<script type="module" src="/assets/js/main.js"></script>
 </body>
 </html>

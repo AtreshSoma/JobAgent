@@ -306,3 +306,43 @@ describe('one design system (U12)', () => {
     expect(app).toContain('...setupLinks()');
   });
 });
+
+describe('the front end is ES modules (U13)', () => {
+  const files = readdirSync(jsDir).filter((f) => f.endsWith('.js'));
+  const source = Object.fromEntries(files.map((f) => [f, readFileSync(new URL(f, jsDir), 'utf8')]));
+
+  it('loads one entry module and no monolith', () => {
+    expect(html).toContain('<script type="module" src="/assets/js/main.js"></script>');
+    expect(files).not.toContain('app.js');
+    for (const f of ['api.js', 'state.js', 'dom.js', 'board.js', 'detail.js', 'today.js', 'runs.js', 'dialogs.js', 'menus.js', 'analytics.js', 'main.js']) {
+      expect(files).toContain(f);
+    }
+  });
+
+  it('imports only names another module exports', () => {
+    const exported = new Map();
+    for (const [file, text] of Object.entries(source)) {
+      for (const m of text.matchAll(/^export (?:async )?(?:function\*?|const|let|class) ([A-Za-z_$][\w$]*)/gm)) {
+        exported.set(`${file}:${m[1]}`, true);
+      }
+    }
+    for (const [file, text] of Object.entries(source)) {
+      for (const m of text.matchAll(/^import \{ ([^}]+) \} from '\.\/([\w-]+\.js)';$/gm)) {
+        for (const name of m[1].split(',').map((n) => n.trim())) {
+          expect(exported.has(`${m[2]}:${name}`), `${file} imports ${name} from ${m[2]}`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('keeps load-time work in the entry module', () => {
+    // Everything else only declares, or registers listeners; boot calls live
+    // in main.js, which runs after every other module has evaluated — so a
+    // circular import can never hit a binding in its temporal dead zone.
+    expect(source['main.js']).toContain('refreshAll({ force: true })');
+    for (const [file, text] of Object.entries(source)) {
+      if (file === 'main.js') continue;
+      expect(text, file).not.toMatch(/^refreshAll\(|^pollRun\(|^setView\(/m);
+    }
+  });
+});

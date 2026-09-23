@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 import { POSTED_WINDOWS } from '../../src/dashboard/data.js';
 
@@ -7,7 +7,13 @@ const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 
 const html = read('../../src/dashboard/public/index.html');
 const css = read('../../src/dashboard/public/assets/css/app.css');
-const app = read('../../src/dashboard/public/assets/js/app.js');
+// The front end is ES modules now (assets/js/*.js, entry main.js). The
+// assertions below are about the shipped code as a whole, so they read every
+// module; each function still lives whole in one file, so slices between two
+// function names stay within that file.
+const jsDir = new URL('../../src/dashboard/public/assets/js/', import.meta.url);
+const app = readdirSync(jsDir).filter((f) => f.endsWith('.js')).sort()
+  .map((f) => readFileSync(new URL(f, jsDir), 'utf8')).join('\n');
 
 describe('dashboard shell structure', () => {
   it('exposes every element id the application script binds to', () => {
@@ -215,7 +221,7 @@ describe('dashboard shell structure', () => {
 
   it('links its stylesheet and module script rather than inlining them', () => {
     expect(html).toContain('<link rel="stylesheet" href="/assets/css/app.css">');
-    expect(html).toContain('<script type="module" src="/assets/js/app.js"></script>');
+    expect(html).toContain('<script type="module" src="/assets/js/main.js"></script>');
   });
 });
 
