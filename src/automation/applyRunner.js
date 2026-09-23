@@ -29,13 +29,21 @@
  * local fixture forms.
  */
 
-import { createBrowserSession, openApplicationPage, inspectCurrentPage } from './browser.js';
+import {
+  createBrowserSession, openApplicationPage, inspectCurrentPage,
+  BROWSER_UNAVAILABLE_CODE, BROWSER_UNAVAILABLE_MESSAGE, isBrowserMissingError, stripPlaywrightBanner,
+} from './browser.js';
 import { fillFields, requiredFieldsSatisfied, verifyFilledFields } from './fieldResolver.js';
-import { scanFields, resolveFormScope, detectValidationErrors } from './domScanner.js';
-import { fillScannedFields } from './fieldFiller.js';
+import {
+  scanFields, resolveFormScope, detectValidationErrors, unfilledRequiredControls, applicationFields,
+} from './domScanner.js';
+import { fillScannedFields, isSensitiveChoiceLabel } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
-import { assertTruthfulSponsorship, isInvertedSponsorshipQuestion } from '../apply/screeningQA.js';
+import { detectBlocker, visibleText } from './guards.js';
+import {
+  assertTruthfulSponsorship, isInvertedSponsorshipQuestion, isSponsorshipTopic,
+} from '../apply/screeningQA.js';
 import {
   APPLICATION_PHASE,
   applicationStatePreventsReopen,
@@ -44,6 +52,7 @@ import {
   resolveApplicationStateStore,
   transitionApplicationState,
 } from '../apply/applicationState.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { LIFECYCLE } from '../lifecycle.js';
 import { join } from 'node:path';
 
@@ -95,6 +104,10 @@ export async function assistApply({
     duplicatePrevented: false,
     applicationState: null,
     applicationStatePath: null,
+    // Every screening answer actually committed on the live form, with the
+    // option text the employer will read — the packet only records what we
+    // PLANNED to say. Auto-submit compares the two (see tryAutoSubmit).
+    liveAnswers: [],
   };
   const clock = deps.now ?? (() => new Date());
   const nowIso = () => {
@@ -113,6 +126,8 @@ export async function assistApply({
       root: config?.root,
       statePath: options.statePath,
       store: deps.stateStore,
+      // Checkpoints are per search profile: see applicationStatePath.
+      profileId: config?.profile?.id ?? null,
     });
     result.applicationStatePath = stateStore?.path ?? (typeof options.statePath === 'string' ? options.statePath : null);
     const loaded = stateStore ? await stateStore.load?.() : null;
@@ -182,6 +197,24 @@ export async function assistApply({
     return result;
   }
 
+  // WHOSE APPLICATION IS THIS? The dashboard and CLI each asked before reusing
+  // a stored packet, but every one of those checks lived in a caller, and a
+  // caller that forgot (or a new one) filled a packet built for somebody else.
+  // The runner is the one path every fill goes through, so the check lives
+  // here too — before a browser opens, before anything is typed.
+  const owned = (deps.ownershipCheck ?? packetOwnershipCheck)(packet, config ?? {});
+  if (!owned.ok) {
+    result.status = LIFECYCLE.ASSIST_BLOCKED;
+    result.blockers.push(
+      `packet_not_owned: this packet is not the active candidate's — ${owned.reason}. `
+      + 'Prepare it again so the documents and answers describe whoever is applying.',
+    );
+    try {
+      await checkpoint(APPLICATION_PHASE.BLOCKED, { blockers: result.blockers }, 'packet belongs to another candidate');
+    } catch { /* the ownership refusal is the actionable error */ }
+    return result;
+  }
+
   // Sponsorship truthfulness is checked from the packet (no browser needed).
   try {
     await checkpoint(APPLICATION_PHASE.PRECHECK, {
@@ -224,10 +257,18 @@ export async function assistApply({
   // never conflicts with an already-running browser (which would otherwise
   // forward the command to the live instance and leave a dead about:blank tab).
   // Pass userDataDir:false to force isolation.
+  //
+  // PER SEARCH PROFILE. One shared `.browser-profile` meant the second
+  // candidate inherited the first one's ATS sessions, autofill and saved
+  // logins — a Workday account signed in as somebody else. With an active
+  // profile id the folder is `.browser-profile-<profileId>[-<channel>]`.
+  // MIGRATION: installs with no profile id keep the historical
+  // `.browser-profile[-<channel>]` folder, so nobody is signed out by this
+  // change; after creating a profile, sign in once more in its own browser
+  // (or copy the old folder to the new name to carry the cookies over).
   let userDataDir = options.userDataDir ?? config?.runtime?.browserUserDataDir ?? null;
   if (userDataDir === null && config?.root) {
-    const dirName = channel ? `.browser-profile-${channel}` : '.browser-profile';
-    userDataDir = join(config.root, dirName);
+    userDataDir = join(config.root, browserProfileDirName({ channel, profileId: config?.profile?.id }));
   }
   if (userDataDir === false) userDataDir = null;
 
@@ -235,13 +276,31 @@ export async function assistApply({
   try {
     session = await createSession({ headless, slowMo, channel, userDataDir, deps });
   } catch (err) {
+    // A missing browser binary is an ENVIRONMENT problem, not a failed
+    // application: nothing about the job or packet is wrong, and "failed"
+    // sent users to the RCA panel to read Playwright's 10-line ASCII banner.
+    // It is recorded as blocked with a stable `browser_unavailable:` code the
+    // dashboard classifies, and one line that says what to run.
+    if (isBrowserMissingError(err)) {
+      result.status = LIFECYCLE.ASSIST_BLOCKED;
+      result.statusReason = `${BROWSER_UNAVAILABLE_CODE}: ${BROWSER_UNAVAILABLE_MESSAGE}`;
+      result.blockers.push(result.statusReason);
+      try {
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: applicationState.currentStep,
+          lastUrl: applicationState.lastUrl ?? url,
+          blockers: result.blockers,
+        }, 'browser not installed');
+      } catch { /* the missing browser is the actionable error */ }
+      return result;
+    }
     result.status = LIFECYCLE.FAILED;
     // The most common cause when reusing a real browser profile is that the
     // browser is still running and holding a lock on the profile directory.
     const hint = channel
       ? ` — if you set BROWSER_USER_DATA_DIR, close every ${channel === 'msedge' ? 'Microsoft Edge' : channel} window first (a profile can only be opened by one process at a time)`
       : '';
-    result.blockers.push(`could not start browser: ${err.message}${hint}`);
+    result.blockers.push(`could not start browser: ${stripPlaywrightBanner(err.message)}${hint}`);
     try {
       await checkpoint(APPLICATION_PHASE.BLOCKED, {
         currentStep: applicationState.currentStep,
@@ -276,6 +335,27 @@ export async function assistApply({
       if (result.blockers.length > 0) return false;
       if (!result.sponsorshipTruthful || !result.requiredFieldsFilled) return false;
       if (!result.submitSelector || !result.submitSelectorConfident) return false;
+      // A legal / immigration / demographic answer chosen LIVE that the human
+      // never reviewed in the packet is not covered by their approval: they
+      // approved "Yes, I require sponsorship", not whichever option a live
+      // widget ended up showing, and not an answer to a question the packet
+      // did not know about.
+      const unreviewed = unreviewedSensitiveAnswers(result.liveAnswers, packet?.screeningPlan?.answered ?? []);
+      if (unreviewed.length) {
+        result.autoSubmitWithheld = unreviewed.map((a) => `live answer to "${a.label}" ("${a.value}") was not in the reviewed packet`);
+        result.note = `auto-submit withheld — ${result.autoSubmitWithheld[0]}; review it and submit yourself`;
+        return false;
+      }
+      // Ask the live DOM, not the static plan, whether anything required is
+      // still blank. `null` means the scope cannot be inspected (a unit-test
+      // double); a real Playwright page always can.
+      const blankRequired = await unfilledRequiredControls(scope);
+      if (Array.isArray(blankRequired) && blankRequired.length) {
+        result.requiredFieldsFilled = false;
+        result.autoSubmitWithheld = blankRequired.map((l) => `required field is empty: ${l}`);
+        result.note = `auto-submit withheld — ${blankRequired.length} required field(s) still empty (${blankRequired.slice(0, 3).join(', ')})`;
+        return false;
+      }
       if ((dailyCount ?? 0) >= dailyCap) {
         result.note = `daily application cap reached (${dailyCap}) — filled but left for you to submit`;
         return false;
@@ -378,7 +458,11 @@ export async function assistApply({
     };
 
     // 1. Open + guard. Never proceed past a protected page.
-    const resumeUrl = result.resumed && applicationState.lastUrl ? applicationState.lastUrl : url;
+    // Resume at the saved step — unless that URL was a wall. Reopening a
+    // CAPTCHA/login page "where we left off" only ever hits the same wall (or
+    // an expired SSO callback); the job's own URL is the safe restart.
+    const resumeUrl = result.resumed && applicationState.lastUrl && !unsafeResumeUrl(applicationState)
+      ? applicationState.lastUrl : url;
     await checkpoint(APPLICATION_PHASE.OPENING, {
       currentStep: applicationState.currentStep,
       lastUrl: resumeUrl,
@@ -394,6 +478,7 @@ export async function assistApply({
         currentStep: applicationState.currentStep,
         lastUrl: nav.url ?? resumeUrl,
         blockers: result.blockers,
+        lastUrlUnsafe: true,
       }, `page blocked (${nav.guard.kind})`);
       return result;
     }
@@ -428,6 +513,7 @@ export async function assistApply({
             currentStep: stepNumber,
             lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
             blockers: result.blockers,
+            lastUrlUnsafe: true,
           }, `page blocked (${nav.guard.kind})`);
           return result;
         }
@@ -463,7 +549,10 @@ export async function assistApply({
       for (const err of fill.errors ?? []) stepBlockers.push(`field ${err.field}: ${err.error}`);
 
       // 2b. Dynamic, type-aware fill of whatever is actually on the page now.
-      const scanned = await scanFields(scope);
+      // Only the application's own controls: a header search box or a
+      // newsletter signup is neither filled nor counted as "this page has a
+      // form" (see applicationFields / allowApplyStart below).
+      const scanned = applicationFields(await scanFields(scope));
       const dyn = await fillScannedFields(scope, scanned, { candidate, screeningAnswers, alreadyFilled: stepFilledKeys });
       for (const f of dyn.filled ?? []) {
         completedThisStep.push(f);
@@ -475,7 +564,7 @@ export async function assistApply({
       // A checkbox/radio/select can reveal a conditional question. Re-scan
       // once after applying the first dynamic batch and fill only newly visible
       // controls (stepFilledKeys prevents duplicate actions).
-      const conditionalScan = await scanFields(scope);
+      const conditionalScan = applicationFields(await scanFields(scope));
       const conditional = await fillScannedFields(scope, conditionalScan, {
         candidate, screeningAnswers, alreadyFilled: stepFilledKeys,
       });
@@ -488,6 +577,12 @@ export async function assistApply({
           .map((item) => [`${item.selector ?? ''}|${item.label ?? ''}`, item]),
       );
       dynamicNeedsUser = [...needsUserByKey.values()];
+      for (const f of [...(dyn.filled ?? []), ...(conditional.filled ?? [])]) {
+        if (f.source !== 'screening') continue;
+        result.liveAnswers.push({
+          label: f.label ?? null, value: f.value ?? null, kind: f.kind ?? null, step: stepNumber,
+        });
+      }
       for (const err of conditional.errors ?? []) stepBlockers.push(`field ${err.label ?? err.field}: ${err.error}`);
       result.unresolved = staticUnresolved;
 
@@ -579,7 +674,10 @@ export async function assistApply({
         stepBlockers.push(`field ${rejected.label ?? rejected.field ?? 'unknown'} was not accepted: ${rejected.reason}`);
       }
       const req = requiredFieldsSatisfied(result.filled, packet.fillPlan);
-      result.requiredFieldsFilled = req.ok;
+      // The auto-submit gate uses the STRICT form, which is not vacuously
+      // satisfied by an empty static plan (see requiredFieldsSatisfied).
+      result.requiredFieldsFilled = req.ok
+        && requiredFieldsSatisfied(result.filled, packet.fillPlan, undefined, { strict: true }).ok;
       const pendingRequiredBlocker = req.ok ? null : `required fields missing: ${req.missing.join(', ')}`;
 
       // Rewrite the validating checkpoint with live acceptance results and the
@@ -625,6 +723,8 @@ export async function assistApply({
       // the eventual resume/contact controls yet. We may safely advance through
       // Apply/Start/Next/Continue, then re-scan the new DOM. A final Submit is
       // still excluded by findAdvanceControl and remains human-gated.
+      // `scanned` already excludes search boxes, consent banners and signup
+      // forms: a JD landing page with a header search box is still fieldless.
       const advance = await findAdvanceControl(scope, {
         allowApplyStart: scanned.length === 0 && result.filled.length === 0,
       });
@@ -740,6 +840,7 @@ export async function assistApply({
           currentStep: stepNumber,
           lastUrl: afterAdvance.url ?? currentUrlOf(page) ?? resumeUrl,
           blockers: result.blockers,
+          lastUrlUnsafe: true,
         }, `page blocked after advancing (${afterAdvance.guard.kind})`);
         return result;
       }
@@ -825,8 +926,193 @@ export async function assistApply({
     // human (headed + stopped before submit). In headless/CI, always close.
     if (!result.sessionLeftOpen) {
       await session.close?.();
+    } else if (shouldWatchForHumanSubmit(result, options, session?.page)) {
+      // The human has the window now. If they submit and the ATS shows its
+      // confirmation page, record that as a human submission PENDING their
+      // confirmation — it used to go unrecorded until they remembered to press
+      // "Mark submitted", while the job still read "ready to submit" and a
+      // re-run could reopen it.
+      result.watchingForHumanSubmit = true;
+      const inspect = deps.inspectPage ?? inspectCurrentPage;
+      result.humanSubmitWatch = watchForHumanSubmission({
+        page: session.page,
+        url,
+        inspectPage: inspect,
+        pollMs: options.humanSubmitPollMs,
+        timeoutMs: options.humanSubmitWatchMs,
+        onConfirmed: async (verification) => {
+          const evidence = [
+            'confirmation page seen after hand-off to the human',
+            ...verification.signals,
+          ];
+          try {
+            const next = transitionApplicationState(applicationState, APPLICATION_PHASE.USER_SUBMITTED, {
+              lastUrl: verification.lastUrl ?? url,
+              submissionEvidence: evidence,
+              blockers: [],
+            }, { now: clock, detail: 'confirmation page detected after the human took over' });
+            applicationState = next;
+            if (stateStore) await stateStore.save?.(next);
+          } catch { /* the DB record below is still made */ }
+          const update = {
+            jobId: result.jobId,
+            status: LIFECYCLE.SUBMIT_UNVERIFIED,
+            submitted: false,
+            filled: result.filled,
+            blockers: [],
+            humanSubmissionDetected: {
+              at: nowIso(),
+              url: verification.lastUrl ?? null,
+              signals: verification.signals,
+            },
+            phases: [{ phase: APPLICATION_PHASE.USER_SUBMITTED, at: nowIso(), detail: 'confirmation page detected' }],
+          };
+          try { await deps.onHumanSubmitted?.(update); } catch { /* recording is best-effort here */ }
+        },
+      });
     }
   }
+}
+
+/** Should the runner watch a handed-over window for the human's submission? */
+function shouldWatchForHumanSubmit(result, options, page) {
+  if (options.watchHumanSubmit === false || result.submitted) return false;
+  if (![LIFECYCLE.READY_FOR_SUBMIT, LIFECYCLE.ASSIST_BLOCKED].includes(result.status)) return false;
+  return Boolean(page) && typeof page.on === 'function';
+}
+
+/** Default: stop watching a handed-over window after 45 minutes. */
+const HUMAN_SUBMIT_WATCH_MS = 45 * 60 * 1000;
+
+/**
+ * Watch a page the human is finishing for the ATS's confirmation page.
+ *
+ * Evidence is the SAME as for an auto-submit (`verifySubmission`), but only
+ * its strongest signal counts here: a visible confirmation message. "The URL
+ * changed and the form is gone" is what a human browsing away looks like, so
+ * it is not accepted. A confirmation phrase already visible when watching
+ * starts (a sidebar "Thanks for applying to other roles") only counts after
+ * the page has navigated. Stops on the first match, when the page closes, or
+ * after `timeoutMs`.
+ *
+ * @param {object} args
+ * @param {object} args.page Playwright page
+ * @param {string} args.url application URL (fallback for inspection)
+ * @param {Function} args.inspectPage inspectCurrentPage-compatible
+ * @param {(verification: object) => Promise<void>|void} args.onConfirmed
+ * @param {number} [args.pollMs=1500]
+ * @param {number} [args.timeoutMs]
+ * @returns {{ stop: () => void, readonly stopped: boolean, ready: Promise<void> }}
+ */
+export function watchForHumanSubmission({
+  page, url, inspectPage = inspectCurrentPage, onConfirmed, pollMs = 1500, timeoutMs = HUMAN_SUBMIT_WATCH_MS,
+} = {}) {
+  let stopped = false;
+  let checking = false;
+  let navigated = false;
+  let baselineHit = false;
+  const timers = [];
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    for (const t of timers) { clearInterval(t); clearTimeout(t); }
+    try { page.off?.('framenavigated', onNavigate); } catch { /* ignore */ }
+    try { page.off?.('close', stop); } catch { /* ignore */ }
+  };
+
+  const check = async () => {
+    if (stopped || checking) return;
+    if (baselineHit && !navigated) return;
+    checking = true;
+    try {
+      if (page.isClosed?.()) { stop(); return; }
+      const verification = await verifySubmission({ page, url, beforeUrl: null, inspectPage });
+      if (!stopped && verification.verified && verification.signals.includes('confirmation message')) {
+        stop();
+        await onConfirmed?.(verification);
+      }
+    } catch { /* a page mid-navigation is checked again on the next tick */ } finally {
+      checking = false;
+    }
+  };
+
+  function onNavigate(frame) {
+    try { if (frame && typeof page.mainFrame === 'function' && frame !== page.mainFrame()) { /* iframe */ } } catch { /* ignore */ }
+    navigated = true;
+    // Give the new document a moment to render its confirmation text.
+    const t = setTimeout(check, 250);
+    t.unref?.();
+    timers.push(t);
+  }
+
+  page.on('framenavigated', onNavigate);
+  page.on('close', stop);
+  const ready = (async () => {
+    try {
+      const html = await page.content();
+      baselineHit = SUBMIT_CONFIRMATION_RE.test(visibleText(html));
+    } catch { baselineHit = false; }
+    if (stopped) return;
+    const poll = setInterval(check, Math.max(50, Number(pollMs) || 1500));
+    poll.unref?.();
+    timers.push(poll);
+    const deadline = setTimeout(stop, Math.max(1000, Number(timeoutMs) || HUMAN_SUBMIT_WATCH_MS));
+    deadline.unref?.();
+    timers.push(deadline);
+  })();
+
+  return { stop, get stopped() { return stopped; }, ready };
+}
+
+/**
+ * Folder name of the persistent browser profile for a search profile/channel.
+ * @param {{channel?: string|null, profileId?: string|null}} args
+ * @returns {string}
+ */
+export function browserProfileDirName({ channel = null, profileId = null } = {}) {
+  const profile = String(profileId ?? '').trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  return ['.browser-profile', profile, channel].filter(Boolean).join('-');
+}
+
+/** Lower-case, punctuation-free comparison form of a label or answer. */
+function normAnswer(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Live answers to sensitive questions (sponsorship, authorization, legal,
+ * EEO) that the reviewed packet does not contain with the same meaning.
+ *
+ * A live answer is "reviewed" when the packet planned an answer for the same
+ * question and the committed text is that answer, or starts with the same
+ * yes/no. Exported for tests.
+ *
+ * @param {Array<{label: string, value: string}>} live result.liveAnswers
+ * @param {Array<{label?: string, answer?: string, value?: string}>} reviewed packet.screeningPlan.answered
+ * @returns {Array<{label: string, value: string}>}
+ */
+export function unreviewedSensitiveAnswers(live = [], reviewed = []) {
+  const planned = new Map(reviewed
+    .filter((r) => r?.label)
+    .map((r) => [normAnswer(r.label), normAnswer(r.answer ?? r.value)]));
+  const lead = (t) => (/^(yes|y)\b/.test(t) ? 'yes' : /^(no|n)\b/.test(t) ? 'no' : null);
+  return live.filter((a) => {
+    const label = String(a?.label ?? '');
+    if (!isSensitiveChoiceLabel(label) && !isSponsorshipTopic(label)) return false;
+    const want = planned.get(normAnswer(label));
+    if (want === undefined) return true;
+    const got = normAnswer(a.value);
+    if (!got) return true;
+    if (got === want || want.startsWith(got) || got.startsWith(want)) return false;
+    return !(lead(got) && lead(got) === lead(want));
+  });
+}
+
+/** Was the checkpoint's last URL a wall (flagged, or a login-shaped URL)? */
+function unsafeResumeUrl(state) {
+  if (state?.lastUrlUnsafe === true) return true;
+  return detectBlocker({ url: String(state?.lastUrl ?? '') }).blocked;
 }
 
 /** Count selector matches (0 on error / missing selector). */
@@ -876,24 +1162,8 @@ const SUBMIT_FAILURE_RE = new RegExp([
   '\\brequest (?:has )?failed\\b',
 ].join('|'), 'i');
 
-/**
- * Visible-ish text of an HTML document: scripts, styles and markup removed.
- *
- * Confirmation and failure phrases both appear verbatim inside bundled
- * JavaScript on most ATSes, so matching raw HTML reports whichever template the
- * page happens to ship rather than what it is actually showing a human.
- *
- * @param {string} html
- * @returns {string}
- */
-export function visibleText(html = '') {
-  return String(html ?? '')
-    .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/gi, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
+/** Re-exported: the page guard and submit verification share one definition. */
+export { visibleText };
 
 /**
  * Does this page say the request FAILED?
@@ -951,7 +1221,8 @@ async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
     if (scope && scope !== page && typeof scope.content === 'function') {
       html += await scope.content();
     }
-    const fields = await scanFields(scope);
+    // A confirmation page with a site search box still has "no form left".
+    const fields = applicationFields(await scanFields(scope));
     formGone = Array.isArray(fields) && fields.length === 0;
   } catch { formGone = false; }
 

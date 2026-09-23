@@ -42,7 +42,8 @@ describe('pythonEnv', () => {
   });
 
   it('resolves the interpreter from the usual overrides', () => {
-    expect(pythonExe({})).toBe('python');
+    // No override, no venv, nothing on PATH: a real interpreter name.
+    expect(pythonExe({}, { root: '/nowhere', platform: 'linux', exists: () => false })).toBe('python3');
     expect(pythonExe({ PYTHON: 'python3.12' })).toBe('python3.12');
     expect(pythonExe({ PYTHON_EXECUTABLE: '/opt/py/bin/python' })).toBe('/opt/py/bin/python');
   });

@@ -11,8 +11,8 @@
  * packet performs no network activity and submits nothing.
  */
 
-import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
 import { join } from 'node:path';
@@ -22,6 +22,8 @@ import { getPlatform } from './platforms/index.js';
 import { buildPrefillPlan } from './formPrefill.js';
 import { buildUploadPlan } from './fileUpload.js';
 import { nowIso } from '../utils/dates.js';
+import { assertNoTemplateTokens, findTemplateTokens, isPlaceholderValue } from '../config/placeholders.js';
+import { candidatePrefix } from '../utils/outputPaths.js';
 
 /**
  * Who a packet belongs to.
@@ -57,33 +59,110 @@ export function packetOwner(config = {}) {
 const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
 
 /**
+ * Content hash of the master resume, the same provenance marker the pipeline
+ * stamps onto `owner.resumeFingerprint` when it builds a packet.
+ *
+ * @param {string|undefined} root project root
+ * @returns {string|null} null when there is no readable master resume
+ */
+export function masterResumeFingerprint(root) {
+  try {
+    if (!root) return null;
+    const master = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+    if (!existsSync(master)) return null;
+    return createHash('sha1').update(readFileSync(master)).digest('hex').slice(0, 16);
+  } catch {
+    return null;
+  }
+}
+
+/** Final path segment on either separator (packets written on Windows too). */
+function fileBase(path) {
+  return String(path ?? '').split(/[\\/]/).pop();
+}
+
+/** Largest legacy cover letter we will read to look for template text. */
+const MAX_LEGACY_TEXT_BYTES = 64 * 1024;
+
+/**
+ * Template text left in a legacy packet's plain-text cover letter, or null.
+ * Cheap and best-effort: only a small .txt is read; anything else is skipped.
+ */
+function legacyArtifactProblem(packet, readText) {
+  const path = packet?.coverLetterPath;
+  if (!path || !/\.txt$/i.test(path)) return null;
+  const text = readText(path);
+  if (typeof text !== 'string') return null;
+  const tokens = findTemplateTokens(text);
+  if (tokens.length) return `its cover letter still contains template placeholders (${tokens.join(', ')})`;
+  const templated = text.split(/\r?\n/).map((l) => l.trim()).find((l) => isPlaceholderValue(l));
+  return templated ? `its cover letter still contains template text ("${templated.slice(0, 60)}")` : null;
+}
+
+function defaultReadText(path) {
+  try {
+    if (!existsSync(path) || statSync(path).size > MAX_LEGACY_TEXT_BYTES) return null;
+    return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Can a packet with NO recorded owner be shown to belong to this candidate?
+ *
+ * It used to be "unknown-but-usable": the fallback compared
+ * `packet.candidateName`, a field no packet has ever been written with, so
+ * every legacy packet passed — including ones built from the shipped example
+ * profile for "Jane Doe". The rule is now fail-closed: a legacy packet is the
+ * active candidate's only when every document it would upload is named for
+ * them (`<First>_<Last>_Resume_…`, the prefix the pipeline has always written),
+ * and its cover letter carries no template text.
+ */
+function legacyOwnershipCheck(packet, current, readText) {
+  // Nothing to compare against (no candidate configured): there is no second
+  // person this packet could be leaking to, and preflight refuses such a
+  // config long before any application opens.
+  if (!current.candidateName) return { ok: true, reason: null };
+  const named = String(packet?.candidateName ?? '').trim();
+  if (named && !sameText(named, current.candidateName)) {
+    return { ok: false, reason: `it was prepared for ${named}, not ${current.candidateName}` };
+  }
+  const expected = `${candidatePrefix(current.candidateName)}_`.toLowerCase();
+  const documents = [packet?.resumePath, packet?.coverLetterPath, packet?.resumePdfPath]
+    .filter(Boolean).map(fileBase);
+  const foreign = documents.filter((name) => !name.toLowerCase().startsWith(expected));
+  if (!documents.length || foreign.length) {
+    return {
+      ok: false,
+      reason: `it records no owner and its documents (${(foreign.length ? foreign : ['none']).join(', ')}) `
+        + `are not named for ${current.candidateName}`,
+    };
+  }
+  const templated = legacyArtifactProblem(packet, readText);
+  if (templated) return { ok: false, reason: templated };
+  return { ok: true, reason: null };
+}
+
+/**
  * Does this packet belong to the candidate the config currently describes?
  *
  * Returns the REASON when it does not, so the caller can tell the user which
- * mismatch it found rather than silently rebuilding.
- *
- * A packet from before this field existed has no owner recorded. That is
- * treated as unknown-but-usable rather than foreign: refusing every historical
- * packet would strand work the user already reviewed and approved, and the
- * profile-switch leak this guards against is a going-forward problem. The
- * packet does carry the candidate name in its documents, so a legacy packet
- * whose name disagrees is still caught below.
+ * mismatch it found rather than silently rebuilding. Called at every
+ * chokepoint that reuses a stored packet: the runner itself, the extension
+ * payload, the CLI assist/apply loops and the dashboard.
  *
  * @param {object} packet loaded application packet
  * @param {object} config loadConfig() bundle
+ * @param {object} [deps]
+ * @param {(root: string) => string|null} [deps.fingerprintImpl] current master-resume fingerprint
+ * @param {(path: string) => string|null} [deps.readTextImpl] legacy artifact reader
  * @returns {{ok: boolean, reason: string|null}}
  */
-export function packetOwnershipCheck(packet, config = {}) {
+export function packetOwnershipCheck(packet, config = {}, deps = {}) {
   const current = packetOwner(config);
   const owner = packet?.owner ?? null;
-  if (!owner) {
-    // Legacy packet: fall back to the one identity it has always carried.
-    const named = String(packet?.candidateName ?? '').trim();
-    if (named && current.candidateName && !sameText(named, current.candidateName)) {
-      return { ok: false, reason: `it was prepared for ${named}, not ${current.candidateName}` };
-    }
-    return { ok: true, reason: null };
-  }
+  if (!owner) return legacyOwnershipCheck(packet, current, deps.readTextImpl ?? defaultReadText);
   if (owner.candidateName && current.candidateName && !sameText(owner.candidateName, current.candidateName)) {
     return { ok: false, reason: `it was prepared for ${owner.candidateName}, not ${current.candidateName}` };
   }
@@ -96,6 +175,21 @@ export function packetOwnershipCheck(packet, config = {}) {
       reason: `it was prepared under the "${owner.profileLabel ?? owner.profileId}" search profile, `
         + `and "${current.profileLabel ?? current.profileId}" is active now`,
     };
+  }
+  // WHICH CAREER HISTORY. The fingerprint was recorded as provenance and never
+  // compared, so replacing MASTER_RESUME.docx with a different person's resume
+  // (same name in the profile) left every stored packet "owned". When both
+  // sides are known and differ, the tailored documents describe a resume that
+  // is no longer the one on disk.
+  if (owner.resumeFingerprint) {
+    const now = current.resumeFingerprint
+      ?? (deps.fingerprintImpl ?? masterResumeFingerprint)(config.root);
+    if (now && now !== owner.resumeFingerprint) {
+      return {
+        ok: false,
+        reason: 'it was tailored from a different master resume than the one on disk now',
+      };
+    }
   }
   return { ok: true, reason: null };
 }
@@ -128,6 +222,15 @@ export function buildApplicationPacket({
 
   const prefill = buildPrefillPlan(formFields, { candidate, screeningAnswers });
   const uploads = buildUploadPlan({ resumePath, coverLetterPath });
+
+  // Nothing addressed to an employer may carry an unfilled `{token}`: not the
+  // cover letter, and not a planned form answer that will be typed into their
+  // ATS verbatim. `generateCoverLetter` already refuses; this is the packet's
+  // own chokepoint for any other composer or answer source.
+  if (coverLetter?.generated) assertNoTemplateTokens(coverLetter.text, 'cover letter');
+  for (const entry of prefill.plan) {
+    assertNoTemplateTokens(entry.value, `answer for "${entry.label}"`);
+  }
 
   const partialPacket = { job, prefill, uploads };
   const fillPlan = platform.prepare(partialPacket);

@@ -18,6 +18,7 @@ import { join } from 'node:path';
 import { createBrowserSession, openApplicationPage } from '../../src/automation/browser.js';
 import { detectValidationErrors } from '../../src/automation/domScanner.js';
 import { assistApply } from '../../src/automation/applyRunner.js';
+import { packetOwner } from '../../src/apply/applicationPacket.js';
 import { loadTestConfig } from './helpers/testConfig.js';
 import { browserUnavailable } from './helpers/browser.js';
 
@@ -57,6 +58,7 @@ describe('validation-error detection (real browser)', () => {
 
     const packet = {
       job: { id: 'fixture-validation', company: 'Acme', title: 'DE', url: FORM_URL },
+      owner: packetOwner(config),
       blockers: [],
       screeningPlan: { answered: [], needsUser: [] },
       fillPlan: {

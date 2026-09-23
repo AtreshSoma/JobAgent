@@ -79,6 +79,18 @@ const SPONSORSHIP_TOPIC_RE =
   /\b(sponsor(?:ship|ed|ing)?|visa|h-?1-?b|work\s+authoriz|authoriz(?:ed|ation)\s+to\s+work|right\s+to\s+work|employment\s+eligib|immigration\s+status)\b/i;
 
 /**
+ * Is this question ABOUT sponsorship / visa / work authorization at all?
+ * Exported so the live filler can apply its read-back check to exactly the
+ * questions `isInvertedSponsorshipQuestion` and the truthfulness guard judge.
+ *
+ * @param {string} question
+ * @returns {boolean}
+ */
+export function isSponsorshipTopic(question) {
+  return SPONSORSHIP_TOPIC_RE.test(String(question ?? ''));
+}
+
+/**
  * Negators that INVERT a sponsorship question's meaning.
  *
  * ATSes ask this both ways, and the two forms take opposite answers:
@@ -484,17 +496,37 @@ function matchScore(text, patterns) {
   return best;
 }
 
-function mapToChoice(answer, type, choices) {
+/**
+ * Map a stored answer onto one of the live form's choices, or null.
+ *
+ * Exported for tests. Partial matches are WHOLE-WORD in both directions: the
+ * substring test this replaced mapped the answer "No" onto the choice
+ * "Now or in the future" (and onto "…will NOT require sponsorship"), writing
+ * the opposite immigration answer from the one configured.
+ *
+ * @param {string} answer
+ * @param {string|null} type
+ * @param {string[]} choices
+ * @returns {string|null}
+ */
+export function mapToChoice(answer, type, choices) {
   const norm = normalizeText(answer);
   // Boolean-style questions.
   if (type === 'boolean_yes' || /^yes\b/.test(norm)) {
     const yes = choices.find((c) => /^(yes|y)\b/i.test(c.trim()));
     if (yes) return yes;
   }
-  // Direct/substring match against a provided choice.
+  if (/^no\b/.test(norm)) {
+    const no = choices.find((c) => /^(no|n)\b/i.test(c.trim()));
+    if (no) return no;
+  }
+  // Direct/whole-word match against a provided choice.
   const direct = choices.find((c) => normalizeText(c) === norm);
   if (direct) return direct;
-  const partial = choices.find((c) => norm.includes(normalizeText(c)) || normalizeText(c).includes(norm));
+  const partial = choices.find((c) => {
+    const choice = normalizeText(c);
+    return choice && (wholeWordIn(norm, choice) || wholeWordIn(choice, norm));
+  });
   return partial ?? null;
 }
 

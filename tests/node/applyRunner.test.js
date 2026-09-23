@@ -425,7 +425,7 @@ describe('assistApply', () => {
     };
 
     const r = await assistApply({
-      packet: basePacket(),
+      packet: basePacket({ owner: { candidateName: 'Priya Raghunathan', candidateEmail: 'a@b.com' } }),
       config: {
         runtime: { maxApplicationsPerDay: 15, assistMaxSteps: 1 },
         scoring: { submit: { minScore: 75 } },

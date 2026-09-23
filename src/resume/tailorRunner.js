@@ -19,7 +19,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { extractJdRequirements } from '../llm/jdRequirements.js';
-import { pythonExe, pythonEnv } from './pythonEnv.js';
+import {
+  pythonExe, pythonSpawnOptions, pythonTimeoutMs, killProcessTree,
+} from './pythonEnv.js';
 
 /** Default master resume location (never overwritten). */
 export function masterResumePath(root) {
@@ -222,7 +224,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
 
   let response;
   try {
-    response = await invokePython(request, deps);
+    response = await invokePython(request, { ...deps, root });
   } catch (err) {
     return { ...fallback, warning: `resume tailoring failed: ${err.message}` };
   }
@@ -293,7 +295,11 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
 function invokePython(request, deps = {}) {
   const spawnImpl = deps.spawnImpl ?? spawn;
   const env = deps.env ?? process.env;
-  const timeoutMs = deps.timeoutMs ?? 60000;
+  const platform = deps.platform ?? process.platform;
+  // Longer than Python's own PDF conversion limits when a PDF is requested,
+  // so Python reports "conversion timed out" itself instead of Node killing a
+  // healthy tailor mid-export and discarding the DOCX it already wrote.
+  const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({ exportPdf: request.export_pdf === true });
   const script = scriptPath();
 
   return new Promise((resolve, reject) => {
@@ -302,10 +308,7 @@ function invokePython(request, deps = {}) {
       // The request carries the output directory, which is derived from the
       // company name. Without a UTF-8 pipe the tailor CREATES the mangled
       // directory and writes the resume into it — see pythonEnv.js.
-      child = spawnImpl(pythonExe(env), [script], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: pythonEnv(env),
-      });
+      child = spawnImpl(pythonExe(env, { root: deps.root, platform }), [script], pythonSpawnOptions(env, platform));
     } catch (err) {
       reject(err);
       return;
@@ -318,12 +321,17 @@ function invokePython(request, deps = {}) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try { child.kill(); } catch { /* ignore */ }
+      killProcessTree(child, { platform, killImpl: deps.killImpl, spawnImpl });
       reject(new Error(`python tailor timed out after ${timeoutMs}ms`));
     }, timeoutMs);
 
-    child.stdout?.on('data', (d) => { stdout += d.toString(); });
-    child.stderr?.on('data', (d) => { stderr += d.toString(); });
+    // Decode as a STREAM: `chunk.toString()` per chunk split any multi-byte
+    // character that straddled two chunks into two U+FFFD — in the JSON that
+    // carries file paths, so "84.51°" came back as "84.51\uFFFD\uFFFD".
+    child.stdout?.setEncoding?.('utf8');
+    child.stderr?.setEncoding?.('utf8');
+    child.stdout?.on('data', (d) => { stdout += d; });
+    child.stderr?.on('data', (d) => { stderr += d; });
 
     child.on('error', (err) => {
       if (settled) return;
@@ -348,6 +356,11 @@ function invokePython(request, deps = {}) {
       }
     });
 
+    // A Python that exits before reading stdin (bad interpreter, import error)
+    // makes the write fail with EPIPE as an 'error' EVENT, not a throw — and an
+    // unhandled stream error crashes the whole Node process. The 'close'
+    // handler above already reports what Python printed.
+    child.stdin?.on?.('error', () => {});
     try {
       child.stdin?.write(JSON.stringify(request));
       child.stdin?.end();

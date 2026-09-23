@@ -69,6 +69,32 @@ function collectFields() {
     return null;
   };
 
+  // Controls that are on the page but are NOT the application: a site search
+  // box, a cookie/consent banner, a newsletter or job-alert signup. Reporting
+  // them as ordinary fields meant a JD landing page with a header search box
+  // "had fields", so its "Apply now" button was never allowed as the way in,
+  // and the filler typed the candidate's email into the newsletter form.
+  const SEARCHY = /search|keyword|query|\bq\b|find.?jobs/i;
+  const SIGNUP = /newsletter|subscribe|subscription|job.?alert|talent.?(?:community|network)|get.?notified|sign.?up.?for|mailing.?list/i;
+  const incidentalReason = (el) => {
+    const type = (el.getAttribute('type') || '').toLowerCase();
+    const hint = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' ');
+    if (type === 'search' || el.closest('[role="search"], search')) return 'search';
+    if (el.closest('header, nav, [role="banner"], [role="navigation"]') && SEARCHY.test(hint)) return 'search';
+    if (el.closest('[id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], [id*="onetrust" i], [class*="gdpr" i]')) {
+      return 'consent-banner';
+    }
+    const form = el.closest('form');
+    const box = form || el.closest('[class*="newsletter" i], [id*="newsletter" i], [class*="subscribe" i]');
+    if (box) {
+      const text = [box.id, box.className, box.getAttribute('action'), box.getAttribute('aria-label'),
+        (box.textContent || '').slice(0, 400)].join(' ');
+      const size = box.querySelectorAll('input:not([type="hidden"]), select, textarea').length;
+      if (SIGNUP.test(text) && size <= 3) return 'signup';
+    }
+    return null;
+  };
+
   const out = [];
   const seenRadioGroups = new Set();
   const controls = Array.from(document.querySelectorAll('input, textarea, select'));
@@ -166,9 +192,30 @@ function collectFields() {
     });
   }
 
+  // Tag (never drop) incidental controls, so callers decide what to ignore.
+  for (const field of out) {
+    let el = null;
+    try { el = field.selector ? document.querySelector(field.selector) : null; } catch { el = null; }
+    if (!el && field.kind === 'radio' && field.options?.[0]?.selector) {
+      try { el = document.querySelector(field.options[0].selector); } catch { el = null; }
+    }
+    const reason = el ? incidentalReason(el) : null;
+    if (reason) field.incidental = reason;
+  }
   return out;
 }
 /* c8 ignore stop */
+
+/**
+ * The scanned fields that belong to the application itself (drops site
+ * search, consent banners and newsletter/job-alert signups).
+ *
+ * @param {Array<object>} fields scanFields() result
+ * @returns {Array<object>}
+ */
+export function applicationFields(fields = []) {
+  return (Array.isArray(fields) ? fields : []).filter((f) => !f?.incidental);
+}
 
 /**
  * Scan the current page for fillable form fields.
@@ -307,5 +354,80 @@ export async function detectValidationErrors(scope) {
     return Array.isArray(errors) ? errors : [];
   } catch {
     return [];
+  }
+}
+
+/**
+ * Labels of every VISIBLE required control that is still empty on this step.
+ *
+ * The auto-submit gate used to trust `requiredFieldsSatisfied`, which only
+ * knows about fields in the packet's static plan — and with an empty plan (the
+ * normal case for a dynamically scanned form) it was vacuously true, so a form
+ * with a blank required question could be submitted. This asks the live DOM
+ * instead: `[required]` and `[aria-required="true"]` controls, radio groups by
+ * name, checkboxes by `checked`, file inputs by their FileList.
+ *
+ * @param {object} scope Playwright Page or Frame
+ * @returns {Promise<string[]|null>} empty labels, or null when the scope cannot
+ *   be inspected (unit-test doubles)
+ */
+export async function unfilledRequiredControls(scope) {
+  if (!scope || typeof scope.evaluate !== 'function') return null;
+  try {
+    const missing = await scope.evaluate(() => {
+      const visible = (el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const labelOf = (el) => {
+        if (el.labels && el.labels.length) return el.labels[0].textContent.trim();
+        const aria = el.getAttribute('aria-label');
+        if (aria) return aria.trim();
+        const by = el.getAttribute('aria-labelledby');
+        if (by) {
+          const ref = document.getElementById(by.split(/\s+/)[0]);
+          if (ref) return ref.textContent.trim();
+        }
+        return el.name || el.id || 'required field';
+      };
+      const out = [];
+      const seenGroups = new Set();
+      const controls = document.querySelectorAll(
+        'input[required], select[required], textarea[required], [aria-required="true"]',
+      );
+      for (const el of controls) {
+        const tag = el.tagName.toLowerCase();
+        const type = String(el.getAttribute('type') || tag).toLowerCase();
+        if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) continue;
+        if (el.disabled) continue;
+        if (type === 'radio') {
+          if (!el.name || seenGroups.has(el.name)) continue;
+          seenGroups.add(el.name);
+          const group = [...document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)];
+          if (!group.some(visible)) continue;
+          if (!group.some((r) => r.checked)) out.push(labelOf(el));
+          continue;
+        }
+        if (!['input', 'select', 'textarea'].includes(tag)) {
+          // An ARIA widget (radiogroup / combobox / listbox) marked required.
+          if (!visible(el)) continue;
+          const chosen = el.querySelector('[aria-checked="true"], [aria-selected="true"]')
+            || (el.getAttribute('aria-valuetext') || '').trim()
+            || el.querySelector('[class*="single-value"], [class*="singleValue"]');
+          if (!chosen) out.push(labelOf(el));
+          continue;
+        }
+        if (!visible(el)) continue;
+        if (type === 'checkbox') { if (!el.checked) out.push(labelOf(el)); continue; }
+        if (type === 'file') { if (!el.files || el.files.length === 0) out.push(labelOf(el)); continue; }
+        if (!String(el.value ?? '').trim()) out.push(labelOf(el));
+      }
+      return [...new Set(out.map((l) => l.replace(/\s+/g, ' ').slice(0, 120)))];
+    });
+    return Array.isArray(missing) ? missing : null;
+  } catch {
+    return null;
   }
 }

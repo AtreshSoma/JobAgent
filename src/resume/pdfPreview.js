@@ -2,7 +2,9 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { pythonExe, pythonEnv } from './pythonEnv.js';
+import {
+  pythonExe, pythonSpawnOptions, pythonTimeoutMs, killProcessTree,
+} from './pythonEnv.js';
 
 function lastJsonLine(text) {
   const lines = String(text ?? '').split(/\r?\n/).filter((line) => line.trim());
@@ -13,7 +15,10 @@ function lastJsonLine(text) {
  * Convert a generated tailored DOCX to a sibling PDF. Existing PDFs are reused.
  * The caller is responsible for validating that both paths are workspace-local.
  */
-export function ensureResumePdf(docxPath, { spawnImpl = spawn, env = process.env, timeoutMs = 60000 } = {}) {
+export function ensureResumePdf(docxPath, {
+  spawnImpl = spawn, env = process.env, timeoutMs = pythonTimeoutMs({ exportPdf: true, baseMs: 15_000 }),
+  platform = process.platform, killImpl, root,
+} = {}) {
   if (!docxPath || !existsSync(docxPath)) {
     return Promise.resolve({ exported: false, pdfPath: null, reason: 'tailored DOCX was not found' });
   }
@@ -24,10 +29,7 @@ export function ensureResumePdf(docxPath, { spawnImpl = spawn, env = process.env
       // `pythonEnv` is what keeps the docx path intact across the pipe. Without
       // it Python reads this path in the OS code page and looks for a file that
       // does not exist, one byte different from the one Node just verified.
-      child = spawnImpl(pythonExe(env), [script], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: pythonEnv(env),
-      });
+      child = spawnImpl(pythonExe(env, { root, platform }), [script], pythonSpawnOptions(env, platform));
     } catch (err) {
       resolve({ exported: false, pdfPath: null, reason: `preview converter could not start: ${err.message}` });
       return;
@@ -42,11 +44,15 @@ export function ensureResumePdf(docxPath, { spawnImpl = spawn, env = process.env
       resolve(value);
     };
     const timer = setTimeout(() => {
-      try { child.kill(); } catch { /* best effort */ }
+      killProcessTree(child, { platform, killImpl, spawnImpl });
       finish({ exported: false, pdfPath: null, reason: `preview conversion timed out after ${timeoutMs}ms` });
     }, timeoutMs);
-    child.stdout?.on('data', (chunk) => { stdout += chunk.toString(); });
-    child.stderr?.on('data', (chunk) => { stderr += chunk.toString(); });
+    // Stream-decoded (see tailorRunner.invokePython).
+    child.stdout?.setEncoding?.('utf8');
+    child.stderr?.setEncoding?.('utf8');
+    child.stdout?.on('data', (chunk) => { stdout += chunk; });
+    child.stderr?.on('data', (chunk) => { stderr += chunk; });
+    child.stdin?.on?.('error', () => { /* EPIPE: reported by 'close' */ });
     child.on('error', (err) => finish({ exported: false, pdfPath: null, reason: `preview conversion failed: ${err.message}` }));
     child.on('close', () => {
       try {

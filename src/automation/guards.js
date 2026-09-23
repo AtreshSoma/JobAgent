@@ -39,15 +39,58 @@ const BLOCKING_PHRASES = Object.freeze({
     'security code we sent',
   ],
   bot: [
-    'checking your browser', 'ddos protection', 'perimeterx',
+    'checking your browser', 'ddos protection',
     'request blocked', 'unusual traffic', 'bot detection',
-    'datadome', 'incapsula', 'akamai bot manager',
     // Cloudflare's "Additional Verification Required" interstitial (shows a
     // Ray ID). Indeed fronts its pages with this and blocks automated browsers.
-    'additional verification required', 'cf-ray',
+    'additional verification required',
     'troubleshooting cloudflare errors',
   ],
 });
+
+/**
+ * Bot-protection VENDOR names. These were strong signals matched against the
+ * raw HTML, and every one of them ships on ordinary, fully usable pages: a
+ * DataDome/PerimeterX/Incapsula sensor script, or a `cf-ray` in a Cloudflare
+ * analytics beacon, sits on a large share of careers sites and ATS forms. A
+ * clean application that merely loaded the vendor's script stopped as a "bot
+ * wall". They now count only on a thin page or next to a real challenge
+ * element (see CHALLENGE_ELEMENT_RE).
+ */
+const VENDOR_TOKENS = Object.freeze(['perimeterx', 'datadome', 'incapsula', 'akamai bot manager', 'cf-ray']);
+
+/**
+ * Markup that only an actual challenge page renders (as opposed to a vendor's
+ * passive sensor script).
+ */
+const CHALLENGE_ELEMENT_RE = /id=["']?(?:challenge-form|challenge-running|challenge-stage|cf-challenge-running|px-captcha)\b|class=["'][^"']*\bcf-(?:challenge|chl)[\w-]*|captcha-delivery\.com|_incapsula_resource|\/cdn-cgi\/challenge-platform\/h\//i;
+
+/**
+ * Visible-ish text of an HTML document: scripts, styles and markup removed.
+ *
+ * The guard used to search the RAW HTML, so a phrase inside a JavaScript
+ * bundle — "please sign in to continue", "session expired", "unusual traffic"
+ * are all error templates shipped by ordinary ATS bundles — stopped runs on
+ * pages that showed none of it. Submission verification had already moved to
+ * visible text (commit 5416e96) for exactly this reason; the page guard now
+ * does the same. Plain text input passes through unchanged.
+ *
+ * @param {string} html
+ * @returns {string}
+ */
+export function visibleText(html = '') {
+  return String(html ?? '')
+    .replace(/<(script|style|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Markup with script/style BODIES removed but tags and attributes kept. */
+function markupWithoutScripts(html = '') {
+  return String(html ?? '').replace(/<(script|style)\b([^>]*)>[\s\S]*?<\/\1>/gi, '<$1$2></$1>');
+}
 
 /**
  * Tokens that DO appear on real bot walls but also appear innocently inside
@@ -106,7 +149,11 @@ const LOGIN_URL_HINTS = ['/login', '/signin', '/sign-in', '/auth', '/account/log
  * }}
  */
 export function detectBlocker({ html = '', url = '', status } = {}) {
-  const haystack = `${html} ${url}`.toLowerCase();
+  const raw = String(html ?? '');
+  // Phrases are matched against what a human would SEE; widget and vendor
+  // tokens against markup (class names, script src) minus script bodies.
+  const text = visibleText(raw).toLowerCase();
+  const markup = markupWithoutScripts(raw).toLowerCase();
   const signals = [];
 
   // HTTP-level blocks first (cheap + unambiguous).
@@ -119,7 +166,7 @@ export function detectBlocker({ html = '', url = '', status } = {}) {
 
   // URL-based login redirect. Each hint must end at a path/query boundary so
   // "/auth" never matches "/author…" and "/signin" never matches a longer slug.
-  const urlLower = url.toLowerCase();
+  const urlLower = String(url ?? '').toLowerCase();
   for (const hint of LOGIN_URL_HINTS) {
     if (hintMatchesUrl(urlLower, hint)) {
       signals.push(`url:${hint}`);
@@ -128,21 +175,27 @@ export function detectBlocker({ html = '', url = '', status } = {}) {
 
   // 1) Strong, unambiguous challenge phrases — block regardless of page size.
   for (const kind of ['captcha', 'mfa', 'bot', 'login']) {
-    const hit = BLOCKING_PHRASES[kind].find((token) => haystack.includes(token));
+    const hit = BLOCKING_PHRASES[kind].find((token) => text.includes(token));
     if (hit) return block(kind, `${kind} signal: "${hit}"`, [...signals, `text:${hit}`]);
   }
 
   // 2) Weak tokens count only on a THIN, dedicated challenge page — not when a
   //    captcha/2FA widget (or the words "access denied") merely appear inside a
-  //    full job/application page.
-  const thin = html.length > 0 && html.length <= THIN_PAGE_MAX;
+  //    full job/application page. "Thin" is measured on VISIBLE text: a
+  //    challenge page can carry 200 KB of script and still show one sentence.
+  const thin = raw.length > 0 && text.length <= THIN_PAGE_MAX;
+  const challengeElement = CHALLENGE_ELEMENT_RE.test(markup);
+  if (thin || challengeElement) {
+    const vendor = VENDOR_TOKENS.find((token) => markup.includes(token) || text.includes(token));
+    if (vendor) return block('bot', `bot protection: "${vendor}"`, [...signals, `vendor:${vendor}`]);
+  }
   if (thin) {
     for (const kind of ['captcha', 'mfa']) {
-      const hit = WIDGET_TOKENS[kind].find((token) => haystack.includes(token));
+      const hit = WIDGET_TOKENS[kind].find((token) => markup.includes(token) || text.includes(token));
       if (hit) return block(kind, `${kind} challenge: "${hit}"`, [...signals, `text:${hit}`]);
     }
     for (const kind of ['bot', 'mfa']) {
-      const hit = (THIN_ONLY_TOKENS[kind] ?? []).find((token) => haystack.includes(token));
+      const hit = (THIN_ONLY_TOKENS[kind] ?? []).find((token) => text.includes(token));
       if (hit) return block(kind, `${kind} interstitial: "${hit}"`, [...signals, `text:${hit}`]);
     }
   }
@@ -187,5 +240,5 @@ export const GUARD_SIGNALS = Object.freeze({
   captcha: [...BLOCKING_PHRASES.captcha, ...WIDGET_TOKENS.captcha],
   login: [...BLOCKING_PHRASES.login],
   mfa: [...BLOCKING_PHRASES.mfa, ...WIDGET_TOKENS.mfa, ...THIN_ONLY_TOKENS.mfa],
-  bot: [...BLOCKING_PHRASES.bot, ...THIN_ONLY_TOKENS.bot],
+  bot: [...BLOCKING_PHRASES.bot, ...VENDOR_TOKENS, ...THIN_ONLY_TOKENS.bot],
 });

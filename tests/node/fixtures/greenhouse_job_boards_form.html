@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Job Application for Senior Data Engineer at Acme</title>
+  <!-- LOCAL FIXTURE modelled on the CURRENT job-boards.greenhouse.io React
+       form (2024+): the file inputs are visually hidden behind "Attach"
+       buttons and labelled by a sibling div, the COVER LETTER slot comes
+       before the resume in DOM order on some boards, and none of the classic
+       #resume_fieldset / #cover_letter_fieldset containers exist. -->
+  <style>
+    .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    input, button { display: block; margin: 6px; }
+  </style>
+</head>
+<body>
+  <form id="application-form" class="application--form">
+    <div class="field-wrapper"><label for="first_name" class="label">First Name<span>*</span></label>
+      <input id="first_name" aria-required="true" autocomplete="given-name"></div>
+    <div class="field-wrapper"><label for="email" class="label">Email<span>*</span></label>
+      <input id="email" type="email" aria-required="true"></div>
+
+    <div class="file-upload" role="group" aria-labelledby="upload-label-cover_letter">
+      <div class="label upload-label" id="upload-label-cover_letter">Cover Letter</div>
+      <div class="file-upload__wrapper">
+        <button type="button" class="btn btn--pill">Attach</button>
+        <input id="cover_letter" type="file" class="visually-hidden" accept=".pdf,.doc,.docx,.txt,.rtf">
+      </div>
+    </div>
+
+    <div class="file-upload" role="group" aria-labelledby="upload-label-resume">
+      <div class="label upload-label" id="upload-label-resume">Resume/CV<span class="required">*</span></div>
+      <div class="file-upload__wrapper">
+        <button type="button" class="btn btn--pill">Attach</button>
+        <input id="resume" type="file" class="visually-hidden" aria-required="true" accept=".pdf,.doc,.docx,.txt,.rtf">
+      </div>
+    </div>
+
+    <div class="file-upload">
+      <div class="label upload-label">Unofficial transcript</div>
+      <input id="question_778" type="file" class="visually-hidden">
+    </div>
+
+    <button type="button" class="btn btn--pill" id="submit">Submit application</button>
+  </form>
+</body>
+</html>

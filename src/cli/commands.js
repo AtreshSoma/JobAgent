@@ -40,6 +40,7 @@ import { scoreJob } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
 import { scoringFingerprint } from '../scoring/fingerprint.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { isQueryFirstAdapter } from '../search/sources.js';
 
@@ -549,7 +550,7 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
   // Only act on packets a human has approved. Pending/rejected are skipped.
   const approvals = db.listApprovals({ status: APPROVAL_STATUS.APPROVED });
   const results = [];
-  const counters = { ...emptyCounters(), jobs_skipped_already_applied: 0 };
+  const counters = { ...emptyCounters(), jobs_skipped_already_applied: 0, jobs_skipped_not_owned: 0 };
   let dailyCount = db.countAppliedOn?.(isoDate(deps.now)) ?? 0;
 
   for (const approval of approvals) {
@@ -575,11 +576,30 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
       continue;
     }
 
+    // Approved is not the same as "approved FOR THIS CANDIDATE". An approval
+    // survives a profile switch, so without this the CLI filled the previous
+    // person's packet onto the new person's application. The runner refuses
+    // too; skipping here keeps a foreign packet from even opening a browser.
+    const owned = packetOwnershipCheck(packet, config ?? {});
+    if (!owned.ok) {
+      counters.jobs_skipped_not_owned += 1;
+      logger?.warn?.({ jobId: approval.job_id },
+        `skipping: this packet is not the active candidate's — ${owned.reason}; prepare it again`);
+      continue;
+    }
+
     const result = await assistFn({
-      packet, config, mode: effectiveMode, approval, dailyCount, options, deps,
+      packet, config, mode: effectiveMode, approval, dailyCount, options,
+      // A confirmation page seen after hand-off is recorded as a human
+      // submission awaiting the user's confirmation (never applied=1).
+      deps: { onHumanSubmitted: (update) => recordAssistResult(db, approval.job_id, update), ...deps },
     });
     results.push(result);
     counters.jobs_assisted += 1;
+    // The daily cap is enforced by the runner against THIS number, so a batch
+    // that auto-submits must count its own submissions or it can exceed the
+    // cap by the size of the batch.
+    if (result?.submitted === true) dailyCount += 1;
     recordAssistResult(db, approval.job_id, result);
     logger?.event?.(EVENT_TYPES.PREFILL_STARTED, {
       jobId: approval.job_id,
@@ -682,6 +702,16 @@ export function recordAssistResult(db, jobId, result) {
       patch.applied_at = new Date().toISOString();
       patch.status = 'submitted';
       patch.submitted_confirmation = `auto-submitted — confirmed by ${signals.join(', ') || 'post-submit check'}`;
+    } else if (result.humanSubmissionDetected) {
+      // The HUMAN submitted in the window we handed over and the ATS showed
+      // its confirmation page. That is evidence, not proof we can act on
+      // alone: the job moves to submit_unverified with the evidence recorded,
+      // and only the user's "Mark submitted" makes it applied.
+      const seen = result.humanSubmissionDetected;
+      patch.status = LIFECYCLE.SUBMIT_UNVERIFIED;
+      patch.submitted_confirmation = 'you appear to have submitted it — confirmation page seen'
+        + `${seen.url ? ` at ${seen.url}` : ''} (${(seen.signals ?? []).join(', ') || 'confirmation message'}); `
+        + 'confirm with "Mark submitted"';
     } else if (result.submitted === true) {
       // Defensive truthfulness guard: a caller may accidentally claim
       // `submitted` without the runner's positive verification result. Never
