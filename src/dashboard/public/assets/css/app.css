@@ -93,22 +93,20 @@
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
   --mono: "Cascadia Code", "SF Mono", ui-monospace, Consolas, monospace;
   /* The one place a name is read as a name (.sig-name), not UI chrome. */
-  --signature-font: "Fraunces", Georgia, "Times New Roman", serif;
+  --signature-font: "Alex Brush", "Brush Script MT", cursive;
 }
 
 /* Self-hosted, not linked from Google Fonts: this app's whole premise is that
    nothing it does reaches a third-party server, and a footer credit is not
-   an exception. One italic weight, latin subset only, ~80KB, loaded lazily
-   (it is the last thing on the page) and skipped entirely offline — the
-   Georgia fallback above still reads as a signature, just not this one. */
+   an exception. One weight, latin subset only, ~22KB, loaded lazily (it is
+   the last thing on the page) and skipped entirely offline — the cursive
+   fallback above still reads as a signature, just not this one. */
 @font-face {
-  font-family: "Fraunces";
-  font-style: italic;
-  /* A variable file (wght 100-900, opsz 9-144); .sig-name pins its own weight
-     and lets optical sizing track the large display size automatically. */
-  font-weight: 100 900;
+  font-family: "Alex Brush";
+  font-style: normal;
+  font-weight: 400;
   font-display: swap;
-  src: url("/assets/fonts/fraunces-italic-variable.woff2") format("woff2");
+  src: url("/assets/fonts/alex-brush.woff2") format("woff2");
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2122;
 }
 
@@ -1963,37 +1961,28 @@ kbd {
   text-transform: uppercase; color: var(--text-faint);
 }
 /* The only element on the page whose job is to be read as a NAME, not as UI —
-   a two-part colophon byline, the way a book sets one: the given name as a
-   signature, the family name as a quiet, tracked engraving beside it. */
-.sig-name { display: inline-flex; align-items: baseline; flex-wrap: wrap; gap: 0 8px; }
-/* The signature half steps out of the interface's system-UI sans and into a
-   serif italic built for exactly this. Weight sits at 560: bold enough to
-   anchor the plate, short of the heavy 700 that read as another button label.
+   the full name, in ONE uniform hand: an actual cursive signature face, not
+   an italic variant of the UI font. A script reads noticeably smaller than a
+   serif at the same pixel size, so this sits well above --fs-2xl; the strokes
+   are also thinner than a text face, so no letter-spacing is added — script
+   letterforms already assume specific spacing to keep their connections
+   looking hand-drawn, and tracking it out breaks the joins between letters.
    The fill is the monogram's own gradient, so the two feel like one mark. */
-.sig-given {
+.sig-name {
+  display: inline-block;
   font-family: var(--signature-font);
-  font-style: italic;
-  font-optical-sizing: auto;
-  font-size: calc(var(--fs-2xl) * 1.2); font-weight: 560; line-height: 1.15;
-  letter-spacing: .2px;
+  font-style: normal;
+  font-size: calc(var(--fs-2xl) * 2); font-weight: 400; line-height: 1;
+  letter-spacing: 0;
   color: var(--text); /* the fallback, and what forced-colors mode renders */
   background: linear-gradient(100deg, var(--sig-a) 0%, var(--sig-b) 45%, var(--sig-c) 100%);
   background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
 }
-/* The engraving: upright, spaced-out small caps in the quiet ink the eyebrow
-   uses, so the given name still reads as the one flourish on the page. */
-.sig-family {
-  font-family: var(--font);
-  font-style: normal; font-weight: 650;
-  font-size: var(--fs-sm); letter-spacing: 2px;
-  text-transform: uppercase;
-  color: var(--text-dim);
-}
-/* A system font (the ital 500-700 fallback stack) has no italic OBLIQUE risk
-   here, but a screen reader with no visual rendering still has "Atresh" as
-   plain text — the gradient is paint, never content. */
+/* A script face has no italic OBLIQUE risk here, but a screen reader with no
+   visual rendering still has "Atresh Somayajula" as plain text — the
+   gradient is paint, never content. */
 @media (forced-colors: active), (prefers-contrast: more) {
-  .sig-given { background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
+  .sig-name { background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
 }
 /* Wide enough that the three facts sit on ONE line on a laptop — a colophon
    rule, not a paragraph. Narrower windows wrap it between clauses. */
@@ -2023,8 +2012,7 @@ kbd {
 @media (max-width: 860px) {
   .signature { padding: var(--s5) var(--s3) var(--s6); margin-top: var(--s5); gap: var(--s2); }
   .sig-monogram { width: 38px; height: 38px; border-radius: 11px; font-size: var(--fs-2xl); }
-  .sig-given { font-size: var(--fs-2xl); }
-  .sig-family { font-size: var(--fs-xs); letter-spacing: 1.5px; }
+  .sig-name { font-size: calc(var(--fs-2xl) * 1.7); }
   .signature .sig-meta { line-height: 1.9; }
   .sig-dot { margin: 0 5px; }
 }
@@ -2040,7 +2028,7 @@ kbd {
   .signature { padding: var(--s3) 0 0; margin-top: var(--s3); }
   .sig-rule, .sig-monogram { display: none; }
   /* Ink on paper, not a gradient a printer will render as flat grey. */
-  .sig-given { font-size: var(--fs-lg); background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
+  .sig-name { font-size: calc(var(--fs-lg) * 1.6); background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
 }
 
 /* ─────────────────── toasts + selection bar ─────────────────── */
