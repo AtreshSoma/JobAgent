@@ -81,6 +81,8 @@
         <button role="menuitem" data-action="run" data-phase="score" title="Recompute fit for jobs already on the board, from their stored descriptions. No network.">↻ Re-score existing jobs</button>
         <hr role="separator">
         <button role="menuitem" data-action="open-reports">📊 View reports…</button>
+        <button role="menuitem" data-action="open-runs"
+          title="Recent discovery, scoring and prepare runs: what each found, how long it took, which sources failed.">🕘 Run history…</button>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">🧾 Master resume…</button>
         <button role="menuitem" data-action="open-profile"
@@ -687,6 +689,14 @@
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
   <div class="dlg-body" id="reportsBody"></div>
+</dialog>
+
+<dialog id="dlgRuns" class="sheet" aria-labelledby="dlgRunsTitle">
+  <div class="dlg-head">
+    <h2 id="dlgRunsTitle">Run history</h2>
+    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="runsBody"></div>
 </dialog>
 
 <dialog id="dlgMaster" aria-labelledby="dlgMasterTitle">

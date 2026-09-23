@@ -243,6 +243,30 @@ function relTime(iso) {
   return `${Math.floor(h / 24)}d ago`;
 }
 
+/**
+ * A "this is slow, and it is working" line for dialogs whose data takes
+ * seconds to build (Reports reads the whole database; System health spawns
+ * Python and probes the browser). Skeleton bars alone looked identical to a
+ * hang. Returns a stop function; the caller replaces the contents after.
+ *
+ * @param {HTMLElement} host
+ * @param {string} message
+ * @returns {() => void}
+ */
+function slowProgress(host, message) {
+  host.textContent = '';
+  const elapsed = el('span', { class: 'faint slow-elapsed' });
+  host.append(el('div', { class: 'slow-progress', role: 'status' },
+    el('span', { class: 'spin', 'aria-hidden': 'true' }), el('span', { text: message }), elapsed),
+  el('div', { class: 'skeleton' }), el('div', { class: 'skeleton' }));
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const secs = Math.round((Date.now() - started) / 1000);
+    if (secs >= 1) elapsed.textContent = `${secs} s`;
+  }, 1000);
+  return () => clearInterval(timer);
+}
+
 const shortStamp = (iso) => String(iso ?? '').slice(0, 16).replace('T', ' ');
 
 function toast(message, tone = '') {
@@ -2903,6 +2927,7 @@ function setSystemNotices(list) {
   const changed = unavailable !== state.browserUnavailable;
   state.browserUnavailable = unavailable;
   renderNotices();
+  renderSetupChecklist();
   if (changed) {
     // Every Auto-fill control reads this flag; redraw the ones on screen.
     syncSelectionBar();
@@ -2916,7 +2941,14 @@ function fixLine(fix) {
   const line = el('div', { class: 'notice-fix' });
   const parts = String(fix ?? '').split(/`([^`]+)`/);
   parts.forEach((part, i) => { if (part) line.append(i % 2 ? el('code', { text: part }) : part); });
-  const command = parts[1];
+  let command = parts[1];
+  // The server may send the fix as a bare command ("npx playwright install
+  // chromium") rather than prose with `code` in it: set the whole thing as code.
+  if (!command && /^(npx|npm|node|python3?|pip3?|brew)\s/.test(String(fix ?? '').trim())) {
+    command = String(fix).trim();
+    line.textContent = '';
+    line.append('Run ', el('code', { text: command }));
+  }
   if (command) {
     line.append(' ', el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'copy-text', 'data-text': command,
@@ -2934,9 +2966,15 @@ function renderNotices() {
       el('span', { class: 'notice-mark', 'aria-hidden': 'true', text: '!' }),
       el('div', { class: 'notice-body' },
         el('b', { text: notice.message }),
-        notice.fix ? fixLine(notice.fix) : null)));
+        notice.fix ? fixLine(notice.fix) : null),
+      NOTICE_ACTION[notice.code] ? el('button', {
+        type: 'button', class: 'small', 'data-action': NOTICE_ACTION[notice.code][0], text: NOTICE_ACTION[notice.code][1],
+      }) : null));
   }
 }
+
+/** Notice code -> the dialog that resolves it. */
+const NOTICE_ACTION = { profile_placeholders: ['open-profile', 'Open application profile'] };
 
 /** Why an Auto-fill control is unavailable, or null when it can be used. */
 function autofillBlockedReason() {
@@ -3044,6 +3082,9 @@ async function todayAct(target) {
  * linked to the dialog that fixes it.
  */
 
+/** Notice code -> the doctor check that reports the same problem. */
+const NOTICE_CHECK = { browser_unavailable: 'browser', profile_placeholders: 'profile-placeholders' };
+
 /** Check id -> the control that fixes it. */
 const SETUP_FIX = {
   browser: { kind: 'copy' },
@@ -3056,14 +3097,15 @@ const SETUP_FIX = {
 async function loadHealthChecks() {
   try { state.health = await api('/api/health'); } catch { return; }
   setSystemNotices(state.today?.systemNotices ?? []);
-  renderSetupChecklist();
 }
 
 function renderSetupChecklist() {
   const host = $('setupChecklist');
   if (!host) return;
   host.textContent = '';
-  const failing = (state.health?.checks ?? []).filter((c) => c.status === 'fail');
+  // A check already raised as a system notice is not listed twice.
+  const noticed = new Set((state.systemNotices ?? []).map((n) => NOTICE_CHECK[n.code]).filter(Boolean));
+  const failing = (state.health?.checks ?? []).filter((c) => c.status === 'fail' && !noticed.has(c.id));
   if (!failing.length) return;
   const card = el('section', { class: 'setup-card', 'aria-labelledby': 'setupTitle' });
   card.append(el('h3', { id: 'setupTitle', text: `Setup checklist — ${failing.length} to fix` }));
@@ -4537,6 +4579,9 @@ function renderRunDetails(status) {
   if (!items.length && !rca.length) {
     host.append(el('div', { class: 'muted', text: 'No per-source detail was reported for this run.' }));
   }
+  host.append(el('div', { class: 'run-more' }, el('button', {
+    type: 'button', class: 'small ghost', 'data-action': 'open-runs', text: 'Run history…',
+  })));
 }
 
 function applyRunGate(status) {
@@ -4614,7 +4659,9 @@ function applyRunGate(status) {
   cancel.disabled = !state.running || status.cancelRequested;
   cancel.textContent = status?.cancelRequested ? 'Stopping…' : 'Cancel';
   dismiss.hidden = state.running || idle;
-  details.hidden = idle || (!(progress?.items ?? []).length && !(status?.rca ?? []).length);
+  // Shown for any non-idle state: even a run with no per-source detail links
+  // to the run history from its popover.
+  details.hidden = idle;
   if (details.hidden) setRunDetails(false);
   if ($('runDetails').hidden === false) renderRunDetails(status);
   // Keep the last payload so opening the panel does not need another fetch.
@@ -4673,6 +4720,154 @@ document.addEventListener('visibilitychange', () => {
     refreshAll();
   }
 });
+
+/* ─────────────────────────── run history ───────────────────────────
+ * "What did last night's run do?" The run pill only ever describes the
+ * latest run, and only until it is dismissed. GET /api/runs?limit=20 lists
+ * recent runs newest first; both the documented shape ({ mode, startedAt,
+ * endedAt, durationMs, counters, perSource, errors }) and the raw run_log
+ * rows an older server returns are read.
+ */
+
+const parseJsonList = (value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try { const parsed = JSON.parse(value); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+};
+
+/** Outcome words the server uses, collapsed to the three a chip can show. */
+function outcomeTone(outcome) {
+  const key = String(outcome ?? '').toLowerCase();
+  if (['ok', 'done', 'success', 'succeeded', 'complete'].includes(key)) return 'ok';
+  if (['partial', 'degraded', 'skipped'].includes(key)) return 'partial';
+  return 'failed';
+}
+
+function normalizeRun(raw) {
+  const counters = raw.counters ?? {};
+  const pick = (...keys) => {
+    for (const key of keys) {
+      const value = counters[key] ?? raw[key];
+      if (value !== null && value !== undefined && value !== '') return Number(value);
+    }
+    return null;
+  };
+  const errors = parseJsonList(raw.errors);
+  let perSource = Array.isArray(raw.perSource) ? raw.perSource.map((s) => ({
+    source: s.source ?? s.name ?? 'source', outcome: s.outcome ?? s.status ?? 'ok', found: s.found ?? null,
+  })) : null;
+  if (!perSource) {
+    // Older rows carry only the failures; each source is as bad as its worst.
+    const worst = new Map();
+    const rank = { ok: 0, partial: 1, failed: 2 };
+    for (const entry of errors) {
+      const source = entry.source ?? entry.operation ?? 'run';
+      const tone = outcomeTone(entry.outcome ?? (Number(entry.kept) > 0 ? 'partial' : 'failed'));
+      if ((rank[tone] ?? 2) >= (rank[worst.get(source)] ?? -1)) worst.set(source, tone);
+    }
+    perSource = [...worst].map(([source, outcome]) => ({ source, outcome, found: null }));
+  }
+  const startedAt = raw.startedAt ?? raw.started_at ?? null;
+  const endedAt = raw.endedAt ?? raw.ended_at ?? null;
+  const duration = Number(raw.durationMs);
+  return {
+    id: raw.runId ?? raw.run_id ?? startedAt,
+    mode: raw.mode && raw.mode !== 'unknown' ? raw.mode : null,
+    startedAt,
+    endedAt,
+    // A negative or missing duration is a row the process never closed, not
+    // a run that took no time — shown as unknown.
+    durationMs: Number.isFinite(duration) && duration >= 0 ? duration : null,
+    found: pick('found', 'jobs_found'),
+    new: pick('new', 'jobs_new'),
+    scored: pick('scored', 'jobs_scored'),
+    discarded: pick('discarded', 'jobs_discarded'),
+    prepared: pick('prepared', 'jobs_prepared'),
+    perSource,
+    errors,
+  };
+}
+
+function humanDuration(ms) {
+  if (ms == null) return 'duration unknown';
+  const secs = Math.round(ms / 1000);
+  if (secs < 60) return `${secs} s`;
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins} min ${secs % 60} s`;
+  return `${Math.floor(mins / 60)} h ${mins % 60} min`;
+}
+
+const RUN_MODE_LABELS = { discover: 'Find new jobs', score: 'Re-score', prepare: 'Find & prepare', 'prepare-selected': 'Prepare selected', assist: 'Auto-fill', 'assist-batch': 'Auto-fill batch' };
+
+async function openRuns() {
+  const body = $('runsBody');
+  openDialog($('dlgRuns'));
+  const stop = slowProgress(body, 'Reading recent runs…');
+  let data;
+  try { data = await apiOptional('/api/runs?limit=20'); }
+  catch (err) { stop(); body.textContent = ''; body.append(el('div', { class: 'st-blocked', text: err.message })); return; }
+  stop();
+  body.textContent = '';
+  if (!data) {
+    // An older server: say so once, and stop offering the entry points.
+    for (const node of document.querySelectorAll('[data-action="open-runs"]')) node.hidden = true;
+    body.append(el('div', { class: 'muted', text: 'Run history needs a newer dashboard server. Restart it with "npm run dashboard".' }));
+    return;
+  }
+  const runs = (data.runs ?? []).map(normalizeRun);
+  if (!runs.length) {
+    body.append(el('div', { class: 'empty' }, el('div', { class: 'big', text: 'No runs recorded yet' }),
+      'Each Find new jobs, re-score or prepare pass is listed here once it finishes.'));
+    return;
+  }
+  const list = el('ol', { class: 'runlist' });
+  for (const run of runs) list.append(runRecord(run));
+  body.append(list);
+}
+
+function runRecord(run) {
+  const item = el('li', { class: 'runrec' });
+  const head = el('div', { class: 'runrec-head' });
+  head.append(el('b', { text: RUN_MODE_LABELS[run.mode] ?? (run.mode ? run.mode : 'Run') }));
+  head.append(el('span', { class: 'muted', title: run.startedAt ?? '', text: relTime(run.startedAt) ?? 'time unknown' }));
+  head.append(el('span', { class: 'faint', text: humanDuration(run.durationMs) }));
+  item.append(head);
+
+  const figures = [['found', run.found], ['new', run.new], ['scored', run.scored], ['discarded', run.discarded], ['prepared', run.prepared]]
+    .filter(([label, value]) => value != null && !(value === 0 && ['prepared', 'new'].includes(label)));
+  if (figures.length) {
+    item.append(el('dl', { class: 'runrec-figs' }, ...figures.map(([label, value]) => el('div', { class: 'fig' },
+      el('dt', { text: label }), el('dd', { text: fmt(value) })))));
+  }
+  if (run.perSource.length) {
+    const chips = el('div', { class: 'runrec-sources', 'aria-label': 'Source outcomes' });
+    for (const source of run.perSource) {
+      const tone = outcomeTone(source.outcome);
+      chips.append(el('span', {
+        class: `chip src-${tone}`,
+        title: `${source.source}: ${tone}${source.found != null ? ` · ${fmt(source.found)} found` : ''}`,
+        text: `${source.source} · ${tone}`,
+      }));
+    }
+    item.append(chips);
+  }
+  if (run.errors.length) {
+    const more = el('details', { class: 'runrec-errors' });
+    more.append(el('summary', { text: `${run.errors.length} problem${run.errors.length === 1 ? '' : 's'}` }));
+    const ul = el('ul', { class: 'plan' });
+    for (const entry of run.errors.slice(0, 20)) {
+      ul.append(el('li', {},
+        el('b', { text: entry.source ?? entry.operation ?? 'run' }), ' — ',
+        [String(entry.category ?? '').replace(/_/g, ' '), entry.status ? `HTTP ${entry.status}` : null]
+          .filter(Boolean).join(' · '),
+        entry.message ? el('div', { class: 'run-why', text: entry.message }) : null,
+        entry.guidance ? el('div', { class: 'run-fix', text: entry.guidance }) : null));
+    }
+    more.append(ul);
+    item.append(more);
+  }
+  return item;
+}
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -4734,6 +4929,7 @@ const ACTIONS = {
   },
   'open-learn': () => window.open('/learn/', '_blank', 'noopener'),
   'open-reports': openReports,
+  'open-runs': () => { setRunDetails(false); return openRuns(); },
   'open-documents': openDocuments,
   'open-master': (target) => {
     // Never stack modals: opening this from the Resume library replaces it.

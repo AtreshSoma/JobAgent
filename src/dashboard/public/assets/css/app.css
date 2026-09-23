@@ -385,6 +385,27 @@ button.icon { padding: 4px 7px; }
 .run-fix { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
 .run-impact { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
 
+.run-more { margin-top: var(--s2); padding-top: var(--s2); border-top: 1px solid var(--line-soft); }
+
+/* Run history: one record per run, readable at any width (a nine-column
+   table would scroll sideways on everything narrower than a laptop). */
+#dlgRuns { width: min(760px, 96vw); }
+.runlist { list-style: none; margin: 0; padding: 0; }
+.runrec { padding: var(--s3) 0; border-top: 1px solid var(--line-soft); }
+.runrec:first-child { border-top: 0; padding-top: 0; }
+.runrec-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+/* Figure over label, one group per measure. */
+.runrec-figs { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s5); margin: 6px 0 0; font-size: 13px; }
+.runrec-figs .fig { display: flex; flex-direction: column-reverse; }
+.runrec-figs dd { margin: 0; font-weight: 650; font-variant-numeric: tabular-nums; }
+.runrec-figs dt { color: var(--text-faint); font-size: 12px; }
+.runrec-sources { display: flex; flex-wrap: wrap; gap: 5px; margin-top: var(--s2); }
+.chip.src-ok { color: var(--good); background: var(--good-soft); }
+.chip.src-partial { color: var(--warn); background: var(--warn-soft); }
+.chip.src-failed { color: var(--bad); background: var(--bad-soft); }
+.runrec-errors { margin-top: var(--s2); font-size: 13px; }
+.runrec-errors summary { cursor: pointer; color: var(--text-dim); }
+
 /* Progress line on the header's bottom edge. */
 .runline {
   position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
@@ -416,6 +437,8 @@ button.icon { padding: 4px 7px; }
 }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
+.slow-progress { display: flex; align-items: center; gap: var(--s2); color: var(--text-dim); font-size: 13px; margin-bottom: var(--s2); }
+.slow-elapsed { font-variant-numeric: tabular-nums; }
 .spin::before {
   content: ''; width: 11px; height: 11px; border-radius: 50%;
   border: 2px solid var(--accent-soft); border-top-color: var(--accent);
@@ -636,6 +659,9 @@ button.stat:hover { background: none; border-color: transparent; }
 .tcard-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
 .tcard-reason { margin: 6px 0 0; font-size: 13px; color: var(--text-dim); }
 .tcard-act { align-self: center; }
+/* The server's labels are short sentences ("Read the tailored resume and
+   approve it"); they wrap inside a bounded button rather than stretching it. */
+.tcard-go { white-space: normal; max-width: 220px; text-align: center; justify-content: center; line-height: 1.3; }
 .today-empty {
   text-align: center; color: var(--text-dim); padding: 40px 16px;
   background: var(--surface); border: 1px dashed var(--line); border-radius: var(--r-md);

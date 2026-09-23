@@ -177,3 +177,28 @@ describe('Today is the landing view (U7)', () => {
     expect(app).toContain("['today', 'Priority', true]");
   });
 });
+
+describe('run history (U8)', () => {
+  it('is reachable from the More menu and from the run pill popover', () => {
+    expect(html).toContain('id="dlgRuns"');
+    expect(html).toMatch(/role="menuitem" data-action="open-runs"/);
+    const details = app.slice(app.indexOf('function renderRunDetails'), app.indexOf('function applyRunGate'));
+    expect(details).toContain("'data-action': 'open-runs'");
+  });
+
+  it('reads both the documented shape and raw run_log rows, and hides on 404', () => {
+    expect(app).toContain("apiOptional('/api/runs?limit=20')");
+    for (const key of ['raw.startedAt ?? raw.started_at', "pick('found', 'jobs_found')", 'parseJsonList(raw.errors)', 'raw.perSource']) {
+      expect(app).toContain(key);
+    }
+    expect(app).toContain("for (const node of document.querySelectorAll('[data-action=\"open-runs\"]')) node.hidden = true;");
+  });
+
+  it('never shows a negative duration', () => {
+    expect(app).toContain('Number.isFinite(duration) && duration >= 0 ? duration : null');
+  });
+
+  it('shows progress with elapsed seconds in slow dialogs', () => {
+    expect(app).toContain('function slowProgress(host, message)');
+  });
+});
