@@ -92,7 +92,7 @@ describe('fieldFiller.applyValue', () => {
       { label: 'No', value: 'n', selector: '#auth-no' },
     ] };
     const res = await applyValue(page, field, 'Yes');
-    expect(res).toEqual({ ok: true, action: 'radio' });
+    expect(res).toMatchObject({ ok: true, action: 'radio', chosen: 'Yes' });
     expect(page.calls).toContainEqual({ selector: '#auth-yes', action: 'check' });
   });
 
@@ -169,7 +169,7 @@ describe('fieldFiller.applyValue (combobox/typeahead)', () => {
       optionMap: { '[role="option"]': ['Morrisville, NC, USA', 'Morristown, NJ, USA'] },
     });
     const res = await applyValue(page, { kind: 'combobox', selector: '#loc' }, 'Morrisville');
-    expect(res).toEqual({ ok: true, action: 'combobox' });
+    expect(res).toMatchObject({ ok: true, action: 'combobox', chosen: 'Morrisville, NC, USA' });
     expect(page.calls).toContainEqual({ selector: '#loc', action: 'fill', value: 'Morrisville' });
     expect(page.calls).toContainEqual({ selector: '[role="option"]', action: 'optionClick', index: 0, text: 'Morrisville, NC, USA' });
   });
@@ -188,7 +188,7 @@ describe('fieldFiller.applyValue (combobox/typeahead)', () => {
   it('falls back to Enter when no option container renders', async () => {
     const page = makeComboboxPage({ inputSelector: '#loc', optionMap: {}, keyboard: true });
     const res = await applyValue(page, { kind: 'combobox', selector: '#loc' }, 'Anything');
-    expect(res).toEqual({ ok: true, action: 'combobox-enter' });
+    expect(res).toMatchObject({ ok: true, action: 'combobox-enter' });
     expect(page.calls).toContainEqual({ action: 'press', key: 'Enter' });
   });
 
