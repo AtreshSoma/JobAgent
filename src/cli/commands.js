@@ -751,7 +751,7 @@ export function recordAssistResult(db, jobId, result) {
     // an unverified submit the human is never asked to confirm). Everything
     // else stays best-effort (the job may not be persisted in some flows).
     if (result.submitted === true) {
-      throw new Error(`failed to record submitted application for ${jobId}: ${err.message}`);
+      throw new Error(`failed to record submitted application for ${jobId}: ${err.message}`, { cause: err });
     }
   }
 }
