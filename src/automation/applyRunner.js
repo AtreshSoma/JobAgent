@@ -44,6 +44,7 @@ import {
   resolveApplicationStateStore,
   transitionApplicationState,
 } from '../apply/applicationState.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { LIFECYCLE } from '../lifecycle.js';
 import { join } from 'node:path';
 
@@ -179,6 +180,24 @@ export async function assistApply({
     try {
       await checkpoint(APPLICATION_PHASE.BLOCKED, { blockers: result.blockers }, 'packet has no application URL');
     } catch { /* the primary error is already actionable */ }
+    return result;
+  }
+
+  // WHOSE APPLICATION IS THIS? The dashboard and CLI each asked before reusing
+  // a stored packet, but every one of those checks lived in a caller, and a
+  // caller that forgot (or a new one) filled a packet built for somebody else.
+  // The runner is the one path every fill goes through, so the check lives
+  // here too — before a browser opens, before anything is typed.
+  const owned = (deps.ownershipCheck ?? packetOwnershipCheck)(packet, config ?? {});
+  if (!owned.ok) {
+    result.status = LIFECYCLE.ASSIST_BLOCKED;
+    result.blockers.push(
+      `packet_not_owned: this packet is not the active candidate's — ${owned.reason}. `
+      + 'Prepare it again so the documents and answers describe whoever is applying.',
+    );
+    try {
+      await checkpoint(APPLICATION_PHASE.BLOCKED, { blockers: result.blockers }, 'packet belongs to another candidate');
+    } catch { /* the ownership refusal is the actionable error */ }
     return result;
   }
 

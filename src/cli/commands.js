@@ -40,6 +40,7 @@ import { scoreJob } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
 import { scoringFingerprint } from '../scoring/fingerprint.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { isQueryFirstAdapter } from '../search/sources.js';
 
@@ -549,7 +550,7 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
   // Only act on packets a human has approved. Pending/rejected are skipped.
   const approvals = db.listApprovals({ status: APPROVAL_STATUS.APPROVED });
   const results = [];
-  const counters = { ...emptyCounters(), jobs_skipped_already_applied: 0 };
+  const counters = { ...emptyCounters(), jobs_skipped_already_applied: 0, jobs_skipped_not_owned: 0 };
   let dailyCount = db.countAppliedOn?.(isoDate(deps.now)) ?? 0;
 
   for (const approval of approvals) {
@@ -575,11 +576,27 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
       continue;
     }
 
+    // Approved is not the same as "approved FOR THIS CANDIDATE". An approval
+    // survives a profile switch, so without this the CLI filled the previous
+    // person's packet onto the new person's application. The runner refuses
+    // too; skipping here keeps a foreign packet from even opening a browser.
+    const owned = packetOwnershipCheck(packet, config ?? {});
+    if (!owned.ok) {
+      counters.jobs_skipped_not_owned += 1;
+      logger?.warn?.({ jobId: approval.job_id },
+        `skipping: this packet is not the active candidate's — ${owned.reason}; prepare it again`);
+      continue;
+    }
+
     const result = await assistFn({
       packet, config, mode: effectiveMode, approval, dailyCount, options, deps,
     });
     results.push(result);
     counters.jobs_assisted += 1;
+    // The daily cap is enforced by the runner against THIS number, so a batch
+    // that auto-submits must count its own submissions or it can exceed the
+    // cap by the size of the batch.
+    if (result?.submitted === true) dailyCount += 1;
     recordAssistResult(db, approval.job_id, result);
     logger?.event?.(EVENT_TYPES.PREFILL_STARTED, {
       jobId: approval.job_id,

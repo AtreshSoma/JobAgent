@@ -7,6 +7,7 @@ import { APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { isInsideDirectory } from '../utils/pathSafe.js';
 import { loadPacket } from '../cli/commands.js';
 import { effectiveAnswers } from '../apply/screeningQA.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 
 // Chrome uses chrome-extension://<id>; current Edge builds may expose the
 // equivalent extension://<id> origin to a loopback server. Chromium extension
@@ -48,6 +49,14 @@ export function buildExtensionPayload({ db, config, jobId, loadPacketImpl = load
   const packet = loadPacketImpl(approval);
   if (!packet?.job?.id || packet.job.id !== jobId) {
     throw statusError(409, 'application packet does not match this job');
+  }
+  // The extension is a SECOND fill path and hands the browser the candidate's
+  // profile, answers and documents; it must ask the same ownership question
+  // the runner does, or a packet prepared for a previous profile is filled by
+  // the extension after the dashboard refused it.
+  const owned = packetOwnershipCheck(packet, config ?? {});
+  if (!owned.ok) {
+    throw statusError(409, `this packet is not the active candidate's — ${owned.reason}; prepare it again`);
   }
   const job = db?.getJob?.(jobId);
   if (job?.applied || ['submitted', 'submit_unverified'].includes(job?.status)) {

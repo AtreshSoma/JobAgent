@@ -22,6 +22,7 @@ import { relPath as rel } from '../utils/outputPaths.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { createBrowserSession } from '../automation/browser.js';
 import { loadPacket, recordAssistResult } from './commands.js';
+import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { listPending, APPROVAL_STATUS } from '../apply/approvalQueue.js';
 import { parseSelection } from './guided.js';
 import { isAggregatorHost } from '../search/adapters/apify.js';
@@ -79,8 +80,23 @@ export async function runApply({ config, db, logger, options = {}, deps = {} } =
     // auto-submit is unverified (re-filling could double-apply). This keeps
     // finished applications out of the menu AND prevents a re-fill from
     // clobbering their "submitted" status in the tracker.
+    // Never offer a packet prepared for a different candidate or search
+    // profile: approvals survive a profile switch, packets do not describe the
+    // new person. They are named so the user knows to re-prepare them.
+    const notOwned = [];
+    const ownedItems = items.filter(({ packet }) => {
+      const owned = packetOwnershipCheck(packet, config ?? {});
+      if (!owned.ok) notOwned.push({ packet, reason: owned.reason });
+      return owned.ok;
+    });
+    if (notOwned.length) {
+      ui.blank();
+      ui.warn(`Skipping ${notOwned.length} packet(s) prepared for someone else — prepare them again: `
+        + notOwned.map(({ packet, reason }) => `${jobLabel(packet)} (${reason})`).join('; '));
+    }
+
     const alreadyApplied = [];
-    const pendingItems = items.filter(({ packet }) => {
+    const pendingItems = ownedItems.filter(({ packet }) => {
       const row = db.getJob?.(packet.job?.id) ?? null;
       const done = row && (Number(row.applied) === 1
         || row.status === 'submitted' || row.status === 'submit_unverified');

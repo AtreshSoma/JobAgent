@@ -82,6 +82,9 @@ describe('dashboard application profile API', () => {
         loadConfigImpl: fakeLoadConfig,
         loadPacketImpl: () => ({
           id: 'pk-j1', job: { id: 'j1', url: 'https://coorstek.wd1.myworkdayjobs.com/job/R-113886' },
+          // Stamped for whoever the profile names now, as a freshly prepared
+          // packet would be: an ownerless packet is refused as foreign.
+          owner: { candidateName: fakeLoadConfig({ root }).candidate.identity.fullName },
           ats: { platform: 'workday' }, blockers: [],
           prefill: { plan: [], needsUser: [] }, screeningPlan: { answered: [], needsUser: [] },
           uploads: { blockers: [] }, stopBeforeSubmit: true,

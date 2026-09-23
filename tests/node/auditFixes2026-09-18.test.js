@@ -153,12 +153,16 @@ describe('a packet prepared for one candidate is never filled for another', () =
     expect(packetOwnershipCheck({ owner: packetOwner(config) }, config).ok).toBe(true);
   });
 
-  it('does not strand packets written before ownership was recorded', () => {
-    // A legacy packet has no owner. Refusing all of them would throw away work
-    // the user already reviewed and approved.
+  it('keeps a legacy packet only when its documents are named for this candidate', () => {
+    // A legacy packet has no owner. It used to pass unconditionally (the
+    // fallback read a field no packet was ever written with), so legacy
+    // "Jane Doe" packets were filled for whoever was active. It is now kept
+    // only when its documents carry the active candidate's file prefix.
     const config = ownerConfig('Dana Okafor', 'dana@example.com', 'dana-data');
-    expect(packetOwnershipCheck({}, config).ok).toBe(true);
-    // ...but a legacy packet that names someone else is still caught.
+    expect(packetOwnershipCheck({}, config).ok).toBe(false);
+    expect(packetOwnershipCheck({ resumePath: '/out/Jane_Doe_Resume_Analyst.docx' }, config).ok).toBe(false);
+    expect(packetOwnershipCheck({ resumePath: '/out/Dana_Okafor_Resume_Analyst.docx' }, config).ok).toBe(true);
+    // ...and a legacy packet that names someone else is still caught.
     expect(packetOwnershipCheck({ candidateName: 'Priya Raman' }, config).ok).toBe(false);
   });
 

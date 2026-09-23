@@ -10,6 +10,7 @@ import {
 const packet = (root) => ({
   job: { id: 'j1', company: 'Acme', title: 'Data Engineer', url: 'https://acme.test/apply' },
   ats: { platform: 'greenhouse' }, blockers: [], resumePath: join(root, 'resume.docx'),
+  owner: { candidateName: 'Ada Lovelace', candidateEmail: 'ada@test' },
 });
 
 function fixture(root, approval = {}) {
