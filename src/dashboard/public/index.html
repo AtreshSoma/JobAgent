@@ -533,11 +533,16 @@
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
 
 <!-- ───────────────────────── dialogs ───────────────────────── -->
+<!-- Each small dialog's body is a <form>, so Enter submits it from any
+     field — "Search job boards" ignored Enter entirely — and the one submit
+     handler (app.js, `data-submit`) is the only path to the action, which is
+     what makes a second Enter or click a no-op while the first is in flight. -->
 <dialog id="dlgAddUrl" class="narrow" aria-labelledby="dlgAddUrlTitle">
   <div class="dlg-head">
     <h2 id="dlgAddUrlTitle">Add a job by URL</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-add-url">
   <div class="dlg-body">
     <p class="muted mt0">Paste a public job posting URL from any career site. It is read,
       scored against your profile, and added to the board. Sites that block automated reads are reported honestly.</p>
@@ -546,9 +551,10 @@
     <div id="addUrlMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" id="addUrlGo" data-action="submit-add-url">Add &amp; score</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="addUrlGo">Add &amp; score</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgJobSearch" class="narrow" aria-labelledby="dlgJobSearchTitle">
@@ -556,6 +562,7 @@
     <h2 id="dlgJobSearchTitle">Search job boards</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-job-search">
   <div class="dlg-body">
     <p class="muted mt0">Search the job boards for <strong>any</strong> role, whether or not it
       has anything to do with your profile.</p>
@@ -571,9 +578,10 @@
     <div id="jobSearchMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" id="jobSearchGo" data-action="submit-job-search">Search</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="jobSearchGo">Search</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgSubmit" class="narrow" aria-labelledby="dlgSubmitTitle">
@@ -581,6 +589,7 @@
     <h2 id="dlgSubmitTitle">Record your submission</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="confirm-submitted">
   <div class="dlg-body">
     <p class="muted mt0" id="dlgSubmitJob"></p>
     <label for="submitConf">Confirmation number <span class="faint">(optional — from the ATS page or email)</span></label>
@@ -591,9 +600,10 @@
       <b>submitted</b>. Without one it is recorded as <b>reported, pending verification</b> — never silently counted as applied.</p>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" data-action="confirm-submitted">✓ I submitted this myself</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary">✓ I submitted this myself</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgLink" class="narrow" aria-labelledby="dlgLinkTitle">
@@ -601,6 +611,7 @@
     <h2 id="dlgLinkTitle">Replace the application URL</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-link">
   <div class="dlg-body">
     <p class="muted mt0">Paste the direct employer or ATS application URL. Aggregator links
       (LinkedIn, Indeed, Dice…) cannot be auto-filled reliably, so they are rejected here.</p>
@@ -609,9 +620,10 @@
     <div id="linkMsg" class="muted"></div>
   </div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" data-action="submit-link">Save URL</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary">Save URL</button>
   </div>
+  </form>
 </dialog>
 
 <dialog id="dlgResume" aria-labelledby="dlgResumeTitle">
@@ -731,11 +743,13 @@
     <h2 id="dlgConfirmTitle">Confirm</h2>
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
+  <form method="dialog" class="dlg-form" data-submit="confirm-go">
   <div class="dlg-body"><div id="confirmBody"></div></div>
   <div class="dlg-foot">
-    <button class="small" data-action="close-dialog">Cancel</button>
-    <button class="small primary" id="confirmGo">Continue</button>
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="confirmGo">Continue</button>
   </div>
+  </form>
 </dialog>
 
 <script type="module" src="/assets/js/app.js"></script>

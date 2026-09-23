@@ -656,7 +656,8 @@ describe('job role links to the posting', () => {
   const cell = app.slice(app.indexOf('function nameCellFor'), app.indexOf('function hostLabel'));
 
   it('makes the role itself the link, opened safely in a new tab', () => {
-    expect(cell).toContain("href: job.url");
+    // Through safeHref: only an absolute http(s) URL ever becomes an href.
+    expect(cell).toContain('safeHref(job.url)');
     expect(cell).toContain("target: '_blank'");
     // noreferrer as well as noopener: these are third-party job boards.
     expect(cell).toContain("rel: 'noopener noreferrer'");
@@ -728,5 +729,46 @@ describe('status reason is readable, not tooltip-only', () => {
     // Clamped so a long reason cannot make rows different heights.
     expect(css).toContain('.statusreason');
     expect(css).toContain('text-overflow: ellipsis');
+  });
+});
+
+describe('mutations are single-flight and dialogs submit on Enter', () => {
+  it('sends the X-Job-Agent header on every non-GET, from the one api helper', () => {
+    expect(app).toContain("if (method !== 'GET' && method !== 'HEAD') headers['X-Job-Agent'] = '1';");
+    // No mutation bypasses it with a bare fetch.
+    const code = app.replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(code).not.toMatch(/fetch\([^)]*method:\s*'(?:POST|PUT|DELETE)'/);
+  });
+
+  it('guards mutating buttons with withBusy instead of per-handler flags', () => {
+    expect(app).toContain('async function withBusy(button, fn');
+    expect(app).toContain('const BUSY_ACTIONS = new Set([');
+    for (const action of ['submit-add-url', 'submit-link', 'confirm-submitted', 'run', 'decide']) {
+      expect(app).toContain(`'${action}'`);
+    }
+  });
+
+  it('wraps each small dialog in a form whose submit is the only path to its action', () => {
+    for (const action of ['submit-add-url', 'submit-job-search', 'confirm-submitted', 'submit-link', 'confirm-go']) {
+      expect(html).toContain(`<form method="dialog" class="dlg-form" data-submit="${action}">`);
+      // The submit button must NOT also carry the action, or one click fires it twice.
+      expect(html).not.toContain(`type="submit" class="small primary" data-action="${action}"`);
+    }
+    expect(app).toContain("document.addEventListener('submit'");
+    // The hand-rolled Enter handlers are gone: the form does it for every field.
+    expect(app).not.toContain("$('addUrlInput').addEventListener('keydown'");
+  });
+});
+
+describe('no data-driven HTML', () => {
+  it('el() has no innerHTML escape hatch', () => {
+    expect(app).not.toContain("k === 'html'");
+    expect(app).not.toMatch(/\.innerHTML\s*=/);
+  });
+
+  it('only puts absolute http(s) job URLs into hrefs', () => {
+    expect(app).toContain('function safeHref(url)');
+    expect(app).toContain("parsed.protocol === 'http:' || parsed.protocol === 'https:'");
+    expect(app).not.toMatch(/href: job\.url\b/);
   });
 });

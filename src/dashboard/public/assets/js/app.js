@@ -150,8 +150,10 @@ function el(tag, attrs = {}, ...children) {
     if (v === null || v === undefined || v === false) continue;
     // `className` on an SVG element is a read-only SVGAnimatedString.
     if (k === 'class') { if (svg) node.setAttribute('class', v); else node.className = v; }
+    // There is deliberately no `html` key. It existed as an innerHTML escape
+    // hatch; nothing needed it, and every caller that one day reached for it
+    // with a job title or a provider message would have been an injection.
     else if (k === 'text') node.textContent = v;
-    else if (k === 'html') node.innerHTML = v;
     else if (k.startsWith('data-') || k.startsWith('aria-')) node.setAttribute(k, v);
     else if (k === 'for') node.htmlFor = v;
     else node.setAttribute(k, v === true ? '' : v);
@@ -161,6 +163,58 @@ function el(tag, attrs = {}, ...children) {
     node.append(child.nodeType ? child : document.createTextNode(String(child)));
   }
   return node;
+}
+
+/**
+ * The URL, but only if it is safe to put in an href: absolute http(s) only.
+ *
+ * Job URLs come from third-party feeds and from anything a user pastes into
+ * "Add by URL". `javascript:` and `data:` hrefs would execute or render on
+ * click — the CSP blocks inline script, but a link is the one place a URL is
+ * handed to the browser to act on, so it is checked where it is used.
+ *
+ * @param {unknown} url
+ * @returns {string|null}
+ */
+function safeHref(url) {
+  if (typeof url !== 'string' || !url.trim()) return null;
+  try {
+    const parsed = new URL(url.trim());
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null;
+  } catch { return null; }
+}
+
+/**
+ * Run `fn` with `button` marked busy, and refuse re-entry while it runs.
+ *
+ * Every mutating button used to be clickable again the instant it was clicked,
+ * so an impatient double click on "Add & score", "I submitted it myself" or a
+ * run button fired the request twice. The guard is the `aria-busy` flag rather
+ * than `disabled`: disabling a focused button throws focus to <body>, which
+ * strands a keyboard user in the middle of the page every time they press one.
+ *
+ * @template T
+ * @param {Element|null|undefined} button
+ * @param {() => T|Promise<T>} fn
+ * @param {{ label?: string }} [options] text to show while busy
+ * @returns {Promise<T|undefined>}
+ */
+async function withBusy(button, fn, { label } = {}) {
+  if (!button || button.nodeType !== 1) return fn();
+  if (button.getAttribute('aria-busy') === 'true') return undefined;
+  const restore = label ? [...button.childNodes] : null;
+  button.setAttribute('aria-busy', 'true');
+  button.setAttribute('aria-disabled', 'true');
+  button.classList.add('is-busy');
+  if (label) button.textContent = label;
+  try {
+    return await fn();
+  } finally {
+    button.removeAttribute('aria-busy');
+    button.removeAttribute('aria-disabled');
+    button.classList.remove('is-busy');
+    if (restore) button.replaceChildren(...restore);
+  }
 }
 
 function relTime(iso) {
@@ -188,10 +242,24 @@ function toast(message, tone = '') {
 
 /* ─────────────────────────── API layer ─────────────────────────── */
 
-async function api(path, options) {
+/**
+ * The one place the page talks to the server.
+ *
+ * Every non-GET request carries `X-Job-Agent: 1`. A cross-site form or image
+ * cannot set a custom header without a CORS preflight the server never grants,
+ * so the header lets the server tell its own page from a drive-by POST — and
+ * because it is added HERE, no mutation can be written that forgets it.
+ *
+ * Errors carry `status`, so a caller can tell "this server has no such route"
+ * (an older process) from a real failure and fall back instead of breaking.
+ */
+async function api(path, options = {}) {
+  const method = String(options.method ?? 'GET').toUpperCase();
+  const headers = { ...(options.headers ?? {}) };
+  if (method !== 'GET' && method !== 'HEAD') headers['X-Job-Agent'] = '1';
   let res;
   try {
-    res = await fetch(path, options);
+    res = await fetch(path, { ...options, method, headers });
   } catch {
     setServerStatus(false);
     throw new Error('Cannot reach the dashboard server — it may have stopped. '
@@ -206,12 +274,24 @@ async function api(path, options) {
     // "no route: GET /api/…", which reads like a bug rather than a stale
     // process. Say what it actually is.
     if (res.status === 404 && /^no route:/i.test(body.error ?? '')) {
-      throw new Error('This feature is newer than the dashboard process that is running. '
-        + 'Stop it and run "npm run dashboard" again, then reload this page.');
+      throw Object.assign(new Error('This feature is newer than the dashboard process that is running. '
+        + 'Stop it and run "npm run dashboard" again, then reload this page.'), { status: 404, noRoute: true });
     }
-    throw new Error(body.error || res.statusText);
+    throw Object.assign(new Error(body.error || res.statusText), { status: res.status });
   }
   return body;
+}
+
+/**
+ * GET an endpoint that an older server may not have. Resolves to `null` on a
+ * 404 so the caller can fall back; every other failure still throws.
+ */
+async function apiOptional(path) {
+  try { return await api(path); }
+  catch (err) {
+    if (err.status === 404) return null;
+    throw err;
+  }
 }
 
 const postJson = (path, body) => api(path, {
@@ -1197,11 +1277,14 @@ function nameCellFor(job) {
   const title = String(job.title ?? '').trim() || 'Title not identified';
   const shown = title.length > TITLE_MAX_CHARS ? `${title.slice(0, TITLE_MAX_CHARS - 1).trimEnd()}…` : title;
 
-  if (job.url) {
+  // Only an absolute http(s) URL becomes a link; anything else (a feed that
+  // handed us `javascript:` or a bare path) is rendered as plain text.
+  const href = safeHref(job.url);
+  if (href) {
     const aggregator = isAggregatorUrl(job.url);
     const link = el('a', {
       class: 'rolelink',
-      href: job.url,
+      href,
       target: '_blank',
       rel: 'noopener noreferrer',
       // `data-action` keeps this inside the one delegated-dispatch convention the
@@ -1535,8 +1618,9 @@ function renderDetail(job) {
   const actions = el('div', { class: 'actions' });
   // A row with no stored URL used to render a dead <a> with no href that looked
   // clickable and did nothing. Say what is missing instead.
-  if (job.url) {
-    actions.append(el('a', { class: 'btn', href: job.url, target: '_blank', rel: 'noopener', text: 'Open posting ↗' }));
+  const postingHref = safeHref(job.url);
+  if (postingHref) {
+    actions.append(el('a', { class: 'btn', href: postingHref, target: '_blank', rel: 'noopener noreferrer', text: 'Open posting ↗' }));
     actions.append(el('button', { class: 'small', 'data-action': 'check-link', 'data-id': job.id, text: 'Check link' }));
   } else {
     actions.append(el('span', { class: 'chip bad', title: 'This job has no application URL stored', text: 'no posting URL' }));
@@ -1675,7 +1759,7 @@ function nextBestAction(job) {
   const { text, buttons } = actionPlan(job);
   box.append(el('div', { class: 'nba-text', text }));
   const row = el('div', { class: 'nba-actions' });
-  for (const button of buttons) row.append(button);
+  for (const button of buttons) if (button) row.append(button);
   box.append(row);
   return box;
 }
@@ -1687,9 +1771,12 @@ const autofillButton = (id, label = '⚡ Auto-fill application') => el('button',
 });
 
 function actionPlan(job) {
-  const openPosting = () => el('a', {
-    class: 'btn small', href: job.url, target: '_blank', rel: 'noopener', text: 'Open posting ↗',
-  });
+  const postingHref = safeHref(job.url);
+  // No safe URL means nothing to open; an <a> without an href would look
+  // clickable and do nothing, so the button simply is not offered.
+  const openPosting = () => (postingHref ? el('a', {
+    class: 'btn small', href: postingHref, target: '_blank', rel: 'noopener noreferrer', text: 'Open posting ↗',
+  }) : null);
   const markSubmitted = () => el('button', {
     class: 'small primary', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself',
   });
@@ -2069,17 +2156,26 @@ for (const dialog of document.querySelectorAll('dialog')) {
   });
 }
 
+/** What "Continue" in the confirm dialog will do; consumed exactly once. */
+let pendingConfirm = null;
+
 function confirmAction(message, onConfirm) {
   $('confirmBody').textContent = '';
   for (const line of String(message).split('\n')) {
     $('confirmBody').append(el('p', { class: line.startsWith('  ') ? 'muted' : '', text: line.trim() }));
   }
-  const dialog = $('dlgConfirm');
-  const go = $('confirmGo');
-  const clone = go.cloneNode(true);
-  go.replaceWith(clone);
-  clone.addEventListener('click', () => { dialog.close(); onConfirm(); });
-  openDialog(dialog);
+  // Held in a variable rather than wired by cloning the button: the form's one
+  // submit handler runs it, so Enter and a click behave identically and a
+  // double submit finds nothing left to run.
+  pendingConfirm = onConfirm;
+  openDialog($('dlgConfirm'));
+}
+
+async function runPendingConfirm() {
+  const fn = pendingConfirm;
+  pendingConfirm = null;
+  closeDialog($('dlgConfirm'));
+  if (fn) await fn();
 }
 
 /* ───────────────────── mutations + refresh ───────────────────── */
@@ -3217,10 +3313,13 @@ function renderProfileFields(profile) {
     if (field.hint) cell.append(el('div', { class: 'faint fineprint', text: field.hint }));
     grid.append(cell);
   }
-  section.append(grid);
-  section.append(el('div', { class: 'row-gap' },
-    el('button', { type: 'button', class: 'small primary', 'data-action': 'save-profile', text: 'Save details' }),
+  // A form, so Enter in any field saves — the same one-path submit the small
+  // dialogs use (see the document 'submit' listener).
+  const form = el('form', { class: 'pf-form', 'data-submit': 'save-profile', novalidate: true });
+  form.append(grid, el('div', { class: 'row-gap' },
+    el('button', { type: 'submit', class: 'small primary', text: 'Save details' }),
     el('span', { class: 'faint fineprint', text: profile.path ?? '' })));
+  section.append(form);
   return section;
 }
 
@@ -3439,7 +3538,7 @@ async function openHealth() {
 }
 
 function download(path, filename) {
-  fetch(path).then(async (res) => {
+  return fetch(path).then(async (res) => {
     if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText);
     const blob = await res.blob();
     const href = URL.createObjectURL(blob);
@@ -3975,7 +4074,6 @@ const ACTIONS = {
   'open-add-url': () => {
     $('addUrlInput').value = '';
     $('addUrlMsg').textContent = '';
-    $('addUrlGo').disabled = false;
     openDialog($('dlgAddUrl'));
   },
   'submit-add-url': submitAddUrl,
@@ -3997,14 +4095,41 @@ const ACTIONS = {
     openDialog(dialog);
   },
   'confirm-submitted': confirmSubmitted,
+  'confirm-go': runPendingConfirm,
   'close-dialog': (target) => closeDialog(target.closest('dialog')),
 };
+
+/**
+ * Actions that write something or start work. The dispatcher runs these
+ * through `withBusy`, so each shows it is working and ignores a second press
+ * until the first has settled — one list instead of a guard per handler.
+ */
+const BUSY_ACTIONS = new Set([
+  'cancel-run', 'run', 'migrate-search-profile', 'activate-search-profile',
+  'profile-from-resume-create', 'profile-from-resume-keep', 'confirm-merge-selection',
+  'profile-from-resume-reconsider', 'adopt-resume-titles', 'adopt-resume-skills',
+  'restore-master', 'save-profile', 'save-question-answer', 'dismiss-question',
+  'save-answers', 'delete-answer', 'export-jobs', 'export-tracker', 'clear-role-search',
+  'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare',
+  'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
+  'check-link', 'save-note', 'today-act', 'decision-reason',
+  'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
+]);
+
+/** Run one ACTIONS entry, busy-guarded when it mutates. */
+function dispatchAction(name, target, event) {
+  const action = ACTIONS[name];
+  if (!action) return undefined;
+  if (target.getAttribute?.('aria-busy') === 'true') return undefined;
+  return BUSY_ACTIONS.has(name)
+    ? withBusy(target, () => action(target, event))
+    : action(target, event);
+}
 
 async function submitAddUrl() {
   const url = $('addUrlInput').value.trim();
   const msg = $('addUrlMsg');
   if (!url) { msg.className = 'st-blocked'; msg.textContent = 'Paste a job URL first.'; return; }
-  $('addUrlGo').disabled = true;
   msg.className = 'muted';
   msg.textContent = 'Reading and scoring the posting…';
   try {
@@ -4016,7 +4141,6 @@ async function submitAddUrl() {
   } catch (err) {
     msg.className = 'st-blocked';
     msg.textContent = err.message;
-    $('addUrlGo').disabled = false;
   }
 }
 
@@ -4073,7 +4197,6 @@ async function runJobSearch() {
     msg.textContent = 'Type a role or phrase to search for.';
     return;
   }
-  $('jobSearchGo').disabled = true;
   msg.className = 'muted';
   msg.textContent = `Searching the job boards for "${query}"…`;
   try {
@@ -4094,8 +4217,6 @@ async function runJobSearch() {
   } catch (err) {
     msg.className = 'st-blocked';
     msg.textContent = err.message;
-  } finally {
-    $('jobSearchGo').disabled = false;
   }
 }
 
@@ -4225,12 +4346,22 @@ document.addEventListener('click', (event) => {
   if (!KEEP_MENU_OPEN.includes(target?.dataset.action)) closeMainMenu();
   if (!$('runDetails').hidden && !$('runbox').contains(event.target)) setRunDetails(false);
   if (!target) return;
-  const action = ACTIONS[target.dataset.action];
-  if (!action) return;
+  if (!ACTIONS[target.dataset.action]) return;
   // A checkbox inside a clickable row must not also trigger row selection.
   if (target.dataset.action !== 'select') event.stopPropagation();
   if (target.tagName === 'A') return; // let real links navigate
-  action(target, event);
+  dispatchAction(target.dataset.action, target, event);
+});
+
+// Dialog forms: Enter in any field, or the submit button, lands here once.
+// `preventDefault` keeps method="dialog" from closing the dialog before the
+// request has succeeded — a failed save must leave the user's input on screen.
+document.addEventListener('submit', (event) => {
+  const form = event.target.closest?.('form[data-submit]');
+  if (!form) return;
+  event.preventDefault();
+  const button = event.submitter ?? form.querySelector('[type="submit"]') ?? form;
+  dispatchAction(form.dataset.submit, button, event);
 });
 
 // Checkbox changes fire on 'change', not 'click', for keyboard users.
@@ -4523,9 +4654,7 @@ function syncFilterSheetCount() {
   if (n) button.append(el('span', { class: 'n', text: String(n) }));
 }
 
-/* Dialog submit-on-Enter */
-$('addUrlInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitAddUrl(); } });
-$('linkInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitLink(); } });
+/* Dialog submit-on-Enter is the <form> itself now — see the submit listener. */
 
 /* Master resume upload — the hidden picker is opened by the visible button. */
 $('masterFile').addEventListener('change', (event) => {
