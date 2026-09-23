@@ -1167,15 +1167,43 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         items: ids.map((jobId) => ({ jobId, status: 'queued' })),
       },
     });
+    const batchStartedAt = runState.startedAt;
     track((async () => {
       const results = [];
       const skipped = [];
       let queueLen = 0;
       let cancelled = false;
       try {
+        // LAUNCH PREFLIGHT. Without a browser every job in the batch failed
+        // one at a time, each with Playwright's multi-line install banner as
+        // its "reason". Check once, before anything is prepared or approved,
+        // and fail the batch with the one line that fixes it. Skipped when
+        // the runner is injected (it does not launch Playwright) unless a
+        // preflight is injected too.
+        const preflight = deps.browserPreflight
+          ?? (deps.assistFn ? null : async () => {
+            const { checkBrowserAvailable } = await import('../automation/browser.js');
+            return checkBrowserAvailable({ channel: config?.runtime?.browserChannel ?? null });
+          });
+        const browser = preflight ? await preflight() : { ok: true };
+        if (!browser?.ok) {
+          const reason = `${browser?.code ?? 'browser_unavailable'}: ${browser?.message ?? 'Browser not installed — run: npx playwright install chromium'}`;
+          runState.lastError = reason;
+          for (const jobId of ids) skipped.push({ jobId, reason });
+          runState.progress.items = ids.map((jobId) => ({ jobId, status: 'skipped', reason }));
+          runState.progress.completed = ids.length;
+          runState.lastResult = {
+            phase: 'assist-batch', total: 0, skipped, results, environment: browser?.code ?? 'browser_unavailable',
+          };
+          return;
+        }
+
         // Auto-submit is fail-closed before any browser opens. Ordinary
         // fill-and-review batches retain the existing prepare/approve flow.
         let autoSubmitEligible = null;
+        // Packet each auto-submit job pointed at when the run was authorized.
+        const reviewedPacketPath = new Map();
+        const { autoSubmitReviewProblem } = await import('../apply/autoApplyEligibility.js');
         if (runOpts.autoSubmit === true) {
           const preview = autoApplyEligibility(ids, true);
           autoSubmitEligible = new Set(preview.items.filter((x) => x.eligible).map((x) => x.jobId));
@@ -1188,6 +1216,26 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             ...(item.eligible ? {} : { reason: item.reasons[0] }),
           }));
           runState.progress.completed = preview.ineligible;
+          // ONLY PACKETS A HUMAN REVIEWED BEFORE THIS RUN. The ordinary flow
+          // below prepares missing/foreign packets and approves them itself;
+          // for auto-submit that meant a packet nobody had seen was built,
+          // approved and submitted in one step. Such jobs are excluded here.
+          for (const jobId of [...autoSubmitEligible]) {
+            const approval = db.getApprovalByJob?.(jobId) ?? null;
+            const owned = storedPacketIsOurs(approval);
+            const problem = !owned.ok
+              ? `its packet is not the active candidate's (${owned.reason})`
+              : autoSubmitReviewProblem({ job: db.getJob?.(jobId), approval, batchStartedAt });
+            if (problem) {
+              autoSubmitEligible.delete(jobId);
+              skipped.push({ jobId, reason: `not auto-submitted: ${problem}` });
+              const item = runState.progress.items.find((x) => x.jobId === jobId);
+              if (item) Object.assign(item, { status: 'ineligible', reason: problem });
+              runState.progress.completed += 1;
+            } else {
+              reviewedPacketPath.set(jobId, approval.packet_path);
+            }
+          }
         }
 
         // 0. Never queue a job that is already submitted (or whose auto-submit
@@ -1262,7 +1310,17 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             runState.progress.completed += 1;
             continue;
           }
-          const liveSkip = liveSkipReason(jobId);
+          // Re-checked at the moment of filling: an approval or packet that
+          // changed while earlier jobs were running was not what was reviewed.
+          const liveSkip = liveSkipReason(jobId) ?? (autoSubmit
+            ? (() => {
+              const problem = autoSubmitReviewProblem({
+                job: db.getJob?.(jobId), approval: db.getApprovalByJob?.(jobId),
+                batchStartedAt, snapshotPacketPath: reviewedPacketPath.get(jobId) ?? null,
+              });
+              return problem ? `not auto-submitted: ${problem}` : null;
+            })()
+            : null);
           if (liveSkip) {
             skipped.push({ jobId, reason: liveSkip });
             done += 1;
@@ -1287,6 +1345,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             const itemResult = {
               jobId, status: result.status, submitted: result.submitted === true,
               blockers: result.blockers ?? [], resumed: result.resumed === true,
+              // What was actually answered on the live form, and why a
+              // final submit was held back — the audit trail for a run that
+              // may click Submit on the user's behalf.
+              ...(Array.isArray(result.liveAnswers) ? { liveAnswers: result.liveAnswers } : {}),
+              ...(result.autoSubmitWithheld ? { autoSubmitWithheld: result.autoSubmitWithheld } : {}),
             };
             results.push(itemResult);
             if (progressItem) Object.assign(progressItem, itemResult);

@@ -10,12 +10,26 @@
 import { APPROVAL_STATUS } from './approvalQueue.js';
 import { isSponsorshipGated } from '../scoring/explainScore.js';
 
-/** ATS contracts exercised by local, no-submit browser fixtures. */
+/**
+ * ATS contracts exercised by local, no-submit browser fixtures, and therefore
+ * the only ones final Auto-submit may click Submit on.
+ *
+ * `generic` used to be on this list. It is not a contract: it is the label
+ * for "we could not tell which ATS this is", so an unrecognised careers page —
+ * whose submit button, confirmation page and required-field conventions have
+ * never been exercised — qualified for an unattended final submission.
+ * Unknown platforms still get assisted fill (see ASSISTED_FILL_ATS); they
+ * just never get submitted for you.
+ */
 export const FIXTURE_VERIFIED_AUTO_APPLY_ATS = Object.freeze([
-  'greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'generic',
+  'greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters',
 ]);
 
+/** Platforms assisted fill is offered on (a superset: fill never submits). */
+export const ASSISTED_FILL_ATS = Object.freeze([...FIXTURE_VERIFIED_AUTO_APPLY_ATS, 'generic']);
+
 const VERIFIED_ATS = new Set(FIXTURE_VERIFIED_AUTO_APPLY_ATS);
+const ASSIST_ATS = new Set(ASSISTED_FILL_ATS);
 const CLOSED_DECISIONS = new Set(['rejected', 'archived']);
 const DUPLICATE_STATUSES = new Set(['submitted', 'submit_unverified']);
 
@@ -32,7 +46,7 @@ function inferredAts(job = {}, packet = null) {
   const explicit = clean(packet?.ats?.platform ?? job.ats_platform).toLowerCase();
   if (explicit) return explicit;
   const source = clean(job.source).toLowerCase();
-  return VERIFIED_ATS.has(source) ? source : 'unknown';
+  return ASSIST_ATS.has(source) ? source : 'unknown';
 }
 
 function unique(values) {
@@ -175,4 +189,45 @@ export function evaluateAutoApplyBatch({ items = [], autoSubmitAuthorized = fals
     ineligible: results.filter((x) => !x.eligible).length,
     items: results,
   };
+}
+
+/** Parse a stored timestamp; null when absent or unparseable. */
+function timeOf(value) {
+  const t = Date.parse(String(value ?? ''));
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * Was this job's packet reviewed and approved BEFORE the auto-submit run
+ * started, and is it still the same packet?
+ *
+ * Auto-submit is authorized for the packets a human looked at. A packet
+ * prepared (or re-prepared, e.g. after an ownership mismatch) or approved
+ * while the run was already going is one nobody reviewed — the batch used to
+ * prepare it, approve it itself, and submit it in the same breath.
+ *
+ * @param {object} args
+ * @param {object|null} args.job live DB row
+ * @param {object|null} args.approval live approval row
+ * @param {string|number|Date} args.batchStartedAt when the run was authorized
+ * @param {string|null} [args.snapshotPacketPath] packet path when the run started
+ * @returns {string|null} why the job must not be auto-submitted, or null
+ */
+export function autoSubmitReviewProblem({ job, approval, batchStartedAt, snapshotPacketPath } = {}) {
+  const started = timeOf(batchStartedAt instanceof Date ? batchStartedAt.toISOString() : batchStartedAt);
+  if (!approval) return 'no reviewed packet exists';
+  if (approval.approval_status !== APPROVAL_STATUS.APPROVED || !approval.approved_by_user) {
+    return 'its packet was not approved before this auto-submit run started';
+  }
+  if (snapshotPacketPath !== undefined && snapshotPacketPath !== null
+    && approval.packet_path !== snapshotPacketPath) {
+    return 'its packet was replaced after this auto-submit run started';
+  }
+  if (started !== null) {
+    const approvedAt = timeOf(approval.approved_at);
+    if (approvedAt !== null && approvedAt > started) return 'it was approved after this auto-submit run started';
+    const preparedAt = timeOf(job?.prepared_at);
+    if (preparedAt !== null && preparedAt > started) return 'it was (re)prepared after this auto-submit run started';
+  }
+  return null;
 }

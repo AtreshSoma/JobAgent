@@ -72,7 +72,7 @@ describe('Auto-Apply eligibility', () => {
     });
     expect(preview).toMatchObject({ total: 2, eligible: 1, ineligible: 1 });
     expect(FIXTURE_VERIFIED_AUTO_APPLY_ATS).toEqual(expect.arrayContaining([
-      'greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters', 'generic',
+      'greenhouse', 'lever', 'ashby', 'workday', 'smartrecruiters',
     ]));
   });
 });

@@ -29,14 +29,21 @@
  * local fixture forms.
  */
 
-import { createBrowserSession, openApplicationPage, inspectCurrentPage } from './browser.js';
+import {
+  createBrowserSession, openApplicationPage, inspectCurrentPage,
+  BROWSER_UNAVAILABLE_CODE, BROWSER_UNAVAILABLE_MESSAGE, isBrowserMissingError, stripPlaywrightBanner,
+} from './browser.js';
 import { fillFields, requiredFieldsSatisfied, verifyFilledFields } from './fieldResolver.js';
-import { scanFields, resolveFormScope, detectValidationErrors } from './domScanner.js';
-import { fillScannedFields } from './fieldFiller.js';
+import {
+  scanFields, resolveFormScope, detectValidationErrors, unfilledRequiredControls,
+} from './domScanner.js';
+import { fillScannedFields, isSensitiveChoiceLabel } from './fieldFiller.js';
 import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
 import { detectBlocker } from './guards.js';
-import { assertTruthfulSponsorship, isInvertedSponsorshipQuestion } from '../apply/screeningQA.js';
+import {
+  assertTruthfulSponsorship, isInvertedSponsorshipQuestion, isSponsorshipTopic,
+} from '../apply/screeningQA.js';
 import {
   APPLICATION_PHASE,
   applicationStatePreventsReopen,
@@ -97,6 +104,10 @@ export async function assistApply({
     duplicatePrevented: false,
     applicationState: null,
     applicationStatePath: null,
+    // Every screening answer actually committed on the live form, with the
+    // option text the employer will read — the packet only records what we
+    // PLANNED to say. Auto-submit compares the two (see tryAutoSubmit).
+    liveAnswers: [],
   };
   const clock = deps.now ?? (() => new Date());
   const nowIso = () => {
@@ -265,13 +276,31 @@ export async function assistApply({
   try {
     session = await createSession({ headless, slowMo, channel, userDataDir, deps });
   } catch (err) {
+    // A missing browser binary is an ENVIRONMENT problem, not a failed
+    // application: nothing about the job or packet is wrong, and "failed"
+    // sent users to the RCA panel to read Playwright's 10-line ASCII banner.
+    // It is recorded as blocked with a stable `browser_unavailable:` code the
+    // dashboard classifies, and one line that says what to run.
+    if (isBrowserMissingError(err)) {
+      result.status = LIFECYCLE.ASSIST_BLOCKED;
+      result.statusReason = `${BROWSER_UNAVAILABLE_CODE}: ${BROWSER_UNAVAILABLE_MESSAGE}`;
+      result.blockers.push(result.statusReason);
+      try {
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: applicationState.currentStep,
+          lastUrl: applicationState.lastUrl ?? url,
+          blockers: result.blockers,
+        }, 'browser not installed');
+      } catch { /* the missing browser is the actionable error */ }
+      return result;
+    }
     result.status = LIFECYCLE.FAILED;
     // The most common cause when reusing a real browser profile is that the
     // browser is still running and holding a lock on the profile directory.
     const hint = channel
       ? ` — if you set BROWSER_USER_DATA_DIR, close every ${channel === 'msedge' ? 'Microsoft Edge' : channel} window first (a profile can only be opened by one process at a time)`
       : '';
-    result.blockers.push(`could not start browser: ${err.message}${hint}`);
+    result.blockers.push(`could not start browser: ${stripPlaywrightBanner(err.message)}${hint}`);
     try {
       await checkpoint(APPLICATION_PHASE.BLOCKED, {
         currentStep: applicationState.currentStep,
@@ -306,6 +335,27 @@ export async function assistApply({
       if (result.blockers.length > 0) return false;
       if (!result.sponsorshipTruthful || !result.requiredFieldsFilled) return false;
       if (!result.submitSelector || !result.submitSelectorConfident) return false;
+      // A legal / immigration / demographic answer chosen LIVE that the human
+      // never reviewed in the packet is not covered by their approval: they
+      // approved "Yes, I require sponsorship", not whichever option a live
+      // widget ended up showing, and not an answer to a question the packet
+      // did not know about.
+      const unreviewed = unreviewedSensitiveAnswers(result.liveAnswers, packet?.screeningPlan?.answered ?? []);
+      if (unreviewed.length) {
+        result.autoSubmitWithheld = unreviewed.map((a) => `live answer to "${a.label}" ("${a.value}") was not in the reviewed packet`);
+        result.note = `auto-submit withheld — ${result.autoSubmitWithheld[0]}; review it and submit yourself`;
+        return false;
+      }
+      // Ask the live DOM, not the static plan, whether anything required is
+      // still blank. `null` means the scope cannot be inspected (a unit-test
+      // double); a real Playwright page always can.
+      const blankRequired = await unfilledRequiredControls(scope);
+      if (Array.isArray(blankRequired) && blankRequired.length) {
+        result.requiredFieldsFilled = false;
+        result.autoSubmitWithheld = blankRequired.map((l) => `required field is empty: ${l}`);
+        result.note = `auto-submit withheld — ${blankRequired.length} required field(s) still empty (${blankRequired.slice(0, 3).join(', ')})`;
+        return false;
+      }
       if ((dailyCount ?? 0) >= dailyCap) {
         result.note = `daily application cap reached (${dailyCap}) — filled but left for you to submit`;
         return false;
@@ -524,6 +574,12 @@ export async function assistApply({
           .map((item) => [`${item.selector ?? ''}|${item.label ?? ''}`, item]),
       );
       dynamicNeedsUser = [...needsUserByKey.values()];
+      for (const f of [...(dyn.filled ?? []), ...(conditional.filled ?? [])]) {
+        if (f.source !== 'screening') continue;
+        result.liveAnswers.push({
+          label: f.label ?? null, value: f.value ?? null, kind: f.kind ?? null, step: stepNumber,
+        });
+      }
       for (const err of conditional.errors ?? []) stepBlockers.push(`field ${err.label ?? err.field}: ${err.error}`);
       result.unresolved = staticUnresolved;
 
@@ -615,7 +671,10 @@ export async function assistApply({
         stepBlockers.push(`field ${rejected.label ?? rejected.field ?? 'unknown'} was not accepted: ${rejected.reason}`);
       }
       const req = requiredFieldsSatisfied(result.filled, packet.fillPlan);
-      result.requiredFieldsFilled = req.ok;
+      // The auto-submit gate uses the STRICT form, which is not vacuously
+      // satisfied by an empty static plan (see requiredFieldsSatisfied).
+      result.requiredFieldsFilled = req.ok
+        && requiredFieldsSatisfied(result.filled, packet.fillPlan, undefined, { strict: true }).ok;
       const pendingRequiredBlocker = req.ok ? null : `required fields missing: ${req.missing.join(', ')}`;
 
       // Rewrite the validating checkpoint with live acceptance results and the
@@ -874,6 +933,40 @@ export async function assistApply({
 export function browserProfileDirName({ channel = null, profileId = null } = {}) {
   const profile = String(profileId ?? '').trim().replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64);
   return ['.browser-profile', profile, channel].filter(Boolean).join('-');
+}
+
+/** Lower-case, punctuation-free comparison form of a label or answer. */
+function normAnswer(value) {
+  return String(value ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+/**
+ * Live answers to sensitive questions (sponsorship, authorization, legal,
+ * EEO) that the reviewed packet does not contain with the same meaning.
+ *
+ * A live answer is "reviewed" when the packet planned an answer for the same
+ * question and the committed text is that answer, or starts with the same
+ * yes/no. Exported for tests.
+ *
+ * @param {Array<{label: string, value: string}>} live result.liveAnswers
+ * @param {Array<{label?: string, answer?: string, value?: string}>} reviewed packet.screeningPlan.answered
+ * @returns {Array<{label: string, value: string}>}
+ */
+export function unreviewedSensitiveAnswers(live = [], reviewed = []) {
+  const planned = new Map(reviewed
+    .filter((r) => r?.label)
+    .map((r) => [normAnswer(r.label), normAnswer(r.answer ?? r.value)]));
+  const lead = (t) => (/^(yes|y)\b/.test(t) ? 'yes' : /^(no|n)\b/.test(t) ? 'no' : null);
+  return live.filter((a) => {
+    const label = String(a?.label ?? '');
+    if (!isSensitiveChoiceLabel(label) && !isSponsorshipTopic(label)) return false;
+    const want = planned.get(normAnswer(label));
+    if (want === undefined) return true;
+    const got = normAnswer(a.value);
+    if (!got) return true;
+    if (got === want || want.startsWith(got) || got.startsWith(want)) return false;
+    return !(lead(got) && lead(got) === lead(want));
+  });
 }
 
 /** Was the checkpoint's last URL a wall (flagged, or a login-shaped URL)? */

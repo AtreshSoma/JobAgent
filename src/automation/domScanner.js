@@ -309,3 +309,78 @@ export async function detectValidationErrors(scope) {
     return [];
   }
 }
+
+/**
+ * Labels of every VISIBLE required control that is still empty on this step.
+ *
+ * The auto-submit gate used to trust `requiredFieldsSatisfied`, which only
+ * knows about fields in the packet's static plan — and with an empty plan (the
+ * normal case for a dynamically scanned form) it was vacuously true, so a form
+ * with a blank required question could be submitted. This asks the live DOM
+ * instead: `[required]` and `[aria-required="true"]` controls, radio groups by
+ * name, checkboxes by `checked`, file inputs by their FileList.
+ *
+ * @param {object} scope Playwright Page or Frame
+ * @returns {Promise<string[]|null>} empty labels, or null when the scope cannot
+ *   be inspected (unit-test doubles)
+ */
+export async function unfilledRequiredControls(scope) {
+  if (!scope || typeof scope.evaluate !== 'function') return null;
+  try {
+    const missing = await scope.evaluate(() => {
+      const visible = (el) => {
+        const style = window.getComputedStyle(el);
+        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
+      const labelOf = (el) => {
+        if (el.labels && el.labels.length) return el.labels[0].textContent.trim();
+        const aria = el.getAttribute('aria-label');
+        if (aria) return aria.trim();
+        const by = el.getAttribute('aria-labelledby');
+        if (by) {
+          const ref = document.getElementById(by.split(/\s+/)[0]);
+          if (ref) return ref.textContent.trim();
+        }
+        return el.name || el.id || 'required field';
+      };
+      const out = [];
+      const seenGroups = new Set();
+      const controls = document.querySelectorAll(
+        'input[required], select[required], textarea[required], [aria-required="true"]',
+      );
+      for (const el of controls) {
+        const tag = el.tagName.toLowerCase();
+        const type = String(el.getAttribute('type') || tag).toLowerCase();
+        if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) continue;
+        if (el.disabled) continue;
+        if (type === 'radio') {
+          if (!el.name || seenGroups.has(el.name)) continue;
+          seenGroups.add(el.name);
+          const group = [...document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)];
+          if (!group.some(visible)) continue;
+          if (!group.some((r) => r.checked)) out.push(labelOf(el));
+          continue;
+        }
+        if (!['input', 'select', 'textarea'].includes(tag)) {
+          // An ARIA widget (radiogroup / combobox / listbox) marked required.
+          if (!visible(el)) continue;
+          const chosen = el.querySelector('[aria-checked="true"], [aria-selected="true"]')
+            || (el.getAttribute('aria-valuetext') || '').trim()
+            || el.querySelector('[class*="single-value"], [class*="singleValue"]');
+          if (!chosen) out.push(labelOf(el));
+          continue;
+        }
+        if (!visible(el)) continue;
+        if (type === 'checkbox') { if (!el.checked) out.push(labelOf(el)); continue; }
+        if (type === 'file') { if (!el.files || el.files.length === 0) out.push(labelOf(el)); continue; }
+        if (!String(el.value ?? '').trim()) out.push(labelOf(el));
+      }
+      return [...new Set(out.map((l) => l.replace(/\s+/g, ' ').slice(0, 120)))];
+    });
+    return Array.isArray(missing) ? missing : null;
+  } catch {
+    return null;
+  }
+}

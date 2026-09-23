@@ -95,7 +95,7 @@ export async function fillFields(page, fillPlan = {}, { dryRun = false } = {}) {
  * @param {string[]} [required=['email']] canonical required field names
  * @returns {{ ok: boolean, missing: string[] }}
  */
-export function requiredFieldsSatisfied(filled = [], fillPlan = {}, required = ['email']) {
+export function requiredFieldsSatisfied(filled = [], fillPlan = {}, required = ['email'], { strict = false } = {}) {
   const steps = Array.isArray(fillPlan.steps) ? fillPlan.steps : [];
   const filledSet = new Set(filled.map((f) => f.field));
   const planned = new Set(steps.map((s) => s.field));
@@ -103,6 +103,10 @@ export function requiredFieldsSatisfied(filled = [], fillPlan = {}, required = [
   for (const field of required) {
     // Only enforce fields the form actually asks for.
     if (planned.has(field) && !filledSet.has(field)) missing.push(field);
+    // STRICT (the auto-submit gate): with no static plan at all, "the form
+    // does not ask for it" was vacuously assumed and an unplanned form passed
+    // with nothing filled. Unplanned, the field must have been filled live.
+    else if (strict && steps.length === 0 && !filledSet.has(field)) missing.push(field);
   }
   return { ok: missing.length === 0, missing };
 }
