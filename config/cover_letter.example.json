@@ -12,7 +12,7 @@
     "opening": "I am applying for the {title} role at {company}. As a {headline} with {years} of experience, I am confident my background maps closely to what you are looking for.",
     "skillsLead": "My core strengths align with your requirements:",
     "experience": "In my current role I {topHighlight}.",
-    "fitNote": "I focus on {focusAreas}, which appear central to this position.",
+    "fitNote": "My recent work also spans {focusAreas}, which this role relies on.",
     "sponsorshipNote": "YOUR truthful sponsorship sentence, or set includeSponsorshipNote to false.",
     "closingParagraph": "I would welcome the chance to discuss how I can contribute to {company}. Thank you for your consideration.",
     "_note": "Templates are yours to edit. The shipped wording is deliberately profession-neutral: it previously asserted \"building data platforms\" for every candidate. Placeholders that the profile cannot evidence cause their paragraph to be OMITTED, never filled with a guess."

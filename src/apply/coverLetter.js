@@ -70,9 +70,72 @@ export function generateCoverLetter(job, scoreResult, {
   };
 }
 
+/** Acronyms that must never read as ordinary words in a letter. */
+const ACRONYMS = new Set(['etl', 'elt', 'sql', 'bi', 'aws', 'gcp', 'api', 'apis', 'ci/cd', 'ml', 'ai', 'llm', 'kpi', 'sox', 'hipaa', 'gdpr', 'saas', 'erp', 'crm', 'ui', 'ux', 'qa', 'sre', 'olap', 'oltp', 'ssis', 'ssrs', 'dax', 'adf', 'rbac']);
+/** Product names whose own casing is not "Title Case" (dbt is lower-case by design). */
+const BRANDS = { dbt: 'dbt', pyspark: 'PySpark', 'power bi': 'Power BI', github: 'GitHub', devops: 'DevOps', mongodb: 'MongoDB', postgresql: 'PostgreSQL', mysql: 'MySQL', bigquery: 'BigQuery', javascript: 'JavaScript', typescript: 'TypeScript', dataops: 'DataOps', mlops: 'MLOps', onelake: 'OneLake' };
+/** Words that name a JOB, not a skill ("data engineer" is not a strength). */
+const ROLE_NOUN_RE = /\b(engineer|engineering|developer|analyst|architect|manager|specialist|consultant|scientist|administrator|lead|director)s?\b/i;
+
+/**
+ * Present JD-matched keywords the way the candidate writes them.
+ *
+ * The matcher works on lower-cased text, and the letter used to print its
+ * tokens verbatim: "My core strengths align with your requirements: data
+ * engineer, azure, azure data factory, databricks, etl" (2026-09-23, the first
+ * real packet). A role title is not a strength, "azure" next to "azure data
+ * factory" says the same thing twice, and a hiring manager reads lower-case
+ * product names as carelessness. Each term now takes the spelling from the
+ * candidate's own stack or resume skills, role nouns are dropped, a term
+ * contained in a longer one already listed is dropped, and known acronyms are
+ * upper-cased. Nothing is added that the matcher did not already match.
+ */
+export function presentableSkills(matched = [], candidate = {}) {
+  const canonical = new Map();
+  const stack = candidate?.technicalStack ?? {};
+  const known = [
+    ...Object.entries(stack).filter(([b]) => b !== 'growth').flatMap(([, t]) => (Array.isArray(t) ? t : [t])),
+    ...(candidate?.skills ?? []),
+  ];
+  for (const t of known) if (typeof t === 'string' && t.trim()) canonical.set(t.trim().toLowerCase(), t.trim());
+  const pretty = (raw) => {
+    const key = String(raw).trim().toLowerCase();
+    // Exact entry first; else the spelling inside the longer entry that
+    // evidences it ("azure" -> "Azure" from "Azure Data Factory").
+    if (canonical.has(key)) return canonical.get(key);
+    if (BRANDS[key]) return BRANDS[key];
+    if (ACRONYMS.has(key)) return key.toUpperCase();
+    for (const [k, v] of canonical) {
+      const at = k.search(new RegExp(`(^|[^a-z0-9])${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`));
+      if (at >= 0) { const start = k.indexOf(key, at); return v.slice(start, start + key.length); }
+    }
+    return key; // a generic concept ("streaming") stays lower-case mid-sentence
+  };
+  // EVIDENCED ONLY. `matchedKeywords` are scoring-category terms found in the
+  // JOB AD — and categories can carry market terms the candidate never used.
+  // On 2026-09-23 the letter said "My recent work also spans Airflow, dbt"
+  // for a resume that mentions neither. A term survives only if the
+  // candidate's own stack or resume skills contain it (exactly, or as a whole
+  // word of a longer entry: "azure" is evidenced by "Azure Data Factory").
+  const knownLower = [...canonical.keys()];
+  const evidenced = (t) => canonical.has(t)
+    || knownLower.some((k) => new RegExp(`(^|[^a-z0-9])${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(k));
+  const terms = [...new Set(matched.map((m) => String(m ?? '').trim().toLowerCase()).filter(Boolean))]
+    .filter((t) => !ROLE_NOUN_RE.test(t) && evidenced(t));
+  const kept = terms.filter((t) => !terms.some((o) => o !== t && o.length > t.length && new RegExp(`\\b${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(o)));
+  return kept.map(pretty);
+}
+
+/** "A", "A and B", "A, B and C". */
+function joinList(items) {
+  if (items.length <= 1) return items.join('');
+  return `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
 function buildContext(job, scoreResult, candidate, coverLetter) {
-  const matched = (scoreResult?.matchedKeywords ?? []);
-  const skills = matched.slice(0, coverLetter.maxSkillBullets ?? 5);
+  const matched = presentableSkills(scoreResult?.matchedKeywords ?? [], candidate);
+  const bulletCount = coverLetter.maxSkillBullets ?? 5;
+  const skills = matched.slice(0, bulletCount);
   // NO UNGROUNDED CLAIMS, AND NO BORROWED PROFESSION.
   //
   // `topHighlight` used to fall back to the literal string 'delivered production
@@ -104,9 +167,13 @@ function buildContext(job, scoreResult, candidate, coverLetter) {
     .filter(([bucket]) => bucket !== 'growth')
     .flatMap(([, terms]) => (Array.isArray(terms) ? terms : [terms]))
     .filter((t) => typeof t === 'string' && t.trim());
+  // The bullets already list the strongest matches; repeating the same three
+  // in the next paragraph read as filler. The focus line names what the
+  // bullets did NOT, or is omitted.
+  const beyond = matched.slice(bulletCount, bulletCount + 3);
   const focusAreas = skills.length
-    ? skills.slice(0, 3).join(', ')
-    : (evidencedTerms.slice(0, 3).join(', ') || null);
+    ? (beyond.length ? joinList(beyond) : null)
+    : (joinList(presentableSkills(evidencedTerms.slice(0, 3), candidate)) || null);
   // PERSONAL FACTS COME FROM THE PROFILE, NOT FROM THE TEMPLATE FILE.
   //
   // `cover_letter.json` is one shared file, and two of its values are facts
