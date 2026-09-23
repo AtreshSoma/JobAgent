@@ -44,6 +44,8 @@
  * --apply.
  */
 
+import { pathToFileURL } from 'node:url';
+
 import { loadConfig } from '../src/config/loadConfig.js';
 import { openDatabase } from '../src/logging/db.js';
 import { buildProfileVocabulary, classifyTitleFit } from '../src/scoring/profileFit.js';
@@ -87,6 +89,55 @@ Fetch descriptions for stored jobs that were never read, then re-score them.
 }
 
 /**
+ * The public CXS detail endpoint for a stored Workday posting URL, or null.
+ *
+ * Two URL families exist and the tenant lives in a different place in each:
+ *
+ *   https://acme.wd5.myworkdayjobs.com/[en-US/]<site>/job/...
+ *       tenant = first host label ("acme")
+ *   https://wd5.myworkdaysite.com/[en-US/]recruiting/<tenant>/<site>/job/...
+ *       tenant = the segment after "recruiting"; the host label is just the pod
+ *
+ * The second family used to derive tenant "wd5" from the host, so every
+ * enrichment of a myworkdaysite.com posting called a nonexistent tenant and
+ * failed.
+ *
+ * @param {string} url stored posting URL
+ * @returns {string|null}
+ */
+export function workdayDetailApi(url) {
+  let u;
+  try { u = new URL(url); } catch { return null; }
+  const segs = u.pathname.split('/').filter(Boolean);
+  const jobIdx = segs.indexOf('job');
+  if (jobIdx < 1) return null;
+  const site = segs[jobIdx - 1];
+  let tenant;
+  const recruiting = segs.indexOf('recruiting');
+  if (/\.myworkdaysite\.com$/i.test(u.hostname) || (recruiting !== -1 && recruiting < jobIdx - 1)) {
+    if (recruiting === -1 || recruiting + 3 !== jobIdx) return null;
+    tenant = segs[recruiting + 1];
+  } else {
+    tenant = u.hostname.split('.')[0];
+  }
+  if (!tenant || !site) return null;
+  const path = `/${segs.slice(jobIdx).join('/')}`;
+  return `https://${u.hostname}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}${path}`;
+}
+
+/**
+ * A row this pass must leave alone because its source stopped listing it, or
+ * its own validThrough date has passed. Reading a dead posting spends a request
+ * to re-score something nobody can apply to.
+ *
+ * @param {object} row jobs-table row
+ * @returns {boolean}
+ */
+export function isExpiredRow(row = {}) {
+  return row.status === 'expired' || /^expired\b/i.test(String(row.discard_reason ?? ''));
+}
+
+/**
  * How to fetch one posting's description, per source.
  *
  * Each reuses the public endpoint its adapter already reads — no new surface,
@@ -96,15 +147,8 @@ Fetch descriptions for stored jobs that were never read, then re-score them.
 const FETCHERS = {
   /** Workday CXS per-job detail, derived from the stored public URL. */
   async workday(row, ctx) {
-    const u = new URL(row.url);
-    const segs = u.pathname.split('/').filter(Boolean);
-    const jobIdx = segs.indexOf('job');
-    if (jobIdx === -1) return null;
-    // <host>/[locale]/<site>/job/... -> tenant is the host label, site precedes /job.
-    const site = segs[jobIdx - 1];
-    const tenant = u.hostname.split('.')[0];
-    const path = `/${segs.slice(jobIdx).join('/')}`;
-    const api = `https://${u.hostname}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}${path}`;
+    const api = workdayDetailApi(row.url);
+    if (!api) return null;
     const data = await getJson(api, ctx);
     const info = data?.jobPostingInfo ?? {};
     const text = htmlToText(info.jobDescription ?? info.jobDescriptionText ?? '');
@@ -196,6 +240,11 @@ async function main() {
     if (args.source && r.source !== args.source) return false;
     if (args.minScore !== null && Number(r.score ?? 0) < args.minScore) return false;
     if (['applied', 'submitted', 'prepared', 'assist_blocked'].includes(r.status)) return false;
+    if (isExpiredRow(r)) return false;
+    // A discarded row whose description WAS read (summary_only = 0) was judged;
+    // discovery no longer stores the text of stale/excluded discards, so an
+    // empty jd_text here does not mean "never read".
+    if (r.status === 'discarded' && Number(r.summary_only) === 0) return false;
     return classifyTitleFit(r.title, vocab).verdict === 'accept';
   });
 
@@ -300,7 +349,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(`enrichDescriptions failed: ${err.stack ?? err.message}`);
-  process.exitCode = 1;
-});
+// Run only when executed directly, so tests can import the pure helpers above.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err) => {
+    console.error(`enrichDescriptions failed: ${err.stack ?? err.message}`);
+    process.exitCode = 1;
+  });
+}
