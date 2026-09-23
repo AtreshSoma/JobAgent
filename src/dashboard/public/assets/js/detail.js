@@ -556,8 +556,10 @@ export function actionPlan(job) {
   }
   if (job.appStatus === 'submit_unverified') {
     return {
-      text: 'Auto-submit clicked Submit but no confirmation was detected. Check the ATS or your email. '
-        + 'This is NOT counted as applied until you confirm.',
+      // The server's explanation knows whether this was our click or the
+      // human's own submit; fall back to the generic wording only without it.
+      text: job.statusReason || ('Auto-submit clicked Submit but no confirmation was detected. Check the ATS or your email. '
+        + 'This is NOT counted as applied until you confirm.'),
       buttons: [markSubmitted(), openPosting()],
     };
   }

@@ -86,7 +86,11 @@ export const TRANSITIONS = Object.freeze({
     LIFECYCLE.SUBMIT_UNVERIFIED, LIFECYCLE.SUBMITTED, LIFECYCLE.CANCELLED,
   ],
   // Re-entry is deliberate: a resumed run performs a fresh precheck.
-  [LIFECYCLE.ASSIST_BLOCKED]: [LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SKIPPED, LIFECYCLE.SUBMITTED],
+  // SUBMIT_UNVERIFIED: the human finished a blocked form in the window we left
+  // open and the hand-off watch saw a confirmation page — still unconfirmed.
+  [LIFECYCLE.ASSIST_BLOCKED]: [
+    LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SKIPPED, LIFECYCLE.SUBMITTED, LIFECYCLE.SUBMIT_UNVERIFIED,
+  ],
   [LIFECYCLE.CANCELLED]: [LIFECYCLE.ASSIST_STARTED, LIFECYCLE.SKIPPED],
   [LIFECYCLE.READY_FOR_SUBMIT]: [LIFECYCLE.SUBMITTED, LIFECYCLE.SUBMIT_UNVERIFIED, LIFECYCLE.SKIPPED],
   // Only the human resolves an unverified submit, in either direction.

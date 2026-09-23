@@ -92,6 +92,7 @@ import {
   preparePacketsForJobs, ingestUrl,
 } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { rescoreStale } from '../pipeline/index.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
 import {
@@ -384,6 +385,34 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return `Saved, but the config could not be reloaded (${message}). `
         + 'Restart the dashboard before the next auto-apply run.';
     }
+  }
+
+  /**
+   * Re-judge the rows the previous profile scored, off the request path.
+   *
+   * Activation changes titles, skills and scoring categories, so every open
+   * verdict on the board is now another profile's. rescoreStale fixes that from
+   * stored descriptions (no network) — but it is synchronous and walks every
+   * active row (~6k on a real store, seconds of CPU), so running it inside the
+   * activation request would freeze every other request, the run poll included.
+   * It is deferred, coalesced, and yields to a run (the run's own end-of-run
+   * rescore covers it).
+   */
+  let rescoreTimer = null;
+  function scheduleRescore() {
+    if (rescoreTimer || !config?.root) return;
+    rescoreTimer = setTimeout(() => {
+      rescoreTimer = null;
+      if (runState.running) return;
+      try {
+        const out = (deps.rescoreStaleImpl ?? rescoreStale)({ db, config });
+        noteUserMutation();
+        logger?.info?.(`re-scored ${out?.rescored ?? 0} job(s) under the active profile`);
+      } catch (err) {
+        logger?.warn?.(`re-score after profile change failed: ${sanitizeErrorMessage(err.message)}`);
+      }
+    }, 50);
+    rescoreTimer.unref?.();
   }
 
   /**
@@ -1209,7 +1238,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       try {
         const result = await assistFn({
           packet, config, mode: 'LIVE_ASSIST', approval, options: {},
-          deps: { ...deps, shouldCancel: () => runState.cancelRequested },
+          deps: {
+            // Same hand-off watch the batch path wires: a human who submits in
+            // the window we leave open is recorded (as submit_unverified until
+            // they confirm), instead of the job silently staying "ready".
+            onHumanSubmitted: (update) => { recordAssistResult(db, jobId, update); refreshTracker(); },
+            ...deps,
+            shouldCancel: () => runState.cancelRequested,
+          },
         });
         recordAssistResult(db, jobId, result);
         refreshTracker();
@@ -1933,6 +1969,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         // The in-memory config MUST be reloaded or the board keeps serving the
         // previous candidate's search until the process restarts.
         const warning = summary.dryRun ? null : reloadConfig();
+        if (!summary.dryRun && !warning) scheduleRescore();
         return sendJson(res, 200, { ...summary, warning });
       });
     }
@@ -2014,7 +2051,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           // without a second, deliberate action.
           if (body.activate === true) {
             const summary = activateProfile(root, saved.id);
-            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning: reloadConfig() });
+            const warning = reloadConfig();
+            if (!warning) scheduleRescore();
+            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning });
           }
           return sendJson(res, 200, { choice, changed: true, ...saved, activated: null });
         }
@@ -2025,7 +2064,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             industries: Array.isArray(body.industries) ? body.industries : [],
           });
           const summary = activateProfile(root, merged.id);
-          return sendJson(res, 200, { choice, changed: true, ...merged, activated: summary, warning: reloadConfig() });
+          const warning = reloadConfig();
+          if (!warning) scheduleRescore();
+          return sendJson(res, 200, { choice, changed: true, ...merged, activated: summary, warning });
         }
         throw new Error('choice must be one of: create, keep, merge');
       });

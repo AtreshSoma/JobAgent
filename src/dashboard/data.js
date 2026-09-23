@@ -26,7 +26,7 @@ import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply
 import { jsonList } from '../utils/json.js';
 import { isWithinLast24Hours, isWithinLastHours, formatPostedRelative } from '../utils/dates.js';
 import { EMPLOYMENT_LABELS } from '../scoring/employmentClassifier.js';
-import { applicationStatePath } from '../apply/applicationState.js';
+import { applicationStatePath, legacyApplicationStatePath } from '../apply/applicationState.js';
 import { isSponsorshipGated, configureGateThreshold, gateThreshold } from '../scoring/explainScore.js';
 import { extractDocxText } from '../resume/docxText.js';
 import { usLocationSignal, US_STATE_COUNT } from '../utils/usGeography.js';
@@ -170,6 +170,15 @@ function explainStatusRaw(job = {}, appStatus = '', approval = null) {
         + 'Any score shown is provisional. Run `npm run enrich` to fetch the descriptions, after which it '
         + 'will be scored properly.';
     case APP_STATUS.SUBMIT_UNVERIFIED:
+      // Two very different ways to land here: our own click with no proof it
+      // landed, or the human finishing the form in the window we handed over
+      // (the runner saw a confirmation page). Telling the second person that
+      // "auto-submit clicked Submit" is simply false.
+      if (/^you appear to have submitted/i.test(String(job.submitted_confirmation ?? ''))) {
+        return 'You appear to have submitted this yourself: a confirmation page was seen in the window Job Agent '
+          + 'left open. Use "Mark submitted" to record it (add the confirmation number if you have one). '
+          + 'It is NOT counted as submitted until you confirm.';
+      }
       return 'Auto-submit clicked Submit, but no confirmation page could be detected. Check your email '
         + '(or the ATS) for a confirmation: if the application went through, use "Mark submitted"; if not, '
         + 'open the posting and finish it manually. It is NOT counted as submitted until you confirm.';
@@ -1590,12 +1599,19 @@ export function jobDetail(db, jobId, deps = {}) {
   let applicationState = null;
   let applicationStateError = null;
   if (deps.root) {
-    const statePath = applicationStatePath(deps.root, {
+    const stateKey = {
       id: packet?.id,
+      owner: packet?.owner,
       job: { id: job.id, url: job.url },
       ats: { platform: job.ats_platform ?? packet?.ats?.platform },
-    });
+    };
     const existsImpl = deps.applicationStateExistsImpl ?? existsSync;
+    // Checkpoints now live under the owning profile; one written before that
+    // change is still at the flat path, and the runner itself falls back to
+    // it — so must the page, or a resumable run looks like it never started.
+    const profiledPath = applicationStatePath(deps.root, stateKey);
+    const legacyPath = legacyApplicationStatePath(deps.root, stateKey);
+    const statePath = profiledPath && existsImpl(profiledPath) ? profiledPath : legacyPath;
     if (statePath && existsImpl(statePath)) {
       try {
         const readState = deps.readApplicationStateImpl ?? ((p) => readFileSync(p, 'utf8'));
