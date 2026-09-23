@@ -1280,7 +1280,52 @@ button.rs-open.prepared:hover { background: var(--accent-soft); }
 }
 
 /* ─────────────────── detail rail ─────────────────── */
-.rail-sticky { position: sticky; top: calc(var(--topbar-h, 51px) + var(--s5)); }
+/* The rail only sticks if its column is as tall as the board beside it:
+   `.layout { align-items: start }` kept the <aside> exactly as tall as its
+   content, so the sticky element had nowhere to travel and scrolled away with
+   the page. Stretched, it sticks; capped at the viewport and scrolling on its
+   own, a long detail no longer runs off the bottom of the screen. */
+.layout > aside { align-self: stretch; min-width: 0; }
+.rail-sticky {
+  position: sticky; top: calc(var(--topbar-h, 51px) + var(--s3));
+  max-height: calc(100vh - var(--topbar-h, 51px) - var(--s3) * 2);
+  overflow: auto; overscroll-behavior: contain; scrollbar-width: thin;
+  border-radius: var(--r-md);
+}
+.rail-sec > h3:first-child { margin-top: var(--s4); }
+.detail-panel > .rail-sec:first-child > :first-child { margin-top: 0; }
+.rail-label {
+  display: block; font-size: 11px; color: var(--text-faint); text-transform: uppercase;
+  letter-spacing: .55px; margin: var(--s4) 0 var(--s2); font-weight: 650;
+}
+.note-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-top: 4px; }
+.note-status { font-size: 12px; min-height: 18px; }
+.warn-text { color: var(--warn); }
+.detail-meta { overflow-wrap: anywhere; }
+
+/* ── the detail as a sheet (<=1240px) ──
+   A side sheet on tablets, a bottom sheet on phones. Modal, so Escape and
+   the focus trap are native, and it slides only when motion is welcome. */
+dialog.detail-sheet {
+  margin: 0 0 0 auto; width: min(620px, 94vw); max-width: 94vw;
+  height: 100dvh; max-height: 100dvh;
+  border-radius: var(--r-lg) 0 0 var(--r-lg); border-right: 0;
+}
+dialog.detail-sheet[open] { display: flex; flex-direction: column; animation: sheet-in .18s ease-out; }
+.detail-sheet .dlg-head { border-bottom: 1px solid var(--line-soft); padding-bottom: var(--s3); }
+.detail-sheet .dlg-head h2 { font-size: 13px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .55px; }
+.detail-sheet .dlg-head h2:focus { outline: none; }
+.detail-sheet .dlg-body { flex: 1; min-height: 0; overflow: auto; padding-top: var(--s3); overscroll-behavior: contain; }
+.detail-sheet #detail > .panel { border: 0; box-shadow: none; padding: 0; margin: 0; background: none; }
+@keyframes sheet-in { from { transform: translateX(28px); opacity: .5; } }
+@keyframes sheet-up { from { transform: translateY(36px); opacity: .5; } }
+@media (max-width: 767px) {
+  dialog.detail-sheet {
+    margin: auto 0 0; width: 100vw; max-width: 100vw; height: 90dvh;
+    border-radius: var(--r-lg) var(--r-lg) 0 0; border-right: 1px solid var(--line); border-bottom: 0;
+  }
+  dialog.detail-sheet[open] { animation-name: sheet-up; }
+}
 .detail-head { display: flex; gap: var(--s3); align-items: flex-start; }
 .detail-head h2 { margin: 0; font-size: 15.5px; line-height: 1.35; }
 .chiprow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }

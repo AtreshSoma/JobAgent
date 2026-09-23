@@ -57,6 +57,8 @@ const state = {
    */
   discoveryMode: 'profile',
   roleQuery: null,
+  /** Last link-check result per job id, so a re-render does not erase it. */
+  linkHealth: new Map(),
 };
 
 const FILTER_IDS = [
@@ -1089,8 +1091,40 @@ async function loadBoard() {
   renderActiveFilters();
 }
 
+/**
+ * Remember which board control has focus, so a re-render can put it back.
+ *
+ * Every board reload replaced all 100 rows, so a keyboard user sitting on a
+ * row — or on its checkbox — was dropped onto <body> by a refresh they did not
+ * cause. Recorded by job id and control, never by node, because the nodes are
+ * the thing being replaced.
+ */
+function captureRowFocus() {
+  const active = document.activeElement;
+  const row = active?.closest?.('#rows tr.job');
+  if (!row) return null;
+  return {
+    id: row.dataset.id,
+    action: active === row ? null : active.dataset?.action ?? null,
+    index: [...$('rows').querySelectorAll('tr.job')].indexOf(row),
+  };
+}
+
+function restoreRowFocus(spec) {
+  if (!spec) return;
+  const rows = [...$('rows').querySelectorAll('tr.job')];
+  // The focused job may have left the page (rejected, filtered out): the row
+  // now in its position is where a keyboard user expects to be.
+  const row = rows.find((tr) => tr.dataset.id === spec.id) ?? rows[Math.min(spec.index, rows.length - 1)];
+  if (!row) { $('boardwrap').focus({ preventScroll: true }); return; }
+  const target = row.dataset.id === spec.id && spec.action
+    ? row.querySelector(`[data-action="${cssEscape(spec.action)}"]`) : null;
+  (target ?? row).focus({ preventScroll: true });
+}
+
 function renderRows(jobs) {
   const body = $('rows');
+  const focus = captureRowFocus();
   body.textContent = '';
 
   if (!jobs.length) {
@@ -1125,6 +1159,7 @@ function renderRows(jobs) {
   const frag = document.createDocumentFragment();
   for (const job of jobs) frag.append(rowFor(job));
   body.append(frag);
+  restoreRowFocus(focus);
 }
 
 function rowFor(job) {
@@ -1517,8 +1552,20 @@ function announceBoard(page) {
 
 /* ──────────────────────── detail rail ──────────────────────── */
 
-async function selectJob(id, { focusRow = false } = {}) {
-  state.selectedId = id;
+/**
+ * Narrow layouts show the detail in a sheet; wide ones in the sticky rail.
+ *
+ * At <=1240px the page is one column, and the rail used to land UNDER the
+ * whole board: selecting a row changed something ~7,000px below the viewport
+ * and nothing on screen. The sheet opens where the user is looking.
+ */
+const SHEET_QUERY = matchMedia('(max-width: 1240px)');
+const isSheetLayout = () => SHEET_QUERY.matches;
+
+let selectTimer = null;
+
+/** Mark the open job's row, and only that row. */
+function markCurrentRow(id) {
   for (const tr of $('rows').querySelectorAll('tr.job')) {
     // Present-or-absent, not "true"/"false": aria-current="false" is a valid
     // value meaning "not current", but it still marks the row as participating,
@@ -1526,16 +1573,49 @@ async function selectJob(id, { focusRow = false } = {}) {
     if (tr.dataset.id === id) tr.setAttribute('aria-current', 'true');
     else tr.removeAttribute('aria-current');
   }
+  for (const card of document.querySelectorAll('.tcard[data-id]')) {
+    card.classList.toggle('current', card.dataset.id === id);
+  }
+}
+
+/**
+ * Open a job in the detail rail.
+ *
+ * @param {string} id
+ * @param {object} [options]
+ * @param {boolean} [options.focusRow] move focus to the job's board row
+ * @param {boolean} [options.user] a person asked for this job (click, Enter,
+ *   a Today card). On a narrow layout that opens the sheet; a background
+ *   refresh re-rendering the same job never does.
+ * @param {number} [options.defer] debounce the fetch, in ms. Arrow-key browsing
+ *   fired one detail request per keypress; holding ↓ for a second queued ~30.
+ */
+async function selectJob(id, { focusRow = false, user = false, defer = 0 } = {}) {
+  // Leaving a job with an unsaved note saves it rather than dropping it.
+  if (id !== state.selectedId) flushNote();
+  state.selectedId = id;
+  markCurrentRow(id);
   if (focusRow) {
     $('rows').querySelector(`tr.job[data-id="${cssEscape(id)}"]`)?.focus();
   }
   history.replaceState(null, '', `#job=${encodeURIComponent(id)}`);
+  if (user && isSheetLayout()) openDetailSheet(id);
 
+  clearTimeout(selectTimer);
+  if (defer > 0) {
+    await new Promise((resolve) => { selectTimer = setTimeout(resolve, defer); });
+    if (state.selectedId !== id) return;
+  }
+  await loadDetail(id);
+}
+
+async function loadDetail(id) {
   const host = $('detail');
   let job;
   try {
     job = await api(`/api/jobs/${encodeURIComponent(id)}`);
   } catch (err) {
+    if (state.selectedId !== id) return;
     host.textContent = '';
     host.append(el('div', { class: 'panel empty', text: err.message }));
     return;
@@ -1550,28 +1630,144 @@ function cssEscape(value) {
   return window.CSS?.escape ? CSS.escape(value) : String(value).replace(/["\\]/g, '\\$&');
 }
 
+/** The element that scrolls the detail: the sheet body, or the sticky rail. */
+function railScroller() {
+  const sheet = $('dlgDetail');
+  return sheet?.open ? $('dlgDetailBody') : document.querySelector('.rail-sticky');
+}
+
+/** Put #detail wherever the current layout shows it. */
+function placeDetail() {
+  const detail = $('detail');
+  const sheet = $('dlgDetail');
+  if (!detail || !sheet) return;
+  if (isSheetLayout()) {
+    if (detail.parentElement !== $('dlgDetailBody')) $('dlgDetailBody').append(detail);
+  } else {
+    if (sheet.open) sheet.close();
+    const rail = document.querySelector('.rail-sticky');
+    if (detail.parentElement !== rail) rail.append(detail);
+  }
+}
+
+/** Which job the sheet was opened for, so closing it can return focus there. */
+let sheetReturnId = null;
+
+function openDetailSheet(id) {
+  const sheet = $('dlgDetail');
+  sheetReturnId = id;
+  placeDetail();
+  if (!sheet.open) sheet.showModal();
+  // Focus goes to the sheet's heading, not its first button: landing on
+  // "Open posting" or "Reject" is one Enter away from an action nobody chose.
+  $('dlgDetailTitle').focus();
+}
+
+/** The control that represents a job wherever it is currently visible. */
+function jobAnchor(id) {
+  const selector = `tr.job[data-id="${cssEscape(id)}"], .tcard[data-id="${cssEscape(id)}"] .tcard-title`;
+  return [...document.querySelectorAll(selector)].find((node) => node.offsetParent !== null) ?? null;
+}
+
+/*
+ * THE RAIL IS RECONCILED, NOT REBUILT.
+ *
+ * Every refresh — the 90s background poll, each decision, each link save, the
+ * end of a run — used to clear the rail and draw it again. That wiped a note
+ * being typed (verified: the text was simply gone), threw focus to <body>,
+ * shut every open <details>, jumped the rail back to the top and erased the
+ * link-check result. The rail is now a list of keyed sections: re-rendering
+ * the SAME job swaps only sections the user is not in, and leaves a section
+ * holding focus — or an unsaved note — exactly as it is.
+ */
+const railSection = (key, ...children) => el('div', { class: 'rail-sec', 'data-section': key }, ...children);
+
 function renderDetail(job) {
   const host = $('detail');
+  const sections = detailSections(job);
+  const current = host.querySelector(':scope > .panel[data-job-id]');
+  if (current && current.dataset.jobId === job.id) {
+    reconcileDetail(current, sections);
+    return;
+  }
+  if (note.id !== job.id) {
+    note.id = job.id;
+    note.saved = job.notes ?? '';
+  }
   host.textContent = '';
-  const panel = el('div', { class: 'panel' });
+  const panel = el('div', { class: 'panel detail-panel', 'data-job-id': job.id });
+  panel.append(...sections);
+  host.append(panel);
+  // A different job starts at its top; the same job keeps its place (above).
+  const scroller = railScroller();
+  if (scroller) scroller.scrollTop = 0;
+}
 
-  // header
+/** A section is left untouched while the user is working inside it. */
+function keepSection(node, key) {
+  return node.contains(document.activeElement) || (key === 'notes' && note.isDirty());
+}
+
+/** Re-apply the open/closed state of keyed <details> to their replacement. */
+function carryOpenDetails(from, to) {
+  for (const open of from.querySelectorAll('details[data-key][open]')) {
+    to.querySelector(`details[data-key="${cssEscape(open.dataset.key)}"]`)?.setAttribute('open', '');
+  }
+}
+
+function reconcileDetail(panel, sections) {
+  const scroller = railScroller();
+  const top = scroller?.scrollTop ?? 0;
+  const old = new Map([...panel.children].map((node) => [node.dataset.section, node]));
+  let anchor = null;
+  for (const node of sections) {
+    const key = node.dataset.section;
+    const prev = old.get(key);
+    old.delete(key);
+    let placed = node;
+    // A kept node is never MOVED: detaching an element, even to reinsert it a
+    // moment later, blurs whatever inside it had focus.
+    if (prev && keepSection(prev, key)) placed = prev;
+    else if (prev) { carryOpenDetails(prev, node); prev.replaceWith(node); }
+    else if (anchor) anchor.after(node);
+    else panel.prepend(node);
+    anchor = placed;
+  }
+  for (const [key, prev] of old) if (!keepSection(prev, key)) prev.remove();
+  if (!old.has('notes') && !note.isDirty()) note.saved = state.detailJob?.notes ?? note.saved;
+  if (scroller) scroller.scrollTop = top;
+}
+
+/** The grade's own label is the verdict; `fit` is only the fallback. */
+function verdictLabel(job) {
+  return job.grade?.label ?? fitLabel(job.fit);
+}
+
+function detailSections(job) {
+  const out = [];
+
+  // header — the grade's label is the one verdict shown. A separate chip that
+  // re-derived "medium fit" from `job.fit` could sit next to a grade reading
+  // "Strong fit", and the two then contradicted each other.
   const head = el('div', { class: 'detail-head' });
   head.append(el('span', {
     class: `grade big ${job.grade ? job.grade.letter : 'none'}`,
+    role: 'img',
+    'aria-label': job.grade ? `grade ${job.grade.letter}, ${job.grade.label}` : 'not scored yet',
     text: job.grade ? job.grade.letter : '—',
   }));
   const headMain = el('div', { class: 'grow-1' });
-  headMain.append(el('h2', { text: `${job.company || 'Company on posting'} — ${job.title}` }));
+  headMain.append(el('h2', { class: 'detail-title', text: `${job.company || 'Company on posting'} — ${job.title}` }));
   const meta = [job.location, job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
     job.atsPlatform ? `ATS ${job.atsPlatform}` : null].filter(Boolean).join(' · ');
-  headMain.append(el('div', { class: 'muted', text: meta }));
+  headMain.append(el('div', { class: 'muted detail-meta', title: meta, text: meta }));
 
   const chips = el('div', { class: 'chiprow' });
-  if (job.score != null) {
-    chips.append(el('span', { class: 'chip info', title: 'Skills-match score', text: `score ${job.score}/100` }));
-  }
-  chips.append(el('span', { class: `chip ${job.fit}`, text: fitLabel(job.fit) }));
+  chips.append(el('span', {
+    class: `chip ${job.fit}`,
+    title: job.score != null ? `Skills-match score ${job.score}/100` : 'Not scored yet',
+    text: job.score != null ? `${verdictLabel(job)} · ${job.score}` : verdictLabel(job),
+  }));
   chips.append(el('span', {
     class: `chip ${esc(job.sponsorship ?? '')}`,
     title: sponsorshipTitle(job),
@@ -1579,40 +1775,40 @@ function renderDetail(job) {
   }));
   if (job.employmentLabel) chips.append(el('span', { class: 'chip', text: job.employmentLabel }));
   chips.append(el('span', { class: `chip st-${job.appStatus}`, text: statusLabel(job) }));
+  if (job.decisionReason) {
+    chips.append(el('span', { class: 'chip', title: 'Why you closed this job', text: `reason: ${reasonLabel(job.decisionReason)}` }));
+  }
   if (job.atsScore != null) {
     chips.append(el('span', { class: 'chip', title: 'Resume/JD keyword match from the ATS report', text: `ATS ${job.atsScore}%` }));
   }
   headMain.append(chips);
   head.append(headMain);
-  panel.append(head);
-
-  panel.append(stepper(job.progress));
+  out.push(railSection('head', head));
+  out.push(railSection('stepper', stepper(job.progress)));
 
   // attention
   if (job.statusReason && ['blocked', 'failed', 'cancelled', 'rejected', 'discarded', 'skipped',
     'date_unconfirmed', 'submit_unverified', 'needs_description'].includes(job.appStatus)) {
-    panel.append(el('h3', { text: 'Needs attention' }));
     const box = el('div', { class: 'attention' });
     box.append(el('span', { class: 'mark', text: '!' }));
     const detail = el('div', {});
     detail.append(el('b', { text: statusLabel(job) }), el('br'),
       job.attention?.summary || job.statusReason);
     if (job.attention?.summary && job.statusReason !== job.attention.summary) {
-      const more = el('details', {});
+      const more = el('details', { 'data-key': 'technical' });
       more.append(el('summary', { class: 'muted', text: 'Technical detail' }),
         el('div', { class: 'muted', text: job.statusReason }));
       detail.append(more);
     }
     box.append(detail);
-    panel.append(box);
+    out.push(railSection('attention', el('h3', { text: 'Needs attention' }), box));
   }
 
   // next best action
-  panel.append(el('h3', { text: 'Do this next' }));
-  panel.append(nextBestAction(job));
+  out.push(railSection('next', el('h3', { text: 'Do this next' }), nextBestAction(job)));
 
   // resume card — the feature the workflow revolves around
-  panel.append(resumeCard(job));
+  out.push(railSection('resume', resumeCard(job)));
 
   // quick actions
   const actions = el('div', { class: 'actions' });
@@ -1643,47 +1839,37 @@ function renderDetail(job) {
   if (!['submitted', 'rejected', 'archived', 'discarded'].includes(job.appStatus)) {
     actions.append(el('button', { class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself' }));
   }
-  panel.append(actions);
-  panel.append(el('div', { class: 'linkhealth', id: 'linkHealth', 'aria-live': 'polite' }));
+  // The last link check survives re-renders: it is a result the user asked
+  // for, and redrawing the rail used to erase it a few seconds later.
+  const health = state.linkHealth.get(job.id);
+  out.push(railSection('actions', actions, el('div', {
+    class: `linkhealth ${health?.tone ?? ''}`.trim(), id: 'linkHealth', 'aria-live': 'polite', text: health?.text ?? '',
+  })));
 
   // submission record
   if (job.appStatus === 'submitted') {
-    panel.append(el('h3', { text: 'Submission record' }));
     const box = el('div', { class: 'why' });
     box.append(`Submitted by you on ${shortStamp(job.appliedAt)}`);
     if (job.submittedConfirmation) {
       box.append(el('br'), 'Confirmation: ', el('b', { text: job.submittedConfirmation }));
     }
-    panel.append(box);
+    out.push(railSection('submission', el('h3', { text: 'Submission record' }), box));
   }
 
-  // sponsorship evidence
-  panel.append(el('h3', { text: 'Sponsorship' }));
-  panel.append(sponsorshipEvidence(job));
+  out.push(railSection('sponsorship', el('h3', { text: 'Sponsorship' }), sponsorshipEvidence(job)));
 
-  // fit explanation
-  panel.append(el('h3', { text: `Why this ${job.fit === 'strong' ? 'is' : job.fit === 'no_fit' ? 'is not' : 'may be'} a fit` }));
-  panel.append(el('div', { class: 'why', text: job.explanation ?? job.discardReason ?? 'Not scored yet.' }));
+  out.push(railSection('fit',
+    el('h3', { text: job.grade?.label ? `Why: ${job.grade.label.toLowerCase()}` : 'Why this may be a fit' }),
+    el('div', { class: 'why', text: job.explanation ?? job.discardReason ?? 'Not scored yet.' })));
 
-  panel.append(el('h3', { text: 'Your skills found in this posting' }));
-  panel.append(keywordList(job.matchedKeywords, 'good'));
-  panel.append(el('h3', { text: 'Asked for, not evidenced in your resume' }));
-  panel.append(keywordList(job.missingKeywords, 'bad'));
+  out.push(railSection('skills',
+    el('h3', { text: 'Your skills found in this posting' }), keywordList(job.matchedKeywords, 'good'),
+    el('h3', { text: 'Asked for, not evidenced in your resume' }), keywordList(job.missingKeywords, 'bad')));
 
-  // notes
-  panel.append(el('h3', { text: 'Your notes' }));
-  const notes = el('div', { class: 'notes' });
-  const textarea = el('textarea', {
-    id: 'noteBox', rows: '3', placeholder: 'Private reminders — saved with this job and exported to CSV…',
-  });
-  textarea.value = job.notes ?? '';
-  notes.append(textarea, el('div', { class: 'actions' },
-    el('button', { class: 'small primary', 'data-action': 'save-note', 'data-id': job.id, text: 'Save note' })));
-  panel.append(notes);
+  out.push(railSection('notes', notesEditor(job)));
 
   // assist history
   if (job.assistFilledCount != null) {
-    panel.append(el('h3', { text: 'Last assisted fill' }));
     const box = el('div', {});
     box.append(`${job.assistFilledCount} field(s) filled`);
     if (job.assistBlockers?.length) {
@@ -1691,30 +1877,146 @@ function renderDetail(job) {
       for (const blocker of job.assistBlockers) ul.append(el('li', { class: 'st-blocked', text: blocker }));
       box.append(ul);
     } else box.append(' · no blockers');
-    panel.append(box);
+    out.push(railSection('assist', el('h3', { text: 'Last assisted fill' }), box));
   }
 
-  if (job.packet) panel.append(packetSection(job.packet));
+  if (job.packet) out.push(railSection('packet', packetSection(job.packet)));
 
   // job id (for the browser extension)
-  panel.append(el('h3', { text: 'Job id' }));
   const idRow = el('div', { class: 'row-gap' });
   idRow.append(el('code', { class: 'jobid', text: job.id }),
     el('button', { class: 'small', 'data-action': 'copy-id', 'data-id': job.id, text: 'Copy' }));
-  panel.append(idRow);
+  out.push(railSection('jobid', el('h3', { text: 'Job id' }), idRow));
 
   if (job.events?.length) {
-    panel.append(el('h3', { text: 'Audit trail' }));
     const ul = el('ul', { class: 'plan' });
     for (const event of job.events) {
       ul.append(el('li', {},
         el('span', { class: 'faint', text: shortStamp(event.at) }), ` ${event.type} — ${event.message ?? ''}`));
     }
-    panel.append(ul);
+    out.push(railSection('audit', el('h3', { text: 'Audit trail' }), ul));
   }
-
-  host.append(panel);
+  return out;
 }
+
+/* ─────────────────────────── notes ───────────────────────────
+ * Notes save themselves: a debounce while typing, and immediately on blur or
+ * when another job is opened. There was only a "Save note" button, and
+ * anything typed without pressing it was lost to the next refresh. */
+
+const NOTE_DEBOUNCE_MS = 1200;
+
+const note = {
+  /** Job the editor belongs to, and the value the server last confirmed. */
+  id: null,
+  saved: '',
+  timer: null,
+  inflight: null,
+  box() {
+    const box = $('noteBox');
+    return box && box.dataset.id === this.id ? box : null;
+  },
+  isDirty() {
+    const box = this.box();
+    return Boolean(box) && (box.value !== this.saved || this.inflight !== null);
+  },
+};
+
+function notesEditor(job) {
+  const wrap = el('div', { class: 'notes' });
+  const textarea = el('textarea', {
+    id: 'noteBox', 'data-id': job.id, rows: '3', 'aria-describedby': 'noteStatus',
+    placeholder: 'Private reminders — saved as you type, and exported to CSV…',
+  });
+  textarea.value = job.notes ?? '';
+  wrap.append(el('label', { for: 'noteBox', class: 'rail-label', text: 'Your notes' }), textarea,
+    el('div', { class: 'note-foot' },
+      el('span', { id: 'noteStatus', class: 'note-status faint', 'aria-live': 'polite', text: job.notes ? 'Saved' : '' }),
+      el('button', { class: 'small ghost', 'data-action': 'save-note', 'data-id': job.id, text: 'Save now' })));
+  return wrap;
+}
+
+function setNoteStatus(kind, detail = '') {
+  const node = $('noteStatus');
+  if (!node) return;
+  const text = {
+    saved: 'Saved', dirty: 'Unsaved changes', saving: 'Saving…', error: `Couldn’t save — ${detail}`,
+  }[kind] ?? '';
+  node.textContent = text;
+  node.className = `note-status ${kind === 'error' ? 'st-blocked' : kind === 'dirty' ? 'warn-text' : 'faint'}`;
+}
+
+async function saveNote() {
+  clearTimeout(note.timer);
+  const box = note.box();
+  if (!box) return;
+  const id = note.id;
+  // One write at a time per job; a later edit waits and then saves the latest.
+  if (note.inflight) {
+    await note.inflight.catch(() => {});
+    if (note.id === id) await saveNote();
+    return;
+  }
+  const value = box.value;
+  if (value === note.saved) { setNoteStatus('saved'); return; }
+  setNoteStatus('saving');
+  note.inflight = postJson(`/api/jobs/${encodeURIComponent(id)}/note`, { note: value });
+  try {
+    await note.inflight;
+    if (note.id !== id) return;
+    note.saved = value;
+    const known = state.known.get(id);
+    if (known) known.notes = value;
+    if (state.detailJob?.id === id) state.detailJob.notes = value;
+    setNoteStatus(note.box()?.value === value ? 'saved' : 'dirty');
+  } catch (err) {
+    if (note.id === id) setNoteStatus('error', err.message);
+  } finally {
+    note.inflight = null;
+  }
+}
+
+/** Save an unsaved note for the job being left, without waiting on it. */
+function flushNote() {
+  const box = note.box();
+  if (!box || box.value === note.saved) return;
+  clearTimeout(note.timer);
+  const id = note.id;
+  const value = box.value;
+  note.saved = value;
+  postJson(`/api/jobs/${encodeURIComponent(id)}/note`, { note: value })
+    .then(() => { const known = state.known.get(id); if (known) known.notes = value; })
+    .catch((err) => toast(`Your note on the previous job was not saved: ${err.message}`, 'bad'));
+}
+
+document.addEventListener('input', (event) => {
+  if (event.target.id !== 'noteBox') return;
+  setNoteStatus('dirty');
+  clearTimeout(note.timer);
+  note.timer = setTimeout(saveNote, NOTE_DEBOUNCE_MS);
+});
+document.addEventListener('focusout', (event) => {
+  if (event.target.id === 'noteBox') saveNote();
+});
+// Closing the tab mid-sentence: keepalive lets the request outlive the page,
+// and unlike sendBeacon it can carry the X-Job-Agent header.
+window.addEventListener('pagehide', () => {
+  const box = note.box();
+  if (!box || box.value === note.saved) return;
+  fetch(`/api/jobs/${encodeURIComponent(note.id)}/note`, {
+    method: 'POST', keepalive: true,
+    headers: { 'content-type': 'application/json', 'X-Job-Agent': '1' },
+    body: JSON.stringify({ note: box.value }),
+  }).catch(() => {});
+});
+
+/** Why a job was closed. Order is the order the chips are offered in. */
+const DECISION_REASONS = [
+  ['salary', 'Salary'], ['location', 'Location'], ['seniority', 'Seniority'],
+  ['sponsorship', 'Sponsorship'], ['stack', 'Stack'], ['company', 'Company'],
+  ['stale', 'Stale'], ['other', 'Other'],
+];
+const reasonLabel = (key) => DECISION_REASONS.find(([k]) => k === key)?.[1] ?? String(key ?? '');
 
 function fitLabel(fit) {
   return { strong: 'strong fit', medium: 'medium fit', weak: 'weak fit', no_fit: 'no fit', unscored: 'unscored' }[fit] ?? fit;
@@ -2129,10 +2431,18 @@ async function openResumePreview(id) {
 
 /* ─────────────────────────── dialogs ─────────────────────────── */
 
-let lastFocused = null;
+/**
+ * Where focus goes back to when each dialog closes.
+ *
+ * One shared variable was enough while dialogs never stacked. The detail sheet
+ * now opens others on top of itself (Replace URL, I submitted it myself), and
+ * the second dialog overwrote the first's return point, so closing the sheet
+ * sent focus into a closed dialog. Each dialog now remembers its own.
+ */
+const lastFocused = new WeakMap();
 
 function openDialog(dialog) {
-  lastFocused = document.activeElement;
+  if (!dialog.open) lastFocused.set(dialog, document.activeElement);
   if (!dialog.open) dialog.showModal();
   // <dialog> gives us Escape, backdrop semantics, and a focus trap natively —
   // the previous hand-rolled overlays had none of those.
@@ -2146,7 +2456,16 @@ function closeDialog(dialog) {
 }
 
 document.addEventListener('close', (event) => {
-  if (event.target.tagName === 'DIALOG') lastFocused?.focus?.();
+  const dialog = event.target;
+  if (dialog.tagName !== 'DIALOG') return;
+  if (dialog.id === 'dlgDetail') {
+    // Back to the job the sheet showed, wherever it is on screen now (the row
+    // may have been re-rendered while the sheet was open).
+    (sheetReturnId && jobAnchor(sheetReturnId))?.focus();
+    return;
+  }
+  const back = lastFocused.get(dialog);
+  if (back?.isConnected) back.focus?.();
 }, true);
 
 // Clicking the backdrop (outside the panel) closes the dialog.
@@ -2206,7 +2525,11 @@ function patchRow(id, patch) {
   const known = state.known.get(id);
   if (known) state.known.set(id, { ...known, ...patch });
   const tr = $('rows').querySelector(`tr.job[data-id="${cssEscape(id)}"]`);
-  if (tr && known) tr.replaceWith(rowFor({ ...known, ...patch }));
+  if (tr && known) {
+    const focus = captureRowFocus();
+    tr.replaceWith(rowFor({ ...known, ...patch }));
+    restoreRowFocus(focus);
+  }
 }
 
 async function decide(id, decision) {
@@ -2268,11 +2591,13 @@ async function checkLink(id) {
     const tone = result.status === 'reachable' ? 'good'
       : ['closed', 'invalid', 'error'].includes(result.status) ? 'bad' : '';
     const text = `${result.message}${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`;
+    state.linkHealth.set(id, { tone, text });
     if (box) { box.className = `linkhealth ${tone}`.trim(); box.textContent = text; }
     // Always surface it as a toast too: the inline slot only exists while the
     // detail rail is open, and the old build silently dropped the result.
     toast(text, tone);
   } catch (err) {
+    state.linkHealth.set(id, { tone: 'bad', text: err.message });
     if (box) { box.className = 'linkhealth bad'; box.textContent = err.message; }
     toast(err.message, 'bad');
   }
@@ -3906,7 +4231,8 @@ const ACTIONS = {
   'open-documents': openDocuments,
   'open-master': (target) => {
     // Never stack modals: opening this from the Resume library replaces it.
-    closeDialog(target?.closest?.('dialog'));
+    // The job-detail sheet is the exception — it is context, not a modal task.
+    closeDialog(target?.closest?.('dialog:not(#dlgDetail)'));
     openMasterResume();
   },
   'migrate-search-profile': async () => {
@@ -3964,7 +4290,7 @@ const ACTIONS = {
   },
   'restore-master': (target) => restoreMasterVersion(target.dataset.name),
   'open-profile': (target) => {
-    closeDialog(target?.closest?.('dialog'));
+    closeDialog(target?.closest?.('dialog:not(#dlgDetail)'));
     openProfile();
   },
   'save-profile': saveProfileDetails,
@@ -4031,7 +4357,7 @@ const ACTIONS = {
     document.querySelector('.boardwrap')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   },
 
-  select: (target) => selectJob(target.dataset.id),
+  select: (target) => selectJob(target.dataset.id, { user: true }),
   // 'toggle-select' is intentionally absent: checkboxes are handled by the
   // 'change' listener below so keyboard toggling works identically, and
   // resolving to the input here still stops the row's select from firing.
@@ -4063,13 +4389,7 @@ const ACTIONS = {
     }
     toast('Job id copied');
   },
-  'save-note': async (target) => {
-    const note = $('noteBox')?.value ?? '';
-    try {
-      await postJson(`/api/jobs/${encodeURIComponent(target.dataset.id)}/note`, { note });
-      toast('Note saved', 'good');
-    } catch (err) { toast(err.message, 'bad'); }
-  },
+  'save-note': () => saveNote(),
 
   'open-add-url': () => {
     $('addUrlInput').value = '';
@@ -4386,7 +4706,7 @@ $('rows').addEventListener('keydown', (event) => {
 
   if (event.key === 'Enter' || event.key === ' ') {
     event.preventDefault();
-    selectJob(row.dataset.id);
+    selectJob(row.dataset.id, { user: true });
     return;
   }
   if (event.key === 'x' || event.key === 'X') {
@@ -4403,7 +4723,10 @@ $('rows').addEventListener('keydown', (event) => {
   if (next) {
     const nextRow = $('rows').querySelector(`tr.job[data-id="${cssEscape(next)}"]`);
     nextRow?.focus();
-    selectJob(next);
+    // Wide: the rail follows focus, debounced so holding ↓ costs one request.
+    // Narrow: the detail is a modal sheet, and opening one per keypress would
+    // trap the user — arrows move, Enter opens.
+    if (!isSheetLayout()) selectJob(next, { defer: 120 });
   }
 });
 
@@ -4694,7 +5017,7 @@ function jobIdFromHash() {
 // listened for changes).
 window.addEventListener('hashchange', () => {
   const id = jobIdFromHash();
-  if (id && id !== state.selectedId) selectJob(id);
+  if (id && id !== state.selectedId) selectJob(id, { user: true });
 });
 
 // Restore the view preferences, validating both against the offered choices so
@@ -4721,6 +5044,8 @@ if (readPreference('analyticsOpen') === '1') {
   $('btnAnalytics').setAttribute('aria-expanded', 'true');
   $('btnAnalytics').querySelector('.caret').textContent = '▾';
 }
+SHEET_QUERY.addEventListener('change', placeDetail);
+placeDetail();
 applyViewPrefs();
 renderTabs();
 syncSortIndicator();

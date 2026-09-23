@@ -712,6 +712,17 @@
   <div class="dlg-body" id="healthBody"></div>
 </dialog>
 
+<!-- Job detail, on layouts too narrow for the side rail (<=1240px). One
+     #detail element is MOVED here rather than rendered twice, so both layouts
+     share one renderer, one set of ids and one note editor. -->
+<dialog id="dlgDetail" class="detail-sheet" aria-labelledby="dlgDetailTitle">
+  <div class="dlg-head">
+    <h2 id="dlgDetailTitle" tabindex="-1">Job detail</h2>
+    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close job detail">✕</button>
+  </div>
+  <div class="dlg-body" id="dlgDetailBody"></div>
+</dialog>
+
 <!-- Every shortcut below already worked; none of them were discoverable, which
      makes them shortcuts only for the person who wrote them. `?` is the
      conventional key for this, so it needs no advertising of its own. -->
