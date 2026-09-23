@@ -58,7 +58,7 @@ import {
 } from './cli/commands.js';
 import { runGuided } from './cli/guided.js';
 import { runApply } from './cli/applyOneByOne.js';
-import { runWatch } from './cli/watch.js';
+import { runWatch, createWatchStopSignal } from './cli/watch.js';
 import { runDoctor, printDoctorReport } from './cli/doctor.js';
 import { quickPreflight } from './cli/preflight.js';
 import { withSourceSelection, selectionFromArgs } from './cli/sourceSelection.js';
@@ -459,20 +459,20 @@ async function runCommand(command, parsed, env) {
           freeOnly: parsed.flags.has('free-only') || parsed.flags.has('freeOnly'),
           once: parsed.flags.has('once'),
           freshAlertMinutes: Number(parsed.options['fresh-alert'] ?? env.WATCH_FRESH_ALERT_MINUTES ?? 60),
+          maxConsecutiveFailures: Number(parsed.options['max-failures'] ?? env.WATCH_MAX_FAILURES ?? 5),
+          notify: parsed.flags.has('notify') || ['1', 'true', 'yes', 'on'].includes(String(env.WATCH_NOTIFY ?? '').trim().toLowerCase()),
         };
         logger.startRun('PREPARE');
-        // Stop cleanly on Ctrl+C: flip a flag the watch loop checks between
-        // (and during) its inter-cycle sleep.
-        let stop = false;
-        const onSignal = () => { stop = true; };
-        process.on('SIGINT', onSignal);
-        process.on('SIGTERM', onSignal);
+        // First Ctrl+C: stop at the next safe point. Second: exit 130 now.
+        const stopSignal = createWatchStopSignal({
+          onFirst: () => ui.note('Stopping after the current step… press Ctrl+C again to quit immediately.'),
+        });
         try {
-          const r = await runWatch({ config, db, logger, options, deps: { shouldStop: () => stop } });
+          const r = await runWatch({ config, db, logger, options, deps: { shouldStop: stopSignal.shouldStop } });
+          if (r.failed) process.exitCode = 1;
           return { command, ...r };
         } finally {
-          process.off('SIGINT', onSignal);
-          process.off('SIGTERM', onSignal);
+          stopSignal.dispose();
         }
       }
       case 'rescore': {

@@ -4,7 +4,8 @@
  * Goal: help you be among the FIRST to apply. Each cycle it re-runs discovery,
  * scores everything, and tailors a ready-to-submit packet for any NEW strong
  * match — then alerts you immediately (a console banner + terminal bell) so you
- * can open it and apply while the posting is still fresh.
+ * can open it and apply while the posting is still fresh. With WATCH_NOTIFY=1 it
+ * also raises a desktop notification (src/utils/notifier.js).
  *
  * Honest scope (by design, non-negotiable):
  *   - It NEVER auto-submits. LinkedIn/Indeed forbid automated submission via a
@@ -23,6 +24,7 @@
 import { runPrepareApps } from './commands.js';
 import { ui } from './ui.js';
 import { formatPostedRelative } from '../utils/dates.js';
+import { createNotifier, createDesktopSink } from '../utils/notifier.js';
 
 /** Minimum poll interval (minutes) — protects public endpoints and your wallet. */
 const MIN_INTERVAL_MINUTES = 5;
@@ -32,6 +34,9 @@ const DEFAULT_INTERVAL_MINUTES = 20;
 
 /** Default "early applicant window": alert extra-loud under this age (minutes). */
 const DEFAULT_FRESH_ALERT_MINUTES = 60;
+
+/** Consecutive failed cycles before watch gives up and exits 1. */
+export const DEFAULT_MAX_CONSECUTIVE_FAILURES = 5;
 
 /**
  * Run a SINGLE watch cycle: discover -> score -> prepare NEW jobs only, and
@@ -81,51 +86,156 @@ export async function runWatchCycle({ config, db, logger, options = {}, deps = {
 /**
  * Run watch continuously until stopped (Ctrl+C) or `--once`.
  *
+ * ONE BAD CYCLE MUST NOT END THE WATCH — AND A BROKEN ONE MUST NOT RUN FOREVER.
+ * A single throw (a source timing out, the network dropping for a minute) used
+ * to escape the loop and kill an overnight watch silently. Now each cycle is
+ * caught and logged, retried after an exponential backoff (1, 2, 4, 8… minutes,
+ * never longer than the poll interval), and after `maxConsecutiveFailures`
+ * failures in a row the watch gives up with `failed: true` — the caller turns
+ * that into exit code 1, so cron and the terminal both see it. A successful
+ * cycle resets the count. `--once` fails on its first error.
+ *
  * @param {object} args
  * @param {object} args.config
  * @param {import('../logging/db.js').Database} args.db
  * @param {object} args.logger
- * @param {object} [args.options] { intervalMinutes, freeOnly, once, freshAlertMinutes }
+ * @param {object} [args.options]
+ *   { intervalMinutes, freeOnly, once, freshAlertMinutes, maxConsecutiveFailures, notify }
  * @param {object} [args.deps]
- *   { runPrepareAppsFn, searchFn, tailorFn, now, sleep, shouldStop, maxCycles, silent }
- * @returns {Promise<{ cycles: number, totalNew: number }>}
+ *   { runPrepareAppsFn, searchFn, tailorFn, now, sleep, shouldStop, maxCycles, silent,
+ *     notifier, retryBaseMs }
+ * @returns {Promise<{ cycles: number, totalNew: number, failed: boolean,
+ *   consecutiveFailures: number, lastError: string|null }>}
  */
 export async function runWatch({ config, db, logger, options = {}, deps = {} } = {}) {
   const intervalMinutes = clampInterval(options.intervalMinutes);
   const intervalMs = intervalMinutes * 60_000;
   const freeOnly = options.freeOnly === true;
   const once = options.once === true;
+  const maxFailures = clampMaxFailures(options.maxConsecutiveFailures);
   const sleep = deps.sleep ?? defaultSleep;
   const shouldStop = deps.shouldStop ?? (() => false);
   const silent = deps.silent === true;
+  // Desktop alerts are opt-in (WATCH_NOTIFY=1): a popup per cycle is noise
+  // for anyone who did not ask for it. The bell + banner always happen.
+  const notifier = deps.notifier ?? (options.notify === true ? createNotifier({ sink: createDesktopSink() }) : null);
 
   if (!silent) printWatchHeader({ config, intervalMinutes, freeOnly });
 
   let cycles = 0;
   let totalNew = 0;
+  let consecutiveFailures = 0;
+  let lastError = null;
+  let failed = false;
   for (;;) {
     if (shouldStop()) break;
     cycles += 1;
     const startedAt = resolveNow(deps.now);
-    const { newMatches, counters } = await runWatchCycle({
-      config, db, logger,
-      options: { freeOnly, freshAlertMinutes: options.freshAlertMinutes },
-      deps,
-    });
-    totalNew += newMatches.length;
-    if (!silent) printCycleResult({ cycle: cycles, startedAt, newMatches, counters, intervalMinutes, once });
+    let waitMs = intervalMs;
+    try {
+      const { newMatches, counters } = await runWatchCycle({
+        config, db, logger,
+        options: { freeOnly, freshAlertMinutes: options.freshAlertMinutes },
+        deps,
+      });
+      consecutiveFailures = 0;
+      totalNew += newMatches.length;
+      if (!silent) printCycleResult({ cycle: cycles, startedAt, newMatches, counters, intervalMinutes, once });
+      if (notifier && newMatches.length) await notifyNewMatches(notifier, newMatches);
+    } catch (err) {
+      consecutiveFailures += 1;
+      lastError = err;
+      try {
+        logger?.error?.(`watch cycle ${cycles} failed: ${err?.message ?? err}`, { cycle: cycles, consecutiveFailures });
+      } catch { /* logging must never be what ends the watch */ }
+      if (!silent) ui.fail(`Cycle ${cycles} failed: ${err?.message ?? err}`);
+      if (once || consecutiveFailures >= maxFailures) {
+        failed = true;
+        if (!silent) {
+          ui.fail(once
+            ? 'Watch --once failed.'
+            : `Giving up after ${consecutiveFailures} consecutive failed cycles (--max-failures=${maxFailures}).`);
+        }
+        break;
+      }
+      waitMs = backoffMs(consecutiveFailures, intervalMs, deps.retryBaseMs);
+      if (!silent) {
+        ui.note(`Retrying in ${formatWait(waitMs)} (failure ${consecutiveFailures} of ${maxFailures} allowed in a row)…`);
+      }
+    }
 
     if (once) break;
     if (deps.maxCycles && cycles >= deps.maxCycles) break;
     if (shouldStop()) break;
-    await interruptibleSleep(intervalMs, shouldStop, sleep);
+    await interruptibleSleep(waitMs, shouldStop, sleep);
   }
 
   if (!silent) {
     ui.blank();
     ui.success(`Watch stopped after ${cycles} cycle(s); ${totalNew} new match(es) surfaced.`);
   }
-  return { cycles, totalNew };
+  return { cycles, totalNew, failed, consecutiveFailures, lastError: lastError ? String(lastError.message ?? lastError) : null };
+}
+
+/**
+ * Ctrl+C handling for watch: the FIRST signal asks the loop to stop at the
+ * next safe point (between cycles or during the sleep); a SECOND one exits
+ * immediately with 130. A cycle can run for minutes, and a user pressing
+ * Ctrl+C twice has already said they do not want to wait for it.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.Process|import('node:events').EventEmitter} [options.proc=process]
+ * @param {(code: number) => void} [options.exit] default process.exit
+ * @param {() => void} [options.onFirst] e.g. print "stopping…"
+ * @returns {{ shouldStop: () => boolean, dispose: () => void }}
+ */
+export function createWatchStopSignal({ proc = process, exit = (code) => process.exit(code), onFirst } = {}) {
+  let stopRequested = false;
+  const onSignal = () => {
+    if (stopRequested) {
+      exit(130);
+      return;
+    }
+    stopRequested = true;
+    onFirst?.();
+  };
+  proc.on('SIGINT', onSignal);
+  proc.on('SIGTERM', onSignal);
+  return {
+    shouldStop: () => stopRequested,
+    dispose() {
+      proc.off('SIGINT', onSignal);
+      proc.off('SIGTERM', onSignal);
+    },
+  };
+}
+
+/** Desktop-notify the new matches of one cycle. Never throws. */
+async function notifyNewMatches(notifier, newMatches) {
+  try {
+    const top = newMatches[0];
+    const head = `${top.company || 'Unknown'} — ${top.title || 'Untitled role'}`;
+    const more = newMatches.length > 1 ? ` (+${newMatches.length - 1} more)` : '';
+    await notifier.actionRequired(
+      `Job Agent: ${newMatches.length} new match${newMatches.length === 1 ? '' : 'es'}`,
+      `${head}${more}`,
+      { count: newMatches.length },
+    );
+  } catch { /* a notification is a courtesy; the console banner already fired */ }
+}
+
+/** Wait after the n-th consecutive failure: 1, 2, 4, 8… x base, capped at the interval. */
+export function backoffMs(failures, intervalMs, baseMs = 60_000) {
+  return Math.min(intervalMs, baseMs * 2 ** Math.max(0, failures - 1));
+}
+
+function clampMaxFailures(value) {
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 ? n : DEFAULT_MAX_CONSECUTIVE_FAILURES;
+}
+
+function formatWait(ms) {
+  return ms >= 60_000 ? `${Math.round(ms / 60_000)} min` : `${Math.max(1, Math.round(ms / 1000))} s`;
 }
 
 /**
@@ -220,7 +330,7 @@ function printWatchHeader({ config, intervalMinutes, freeOnly }) {
     ui.warn('Apify sources run every cycle and cost money. Use --free-only or a longer --interval to reduce spend.');
   }
   ui.blank();
-  ui.note('Press Ctrl+C to stop.');
+  ui.note('Press Ctrl+C to stop (twice to quit without waiting for the current cycle).');
 }
 
 function printCycleResult({ cycle, startedAt, newMatches, counters, intervalMinutes, once }) {
