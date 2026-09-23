@@ -52,7 +52,7 @@
  * hardcoded job titles, and no profession-specific branch anywhere below.
  */
 
-import { normalizeText } from '../utils/textNormalize.js';
+import { normalizeText, hasNormalizedTerm } from '../utils/textNormalize.js';
 import {
   loadRoleFamilies, profileFamilies, classifyTitleAgainstFamilies,
 } from '../profile/roleFamilies.js';
@@ -246,11 +246,57 @@ export function buildProfileVocabulary(candidate = {}, { taxonomy, root } = {}) 
   };
 }
 
-/** Whole-word presence test against already-normalized text. */
+/** candidate object -> vocabulary built from the default taxonomy. */
+const VOCAB_BY_CANDIDATE = new WeakMap();
+
+/**
+ * The vocabulary for a candidate, built ONCE per candidate object.
+ *
+ * Adapters built it per tenant / per board (Workday: once for each of 200+
+ * tenants), and every fresh vocabulary object also defeats the per-vocabulary
+ * title memo below. Keyed on the candidate object with a WeakMap, so loading a
+ * new config yields a new vocabulary and the old one is collectable.
+ *
+ * @param {object|null} candidate
+ * @returns {object|null}
+ */
+export function profileVocabularyFor(candidate) {
+  if (!candidate || typeof candidate !== 'object') return null;
+  let vocab = VOCAB_BY_CANDIDATE.get(candidate);
+  if (!vocab) {
+    vocab = buildProfileVocabulary(candidate);
+    VOCAB_BY_CANDIDATE.set(candidate, vocab);
+  }
+  return vocab;
+}
+
+/**
+ * Rank a list best-first by `titleFitPriority`, computing each priority ONCE.
+ *
+ * Calling the priority inside the sort comparator ran it O(n log n) times:
+ * measured 150 titles sorted in ~1,033 ms that way versus ~100 ms precomputed.
+ * Stable, so ties keep input order exactly as `Array#sort` did before.
+ *
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => string} titleOf
+ * @param {object} vocab
+ * @returns {T[]} a new array
+ */
+export function sortByTitleFit(items, titleOf, vocab) {
+  return items
+    .map((item, i) => ({ item, i, p: titleFitPriority(titleOf(item), vocab) }))
+    .sort((a, b) => (b.p - a.p) || (a.i - b.i))
+    .map((d) => d.item);
+}
+
+/**
+ * Whole-word presence test against already-normalized text — precompiled and
+ * substring-prefiltered (see `hasNormalizedTerm`); it used to build a new
+ * RegExp per term per call.
+ */
 function hasTerm(text, term) {
-  if (!term) return false;
-  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(text);
+  return hasNormalizedTerm(text, term);
 }
 
 /** Position on the seniority ladder for a piece of text, or -1. */
@@ -271,6 +317,36 @@ export function seniorityRank(text) {
  * @returns {{verdict: 'accept'|'defer'|'reject', signals: string[]}}
  */
 export function classifyTitleFit(title, vocab) {
+  // MEMOIZED per (vocabulary, title). The same titles are classified by the
+  // adapter title gate, the detail-budget ranking, discovery and the pipeline
+  // within one run — measured ~610 µs each before the matcher was precompiled.
+  // The verdict is pure in (title, vocab); every caller gets its own copy of
+  // `signals`, so one that mutates it cannot poison the cache.
+  const cacheable = vocab && typeof vocab === 'object';
+  const key = String(title ?? '');
+  let memo = cacheable ? TITLE_FIT_MEMO.get(vocab) : null;
+  if (cacheable && !memo) {
+    memo = new Map();
+    TITLE_FIT_MEMO.set(vocab, memo);
+  }
+  const hit = memo?.get(key);
+  if (hit) return { verdict: hit.verdict, signals: [...hit.signals] };
+  const result = classifyTitleFitUncached(title, vocab);
+  if (memo) {
+    // Bounded, so a long-lived process (the dashboard) cannot grow without limit.
+    if (memo.size >= TITLE_FIT_MEMO_LIMIT) memo.clear();
+    memo.set(key, { verdict: result.verdict, signals: [...result.signals] });
+  }
+  return result;
+}
+
+/** vocab object -> (title -> verdict). A WeakMap: a new config frees the old. */
+const TITLE_FIT_MEMO = new WeakMap();
+
+/** Distinct titles remembered per vocabulary before the memo is reset. */
+const TITLE_FIT_MEMO_LIMIT = 20_000;
+
+function classifyTitleFitUncached(title, vocab) {
   const raw = String(title ?? '').trim();
   if (!raw) return { verdict: 'defer', signals: ['no-title'] };
   // Normalize punctuation to spaces so an en dash, comma or slash can never

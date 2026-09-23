@@ -273,6 +273,8 @@ export function extractReadableContent(html, { minChars = 200 } = {}) {
 function extractHintedContainer(html) {
   const lower = html.toLowerCase();
   let best = '';
+  /** [start, end) of every container already evaluated. */
+  const spans = [];
   for (const hint of JD_CONTAINER_HINTS) {
     let from = 0;
     // Scan all occurrences of the hint; only accept ones inside an id/class attr
@@ -289,7 +291,15 @@ function extractHintedContainer(html) {
       if (!CONTAINER_TAGS.includes(tagName)) continue;
       const attrSlice = lower.slice(tagStart, lower.indexOf('>', tagStart) + 1);
       if (!/\b(id|class)\s*=/.test(attrSlice)) continue;
-      const inner = balancedInner(html, tagStart, tagName);
+      // A container NESTED inside one already evaluated cannot win — its text is
+      // a subset of the outer one's — and neither can the same element reached
+      // through a second hint ("job-description" then "description"). Skipping
+      // them removes the repeated slice + htmlToText that made pages with many
+      // nested matching containers quadratic.
+      if (spans.some(([s, e]) => tagStart >= s && tagStart < e)) continue;
+      const inner = balancedInner(html, tagStart, tagName, lower);
+      const contentStart = lower.indexOf('>', tagStart) + 1;
+      spans.push([tagStart, contentStart + inner.length]);
       const text = htmlToText(inner);
       if (text.length > best.length) best = text;
     }
@@ -302,15 +312,17 @@ function firstElementText(html, tagName) {
   const lower = html.toLowerCase();
   const open = lower.indexOf(`<${tagName}`);
   if (open === -1) return '';
-  return htmlToText(balancedInner(html, open, tagName));
+  return htmlToText(balancedInner(html, open, tagName, lower));
 }
 
 /**
  * Return the inner HTML of an element starting at `openIndex`, balancing nested
  * same-name tags so we capture the full element.
  */
-function balancedInner(html, openIndex, tagName) {
-  const lower = html.toLowerCase();
+function balancedInner(html, openIndex, tagName, lowered = null) {
+  // Callers pass their already-lowered copy: re-lowering the WHOLE page once
+  // per hint hit made a page with many matching containers quadratic.
+  const lower = lowered ?? html.toLowerCase();
   const openEnd = lower.indexOf('>', openIndex);
   if (openEnd === -1) return '';
   const openTag = `<${tagName}`;

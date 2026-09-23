@@ -262,11 +262,27 @@ function foldAccents(text) {
   return String(text ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
-/** Whole-word (token) match of `term` within already-normalized `text`. */
-function wordMatch(text, term) {
-  if (!term) return false;
-  return new RegExp(`(^|[^a-z0-9])${escapeRegex(foldAccents(term))}([^a-z0-9]|$)`)
-    .test(foldAccents(text));
+/** Folded-term -> compiled boundary regex. Marker lists are fixed per run. */
+const WORD_PATTERNS = new Map();
+
+/**
+ * Whole-word (token) match of `term` within already-normalized, ALREADY-FOLDED
+ * `text`.
+ *
+ * PERFORMANCE. This compiled a RegExp and accent-folded BOTH strings on every
+ * call, and `checkUsOnly` calls it once per configured marker (~150) per job —
+ * so every posting paid ~300 NFD normalizations and ~150 compilations. The
+ * location is now folded once per job by the caller, the marker once ever.
+ */
+function wordMatch(foldedText, term) {
+  if (!term || !foldedText) return false;
+  let re = WORD_PATTERNS.get(term);
+  if (!re) {
+    const folded = foldAccents(term);
+    re = folded ? new RegExp(`(^|[^a-z0-9])${escapeRegex(folded)}([^a-z0-9]|$)`) : null;
+    WORD_PATTERNS.set(term, re);
+  }
+  return re ? re.test(foldedText) : false;
 }
 
 /**
@@ -326,7 +342,8 @@ function checkUsOnly(job, geo = {}) {
     return discard('geography_mismatch', [`country is ${rawCountry}, not US`]);
   }
 
-  const loc = normalizeText(job.location);
+  // Folded ONCE for every marker test below (see wordMatch).
+  const loc = foldAccents(normalizeText(job.location));
   if (!loc) return null; // unknown location -> defer, do not hard-discard
 
   // A leading ISO country prefix is checked FIRST and is conclusive, because it
