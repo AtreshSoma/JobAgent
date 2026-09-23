@@ -67,10 +67,14 @@ import { ui } from './cli/ui.js';
 import { formatPostedRelative } from './utils/dates.js';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { acquireRunLock } from './utils/runLock.js';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { relPath as rel } from './utils/outputPaths.js';
+
+/** CLI commands that write the jobs table in bulk and must not overlap another run. */
+const CLI_LOCKED_COMMANDS = new Set(['discover', 'score', 'prepare-apps', 'go', 'start', 'end-to-end', 'watch']);
 
 /** Short, readable form of an approval UUID (keeps it copy-pasteable in full). */
 function shortId(id) {
@@ -314,6 +318,8 @@ async function runCommand(command, parsed, env) {
   const db = openDatabase({});
   const logger = new JobLogger({ db, logger: pino, runId });
   const arg = parsed.positionals[1];
+  // Cross-process exclusion with the dashboard and other CLI runs (src/utils/runLock.js).
+  const runLock = CLI_LOCKED_COMMANDS.has(command) ? acquireRunLock({ root: config.root, owner: 'cli', phase: command }) : null;
 
   try {
     switch (command) {
@@ -575,6 +581,7 @@ async function runCommand(command, parsed, env) {
         throw new Error(`unknown command: ${command}`);
     }
   } finally {
+    runLock?.release();
     db.close();
   }
 }

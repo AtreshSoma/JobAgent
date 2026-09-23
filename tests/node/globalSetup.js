@@ -78,6 +78,10 @@ export function buildTestRoot(repo = REPO) {
 }
 
 export default function setup() {
+  // Many test files boot a dashboard in parallel on the same workspace root; the
+  // cross-process run lock (src/utils/runLock.js) would make those unrelated
+  // servers 409 each other. Tests that exercise the lock opt back in.
+  process.env.JOB_AGENT_RUN_LOCK = 'off';
   const root = buildTestRoot();
   process.env.JOB_AGENT_ROOT = root;
   return () => {

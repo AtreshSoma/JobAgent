@@ -17,12 +17,14 @@ describe('db (node:sqlite, in-memory)', () => {
   });
 
   it('upserts and reads a job, managing timestamps', () => {
-    const created = db.upsertJob({ id: 'j1', company: 'Acme', title: 'SDE', score: 80, tier: 'Apply' });
+    expect(db.upsertJob({ id: 'j1', company: 'Acme', title: 'SDE', score: 80, tier: 'Apply' })).toEqual({ changes: 1 });
+    const created = db.getJob('j1');
     expect(created.company).toBe('Acme');
     expect(created.created_at).toBeTruthy();
     expect(db.jobExists('j1')).toBe(true);
 
-    const updated = db.upsertJob({ id: 'j1', score: 90, tier: 'Priority' });
+    db.upsertJob({ id: 'j1', score: 90, tier: 'Priority' });
+    const updated = db.getJob('j1');
     expect(updated.score).toBe(90);
     expect(updated.tier).toBe('Priority');
     // created_at preserved across update

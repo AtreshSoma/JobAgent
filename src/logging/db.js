@@ -12,9 +12,12 @@
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 
 import { PROJECT_ROOT } from '../config/loadConfig.js';
 import { nowIso } from '../utils/dates.js';
+import { assertTransition } from '../lifecycle.js';
+import { localDayWindow } from '../domain/time.js';
 
 // Load the built-in `node:sqlite` via createRequire so bundlers/test runners
 // (Vite/Vitest) do not statically analyze and try to transform this newer
@@ -159,29 +162,43 @@ const JOB_SUMMARY_COLUMNS = [
   'cover_letter_path', 'application_packet_path', 'output_folder_path', 'prepared_at',
   'applied', 'applied_at', 'user_decision', 'decided_at',
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
-  'created_at', 'updated_at', 'discovery_mode', 'search_query',
-].join(', ');
+  'created_at', 'updated_at', 'discovery_mode', 'search_query', 'decision_reason',
+];
 
 /**
  * SQL restricting a board read to ONE discovery mode.
  *
- * 'profile' is the default everywhere and deliberately treats NULL as profile:
- * every row written before this column existed came from a personalized run,
- * because ad-hoc role search is the only other writer and it is newer. Without
- * the NULL branch the entire existing board would vanish on upgrade.
+ * Every row written before this column existed came from a personalized run
+ * (ad-hoc role search is the only other writer and it is newer), so NULL MEANS
+ * 'profile'. That used to be spelled in every query as
+ * `(discovery_mode IS NULL OR discovery_mode = 'profile')` — and an OR over a
+ * nullable column cannot be answered from one covering index: SQLite split it
+ * into a MULTI-INDEX OR with a row lookup per candidate. Measured on the live
+ * 122,977-row store: the board's open-ids read took 188 ms that way, against
+ * ~20 ms for the same read as an equality on a covering index.
+ *
+ * Schema v1 (see MIGRATIONS) backfills the NULLs and makes every new insert
+ * default to 'profile', after which plain equality is exactly equivalent. The
+ * NULL-tolerant form is kept ONLY for a handle on a database that has not been
+ * migrated (a read-only connection opened by a tool), where equality would
+ * silently drop 57k legacy rows off the board.
  *
  * @param {'profile'|'role_search'|'all'} [mode]
  * @param {string|null} [query] required to scope a role_search read to one phrase
+ * @param {object} [options]
+ * @param {boolean} [options.nullIsProfile=false] true for an unmigrated (v0) database
  * @returns {{sql: string, params: string[]}} a WHERE-ready fragment ('' when unrestricted)
  */
-export function discoveryModeClause(mode = 'profile', query = null) {
+export function discoveryModeClause(mode = 'profile', query = null, { nullIsProfile = false } = {}) {
   if (mode === 'all') return { sql: '', params: [] };
   if (mode === 'role_search') {
     return query
       ? { sql: "discovery_mode = 'role_search' AND search_query = ?", params: [String(query)] }
       : { sql: "discovery_mode = 'role_search'", params: [] };
   }
-  return { sql: "(discovery_mode IS NULL OR discovery_mode = 'profile')", params: [] };
+  return nullIsProfile
+    ? { sql: "(discovery_mode IS NULL OR discovery_mode = 'profile')", params: [] }
+    : { sql: "discovery_mode = 'profile'", params: [] };
 }
 
 /** `WHERE <clause>` / `AND <clause>`, or '' when the mode is unrestricted. */
@@ -226,6 +243,9 @@ const JOB_COLUMNS = [
   // from a patch, they keep their stored value — which is what lets a role
   // search update a posting's text without claiming a row the profile owns.
   'discovery_mode', 'search_query',
+  // Why the user rejected/archived the job (schema v2). Written only through
+  // setUserDecision, but allowed here so an import can carry it.
+  'decision_reason',
 ];
 
 /**
@@ -260,6 +280,7 @@ export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
   db.exec('PRAGMA temp_store = MEMORY;');
   db.exec(SCHEMA_SQL);
   applyMigrations(db);
+  applyVersionedMigrations(db);
   if (path !== ':memory:') {
     // Long-lived readers (the dashboard) can keep the WAL from ever being
     // checkpointed; left alone it grows without bound (observed: 60+ MB).
@@ -304,28 +325,9 @@ function applyMigrations(db) {
   if (!jobCols.has('summary_only')) {
     db.exec('ALTER TABLE jobs ADD COLUMN summary_only INTEGER');
   }
-  // PERFORMANCE INDEXES — created here, not in SCHEMA_SQL, because they name
-  // columns that MIGRATIONS add (user_decision, prepared_at). Declared with the
-  // table they would reference a column that does not exist yet on a fresh
-  // database, and CREATE TABLE would fail outright with "no such column".
-  //
-  // These two are the difference between a dashboard that responds instantly
-  // and one that appears hung. Measured on 112,709 rows / a 383 MB jobs table:
-  //   board open-rows predicate   15.3 s -> 39 ms   (covering, no row reads)
-  //   stats tiles (all rows)      25.7 s -> 663 ms  (index-only scan)
-  // jd_text is stored INLINE, so any full table scan drags every stored job
-  // description through memory; these let SQLite answer from the index instead.
-  // Keep idx_jobs_stats in sync with JOB_STATS_COLUMNS — a column in the query
-  // but missing from the index silently reverts the plan to a full scan.
-  const perfIndexes = [
-    `CREATE INDEX IF NOT EXISTS idx_jobs_board_open
-       ON jobs(status, applied, user_decision, score, id)`,
-    `CREATE INDEX IF NOT EXISTS idx_jobs_stats
-       ON jobs(score, id, source, location, posted_at, tier, sponsorship, status,
-               applied, applied_at, user_decision, created_at, updated_at,
-               prepared_at, discard_reason, application_packet_path)`,
-  ];
-  for (const sql of perfIndexes) db.exec(sql);
+  // PERFORMANCE INDEXES (idx_jobs_board_open, idx_jobs_stats) are owned by the
+  // versioned migrations below — they now lead with discovery_mode, a column
+  // this function adds further down, so they cannot be created at this point.
 
   if (!jobCols.has('assist_filled_count')) {
     db.exec('ALTER TABLE jobs ADD COLUMN assist_filled_count INTEGER');
@@ -371,6 +373,125 @@ function applyMigrations(db) {
              ON jobs(discovery_mode, search_query, status, score, id)`);
 }
 
+/*
+ * PERFORMANCE INDEXES.
+ *
+ * These two are the difference between a dashboard that responds instantly
+ * and one that appears hung. Measured on 112,709 rows / a 383 MB jobs table:
+ *   board open-rows predicate   15.3 s -> 39 ms   (covering, no row reads)
+ *   stats tiles (all rows)      25.7 s -> 663 ms  (index-only scan)
+ * jd_text is stored INLINE, so any full table scan drags every stored job
+ * description through memory; these let SQLite answer from the index instead.
+ *
+ * Both LEAD with discovery_mode: every board and stats read is scoped to one
+ * mode by an equality, so the scope is a range seek into the index and the
+ * rest of the read stays covering. Keep idx_jobs_stats in sync with
+ * JOB_STATS_COLUMNS — a column in the query but missing from the index silently
+ * reverts the plan to a full scan (tests/node/dbMigrations.test.js asserts the
+ * plan says COVERING INDEX).
+ */
+const PERF_INDEXES = Object.freeze([
+  ['idx_jobs_board_open', 'jobs(discovery_mode, status, applied, user_decision, score, id)'],
+  ['idx_jobs_stats', `jobs(discovery_mode, score, id, source, location, posted_at, tier, sponsorship,
+      status, applied, applied_at, user_decision, created_at, updated_at, prepared_at,
+      discard_reason, application_packet_path)`],
+]);
+
+/**
+ * "This row has a generated document." Shared, verbatim, by idx_jobs_documents
+ * and listDocumentJobs: SQLite only uses a partial index when the query's WHERE
+ * implies the index's, and textual identity is the reliable way to ensure it.
+ */
+const DOCUMENT_ROW_PREDICATE = 'resume_docx_path IS NOT NULL OR resume_path IS NOT NULL '
+  + 'OR resume_pdf_path IS NOT NULL OR cover_letter_path IS NOT NULL OR application_packet_path IS NOT NULL';
+
+/** Add a column only when it is missing (ALTER TABLE has no IF NOT EXISTS). */
+function addColumnIfMissing(db, table, column, type) {
+  const cols = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  if (!cols.has(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+}
+
+/**
+ * VERSIONED migrations, tracked in `PRAGMA user_version`.
+ *
+ * The additive `applyMigrations` above is enough for "add a nullable column",
+ * but not for a change that rewrites data or replaces an index: those must run
+ * exactly once, completely or not at all. Each step here runs in its own
+ * `BEGIN IMMEDIATE` transaction together with the user_version bump, so a
+ * crash mid-migration leaves the previous version intact and the step simply
+ * re-runs on the next open. Every step is also idempotent on its own.
+ *
+ * Measured on a synthetic 120,000-row store (47% NULL discovery_mode, ~2 KB
+ * jd_text/row): v0 -> v2 in 1.84 s (open-ids read 181 -> 18 ms, stats read
+ * 455 -> 211 ms, both now COVERING). See tests/node/dbMigrations.test.js.
+ */
+export const MIGRATIONS = Object.freeze([
+  {
+    version: 1,
+    name: 'discovery_mode is never NULL; board/stats indexes lead with it',
+    up(db) {
+      // Rows written before the column existed are personalized — see
+      // discoveryModeClause. Backfilling lets every read use equality.
+      db.exec("UPDATE jobs SET discovery_mode = 'profile' WHERE discovery_mode IS NULL");
+      for (const [name, on] of PERF_INDEXES) {
+        db.exec(`DROP INDEX IF EXISTS ${name}`);
+        db.exec(`CREATE INDEX ${name} ON ${on}`);
+      }
+      // `status` and `score` alone: each was a PREFIX of the old board/stats
+      // index, and is not of the new ones — they still serve the unscoped
+      // (`mode: 'all'`) reads and `WHERE status = ?`, so they are kept.
+    },
+  },
+  {
+    version: 2,
+    name: 'decision reasons, and per-source run summaries',
+    up(db) {
+      // Why the user rejected/archived a job ("salary", "location", …): the
+      // one signal about their preferences the product threw away.
+      addColumnIfMissing(db, 'jobs', 'decision_reason', 'TEXT');
+      // A run's per-source summary (found / errors / duration per board), so
+      // /api/runs can answer "which board failed last night?" after a restart.
+      addColumnIfMissing(db, 'run_log', 'per_source', 'TEXT');
+      addColumnIfMissing(db, 'run_log', 'jobs_discarded_stale', 'INTEGER');
+      // The few hundred rows with a generated document. A PARTIAL index whose
+      // WHERE is exactly listDocumentJobs' predicate, so the Documents view and
+      // the master-resume staleness count stop scanning the whole table
+      // (measured live without it: ~1.0 s each, reading every inline jd_text).
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_jobs_documents ON jobs(id) WHERE ${DOCUMENT_ROW_PREDICATE}`);
+    },
+  },
+]);
+
+/** Highest schema version this code knows how to produce. */
+export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
+
+/**
+ * Bring the database up to SCHEMA_VERSION, one transactional step at a time.
+ * @param {DatabaseSync} db
+ * @returns {{from: number, to: number}}
+ */
+export function applyVersionedMigrations(db) {
+  const from = Number(db.prepare('PRAGMA user_version').get().user_version) || 0;
+  let current = from;
+  for (const step of MIGRATIONS) {
+    if (current >= step.version) continue;
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      step.up(db);
+      // Integer interpolation of a constant from this file, never input.
+      db.exec(`PRAGMA user_version = ${Number(step.version)}`);
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch { /* already rolled back */ }
+      throw new Error(`schema migration v${step.version} (${step.name}) failed: ${err.message}`);
+    }
+    current = step.version;
+  }
+  // Belt and braces: an index dropped by hand is recreated (a no-op otherwise).
+  for (const [name, on] of PERF_INDEXES) db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${on}`);
+  return { from, to: current };
+}
+
 /** Serialize a value for a TEXT column (objects/arrays become JSON). */
 function toText(value) {
   if (value === null || value === undefined) return null;
@@ -391,6 +512,59 @@ export class Database {
      * @type {Map<string, import('node:sqlite').StatementSync>}
      */
     this._stmtCache = new Map();
+    /**
+     * Where non-fatal bookkeeping problems go (e.g. a run_log update for a run
+     * that was never opened). Replaceable so a caller can route it to its
+     * logger; tests silence it.
+     * @type {(message: string) => void}
+     */
+    this.onWarning = (message) => { process.emitWarning(message, { code: 'JOBAGENT_DB' }); };
+    this._detectSchema();
+  }
+
+  /**
+   * Read the schema version and column set this handle actually has.
+   *
+   * `openDatabase` always migrates, so this is normally SCHEMA_VERSION. It is
+   * NOT for a handle wrapped directly — a read-only connection a tool opened
+   * against a database nobody has migrated yet. Such a handle must neither
+   * select columns that do not exist (decision_reason arrives in v2) nor use
+   * the equality mode clause on rows that still hold NULL (v1 backfills them).
+   */
+  _detectSchema() {
+    let version = SCHEMA_VERSION;
+    let cols = null;
+    try {
+      version = Number(this.db.prepare('PRAGMA user_version').get().user_version) || 0;
+      cols = new Set(this.db.prepare('PRAGMA table_info(jobs)').all().map((c) => c.name));
+    } catch { /* exotic stub handle — assume current */ }
+    this.schemaVersion = version;
+    this._nullModeIsProfile = version < 1;
+    const summary = cols && cols.size ? JOB_SUMMARY_COLUMNS.filter((c) => cols.has(c)) : JOB_SUMMARY_COLUMNS;
+    this._summaryColumns = summary.join(', ');
+    this._hasDecisionReason = !cols || !cols.size || cols.has('decision_reason');
+  }
+
+  /** The discovery-mode clause appropriate to THIS database's schema version. */
+  _modeClause(mode, query) {
+    return discoveryModeClause(mode, query, { nullIsProfile: this._nullModeIsProfile });
+  }
+
+  /**
+   * A token that changes whenever ANY connection commits a write.
+   *
+   * `total_changes()` alone only counts THIS connection's writes, so a cache
+   * keyed on it never noticed a CLI `watch` / `discover` process writing the
+   * same file — the dashboard kept serving numbers from before the run.
+   * `PRAGMA data_version` is the complement: it changes when another
+   * connection commits, and never for our own. Together they cover both.
+   *
+   * @returns {string}
+   */
+  changeToken() {
+    const version = this.prepareCached('PRAGMA data_version').get()?.data_version ?? 0;
+    const changes = this.prepareCached('SELECT total_changes() AS c').get()?.c ?? 0;
+    return `${version}:${changes}`;
   }
 
   /** Prepare (and cache) a statement by its SQL text. */
@@ -407,12 +581,24 @@ export class Database {
    * Run `fn` inside a single transaction. Commits on success, rolls back on
    * throw. Used to batch the thousands of per-job upserts a discovery run makes
    * into one durable write instead of thousands.
+   *
+   * BEGIN IMMEDIATE, not a deferred BEGIN: two processes write this file (the
+   * dashboard and a CLI run). A deferred transaction that reads first and then
+   * tries to write can fail with SQLITE_BUSY *without* honouring busy_timeout,
+   * because upgrading a read lock would deadlock; IMMEDIATE takes the write
+   * lock up front, so contention waits the 5 s busy timeout instead of failing.
+   *
+   * Re-entrant: called while a transaction is already open (a helper that
+   * wraps its own writes, invoked from inside a caller's batch), `fn` simply
+   * joins the outer transaction.
+   *
    * @template T
    * @param {() => T} fn
-   * @returns {T}
+   * @returns {T} whatever `fn` returned
    */
   transaction(fn) {
-    this.db.exec('BEGIN');
+    if (this.db.isTransaction) return fn();
+    this.db.exec('BEGIN IMMEDIATE');
     try {
       const result = fn();
       this.db.exec('COMMIT');
@@ -423,6 +609,39 @@ export class Database {
     }
   }
 
+  /**
+   * Apply `fn` to every item, committing every `size` items.
+   *
+   * One transaction per row made a discovery run pay a WAL commit per posting;
+   * one transaction for the whole run holds the write lock for its entire
+   * duration, so the dashboard's own writes (a decision click) wait behind it
+   * and can hit the busy timeout. Chunks bound both: a few hundred rows per
+   * commit is ~all of the batching win while releasing the lock many times a
+   * second.
+   *
+   * A throw rolls back ONLY the chunk it happened in (earlier chunks are
+   * already durable) and propagates.
+   *
+   * @template I, R
+   * @param {I[]} items
+   * @param {number} size rows per transaction (>= 1; default 500)
+   * @param {(item: I, index: number) => R} fn called once per item, inside a transaction
+   * @returns {R[]} fn's results, in item order
+   */
+  transactionChunks(items = [], size = 500, fn) {
+    if (typeof fn !== 'function') throw new TypeError('transactionChunks(items, size, fn) requires fn');
+    const step = Number.isFinite(size) && size >= 1 ? Math.floor(size) : 500;
+    const list = Array.isArray(items) ? items : [...items];
+    const results = new Array(list.length);
+    for (let start = 0; start < list.length; start += step) {
+      const end = Math.min(start + step, list.length);
+      this.transaction(() => {
+        for (let i = start; i < end; i += 1) results[i] = fn(list[i], i);
+      });
+    }
+    return results;
+  }
+
   close() {
     this._stmtCache.clear();
     this.db.close();
@@ -431,7 +650,15 @@ export class Database {
   /**
    * Insert or update a job row by id. Unknown keys are ignored; timestamps
    * are managed automatically.
+   *
+   * Returns only the write's outcome. It used to return `getJob(id)` — a
+   * `SELECT *` that dragged the row's full jd_text (~8 KB avg) back off disk
+   * after every write, on every one of the tens of thousands of rows a
+   * discovery run persists, for a value no production caller ever read.
+   * A caller that needs the row calls getJob itself.
+   *
    * @param {Record<string, any>} job
+   * @returns {{changes: number}}
    */
   upsertJob(job) {
     if (!job || !job.id) throw new Error('upsertJob requires a job with an id');
@@ -441,8 +668,17 @@ export class Database {
     record.created_at = job.created_at ?? now;
     record.updated_at = now;
 
-    const cols = JOB_COLUMNS.filter((c) => c in record);
-    const placeholders = cols.map((c) => `@${c}`).join(', ');
+    // `!== undefined`, not `in`: a patch built from an object whose field
+    // happened to be missing (`jd_text: job.jdText` for a posting with no
+    // description) used to write NULL over the stored value — erasing a
+    // description some earlier run had paid to fetch. `null` is still an
+    // explicit "clear it".
+    const cols = JOB_COLUMNS.filter((c) => record[c] !== undefined);
+    // Every NEW row is owned by a search. Omitted from a patch, the mode keeps
+    // its stored value on UPDATE (see the ownership rule in pipeline/index.js),
+    // but an INSERT without one would recreate the NULLs schema v1 backfilled.
+    const insertCols = cols.includes('discovery_mode') ? cols : [...cols, 'discovery_mode'];
+    const placeholders = insertCols.map((c) => `@${c}`).join(', ');
     // `created_at` is deliberately NOT in the UPDATE list: the first insert owns
     // it and a re-discovery must never move it. This used to be enforced by
     // reading the existing row first (`existing?.created_at ?? ...`) and writing
@@ -452,15 +688,44 @@ export class Database {
     // equivalent and needs no read at all.
     const updates = cols
       .filter((c) => c !== 'id' && c !== 'created_at')
-      .map((c) => `${c} = @${c}`).join(', ');
+      .map((c) => `${c} = ${this._updateExpr(c, cols)}`).join(', ');
 
     const params = {};
     for (const c of cols) params[c] = toText(record[c]);
+    if (!cols.includes('discovery_mode')) params.discovery_mode = 'profile';
 
-    const sql = `INSERT INTO jobs (${cols.join(', ')}) VALUES (${placeholders})
+    const sql = `INSERT INTO jobs (${insertCols.join(', ')}) VALUES (${placeholders})
       ON CONFLICT(id) DO UPDATE SET ${updates}`;
-    this.prepareCached(sql).run(params);
-    return this.getJob(job.id);
+    const result = this.prepareCached(sql).run(params);
+    return { changes: Number(result?.changes ?? 0) };
+  }
+
+  /**
+   * The UPDATE expression for one column of an upsert.
+   *
+   * THE DESCRIPTION GUARD. A source that returns only a title + snippet marks
+   * its row `summary_only = 1` and carries whatever short text it has. When
+   * such a sighting re-discovers a posting whose FULL description is already
+   * stored, the plain `jd_text = @jd_text` replaced 8 KB of real description
+   * with a 150-character teaser (or NULL) and flagged the row unread — and the
+   * next re-score then judged the job on the teaser. A stored description of
+   * >= 200 characters is therefore never replaced by a shorter one from a
+   * summary-only write, and the row keeps `summary_only = 0`, because it is
+   * still, truthfully, a row whose description we have read.
+   *
+   * @param {string} c column name (allowlisted)
+   * @param {string[]} cols columns present in this upsert
+   * @returns {string} SQL expression
+   */
+  _updateExpr(c, cols) {
+    if (!cols.includes('summary_only')) return `@${c}`;
+    const keepsStored = "(excluded.summary_only = 1 AND length(coalesce(jobs.jd_text, '')) >= 200"
+      + (cols.includes('jd_text')
+        ? " AND length(coalesce(excluded.jd_text, '')) < length(jobs.jd_text))"
+        : ')');
+    if (c === 'jd_text') return `CASE WHEN ${keepsStored} THEN jobs.jd_text ELSE excluded.jd_text END`;
+    if (c === 'summary_only') return `CASE WHEN ${keepsStored} THEN 0 ELSE excluded.summary_only END`;
+    return `@${c}`;
   }
 
   /** @param {string} id */
@@ -567,7 +832,7 @@ export class Database {
     // option so a caller that DOES need one search's rows can say so and be
     // obeyed — passing `mode` to a method that silently ignored it is exactly
     // how a scoping bug hides.
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     if (clause.sql) { clauses.push(clause.sql); params.push(...clause.params); }
     const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
     return this.db.prepare(`SELECT * FROM jobs${where} ORDER BY score DESC`).all(...params);
@@ -585,7 +850,7 @@ export class Database {
    * @returns {string[]}
    */
   listJobIds({ mode = 'profile', query = null } = {}) {
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     return this.db.prepare(
       `SELECT id FROM jobs${whereMode(clause)} ORDER BY score DESC`,
     ).all(...clause.params).map((r) => r.id);
@@ -599,15 +864,45 @@ export class Database {
    * @returns {object[]} jobs-table rows minus jd_text
    */
   listJobsSummary({ mode = 'profile', query = null } = {}) {
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     return this.db.prepare(
-      `SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs${whereMode(clause)} ORDER BY score DESC`,
+      `SELECT ${this._summaryColumns} FROM jobs${whereMode(clause)} ORDER BY score DESC`,
     ).all(...clause.params);
+  }
+
+  /**
+   * Summary rows that carry a generated document (tailored resume, cover
+   * letter or packet), every discovery mode — the Documents view and the
+   * master-resume staleness count.
+   *
+   * Both used to decorate or scan the WHOLE table to find the few hundred rows
+   * with a file on disk; measured live that was 897 ms and 785 ms per request.
+   * @returns {object[]}
+   */
+  listDocumentJobs() {
+    return this.prepareCached(`SELECT ${this._summaryColumns} FROM jobs
+      WHERE ${DOCUMENT_ROW_PREDICATE}`).all();
+  }
+
+  /**
+   * Recorded assist blockers of every row the board shows as needing help
+   * (blocked / failed / cancelled, not submitted or closed by the user).
+   * A few dozen rows found through idx_jobs_status — the stats scan never
+   * reads assist_blockers, and adding it there would break the covering index.
+   * @returns {{id: string, status: string, assist_blockers: string|null}[]}
+   */
+  listAttentionBlockers({ mode = 'profile', query = null } = {}) {
+    const clause = this._modeClause(mode, query);
+    return this.prepareCached(`SELECT id, status, assist_blockers FROM jobs
+      WHERE status IN ('assist_blocked', 'failed', 'cancelled')
+        AND COALESCE(applied, 0) <> 1
+        AND (user_decision IS NULL OR user_decision NOT IN ('rejected', 'archived'))${whereMode(clause, 'AND')}`)
+      .all(...clause.params);
   }
 
   /** Total rows in the jobs table, within one discovery mode. */
   countJobs({ mode = 'profile', query = null } = {}) {
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     return this.prepareCached(
       `SELECT COUNT(*) AS c FROM jobs${whereMode(clause)}`,
     ).get(...clause.params).c ?? 0;
@@ -625,11 +920,38 @@ export class Database {
       GROUP BY search_query ORDER BY lastFoundAt DESC`).all();
   }
 
-  /** Drop every row a given role search produced (never touches profile rows). */
+  /**
+   * Clear one role search — without destroying anything the user invested in.
+   *
+   * This used to DELETE every row the search produced, including a job the
+   * user had since applied to, shortlisted/rejected, prepared a packet for or
+   * queued for approval — erasing their application history and orphaning the
+   * approval row and packet files that pointed at it. Those rows are now
+   * RE-OWNED by the personalized board (discovery_mode = 'profile'), which is
+   * where a job the user acted on belongs anyway; only untouched rows are
+   * deleted, together with their now-orphaned events, in one transaction.
+   *
+   * @param {string} query
+   * @returns {number} rows deleted (rows kept are left in `lastRoleSearchKept`)
+   */
   deleteRoleSearch(query) {
-    return this.db.prepare(
-      "DELETE FROM jobs WHERE discovery_mode = 'role_search' AND search_query = ?",
-    ).run(String(query)).changes ?? 0;
+    const q = String(query);
+    const PROTECTED = `(COALESCE(applied, 0) = 1 OR user_decision IS NOT NULL
+        OR application_packet_path IS NOT NULL
+        OR EXISTS (SELECT 1 FROM approval_queue aq WHERE aq.job_id = jobs.id))`;
+    const SCOPE = "discovery_mode = 'role_search' AND search_query = ?";
+    return this.transaction(() => {
+      const kept = this.db.prepare(
+        `UPDATE jobs SET discovery_mode = 'profile', search_query = NULL, updated_at = ?
+          WHERE ${SCOPE} AND ${PROTECTED}`,
+      ).run(nowIso(), q).changes ?? 0;
+      this.db.prepare(
+        `DELETE FROM application_events WHERE job_id IN (SELECT id FROM jobs WHERE ${SCOPE})`,
+      ).run(q);
+      const removed = this.db.prepare(`DELETE FROM jobs WHERE ${SCOPE}`).run(q).changes ?? 0;
+      this.lastRoleSearchKept = Number(kept);
+      return Number(removed);
+    });
   }
 
   /**
@@ -661,9 +983,9 @@ export class Database {
     if (!order) throw new Error(`unsupported page order "${orderBy}"`);
     const take = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
     const skip = Number.isFinite(offset) && offset > 0 ? Math.floor(offset) : 0;
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     return this.prepareCached(
-      `SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs${whereMode(clause)} ORDER BY ${order}, id LIMIT ? OFFSET ?`,
+      `SELECT ${this._summaryColumns} FROM jobs${whereMode(clause)} ORDER BY ${order}, id LIMIT ? OFFSET ?`,
     ).all(...clause.params, take, skip);
   }
 
@@ -674,9 +996,12 @@ export class Database {
    * @returns {object[]}
    */
   listJobsForStats({ mode = 'profile', query = null } = {}) {
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     return this.prepareCached(
-      `SELECT ${JOB_STATS_COLUMNS} FROM jobs${whereMode(clause)} ORDER BY score DESC`,
+      // No ORDER BY: every statistic is an order-insensitive count or max, and
+      // asking for score order made SQLite either sort 120k rows or walk the
+      // index in score order instead of seeking straight to this mode's range.
+      `SELECT ${JOB_STATS_COLUMNS} FROM jobs${whereMode(clause)}`,
     ).all(...clause.params);
   }
 
@@ -722,7 +1047,7 @@ export class Database {
     // the wide columns for just the ~2,500 ids that survived — a few thousand
     // primary-key seeks rather than a whole-table read. Same rows, same order,
     // 1.6 s cold and 185 ms warm.
-    const clause = discoveryModeClause(mode, query);
+    const clause = this._modeClause(mode, query);
     const ids = this.prepareCached(`SELECT id FROM jobs
       WHERE NOT (
         status IS 'discarded'
@@ -746,16 +1071,15 @@ export class Database {
    * @returns {object[]}
    */
   rowsByIds(ids = []) {
-    const CHUNK = 800;
-    const out = [];
-    for (let i = 0; i < ids.length; i += CHUNK) {
-      const slice = ids.slice(i, i + CHUNK);
-      const holes = slice.map(() => '?').join(',');
-      out.push(...this.prepareCached(
-        `SELECT ${JOB_SUMMARY_COLUMNS} FROM jobs WHERE id IN (${holes})`,
-      ).all(...slice));
-    }
-    return out;
+    if (!ids.length) return [];
+    // ONE statement, one bound JSON array. The `IN (?,?,…)` form prepared a
+    // new statement for every distinct chunk length and cached each forever —
+    // the final partial chunk of every board read was a fresh SQL text — and
+    // capped a call at the bound-parameter limit. `json_each` takes any length
+    // through a single parameter, and the primary-key seeks are unchanged.
+    return this.prepareCached(
+      `SELECT ${this._summaryColumns} FROM jobs WHERE id IN (SELECT value FROM json_each(?))`,
+    ).all(JSON.stringify(ids));
   }
 
   /**
@@ -764,15 +1088,61 @@ export class Database {
    * @param {string} id job id
    * @param {'shortlisted'|'rejected'|'archived'|null} decision null clears it
    */
-  setUserDecision(id, decision) {
+  setUserDecision(id, decision, { reason = null } = {}) {
     const allowed = new Set(['shortlisted', 'rejected', 'archived', null]);
     if (!allowed.has(decision)) {
       throw new Error(`invalid user decision: ${decision} (use shortlisted/rejected/archived/null)`);
     }
-    this.db.prepare(
-      'UPDATE jobs SET user_decision = ?, decided_at = ?, updated_at = ? WHERE id = ?',
-    ).run(decision, decision ? nowIso() : null, nowIso(), id);
+    if (this._hasDecisionReason) {
+      this.db.prepare(
+        'UPDATE jobs SET user_decision = ?, decided_at = ?, decision_reason = ?, updated_at = ? WHERE id = ?',
+      ).run(decision, decision ? nowIso() : null, decision ? reason : null, nowIso(), id);
+    } else {
+      this.db.prepare(
+        'UPDATE jobs SET user_decision = ?, decided_at = ?, updated_at = ? WHERE id = ?',
+      ).run(decision, decision ? nowIso() : null, nowIso(), id);
+    }
     return this.getJob(id);
+  }
+
+  /**
+   * Move a job to a new lifecycle status — the ONE door for status writes that
+   * a human or an assist outcome causes.
+   *
+   * Status writes used to be bare upserts from half a dozen places, none of
+   * which asked whether the move was legal, and none of which left a trace: a
+   * submitted job could be "re-marked" unverified and silently stop counting as
+   * an application. This reads the current status, asks lifecycle
+   * `assertTransition`, writes the status plus any extra columns, and appends an
+   * application_events row — all in one transaction.
+   *
+   * @param {string} id
+   * @param {string} to a LIFECYCLE value
+   * @param {object} [options]
+   * @param {string} [options.reason] recorded on the event
+   * @param {Record<string, any>} [options.patch] extra columns to write
+   * @param {'system'|'human'} [options.actor] a human may report a submission from any
+   *   non-terminal state (see lifecycle HUMAN_REACHABLE)
+   * @returns {{id: string, from: string|null, to: string}}
+   * @throws {Error} statusCode 404 for an unknown id, 409 for an illegal move
+   */
+  setJobStatus(id, to, { reason = '', patch = {}, actor = 'system' } = {}) {
+    return this.transaction(() => {
+      const current = this.prepareCached('SELECT status FROM jobs WHERE id = ?').get(id);
+      if (!current) throw Object.assign(new Error(`unknown job id: ${id}`), { statusCode: 404 });
+      const from = current.status ?? null;
+      try { assertTransition(from, to, reason, { actor }); }
+      catch (err) { throw Object.assign(err, { statusCode: 409 }); }
+      this.upsertJob({ ...patch, id, status: to });
+      if (from !== to) {
+        this.insertEvent({
+          id: randomUUID(), job_id: id, event_type: 'status_changed',
+          message: `${from ?? '(none)'} -> ${to}${reason ? `: ${reason}` : ''}`,
+          metadata: { from, to, reason: reason || null, actor },
+        });
+      }
+      return { id, from, to };
+    });
   }
 
   /** @param {string} id */
@@ -780,7 +1150,39 @@ export class Database {
     return this.db.prepare('SELECT 1 FROM jobs WHERE id = ?').get(id) !== undefined;
   }
 
-  /** Count jobs applied on a given ISO date (YYYY-MM-DD prefix). */
+  /**
+   * Count jobs applied inside a half-open [start, end) UTC window.
+   *
+   * The daily application cap needs the candidate's LOCAL day (see
+   * src/domain/time.js localDayWindow): the UTC day reset the cap at 8 pm for
+   * a US Eastern user, mid-session. A range over ISO strings also avoids
+   * running substr() on every applied row.
+   * @param {string} start ISO timestamp (inclusive)
+   * @param {string} end ISO timestamp (exclusive)
+   */
+  countAppliedBetween(start, end) {
+    const row = this.prepareCached(
+      'SELECT COUNT(*) AS c FROM jobs WHERE applied = 1 AND applied_at >= ? AND applied_at < ?',
+    ).get(String(start), String(end));
+    return row?.c ?? 0;
+  }
+
+  /**
+   * Jobs applied on the candidate's LOCAL calendar day containing `now` — what
+   * the daily application cap means by "today".
+   * @param {Date} [now]
+   * @param {string|null} [timeZone] IANA zone (candidate.location.timezone); null = UTC day
+   * @returns {number}
+   */
+  countAppliedOnLocalDay(now = new Date(), timeZone = null) {
+    const { start, end } = localDayWindow(now instanceof Date ? now : new Date(now), timeZone);
+    return this.countAppliedBetween(start, end);
+  }
+
+  /**
+   * Count jobs applied on a given ISO date (YYYY-MM-DD prefix) — the UTC day.
+   * @deprecated use countAppliedBetween with a local-day window.
+   */
   countAppliedOn(isoDatePrefix) {
     const row = this.db
       .prepare("SELECT COUNT(*) AS c FROM jobs WHERE applied = 1 AND substr(applied_at,1,10) = ?")
@@ -790,11 +1192,9 @@ export class Database {
 
   /** @param {Record<string, any>} row */
   insertRunLog(row) {
-    const cols = ['run_id', 'mode', 'started_at', 'ended_at', 'jobs_found', 'jobs_scored',
-      'jobs_skipped_unchanged', 'jobs_cancelled',
-      'jobs_queued', 'jobs_prepared', 'jobs_applied', 'jobs_assisted', 'jobs_submitted',
-      'jobs_discarded', 'jobs_unknown_date_review', 'errors'];
-    const present = cols.filter((c) => c in row);
+    // Every real run_log column is writable — the counter list was hardcoded,
+    // so jobs_new / jobs_discarded_stale / … were silently dropped on insert.
+    const present = this._runLogColumns().filter((c) => row[c] !== undefined);
     const params = {};
     for (const c of present) params[c] = toText(row[c]);
     this.db.prepare(
@@ -817,19 +1217,36 @@ export class Database {
    * @param {Record<string, any>} patch
    */
   updateRunLog(runId, patch) {
-    const cols = Object.keys(patch);
+    const known = new Set(this._runLogColumns());
+    const cols = Object.keys(patch).filter((c) => known.has(c) && c !== 'run_id' && patch[c] !== undefined);
     if (cols.length === 0) return;
     const set = cols.map((c) => `${c} = @${c}`).join(', ');
     const params = { run_id: runId };
     for (const c of cols) params[c] = toText(patch[c]);
     const result = this.db.prepare(`UPDATE run_log SET ${set} WHERE run_id = @run_id`).run(params);
     if (Number(result?.changes ?? 0) > 0) return;
+    // No opening row. Recreate it only when the caller KNOWS what kind of run
+    // this was. The pipeline's endRun used to land here with the dashboard
+    // SESSION's run id and no mode, inventing a mode='unknown' row that then
+    // absorbed the counters of every later run in the session. A phantom row
+    // is worse than a missing one, so without a mode it is reported, not made.
+    if (!patch.mode) {
+      this.onWarning?.(`run_log: no run "${runId}" was started; its end counters were not recorded`);
+      return;
+    }
     this.insertRunLog({
       run_id: runId,
-      mode: patch.mode ?? 'unknown',
       started_at: patch.started_at ?? nowIso(),
       ...patch,
     });
+  }
+
+  /** run_log's real columns (cached; schema v2 adds some). */
+  _runLogColumns() {
+    if (!this._runLogCols) {
+      this._runLogCols = this.db.prepare('PRAGMA table_info(run_log)').all().map((c) => c.name);
+    }
+    return this._runLogCols;
   }
 
   /**
@@ -844,7 +1261,7 @@ export class Database {
    */
   listRunLogs({ limit = 25 } = {}) {
     const rows = this.db.prepare(
-      'SELECT * FROM run_log ORDER BY started_at DESC LIMIT ?',
+      'SELECT * FROM run_log ORDER BY started_at DESC, rowid DESC LIMIT ?',
     ).all(Math.max(1, Math.min(500, Number(limit) || 25)));
     return rows.map((row) => {
       const started = Date.parse(row.started_at ?? '');

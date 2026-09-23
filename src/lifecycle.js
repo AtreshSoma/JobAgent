@@ -103,17 +103,31 @@ export const TRANSITIONS = Object.freeze({
 const ALWAYS_REACHABLE = Object.freeze([LIFECYCLE.FAILED]);
 
 /**
+ * States a HUMAN may move a job to from any non-terminal state.
+ *
+ * "I submitted it myself" is a report of something that happened outside the
+ * agent — the user applied on the employer's site straight from a scored or
+ * shortlisted row, without any packet. The pipeline graph above has no edge
+ * from `scored` to `submitted` because the AGENT must never take it; a person
+ * may. Nothing moves a job out of `submitted`, human or not.
+ */
+const HUMAN_REACHABLE = Object.freeze([LIFECYCLE.SUBMITTED, LIFECYCLE.SUBMIT_UNVERIFIED]);
+
+/**
  * May `from` legally become `to`?
  *
  * @param {string|null} from current jobs.status (null for a brand-new row)
  * @param {string} to proposed next status
+ * @param {object} [options]
+ * @param {'system'|'human'} [options.actor='system'] who is making the move
  * @returns {boolean}
  */
-export function canTransition(from, to) {
+export function canTransition(from, to, { actor = 'system' } = {}) {
   if (!LIFECYCLE_VALUES.includes(to)) return false;
   if (from == null || from === '') return true; // entry point
   if (from === to) return true;                 // idempotent re-write
   if (ALWAYS_REACHABLE.includes(to)) return true;
+  if (actor === 'human' && HUMAN_REACHABLE.includes(to) && from !== LIFECYCLE.SUBMITTED) return true;
   return (TRANSITIONS[from] ?? []).includes(to);
 }
 
@@ -125,9 +139,10 @@ export function canTransition(from, to) {
  * @param {string|null} from
  * @param {string} to
  * @param {string} [reason] human-readable cause, included in the error
+ * @param {object} [options] passed to canTransition ({ actor })
  */
-export function assertTransition(from, to, reason = '') {
-  if (canTransition(from, to)) return;
+export function assertTransition(from, to, reason = '', options = {}) {
+  if (canTransition(from, to, options)) return;
   const known = LIFECYCLE_VALUES.includes(to) ? '' : ' (not a known lifecycle status)';
   throw new Error(
     `illegal lifecycle transition: "${from}" -> "${to}"${known}`

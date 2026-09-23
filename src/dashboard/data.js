@@ -20,6 +20,7 @@
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply/approvalQueue.js';
 import { jsonList } from '../utils/json.js';
@@ -29,102 +30,25 @@ import { applicationStatePath } from '../apply/applicationState.js';
 import { isSponsorshipGated, configureGateThreshold, gateThreshold } from '../scoring/explainScore.js';
 import { extractDocxText } from '../resume/docxText.js';
 import { usLocationSignal, US_STATE_COUNT } from '../utils/usGeography.js';
+import {
+  APP_STATUS, APP_STATUS_LABELS, LIFECYCLE_TO_APP_STATUS, deriveAppStatus, fitBucket,
+  gradeFromScore, FIT_LABELS, postedConfidence, resumeStatusOf,
+} from '../domain/appStatus.js';
+import { candidateTimeZone, dayOf } from '../domain/time.js';
+import { findPlaceholders } from '../config/placeholders.js';
+import { csvCell } from '../reports/csv.js';
 
-/** Derived application statuses shown on the board (ordered by precedence). */
-export const APP_STATUS = Object.freeze({
-  SUBMITTED: 'submitted',          // human submitted it, or auto-submit verified it (applied = 1)
-  ARCHIVED: 'archived',            // user archived it
-  REJECTED: 'rejected',            // user rejected it (or rejected the packet)
-  SKIPPED: 'skipped',              // user skipped it during assisted apply
-  BLOCKED: 'blocked',              // assist hit login/captcha/unknown fields
-  FAILED: 'failed',                // unexpected assist/component error; retry after RCA
-  CANCELLED: 'cancelled',          // user cancelled at a safe resumable checkpoint
-  SUBMIT_UNVERIFIED: 'submit_unverified', // auto-submit clicked; no confirmation detected — verify!
-  READY_FOR_SUBMIT: 'ready_for_submit', // form filled; awaiting the human's click
-  APPROVED: 'approved',            // packet approved; ready for assisted fill
-  NEEDS_REVIEW: 'needs_review',    // packet prepared; awaiting human approval
-  SHORTLISTED: 'shortlisted',      // user shortlisted; not yet prepared/approved
-  DATE_UNCONFIRMED: 'date_unconfirmed', // no parseable posting date; flagged for review
-  DISCARDED: 'discarded',          // pipeline hard-excluded or below threshold
-  NEEDS_DESCRIPTION: 'needs_description', // found, but the JD was never fetched — NOT judged
-  SCORED: 'scored',                // scored, no action yet
-  DISCOVERED: 'discovered',        // found, not yet scored
-});
+// The status vocabulary and the pure per-row rules moved to src/domain so the
+// tracker, reports and CLI can use them without importing this whole data
+// layer. Re-exported (alongside real local imports) so every existing import
+// site keeps working unchanged.
+export {
+  APP_STATUS, APP_STATUS_LABELS, LIFECYCLE_TO_APP_STATUS, deriveAppStatus, fitBucket,
+  gradeFromScore, FIT_LABELS, postedConfidence, resumeStatusOf,
+};
 
 /** User decisions accepted by applyDecision(). */
 export const USER_DECISIONS = Object.freeze(['shortlisted', 'rejected', 'archived', 'clear']);
-
-/**
- * Derive the single board status for a job + its latest approval row.
- * Precedence: actual submission > user archive/reject > assist outcomes >
- * approval state > user shortlist > pipeline state.
- *
- * @param {object} job jobs-table row
- * @param {object|null} approval latest approval_queue row
- * @returns {string} an APP_STATUS value
- */
-export function deriveAppStatus(job = {}, approval = null) {
-  if (Number(job.applied) === 1) return APP_STATUS.SUBMITTED;
-  if (job.user_decision === 'archived') return APP_STATUS.ARCHIVED;
-  if (job.user_decision === 'rejected') return APP_STATUS.REJECTED;
-  if (job.status === 'skipped') return APP_STATUS.SKIPPED;
-  if (job.status === 'assist_blocked') return APP_STATUS.BLOCKED;
-  if (job.status === 'failed') return APP_STATUS.FAILED;
-  if (job.status === 'cancelled') return APP_STATUS.CANCELLED;
-  if (job.status === 'submit_unverified') return APP_STATUS.SUBMIT_UNVERIFIED;
-  if (job.status === 'ready_for_submit') return APP_STATUS.READY_FOR_SUBMIT;
-  if (approval?.approval_status === APPROVAL_STATUS.REJECTED) return APP_STATUS.REJECTED;
-  if (approval?.approval_status === APPROVAL_STATUS.APPROVED) return APP_STATUS.APPROVED;
-  if (approval?.approval_status === APPROVAL_STATUS.PENDING) return APP_STATUS.NEEDS_REVIEW;
-  if (job.user_decision === 'shortlisted') return APP_STATUS.SHORTLISTED;
-  if (job.status === 'unknown_date_review') return APP_STATUS.DATE_UNCONFIRMED;
-  if (job.status === 'discarded') return APP_STATUS.DISCARDED;
-  // `needs_description` is written to jobs.status by the pipeline for rows whose
-  // JD was never fetched, precisely so they are NOT reported as judged. With no
-  // case here they fell through to the score/tier test below and surfaced as
-  // "Scored" — 5,029 unread rows inside a tile reporting 5,175, so 97% of what
-  // the board called "Scored" was never read. A provisional score is set on
-  // these rows; it is not a verdict.
-  if (job.status === 'needs_description') return APP_STATUS.NEEDS_DESCRIPTION;
-  if (typeof job.score === 'number' || job.tier) return APP_STATUS.SCORED;
-  return APP_STATUS.DISCOVERED;
-}
-
-/**
- * Every lifecycle status this presentation layer knows how to render.
- *
- * `deriveAppStatus` is a chain of `if`s with a fallthrough, which is why a
- * status could be introduced by one writer and silently mishandled here: a row
- * whose status nothing matched simply fell through to SCORED. That is exactly
- * how 4,732 rows the pipeline had deliberately marked unread came to be
- * reported as judged.
- *
- * Keeping the mapping explicit lets a test assert exhaustiveness over
- * LIFECYCLE_VALUES, so adding a status without deciding how it is DISPLAYED
- * fails the suite rather than quietly mislabelling rows in production.
- *
- * A status maps to `null` when it is deliberately not a distinct board status
- * (it is represented by approval/user-decision precedence instead).
- */
-export const LIFECYCLE_TO_APP_STATUS = Object.freeze({
-  found: APP_STATUS.DISCOVERED,
-  hard_discarded: APP_STATUS.DISCARDED,
-  discarded: APP_STATUS.DISCARDED,
-  needs_description: APP_STATUS.NEEDS_DESCRIPTION,
-  unknown_date_review: APP_STATUS.DATE_UNCONFIRMED,
-  scored: APP_STATUS.SCORED,
-  near_miss: APP_STATUS.SCORED,
-  queued: APP_STATUS.SCORED,
-  prepared: APP_STATUS.NEEDS_REVIEW,
-  assist_started: APP_STATUS.APPROVED,
-  assist_blocked: APP_STATUS.BLOCKED,
-  ready_for_submit: APP_STATUS.READY_FOR_SUBMIT,
-  submit_unverified: APP_STATUS.SUBMIT_UNVERIFIED,
-  submitted: APP_STATUS.SUBMITTED,
-  skipped: APP_STATUS.SKIPPED,
-  cancelled: APP_STATUS.CANCELLED,
-  failed: APP_STATUS.FAILED,
-});
 
 // The sponsorship gate is a SCORING concept; it lives in scoring/explainScore.js
 // next to the rule that creates it. Re-exported here (alongside a real local
@@ -132,71 +56,6 @@ export const LIFECYCLE_TO_APP_STATUS = Object.freeze({
 // existing dashboard consumer and its tests keep one import site.
 export { isSponsorshipGated, configureGateThreshold, gateThreshold };
 
-/**
- * Map a scoring tier to a fit bucket.
- *
- * FIT measures how well the ROLE matches the candidate; sponsorship
- * feasibility is reported separately. A 75+ job the sponsorship gate parked
- * in Queue is therefore still a STRONG fit (with sponsorshipGated: true and a
- * "verify sponsorship" action) — hiding those as "medium" made 10k-job sources
- * read as producing zero strong matches.
- *
- * The gate flag is only a PROXY for "this Queue row really scored Apply" — and
- * that proxy does not hold for a row whose sponsorship is `Denied`: such a row
- * was not parked pending verification, it was refused outright. Passing
- * sponsorship through keeps a refused job out of "Best matches".
- *
- * @param {string|null} tier
- * @param {number|null} [score] pass the job's score to classify gated rows
- * @param {string|null} [sponsorship] pass the job's sponsorship status
- * @returns {'strong'|'medium'|'weak'|'no_fit'|'unscored'}
- */
-export function fitBucket(tier, score = null, sponsorship = null) {
-  if (tier === 'Priority' || tier === 'Apply') return 'strong';
-  if (tier === 'Queue') return isSponsorshipGated({ tier, score, sponsorship }) ? 'strong' : 'medium';
-  if (tier === 'Near miss') return 'weak';
-  if (tier === 'Discard') return 'no_fit';
-  return 'unscored';
-}
-
-/**
- * Letter grade for a 0-100 score — a compact, career-ops-style signal of how
- * worth-your-time a role is. The system is a FILTER, not spray-and-pray: grades
- * D/F are de-emphasized in the UI so you focus on the few A/B roles.
- *
- * @param {number|null} score
- * @returns {{ letter: string, label: string, recommend: boolean }|null}
- */
-export function gradeFromScore(score) {
-  if (typeof score !== 'number' || Number.isNaN(score)) return null;
-  if (score >= 85) return { letter: 'A', label: 'Excellent fit', recommend: true };
-  if (score >= 75) return { letter: 'B', label: 'Strong fit', recommend: true };
-  if (score >= 65) return { letter: 'C', label: 'Possible fit', recommend: true };
-  if (score >= 50) return { letter: 'D', label: 'Weak fit', recommend: false };
-  return { letter: 'F', label: 'Poor fit', recommend: false };
-}
-
-/**
- * Confidence in a job's posting date. Aggregator feeds often omit or mangle the
- * date; those are flagged so a stale role is never mistaken for a fresh one.
- * @param {object} job
- * @returns {'confirmed'|'unconfirmed'}
- */
-export function postedConfidence(job = {}) {
-  if (job.status === 'unknown_date_review') return 'unconfirmed';
-  return job.posted_at ? 'confirmed' : 'unconfirmed';
-}
-
-/**
- * Resume packet readiness for a job, for an at-a-glance column.
- * @param {object} job
- * @returns {'tailored'|'prepared'|'none'}
- */
-export function resumeStatusOf(job = {}) {
-  if (job.resume_pdf_path || job.resume_docx_path || job.resume_path) return 'tailored';
-  if (job.application_packet_path) return 'prepared';
-  return 'none';
-}
 
 /**
  * The happy-path pipeline a job advances through, plus terminal off-ramps. Used
@@ -256,6 +115,38 @@ export function lastActionFor(job = {}, appStatus = '') {
 }
 
 /**
+ * A failure of THIS MACHINE, not of the application: the Playwright browser
+ * binary is missing. Every auto-fill fails the same way until it is installed,
+ * so these rows are one setup problem, not N per-job blockers — and they were
+ * being mis-filed as "Page / navigation problem" / "Browser needs attention",
+ * which sent the user to fix job links that were fine.
+ */
+export const ENVIRONMENT_FAILURE_RE = /browser_unavailable|Executable doesn't exist|playwright install/i;
+
+/** Does this row's recorded blocker say the browser is not installed? */
+export function isEnvironmentFailure(jobOrRow = {}) {
+  const blockers = Array.isArray(jobOrRow.assistBlockers)
+    ? jobOrRow.assistBlockers : jsonList(jobOrRow.assist_blockers);
+  const text = `${blockers.join(' ')} ${jobOrRow.statusReason ?? ''}`;
+  return ENVIRONMENT_FAILURE_RE.test(text);
+}
+
+/** The one label every surface uses for an environmental failure. */
+export const SETUP_BROWSER_LABEL = 'Setup: browser not installed';
+
+/**
+ * Drop box-drawing / block characters and collapse the whitespace they leave.
+ * Playwright's "Executable doesn't exist" error arrives wrapped in a
+ * ╔═══╗ banner, which rendered as a wall of line art in a one-line status cell.
+ */
+export function stripBannerChars(text) {
+  return String(text ?? '')
+    .replace(/[─-▟]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Plain-language explanation of WHY a job sits in its current status — the
  * answer to "why is this blocked / rejected / discarded?". Honest about the
  * common case where an older assisted-fill attempt stopped at a wall but did
@@ -267,6 +158,11 @@ export function lastActionFor(job = {}, appStatus = '') {
  * @returns {string|null} a human reason, or null when none applies
  */
 export function explainStatus(job = {}, appStatus = '', approval = null) {
+  const reason = explainStatusRaw(job, appStatus, approval);
+  return reason == null ? null : stripBannerChars(reason);
+}
+
+function explainStatusRaw(job = {}, appStatus = '', approval = null) {
   const blockers = jsonList(job.assist_blockers);
   switch (appStatus) {
     case APP_STATUS.NEEDS_DESCRIPTION:
@@ -321,6 +217,13 @@ export function classifyAttention(job = {}, appStatus = '') {
   if (appStatus === APP_STATUS.CANCELLED) return {
     kind: 'paused', label: 'Paused safely', summary: 'Resume Auto-fill when you are ready.', retryable: true,
   };
+  // Checked before every per-site rule: a missing browser is not a login wall
+  // or a navigation problem, and nothing about the posting needs fixing.
+  if (ENVIRONMENT_FAILURE_RE.test(reason)) return {
+    kind: 'setup_browser', label: SETUP_BROWSER_LABEL,
+    summary: 'Auto-fill can’t start: the Playwright browser is not installed. Run: npx playwright install chromium, then retry.',
+    retryable: true,
+  };
   if (/captcha|verification challenge|human verification/.test(reason)) return {
     kind: 'verification', label: 'Needs verification', summary: 'Complete the site verification in the open browser, then retry Auto-fill.', retryable: true,
   };
@@ -363,20 +266,29 @@ const approvalsByJob = latestApprovalsByJob;
  * Every dashboard endpoint decorates the FULL jobs table per request; at tens
  * of thousands of rows that is ~1s of blocked event loop each, and the page's
  * initial burst (stats + sections + jobs + status) queues them back-to-back —
- * the UI reads as frozen. Cache the expensive computations, keyed by:
- *   - SQLite total_changes() for this connection — any write (upsert, decision,
- *     approval, note) bumps it, so mutations invalidate instantly, and
- *   - a 30s time bucket — `now`-derived fields (postedLabel, last-24h flags)
- *     refresh on their own even with no writes.
+ * the UI reads as frozen. Cache the expensive computations, keyed by DATA, not
+ * by the clock:
+ *   - `PRAGMA data_version` — changes when ANOTHER connection commits (a CLI
+ *     `watch`/`discover` writing the same file). The old key used only
+ *     total_changes(), which counts this connection's writes and nothing else,
+ *     so a CLI run was invisible to the dashboard until its 30 s bucket rolled;
+ *   - total_changes() — this connection's own writes;
+ *   - an in-process mutation counter (`noteUserMutation`) — user actions that
+ *     change what the board SHOWS without writing a row (a sponsorship-gate or
+ *     search-profile change).
+ * The old key also carried a 30 s time bucket, so an idle dashboard threw away
+ * a 5 s stats build every 30 s just to refresh "posted 3d ago". Time-derived
+ * row fields are now refreshed in place at serve time (`refreshTimeFields`,
+ * O(rows) string work, no decoration), and stats uses stale-while-revalidate.
  * Per-Database WeakMap so tests with separate in-memory DBs never collide.
  *
  * A bulk discover/score run upserts thousands of rows in quick succession,
- * so total_changes() moves on almost every request during (and right after)
- * one — the cache misses nearly every time and pays the full ~1s decoration
- * on each dashboard poll, which is exactly when the board is under the most
- * load. `setDuringBulkRun(true)` (called by the server around a discover/score
- * run) drops the write-count component for that stretch, falling back to the
- * 30s time bucket alone — bounded staleness instead of a per-write repaint.
+ * so total_changes() moves on almost every request during one — the cache
+ * would miss on every poll, exactly when the board is under the most load.
+ * `setDuringBulkRun(true)` (called by the server around a discover/score run)
+ * drops the write-count component for that stretch, falling back to a 30 s
+ * bucket — bounded staleness instead of a per-write repaint. User mutations
+ * still invalidate immediately.
  */
 let duringBulkRun = false;
 
@@ -386,22 +298,137 @@ export function setDuringBulkRun(flag) {
   duringBulkRun = Boolean(flag);
 }
 
+let userMutations = 0;
+
+/**
+ * Record a user mutation that must invalidate every cached board/stats value
+ * immediately (decision, note, approval, profile or gate change). Row writes
+ * already move the data key; this also covers changes that write no row.
+ */
+export function noteUserMutation() {
+  userMutations += 1;
+}
+
+/** How long cached time-derived fields may go without a refresh. */
+const TIME_REFRESH_MS = 60_000;
+
 const _memo = new WeakMap();
-function cached(db, kind, now, compute) {
-  const at = typeof now?.getTime === 'function' ? now.getTime() : Date.now();
-  const bucket = Math.floor(at / 30_000);
-  let key = `bulk:${bucket}`;
-  if (!duringBulkRun) {
-    let changes = -1;
-    try { changes = db.db.prepare('SELECT total_changes() AS c').get().c; }
-    catch { return compute(); /* exotic db stub (tests) — skip caching */ }
-    key = `${changes}:${bucket}`;
-  }
+
+/** Cache slot map for one database. */
+function slotFor(db) {
   let slot = _memo.get(db);
   if (!slot) { slot = {}; _memo.set(db, slot); }
-  if (slot[kind]?.key === key) return slot[kind].val;
+  return slot;
+}
+
+/** Epoch ms of `now` (a Date), or the wall clock. */
+const msOf = (now) => (typeof now?.getTime === 'function' ? now.getTime() : Date.now());
+
+/**
+ * The data-change key for a database, or null when it cannot be read
+ * (exotic stubs in tests — those skip caching entirely).
+ * @returns {{key: string, local: string}|null} `local` is the part only THIS
+ *   process moves (own writes + user mutations): a change there must be seen
+ *   synchronously, while another process's writes may be served stale.
+ */
+function dataKey(db, now) {
+  try {
+    const version = db.db.prepare('PRAGMA data_version').get()?.data_version ?? 0;
+    if (duringBulkRun) {
+      const local = `bulk:${Math.floor(msOf(now) / 30_000)}:${userMutations}`;
+      return { key: `${version}:${local}`, local };
+    }
+    const changes = db.db.prepare('SELECT total_changes() AS c').get().c;
+    const local = `${changes}:${userMutations}`;
+    return { key: `${version}:${local}`, local };
+  } catch {
+    return null;
+  }
+}
+
+function cached(db, kind, now, compute) {
+  const k = dataKey(db, now);
+  if (!k) return compute();
+  const slot = slotFor(db);
+  if (slot[kind]?.key === k.key) return slot[kind].val;
   const val = compute();
-  slot[kind] = { key, val };
+  slot[kind] = { key: k.key, local: k.local, val };
+  return val;
+}
+
+/**
+ * Re-derive the fields of a decorated row that depend on the clock alone.
+ * Kept next to boardRow so a new time-derived field is added in both places.
+ */
+function refreshTimeFields(row, now) {
+  row.postedLabel = formatPostedRelative(row.postedAt, now);
+  row.postedLast24h = isWithinLast24Hours(row.postedAt, now);
+}
+
+/**
+ * `cached`, for arrays of decorated rows: a data change rebuilds, and mere
+ * passage of time only refreshes the time-derived fields in place.
+ */
+function cachedRows(db, kind, now, compute) {
+  const k = dataKey(db, now);
+  if (!k) return compute();
+  const slot = slotFor(db);
+  const at = msOf(now);
+  const entry = slot[kind];
+  if (entry?.key === k.key) {
+    if (Math.abs(at - entry.at) >= TIME_REFRESH_MS) {
+      for (const row of entry.val) refreshTimeFields(row, now);
+      entry.at = at;
+    }
+    return entry.val;
+  }
+  const val = compute();
+  slot[kind] = { key: k.key, local: k.local, val, at };
+  return val;
+}
+
+/**
+ * Stale-while-revalidate for the expensive whole-table aggregates.
+ *
+ * A value is FRESH while the data key matches and it is under a minute old.
+ * When it is stale only because another process wrote, a bulk run is writing,
+ * or the clock moved, the cached value is returned at once (flagged
+ * `stale: true`) and ONE recompute is scheduled after the response
+ * (setImmediate, single-flight per kind). When the staleness is this
+ * process's own doing — a click, a note, an assist result — it recomputes
+ * synchronously, so the user always sees their own action reflected.
+ *
+ * Measured live (122,977 rows): a stats rebuild blocked the event loop for
+ * 5.4 s; during a discovery run every poll paid it.
+ *
+ * @param {boolean} allowStale false (default): every stale case recomputes synchronously
+ */
+function cachedSwr(db, kind, now, compute, { allowStale = false } = {}) {
+  const k = dataKey(db, now);
+  if (!k) return compute();
+  const slot = slotFor(db);
+  const at = msOf(now);
+  const entry = slot[kind];
+  if (entry && entry.key === k.key && Math.abs(at - entry.at) < TIME_REFRESH_MS) {
+    return entry.val;
+  }
+  if (allowStale && entry && entry.local === k.local) {
+    if (!entry.refreshing) {
+      entry.refreshing = true;
+      setImmediate(() => {
+        try {
+          const fresh = dataKey(db, now);
+          const val = compute();
+          if (fresh) slot[kind] = { key: fresh.key, local: fresh.local, val, at };
+        } catch { /* a closed db (shutdown) — keep serving the old value */ } finally {
+          entry.refreshing = false;
+        }
+      });
+    }
+    return { ...entry.val, stale: true };
+  }
+  const val = compute();
+  slot[kind] = { key: k.key, local: k.local, val, at };
   return val;
 }
 
@@ -437,7 +464,7 @@ const EVERY_MODE = Object.freeze({ mode: 'all', query: null, key: 'all:' });
 
 /** All jobs decorated as board rows (cached — see above). */
 function allBoardRows(db, now, scope = discoveryScope()) {
-  return cached(db, `rows:${scope.key}`, now, () => {
+  return cachedRows(db, `rows:${scope.key}`, now, () => {
     const approvals = approvalsByJob(db);
     return listSummaryRows(db, scope).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
   });
@@ -453,7 +480,7 @@ function allBoardRows(db, now, scope = discoveryScope()) {
  */
 function openBoardRows(db, now, scope = discoveryScope()) {
   if (typeof db.listOpenJobsSummary !== 'function') return allBoardRows(db, now, scope);
-  return cached(db, `openRows:${scope.key}`, now, () => {
+  return cachedRows(db, `openRows:${scope.key}`, now, () => {
     const approvals = approvalsByJob(db);
     return db.listOpenJobsSummary({ mode: scope.mode, query: scope.query })
       .map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
@@ -469,45 +496,6 @@ function listSummaryRows(db, scope = discoveryScope()) {
   return typeof db.listJobsSummary === 'function' ? db.listJobsSummary(args) : db.listJobs(args);
 }
 
-/**
- * The calendar day a timestamp falls on, IN THE CANDIDATE'S TIMEZONE.
- *
- * This used to be `String(value).slice(0, 10)` over an ISO-8601 UTC timestamp,
- * i.e. the UTC day. For a US Eastern user that rolls over at 7–8 pm local, so
- * "Discovered today", "Prepared today", "Submitted today" and "New qualified
- * today" all reset to zero while the evening's work was still happening.
- * Measured live at 00:07 UTC: `discoveredToday: 0` next to
- * `discoveredLast24h: 15954`, 35 minutes after a run.
- *
- * The zone comes from `candidate.location.timezone`, which is already a
- * required profile field. `en-CA` is used only because it formats as
- * YYYY-MM-DD, which is what every caller compares.
- *
- * @param {unknown} value ISO timestamp
- * @param {string} [timeZone] IANA zone; UTC slicing is kept as the fallback
- * @returns {string} YYYY-MM-DD
- */
-function dayOf(value, timeZone) {
-  const raw = String(value ?? '');
-  if (!raw) return '';
-  if (!timeZone) return raw.slice(0, 10);
-  const at = new Date(raw);
-  if (Number.isNaN(at.getTime())) return raw.slice(0, 10);
-  try {
-    return new Intl.DateTimeFormat('en-CA', {
-      timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(at);
-  } catch {
-    // An unknown/invalid zone must not break the dashboard.
-    return raw.slice(0, 10);
-  }
-}
-
-/** The candidate's IANA timezone, or null to fall back to UTC. */
-function candidateTimeZone(config) {
-  const tz = config?.candidate?.location?.timezone;
-  return typeof tz === 'string' && tz.trim() ? tz.trim() : null;
-}
 
 /**
  * Was this row dropped purely because its posting date was unreadable?
@@ -661,6 +649,8 @@ function boardRow(job, approval, now) {
   const score = typeof job.score === 'number' ? job.score : null;
   const haystack = `${job.location ?? ''} ${job.employment_type ?? ''} ${job.title ?? ''}`.toLowerCase();
   const locationSignal = usLocationSignal(job.location);
+  const fit = fitBucket(job.tier, score, job.sponsorship ?? null);
+  const attention = classifyAttention(job, appStatus);
   return {
     id: job.id,
     company: job.company,
@@ -671,9 +661,9 @@ function boardRow(job, approval, now) {
     url: job.url,
     source: job.source || 'unknown',
     score,
-    grade: gradeFromScore(score),
+    grade: gradeFromScore(score, fit),
     tier: job.tier ?? null,
-    fit: fitBucket(job.tier, score, job.sponsorship ?? null),
+    fit,
     sponsorshipGated: isSponsorshipGated(job),
     sponsorship: job.sponsorship ?? null,
     // The prose the verdict was read from, so a human can check the badge
@@ -699,9 +689,14 @@ function boardRow(job, approval, now) {
     appStatus,
     progress: progressFor(appStatus),
     statusReason: explainStatus(job, appStatus, approval),
-    attention: classifyAttention(job, appStatus),
+    attention,
+    // The one human label for the status column (attention wins: "Needs
+    // sign-in" says more than "blocked").
+    statusLabel: attention?.label ?? APP_STATUS_LABELS[appStatus] ?? appStatus,
     lastAction: lastActionFor(job, appStatus),
     userDecision: job.user_decision ?? null,
+    // Why the user rejected/archived it (DECISION_REASONS), or null.
+    decisionReason: job.decision_reason ?? null,
     atsPlatform: job.ats_platform ?? (ATS_NATIVE_SOURCES.has(job.source) ? job.source : null),
     resumeStatus: resumeStatusOf(job),
     atsScore: job.ats_score == null || job.ats_score === '' ? null : Number(job.ats_score),
@@ -737,15 +732,25 @@ function boardRow(job, approval, now) {
  * @param {import('../logging/db.js').Database} db
  * @param {object} [options]
  * @param {Date} [options.now]
+ * @param {object} [options.config] supplies the candidate timezone
+ * @param {boolean} [options.allowStale=false] serve a stale cached value at once
+ *   (flagged `stale: true`) and recompute in the background — the server's
+ *   mode; see cachedSwr
  * @returns {object}
  */
-export function dashboardStats(db, { now = new Date(), config = null } = {}) {
+export function dashboardStats(db, { now = new Date(), config = null, allowStale = false } = {}) {
   const timeZone = candidateTimeZone(config);
   // The cache key must include the zone: the same instant belongs to different
   // calendar days in different zones, so a cached UTC-day answer must not be
   // served after the profile's timezone changes.
-  return cached(db, `stats:${timeZone ?? 'utc'}`, now, () => computeDashboardStats(db, now, timeZone));
+  return cachedSwr(db, `stats:${timeZone ?? 'utc'}`, now,
+    () => computeDashboardStats(db, now, timeZone), { allowStale });
 }
+
+/** Sponsorship verdicts reported on their own, everything else is "unconfirmed". */
+const SPONSORSHIP_OPEN_KEYS = Object.freeze({
+  Confirmed: 'confirmed', Likely: 'likely', Unconfirmed: 'unconfirmed', Denied: 'denied',
+});
 
 function computeDashboardStats(db, now, timeZone = null) {
   // Narrow column projection where available (see db.listJobsForStats); test
@@ -793,6 +798,8 @@ function computeDashboardStats(db, now, timeZone = null) {
       readyForSubmit: 0,
       submitUnverified: 0,
       submittedTotal: 0,
+      // Part of `blocked` whose cause is a missing Playwright browser.
+      blockedSetup: 0,
     },
     // ISO timestamp of the most recent discovery (max created_at) so the UI can
     // show "last discovery Nh ago" — this explains a legitimate "0 discovered
@@ -802,6 +809,8 @@ function computeDashboardStats(db, now, timeZone = null) {
     byStatus: {},
     // sponsorship status -> { count, strong } so feasibility is visible at a glance
     bySponsorship: {},
+    // Actionable rows only — see the loop. `notEvaluated` = no verdict recorded.
+    sponsorshipOpen: { confirmed: 0, likely: 0, unconfirmed: 0, denied: 0, notEvaluated: 0 },
     // USPS code -> { count, strong }. Makes nationwide coverage VERIFIABLE
     // rather than assumed: the searches say "United States", and this says
     // which states actually came back. A gap here is a real coverage gap.
@@ -909,12 +918,22 @@ function computeDashboardStats(db, now, timeZone = null) {
     const viewRow = {
       appStatus: status,
       fit,
-      grade: gradeFromScore(typeof job.score === 'number' ? job.score : null),
+      grade: gradeFromScore(typeof job.score === 'number' ? job.score : null, fit),
       postedLast24h,
       sponsorshipGated: gated,
     };
     for (const [key, pred] of BOARD_VIEW_ENTRIES) {
       if (pred(viewRow)) stats.views[key] += 1;
+    }
+
+    // The same verdicts over ACTIONABLE rows only (open and not yet submitted).
+    // `bySponsorship` counts the whole table, which is ~97% discarded rows, so
+    // its "Unconfirmed" figure described the discard pile, not the jobs a user
+    // could still apply to. Rows never classified are `notEvaluated`, apart.
+    if (isOpen && !applied) {
+      const openKey = SPONSORSHIP_OPEN_KEYS[job.sponsorship];
+      if (openKey) stats.sponsorshipOpen[openKey] += 1;
+      else stats.sponsorshipOpen.notEvaluated += 1;
     }
 
     const spon = job.sponsorship ?? 'Unclassified';
@@ -968,6 +987,13 @@ function computeDashboardStats(db, now, timeZone = null) {
   // The untriaged-strong action opens the Best matches view, so it must be
   // COUNTED by that view's predicate. Keeping a second, slightly different
   // predicate here is how the sentence and the board came to disagree.
+  // Of the blocked total, how many are the SAME setup problem (no browser).
+  // They are counted apart so the action plan says "install the browser"
+  // once instead of "N applications need a login or CAPTCHA".
+  try {
+    stats.totals.blockedSetup = (db.listAttentionBlockers?.() ?? [])
+      .filter((row) => isEnvironmentFailure(row)).length;
+  } catch { stats.totals.blockedSetup = 0; }
   stats.nextActions = buildNextActions(stats.totals, stats.views.best);
   return stats;
 }
@@ -1033,12 +1059,28 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       filter: { appStatus: APP_STATUS.NEEDS_REVIEW },
     });
   }
-  if (totals.blocked > 0) {
+  // A missing browser is ONE fix for the machine, not N walls on N sites. It
+  // used to be counted inside "Unblock applications" and described as "a
+  // login, CAPTCHA or unanswered question", which is exactly what it is not.
+  const setup = Math.min(Number(totals.blockedSetup ?? 0), Number(totals.blocked ?? 0));
+  if (setup > 0) {
     add({
-      count: totals.blocked,
+      count: setup,
+      verb: SETUP_BROWSER_LABEL,
+      detail: 'auto-fill cannot start until it is installed: npx playwright install chromium',
+      text: `${setup} auto-fill(s) could not start because the Playwright browser is not installed — run `
+        + '"npx playwright install chromium", then retry',
+      filter: { view: 'blocked' },
+      kind: 'system',
+    });
+  }
+  const walls = Number(totals.blocked ?? 0) - setup;
+  if (walls > 0) {
+    add({
+      count: walls,
       verb: 'Unblock applications',
       detail: 'a login, CAPTCHA or unanswered question stopped the fill',
-      text: `${totals.blocked} application(s) are blocked (login / CAPTCHA / unanswered questions) and need you`,
+      text: `${walls} application(s) are blocked (login / CAPTCHA / unanswered questions) and need you`,
       // totals.blocked counts blocked + failed + cancelled, so this must open
       // the "Needs you" VIEW. Filtering on appStatus: blocked alone showed
       // fewer rows than the sentence promised.
@@ -1222,9 +1264,43 @@ function unfilteredWholeTablePage(db, filters, now, { closedPossible, scope = di
   };
 }
 
+/** Largest board page served. */
+export const MAX_PAGE_LIMIT = 500;
+
+/**
+ * `fields=board`: exactly what the board table (app.js `rowFor`, `nameCellFor`,
+ * the pager and the selection/undo state) reads, and nothing else.
+ *
+ * A default row carries ~45 fields, including the explanation prose and both
+ * keyword arrays that only the detail rail shows; measured live, a 100-row page
+ * was 208,699 bytes. The detail rail fetches /api/jobs/:id for itself, so the
+ * table needs none of that. The default response is unchanged.
+ */
+export const BOARD_FIELDS = Object.freeze([
+  'id', 'title', 'company', 'location', 'url', 'remote', 'source', 'score', 'grade', 'fit', 'tier',
+  'appStatus', 'statusLabel', 'statusReason', 'attention', 'progress',
+  'sponsorship', 'sponsorshipGated', 'sponsorshipSignals',
+  'postedAt', 'postedLabel', 'postedLast24h', 'postedConfidence', 'createdAt',
+  'resumeStatus', 'resumeDocxPath', 'resumePdfPath', 'atsPlatform', 'employmentCategory', 'employmentLabel',
+  'discoveryMode', 'searchQuery', 'userDecision', 'decision', 'decisionReason', 'applied',
+]);
+
+/** Project one decorated row onto BOARD_FIELDS. */
+export function boardProjection(row) {
+  const out = {};
+  for (const key of BOARD_FIELDS) {
+    if (key === 'decision') out.decision = row.userDecision ?? null;
+    else if (key === 'applied') out.applied = row.appStatus === APP_STATUS.SUBMITTED;
+    else out[key] = row[key] ?? null;
+  }
+  return out;
+}
+
 /** The requested page window, from `limit` plus either `offset` or `page`. */
 function pageWindow(filters) {
-  const limit = Number(filters.limit) > 0 ? Number(filters.limit) : 200;
+  // Capped: `?limit=100000` from a query string serialized the whole decorated
+  // board into one multi-megabyte response on a single-threaded server.
+  const limit = Number(filters.limit) > 0 ? Math.min(Math.floor(Number(filters.limit)), MAX_PAGE_LIMIT) : 200;
   const requestedOffset = Number(filters.offset);
   const requestedPage = Number(filters.page);
   const offset = Number.isFinite(requestedOffset) && requestedOffset >= 0
@@ -1236,6 +1312,12 @@ function pageWindow(filters) {
 }
 
 export function boardPage(db, filters = {}) {
+  const page = boardPageRows(db, filters);
+  if (filters.fields !== 'board') return page;
+  return { ...page, jobs: page.jobs.map(boardProjection), fields: 'board' };
+}
+
+function boardPageRows(db, filters = {}) {
   const now = filters.now ?? new Date();
   // REGRESSION GUARD. The "tracked" stat tile's own declared filter is
   // `{ includeClosed: true }` (app.js HEALTH_FACTS) — a key this function
@@ -1524,7 +1606,35 @@ export function jobDetail(db, jobId, deps = {}) {
     }
   }
 
-  return { ...row, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError };
+  // The free-text half of the decision reason lives on the decision event
+  // (events are newest first here), not in a column of its own.
+  const decisionEvent = job.user_decision ? events.find((e) => e.type === 'user_decision') : null;
+  const decisionReasonNote = decisionEvent?.metadata?.reasonNote ?? null;
+
+  return {
+    ...row, decisionReasonNote, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError,
+  };
+}
+
+/**
+ * Why a user rejected or archived a job — the one signal about their
+ * preferences the product threw away. A closed vocabulary so it can be
+ * counted; `other` plus the free-text note covers everything else.
+ */
+export const DECISION_REASONS = Object.freeze([
+  'salary', 'location', 'seniority', 'sponsorship', 'stack', 'company', 'stale', 'other',
+]);
+
+/** Longest free-text decision note kept. */
+const MAX_REASON_NOTE = 200;
+
+/** Event type recorded for every dashboard decision (and its undo). */
+export const DECISION_EVENT = 'user_decision';
+
+/** Append an audit event when the db supports it (test stubs may not). */
+function recordEvent(db, event) {
+  if (typeof db.insertEvent !== 'function') return;
+  db.insertEvent({ id: randomUUID(), created_at: new Date().toISOString(), ...event });
 }
 
 /**
@@ -1533,17 +1643,87 @@ export function jobDetail(db, jobId, deps = {}) {
  * @param {import('../logging/db.js').Database} db
  * @param {string} jobId
  * @param {'shortlisted'|'rejected'|'archived'|'clear'} decision
- * @returns {{ id: string, userDecision: string|null, appStatus: string }}
+ * @param {object} [details]
+ * @param {string} [details.reason] one of DECISION_REASONS (optional)
+ * @param {string} [details.reasonNote] free text, <= 200 chars (optional)
+ * @returns {{ id: string, userDecision: string|null, decisionReason: string|null, appStatus: string }}
  */
-export function applyDecision(db, jobId, decision) {
+export function applyDecision(db, jobId, decision, { reason = null, reasonNote = null } = {}) {
   if (!USER_DECISIONS.includes(decision)) {
     throw httpError(400, `invalid decision "${decision}" (use ${USER_DECISIONS.join('/')})`);
   }
-  if (!db.getJob(jobId)) throw httpError(404, `unknown job id: ${jobId}`);
+  if (reason != null && reason !== '' && !DECISION_REASONS.includes(reason)) {
+    throw httpError(400, `invalid reason "${reason}" (use ${DECISION_REASONS.join('/')})`);
+  }
+  if (reasonNote != null && typeof reasonNote !== 'string') {
+    throw httpError(400, 'reasonNote must be text');
+  }
+  const note = reasonNote ? reasonNote.trim().slice(0, MAX_REASON_NOTE) || null : null;
+  const before = db.getJob(jobId);
+  if (!before) throw httpError(404, `unknown job id: ${jobId}`);
   const value = decision === 'clear' ? null : decision;
-  const job = db.setUserDecision(jobId, value);
+  const why = value ? (reason || null) : null;
+  const job = db.setUserDecision(jobId, value, { reason: why });
+  recordEvent(db, {
+    job_id: jobId,
+    event_type: DECISION_EVENT,
+    message: value ? `decision: ${value}${why ? ` (${why})` : ''}` : 'decision cleared',
+    metadata: {
+      decision: value,
+      reason: why,
+      reasonNote: value ? note : null,
+      // What it was BEFORE, so a single decision can be undone exactly.
+      previous: { decision: before.user_decision ?? null, reason: before.decision_reason ?? null },
+    },
+  });
+  noteUserMutation();
   const approval = db.getApprovalByJob?.(jobId) ?? null;
-  return { id: jobId, userDecision: job.user_decision ?? null, appStatus: deriveAppStatus(job, approval) };
+  return {
+    id: jobId,
+    userDecision: job.user_decision ?? null,
+    decisionReason: job.decision_reason ?? null,
+    appStatus: deriveAppStatus(job, approval),
+  };
+}
+
+/**
+ * Undo the most recent dashboard decision on one job, restoring the decision
+ * AND reason it replaced. Batch undo in the UI re-posts each job's previous
+ * decision, which cannot bring a reason back; this can, because every
+ * decision event records what it overwrote.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {string} jobId
+ * @returns {{ id: string, userDecision: string|null, decisionReason: string|null,
+ *            appStatus: string, undone: true }}
+ * @throws 404 unknown job, 409 when there is no decision to undo
+ */
+export function undoDecision(db, jobId) {
+  if (!db.getJob(jobId)) throw httpError(404, `unknown job id: ${jobId}`);
+  const events = (db.listEvents?.(jobId) ?? []).filter((e) => e.event_type === DECISION_EVENT);
+  const last = events[events.length - 1];
+  let meta = last?.metadata ?? null;
+  if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+  if (!meta || meta.undo === true || !meta.previous) {
+    throw httpError(409, 'there is no decision on this job to undo');
+  }
+  const previous = meta.previous;
+  const job = db.setUserDecision(jobId, previous.decision ?? null, { reason: previous.reason ?? null });
+  recordEvent(db, {
+    job_id: jobId,
+    event_type: DECISION_EVENT,
+    message: `decision undone (back to ${previous.decision ?? 'none'})`,
+    metadata: { decision: previous.decision ?? null, reason: previous.reason ?? null, undo: true },
+  });
+  noteUserMutation();
+  const approval = db.getApprovalByJob?.(jobId) ?? null;
+  return {
+    id: jobId,
+    userDecision: job.user_decision ?? null,
+    decisionReason: job.decision_reason ?? null,
+    appStatus: deriveAppStatus(job, approval),
+    undone: true,
+  };
 }
 
 /**
@@ -1554,6 +1734,7 @@ export function approveJobPacket(db, jobId) {
   const approval = db.getApprovalByJob?.(jobId);
   if (!approval) throw httpError(409, `no prepared packet to approve for job ${jobId} — run Prepare first`);
   const r = approve(db, approval.id);
+  noteUserMutation();
   return { id: jobId, approvalId: approval.id, status: r.status };
 }
 
@@ -1565,7 +1746,15 @@ export function rejectJobPacket(db, jobId) {
   const approval = db.getApprovalByJob?.(jobId);
   if (!approval) throw httpError(409, `no prepared packet to reject for job ${jobId}`);
   const r = reject(db, approval.id);
+  noteUserMutation();
   return { id: jobId, approvalId: approval.id, status: r.status };
+}
+
+/** Timestamped note line appended to a job's notes. */
+function appendNote(existing, label, at, note) {
+  const stamp = at.slice(0, 16).replace('T', ' ');
+  const line = `[${label} ${stamp}] ${note}`;
+  return existing ? `${existing}\n${line}` : line;
 }
 
 /**
@@ -1576,6 +1765,16 @@ export function rejectJobPacket(db, jobId) {
  * free-text note (e.g. which email the confirmation went to). The note is
  * appended to the job's existing notes with a timestamp, never overwriting.
  *
+ * NEVER DOWNGRADES. A second click on an already-submitted job — or an
+ * unverified "I think I submitted it" on one — used to write `applied = 0,
+ * status = 'submit_unverified'` over a confirmed submission: the application
+ * silently stopped counting, and the daily cap and every "submitted" tile
+ * forgot it. A submitted job now only gains the note (and a confirmation
+ * number, if it had none); its status and applied_at never move.
+ *
+ * The status move itself goes through db.setJobStatus, so it is checked
+ * against the lifecycle graph and leaves an audit event.
+ *
  * @param {import('../logging/db.js').Database} db
  * @param {string} jobId
  * @param {object} [details]
@@ -1583,31 +1782,54 @@ export function rejectJobPacket(db, jobId) {
  * @param {boolean} [details.verified] human explicitly saw positive confirmation evidence
  * @param {string} [details.note]
  * @param {Date} [details.now]
- * @returns {{ id: string, appStatus: string, appliedAt: string, confirmationNumber: string|null }}
+ * @returns {{ id: string, appStatus: string, appliedAt: string|null, reportedAt: string,
+ *             verified: boolean, confirmationNumber: string|null, alreadySubmitted?: true }}
  */
 export function markSubmittedByHuman(db, jobId, details = {}) {
   const job = db.getJob(jobId);
   if (!job) throw httpError(404, `unknown job id: ${jobId}`);
-  const appliedAt = (details.now ?? new Date()).toISOString();
+  const reportedAt = (details.now ?? new Date()).toISOString();
   const confirmation = String(details.confirmationNumber ?? '').trim().slice(0, 200) || null;
   const verified = details.verified === true || Boolean(confirmation);
+  const note = String(details.note ?? '').trim().slice(0, 2000);
+
+  if (Number(job.applied) === 1 || job.status === 'submitted') {
+    const patch = { id: jobId };
+    if (note) patch.notes = appendNote(job.notes, 'note', reportedAt, note);
+    if (confirmation && !job.submitted_confirmation) patch.submitted_confirmation = confirmation;
+    if (Object.keys(patch).length > 1) db.upsertJob(patch);
+    noteUserMutation();
+    return {
+      id: jobId,
+      appStatus: APP_STATUS.SUBMITTED,
+      appliedAt: job.applied_at ?? null,
+      reportedAt,
+      verified: true,
+      confirmationNumber: job.submitted_confirmation ?? patch.submitted_confirmation ?? null,
+      alreadySubmitted: true,
+    };
+  }
 
   const patch = verified
-    ? { id: jobId, applied: 1, applied_at: appliedAt, status: 'submitted' }
-    : { id: jobId, applied: 0, applied_at: null, status: 'submit_unverified' };
+    ? { applied: 1, applied_at: reportedAt }
+    : { applied: 0, applied_at: null };
   if (confirmation) patch.submitted_confirmation = confirmation;
-  const note = String(details.note ?? '').trim().slice(0, 2000);
   if (note) {
-    const stamp = appliedAt.slice(0, 16).replace('T', ' ');
     const label = verified ? 'submitted' : 'submission reported — verification pending';
-    patch.notes = job.notes ? `${job.notes}\n[${label} ${stamp}] ${note}` : `[${label} ${stamp}] ${note}`;
+    patch.notes = appendNote(job.notes, label, reportedAt, note);
   }
-  db.upsertJob(patch);
+  const to = verified ? 'submitted' : 'submit_unverified';
+  if (typeof db.setJobStatus === 'function') {
+    db.setJobStatus(jobId, to, { reason: 'marked by the user', patch, actor: 'human' });
+  } else {
+    db.upsertJob({ id: jobId, ...patch, status: to });
+  }
+  noteUserMutation();
   return {
     id: jobId,
     appStatus: verified ? APP_STATUS.SUBMITTED : APP_STATUS.SUBMIT_UNVERIFIED,
-    appliedAt: verified ? appliedAt : null,
-    reportedAt: appliedAt,
+    appliedAt: verified ? reportedAt : null,
+    reportedAt,
     verified,
     confirmationNumber: confirmation,
   };
@@ -1626,6 +1848,7 @@ export function setJobNote(db, jobId, note) {
   if (!db.getJob(jobId)) throw httpError(404, `unknown job id: ${jobId}`);
   const value = String(note ?? '').slice(0, 4000);
   db.upsertJob({ id: jobId, notes: value });
+  noteUserMutation();
   return { id: jobId, notes: value };
 }
 
@@ -1650,6 +1873,8 @@ function blockerReason(row) {
   const first = (row.assistBlockers ?? [])[0];
   if (!first) return 'Unknown — open it to see why';
   const b = String(first).toLowerCase();
+  // First: a missing browser is a setup problem, not a login/navigation wall.
+  if (ENVIRONMENT_FAILURE_RE.test(b)) return SETUP_BROWSER_LABEL;
   if (b.includes('captcha')) return 'CAPTCHA / bot wall';
   if (b.includes('login') || b.includes('sign in') || b.includes('account')) return 'Login / account required';
   if (b.includes('mfa') || b.includes('verification')) return 'MFA / verification';
@@ -1714,7 +1939,10 @@ export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
   };
   addPriority(readyForUserSubmission, 'ready_for_submission');
   addPriority(submitUnverified, 'submission_unverified');
-  addPriority(blocked, 'blocked');
+  // Failed fills and environment failures are not today's work: a failure
+  // needs the RCA panel, and a missing browser is ONE setup notice (see
+  // todayQueue) — listing each as a per-job priority buried the real queue.
+  addPriority(blocked.filter((r) => r.appStatus !== APP_STATUS.FAILED && !isEnvironmentFailure(r)), 'blocked');
   addPriority(needsReview, 'prepared_review');
   addPriority(strongNew, 'strong_new');
   addPriority(sponsorshipVerification, 'verify_sponsorship');
@@ -1757,6 +1985,142 @@ export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
       blocked: blocked.length,
     },
   };
+}
+
+/* ───────────────────────────── today queue ───────────────────────────── */
+
+/** Most items the Today queue returns. */
+export const TODAY_LIMIT = 10;
+
+/** Longest `reason` string in a Today item. */
+const TODAY_REASON_MAX = 240;
+
+/** A blocker that is a question only the human can answer. */
+const QUESTION_BLOCKER_RE = /screening|needs user|required field|question|unanswered/i;
+
+/**
+ * What the human does next for one row, and how urgent it is (lower = sooner).
+ * Returns null for rows that are not today's work.
+ */
+function todayAction(row) {
+  switch (row.appStatus) {
+    case APP_STATUS.SUBMIT_UNVERIFIED:
+      return { rank: 0, kind: 'review', label: 'Confirm whether this application went through' };
+    case APP_STATUS.READY_FOR_SUBMIT:
+      return { rank: 1, kind: 'submit', label: 'Review the filled form and click Submit' };
+    case APP_STATUS.BLOCKED: {
+      const blockers = (row.assistBlockers ?? []).join(' ');
+      return QUESTION_BLOCKER_RE.test(blockers) || row.attention?.kind === 'needs_help'
+        ? { rank: 2, kind: 'answer', label: 'Answer the question that stopped auto-fill' }
+        : { rank: 2, kind: 'review', label: row.attention?.summary ?? 'Finish the step auto-fill could not' };
+    }
+    case APP_STATUS.NEEDS_REVIEW:
+      return { rank: 3, kind: 'approve', label: 'Read the tailored resume and approve it' };
+    case APP_STATUS.APPROVED:
+      return { rank: 4, kind: 'autofill', label: 'Start auto-fill' };
+    case APP_STATUS.CANCELLED:
+      return { rank: 5, kind: 'autofill', label: 'Resume auto-fill' };
+    case APP_STATUS.FAILED:
+      return { rank: 6, kind: 'review', label: 'Check the recorded error, then retry auto-fill' };
+    case APP_STATUS.SHORTLISTED:
+      return { rank: 7, kind: 'prepare', label: 'Prepare the tailored resume and application' };
+    case APP_STATUS.SCORED:
+    case APP_STATUS.DISCOVERED:
+      if (row.fit === 'strong' && row.grade?.recommend && row.postedLast24h && row.postedConfidence === 'confirmed') {
+        return { rank: 8, kind: 'prepare', label: 'New strong fit — prepare an application' };
+      }
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** Why this row is on the list, in one line. */
+function todayReason(row, action) {
+  if (action.rank === 8) return `Strong fit posted ${row.postedLabel ?? 'in the last 24 hours'}`;
+  const text = row.statusReason ? stripBannerChars(row.statusReason) : (row.statusLabel ?? row.appStatus);
+  return text.length > TODAY_REASON_MAX ? `${text.slice(0, TODAY_REASON_MAX - 1)}…` : text;
+}
+
+/**
+ * Problems with the SETUP that stop work on every job, reported once each.
+ *
+ * @param {object[]} rows decorated open rows
+ * @param {object|null} config loadConfig() bundle (for placeholder detection)
+ * @returns {Array<{code: string, severity: 'error'|'warn', message: string, fix: string}>}
+ */
+export function systemNotices(rows = [], config = null) {
+  const notices = [];
+  const browserMissing = rows.some((r) => VIEW_BLOCKED.has(r.appStatus) && isEnvironmentFailure(r));
+  if (browserMissing) {
+    notices.push({
+      code: 'browser_unavailable',
+      severity: 'error',
+      message: 'Auto-fill can’t start: the Playwright browser is not installed',
+      fix: 'npx playwright install chromium',
+    });
+  }
+  if (config) {
+    let found = null;
+    try { found = findPlaceholders(config); } catch { found = null; }
+    if (found && !found.ok) {
+      const labels = [...new Set(found.placeholders.map((p) => p.label))];
+      const shown = labels.slice(0, 5).join(', ') + (labels.length > 5 ? `, and ${labels.length - 5} more` : '');
+      notices.push({
+        code: 'profile_placeholders',
+        severity: 'error',
+        message: `${labels.length} profile value(s) are still template text: ${shown}. `
+          + 'Applications will not be prepared until they are real.',
+        fix: 'Open Settings → Application profile (or edit the search profile) and replace each highlighted field '
+          + 'with your real, truthful value.',
+      });
+    }
+  }
+  return notices;
+}
+
+/**
+ * The Today queue: at most ten things the human should do next, most urgent
+ * first (then by score), plus setup notices that block everything.
+ *
+ * Environmental failures are deliberately NOT items: when the browser is not
+ * installed, every auto-fill row fails identically, and listing them one by
+ * one filled the queue with the same non-actionable row. They collapse into a
+ * single `browser_unavailable` notice instead.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {object} [options]
+ * @param {Date} [options.now]
+ * @param {object} [options.config]
+ * @param {number} [options.limit=10]
+ * @returns {{ generatedAt: string, items: object[], systemNotices: object[] }}
+ */
+export function todayQueue(db, { now = new Date(), config = null, limit = TODAY_LIMIT } = {}) {
+  const rows = openBoardRows(db, now);
+  const candidates = [];
+  for (const row of rows) {
+    if (isEnvironmentFailure(row)) continue;
+    const action = todayAction(row);
+    if (action) candidates.push({ row, action });
+  }
+  candidates.sort((a, b) => a.action.rank - b.action.rank
+    || (b.row.score ?? -1) - (a.row.score ?? -1)
+    || String(a.row.id).localeCompare(String(b.row.id)));
+  const take = Math.max(1, Math.min(TODAY_LIMIT, Number(limit) || TODAY_LIMIT));
+  const items = candidates.slice(0, take).map(({ row, action }) => ({
+    id: row.id,
+    title: row.title,
+    company: row.company ?? null,
+    location: row.location ?? null,
+    score: row.score,
+    grade: row.grade,
+    tier: row.tier,
+    appStatus: row.appStatus,
+    statusLabel: row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus,
+    reason: todayReason(row, action),
+    nextAction: { kind: action.kind, label: action.label },
+  }));
+  return { generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config) };
 }
 
 /** Columns for the rich CSV/spreadsheet export, in order. */
@@ -1824,11 +2188,6 @@ export function buildExportRows(db, { now = new Date(), includeClosed = true } =
   }));
 }
 
-/** Escape one CSV cell (RFC-4180: quote when it contains comma/quote/newline). */
-function csvCell(value) {
-  const s = String(value ?? '');
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 /**
  * Serialize export rows to a CSV string with a human-friendly header row.
@@ -1839,6 +2198,18 @@ export function exportRowsToCsv(rows = []) {
   const header = EXPORT_COLUMNS.map(([, label]) => csvCell(label)).join(',');
   const body = rows.map((r) => EXPORT_COLUMNS.map(([key]) => csvCell(r[key])).join(',')).join('\r\n');
   return body ? `${header}\r\n${body}\r\n` : `${header}\r\n`;
+}
+
+/**
+ * Rows with a generated document on record, every discovery mode. The SQL
+ * narrows to those rows (db.listDocumentJobs); stubs without it fall back to
+ * the whole table, and the filter below is kept either way so both paths
+ * treat an empty-string path exactly alike.
+ */
+function documentRows(db) {
+  const rows = typeof db.listDocumentJobs === 'function' ? db.listDocumentJobs() : listSummaryRows(db, EVERY_MODE);
+  return rows.filter((j) => j.resume_docx_path || j.resume_path || j.resume_pdf_path
+    || j.cover_letter_path || j.application_packet_path);
 }
 
 /* ───────────────────────────── reports ───────────────────────────── */
@@ -1868,8 +2239,20 @@ function reportRow(r) {
  *                     blockedJobs, skippedJobs, sponsorshipSummary, sourcePerformance }
  */
 export function buildReports(db, { now = new Date(), config = null } = {}) {
+  // Cached by the same data key as the board (plus the zone, like stats).
+  // Measured live: 3.3 s per open of the Reports drawer, cold AND warm — it
+  // decorated and filtered all 122,977 rows, discard pile included, every time.
+  return cachedSwr(db, `reports:${candidateTimeZone(config) ?? 'utc'}`, now,
+    () => computeReports(db, now, config));
+}
+
+function computeReports(db, now, config) {
   const stats = dashboardStats(db, { now, config });
-  const rows = listBoardJobs(db, { now, hideClosed: false, limit: 100000 });
+  // Every status a report lists (submitted, rejected/archived, skipped,
+  // blocked, ready, prepared, approved) survives the open-rows prefilter,
+  // which only drops PROVABLY discarded rows — and no report section lists a
+  // discarded row. Same rows as the old whole-table read, ~2% of the work.
+  const rows = openBoardRows(db, now);
 
   const byStatus = (status) => rows.filter((r) => r.appStatus === status).map(reportRow);
 
@@ -1941,9 +2324,7 @@ export function buildDocuments(db, {
   // Documents on disk belong to whoever made them, not to a search mode: a
   // packet prepared from a role-search job is still the user's document and
   // must be findable here.
-  const rows = listSummaryRows(db, EVERY_MODE)
-    .filter((j) => j.resume_docx_path || j.resume_path || j.resume_pdf_path
-      || j.cover_letter_path || j.application_packet_path)
+  const rows = documentRows(db)
     .map((j) => {
       let packet = null;
       let packetError = null;
@@ -2075,7 +2456,7 @@ export function buildMasterResume(db, {
 
   // Tailored resumes generated BEFORE the current master no longer reflect it.
   const stalePackets = info.modifiedAt
-    ? listSummaryRows(db, EVERY_MODE).filter((j) => {
+    ? documentRows(db).filter((j) => {
       const preparedAt = preparedAtOf(j);
       return (j.resume_docx_path || j.resume_path) && preparedAt
         && preparedAt < info.modifiedAt;

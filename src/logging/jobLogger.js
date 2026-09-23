@@ -9,8 +9,8 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, createWriteStream } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, createWriteStream, readdirSync, rmSync, statSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import pino from 'pino';
 
 import { PROJECT_ROOT } from '../config/loadConfig.js';
@@ -55,7 +55,9 @@ export const EVENT_TYPES = Object.freeze({
  *   raw JSON (e.g. per-job resume-tailoring fallbacks logged at warn).
  * @returns {{ logger: import('pino').Logger, file: string|null }}
  */
-export function createPinoLogger({ runId = randomUUID(), level = 'info', logDir, toFile = true, consoleLevel } = {}) {
+export function createPinoLogger({
+  runId = randomUUID(), level = 'info', logDir, toFile = true, consoleLevel, rotate = true, now = new Date(),
+} = {}) {
   const dir = logDir ?? join(PROJECT_ROOT, 'logs');
   const stdoutLevel = consoleLevel ?? process.env.LOG_CONSOLE ?? 'error';
   let file = null;
@@ -63,9 +65,16 @@ export function createPinoLogger({ runId = randomUUID(), level = 'info', logDir,
   const streams = [];
 
   if (toFile) {
-    mkdirSync(dir, { recursive: true });
+    // Housekeeping first, so this run's file is never a pruning candidate.
+    if (rotate) {
+      try { rotateRunLogs(dir, { now }); } catch { /* a log directory problem must not stop a run */ }
+    }
     file = join(dir, `run-${runId}.log`);
-    streams.push({ level, stream: createWriteStream(file, { flags: 'a' }) });
+    // LAZY: the file is created by the first record, not by constructing the
+    // logger. It used to be opened eagerly — and the dashboard logged at 'warn'
+    // with no warn() method reachable (see JobLogger), so every dashboard
+    // session left a 0-byte run-*.log behind: 33 of the 35 files in logs/.
+    streams.push({ level, stream: lazyFileStream(file) });
   }
   // JSON stream to stdout — quiet by default so the console reporter owns the
   // human-facing output. Raised via consoleLevel / LOG_CONSOLE when debugging.
@@ -76,6 +85,72 @@ export function createPinoLogger({ runId = randomUUID(), level = 'info', logDir,
   const baseLevel = lowerLevel(level, stdoutLevel);
   const logger = pino({ level: baseLevel, base: { runId } }, pino.multistream(streams));
   return { logger, file };
+}
+
+/**
+ * A write stream that does not exist until something is written to it.
+ * @param {string} file
+ * @returns {{ write: (chunk: string) => boolean, end: () => void, get opened(): boolean }}
+ */
+export function lazyFileStream(file) {
+  let stream = null;
+  return {
+    write(chunk) {
+      if (!stream) {
+        mkdirSync(dirname(file), { recursive: true });
+        stream = createWriteStream(file, { flags: 'a' });
+      }
+      return stream.write(chunk);
+    },
+    end() { stream?.end(); },
+    get opened() { return stream !== null; },
+  };
+}
+
+/** Run logs kept: at most this many files ... */
+export const LOG_KEEP_FILES = 30;
+/** ... and at most this many bytes in total. */
+export const LOG_KEEP_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Bound logs/: delete 0-byte run logs older than a day, then keep only the
+ * newest LOG_KEEP_FILES run-*.log files and at most LOG_KEEP_BYTES in total.
+ * Nothing ever pruned logs/, so it grew by one file per process start.
+ *
+ * @param {string} dir
+ * @param {object} [options]
+ * @param {Date} [options.now]
+ * @param {number} [options.keepFiles]
+ * @param {number} [options.keepBytes]
+ * @returns {string[]} names removed
+ */
+export function rotateRunLogs(dir, { now = new Date(), keepFiles = LOG_KEEP_FILES, keepBytes = LOG_KEEP_BYTES } = {}) {
+  let names;
+  try { names = readdirSync(dir); } catch { return []; }
+  const removed = [];
+  const logs = [];
+  for (const name of names) {
+    if (!/^run-.+\.log$/.test(name)) continue;
+    const path = join(dir, name);
+    let st;
+    try { st = statSync(path); } catch { continue; }
+    if (st.size === 0 && now.getTime() - st.mtimeMs > 86_400_000) {
+      rmSync(path, { force: true });
+      removed.push(name);
+      continue;
+    }
+    logs.push({ name, path, size: st.size, mtimeMs: st.mtimeMs });
+  }
+  logs.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  let bytes = 0;
+  logs.forEach((log, index) => {
+    bytes += log.size;
+    if (index >= keepFiles || bytes > keepBytes) {
+      rmSync(log.path, { force: true });
+      removed.push(log.name);
+    }
+  });
+  return removed;
 }
 
 /** Return the more permissive (numerically lower) of two pino levels. */
@@ -158,6 +233,43 @@ export class JobLogger {
     this.db.updateRunLog(this.runId, { ...counters, ended_at: nowIso() });
     this.event(EVENT_TYPES.RUN_END, { message: 'Run ended', meta: counters });
     return this.db.getRunLog(this.runId);
+  }
+
+  /*
+   * Plain diagnostic logging, delegated to pino (NOT persisted as events).
+   *
+   * The dashboard server calls `logger?.warn?.(…)` / `logger?.info?.(…)` for
+   * config-reload failures, tracker refresh errors and run bookkeeping — and
+   * JobLogger had no such methods, so the optional chaining silently dropped
+   * every one of them. Both pino call shapes are accepted: (message) and
+   * (fields, message).
+   */
+  warn(...args) { return this._log('warn', args); }
+
+  info(...args) { return this._log('info', args); }
+
+  debug(...args) { return this._log('debug', args); }
+
+  _log(level, args) {
+    const fn = this.logger?.[level];
+    if (typeof fn !== 'function') return;
+    const [first, ...rest] = args;
+    if (first && typeof first === 'object' && !(first instanceof Error)) {
+      fn.call(this.logger, { runId: this.runId, ...redact(first) }, ...rest);
+    } else {
+      fn.call(this.logger, { runId: this.runId }, first, ...rest);
+    }
+  }
+
+  /**
+   * A JobLogger for ONE run: its own runId (so run_log / events / log lines of
+   * that run correlate) over the same database and log file.
+   * @param {string} runId
+   * @returns {JobLogger}
+   */
+  forRun(runId) {
+    const child = typeof this.logger?.child === 'function' ? this.logger.child({ runId }) : this.logger;
+    return new JobLogger({ db: this.db, logger: child, runId });
   }
 
   /** Convenience for error logging. @param {string} message @param {object} [meta] @param {string} [jobId] */
