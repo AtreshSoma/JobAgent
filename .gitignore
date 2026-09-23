@@ -1,5 +1,8 @@
 # --- Secrets ---
-.env
+# Every .env variant (.env.local, .env.production, .env.bak …), not just the
+# two spellings that used to be listed — a copied `.env.backup` holding the
+# Apify token was one `git add -A` from being committed.
+.env*
 *.env
 !.env.example
 # Ad-hoc probe/experiment scripts at the repo root. These routinely get a real
@@ -21,6 +24,8 @@ config/screening_answers.json
 # taxonomy they are matched against (config/role_families.json) is shared,
 # impersonal data and IS tracked.
 config/profiles/
+# Files regenerated from the active profile — derived, never edited by hand.
+config/derived/
 
 # Timestamped backups written by scripts/harvestSources.mjs --apply
 config/*.bak
@@ -44,33 +49,15 @@ env/
 
 # --- Local data & generated artifacts ---
 .tmp/
-data/*.db
-data/*.db-shm
-data/*.db-wal
-# Timestamped backups written by scripts/repairJobUrls.mjs --apply (contains
-# the same personal application data as the live DB, so it must never commit)
-data/*.db.*.bak
-# ...and SQLite's sidecars for those backups. `data/*.db-shm` above only covers
-# the LIVE database; a backup's sidecars are named `<name>.bak-shm`/`-wal`,
-# matched by neither rule, so six files holding the same personal application
-# data sat staged-able in `git status` waiting for a `git add -A`.
-data/*.bak-shm
-data/*.bak-wal
-data/found_jobs.json
-data/scored_jobs.json
-data/queued_jobs.json
-data/unknown_date_review.json
-data/job_tracker.csv
-data/approval_queue.json
-data/run_state.json
-# Measured per-source discovery durations. A local cache used to schedule the
-# slowest sources first — machine- and network-specific, so it is never shared.
-data/source_timings.json
-# Questions real employers' forms asked that the filler could not answer, with
-# the jobs that asked them. Personal, like the answers they lead to.
-data/question_queue.json
-data/packets/
-data/application-state/
+coverage/
+# EVERYTHING under data/ is local state — the SQLite store and its backups and
+# sidecars, packets, run state, question queue, discovery caches, trackers.
+# It used to be ignored file-by-file, and every new artifact (backup sidecars,
+# source_timings.json, question_queue.json …) was committable until someone
+# noticed and added a line. Now it is ignored unless deliberately re-included.
+data/*
+# Tracked inputs: the manual-jobs CSV and its example.
+!data/jobs_input/
 resumes/output/*
 !resumes/output/.gitkeep
 # Timestamped copies the tailoring step writes before touching the master.

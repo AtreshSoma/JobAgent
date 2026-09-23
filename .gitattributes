@@ -1,0 +1,18 @@
+# Line endings. Text files are normalized to LF in the repository and checked
+# out in the platform's convention — except the launchers, whose interpreters
+# care: bash chokes on a CRLF shebang ("/usr/bin/env: 'bash\r'"), and cmd.exe
+# mis-parses labels and multi-line blocks in an LF-only .cmd file.
+* text=auto
+
+*.sh   text eol=lf
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary: never diffed, never touched by EOL conversion.
+*.docx binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.woff2 binary

@@ -9,6 +9,7 @@
  * with the project's existing `playwright` dependency. Run from anywhere:
  *
  *     node interview-prep/build-pdf.mjs
+ *     PREP_PDF_NAME="Your Name" npm run prep:pdf     # optional name on the cover
  *
  * Outputs (next to this script):
  *     Data-Engineer-Interview-Prep.pdf   — the polished, navigable study PDF
@@ -191,6 +192,10 @@ async function main() {
   for (const d of DOCS) built.push(await buildDoc(d));
   for (const b of built) b.html = rewriteLinks(b.html);
 
+  // The cover used to carry one person's name, hardcoded, into every build.
+  // It is now opt-in: PREP_PDF_NAME="…" or --name="…"; otherwise no name.
+  const ownerName = (process.argv.find((a) => a.startsWith('--name='))?.slice(7)
+    ?? process.env.PREP_PDF_NAME ?? '').trim();
   const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
   // ---- Table of contents (2 levels) ----
@@ -204,7 +209,7 @@ async function main() {
     <div class="cover-badge">DE</div>
     <div class="cover-title">Data Engineer<br/>Interview Preparation</div>
     <div class="cover-sub">Senior / Lead Data Engineer — Complete Course &amp; Question Bank</div>
-    <div class="cover-name">Atresh Somayajula</div>
+    ${ownerName ? `<div class="cover-name">${escapeHtml(ownerName)}</div>` : ''}
     <div class="cover-role">Senior Data Engineer · Azure · Databricks · Delta Lake · Fabric</div>
     <div class="cover-rule"></div>
     <div class="cover-meta">
@@ -271,7 +276,7 @@ async function main() {
   const masterMd = [
     '# Data Engineer Interview Preparation — Master Document',
     '',
-    `_Senior / Lead Data Engineer · Atresh Somayajula · Compiled ${dateStr}_`,
+    `_Senior / Lead Data Engineer · ${ownerName ? `${ownerName} · ` : ''}Compiled ${dateStr}_`,
     '',
     '## Contents',
     '',

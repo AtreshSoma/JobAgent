@@ -25,12 +25,72 @@ export const SECRET_KEY_PATTERNS = [
 ];
 
 /**
+ * Name suffixes that mark a secret even when no substring pattern matches:
+ * `ADZUNA_APP_KEY`, `JOB_AGENT_EXTENSION_KEY`, `appKey`, `clientSecret`,
+ * `x-auth-token`. `app_key` slipped past the substring list (it has no
+ * `api_key`), so it could be logged verbatim.
+ */
+const SECRET_SUFFIXES = ['key', 'secret', 'token', 'password'];
+
+/**
  * @param {string} name
  * @returns {boolean}
  */
 function looksSecret(name) {
   const lower = String(name).toLowerCase();
-  return SECRET_KEY_PATTERNS.some((p) => lower.includes(p));
+  return SECRET_KEY_PATTERNS.some((p) => lower.includes(p))
+    || SECRET_SUFFIXES.some((s) => lower.endsWith(s));
+}
+
+/**
+ * Query/form parameters whose VALUE is a credential (`?app_key=…`,
+ * `&access_token=…`). Adzuna, for one, authenticates with app_id/app_key in
+ * the URL, so a request URL in an error message or log line carries the key.
+ */
+const SECRET_PARAM_RE = /([?&;](?:[\w.-]*?(?:key|secret|token|password|passwd|signature|sig)|auth|code)=)[^&#\s"'<>]+/gi;
+
+/**
+ * `Authorization: <anything>` and a free-standing `Bearer <token>`. Not a bare
+ * "Basic <word>": job descriptions say "Basic Qualifications".
+ */
+const AUTH_HEADER_RE = /(authorization\s*[:=]\s*)(?:(?:Bearer|Basic)\s+)?[^\s,;"'}]+/gi;
+const BEARER_RE = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/g;
+
+/**
+ * Values of secret-named environment variables, longest first, so they can be
+ * scrubbed wherever they appear — including inside strings no key name
+ * describes. Short values are skipped: masking "1" or "true" everywhere would
+ * destroy logs without protecting anything.
+ */
+function knownSecretValues(env) {
+  const values = [];
+  for (const [name, value] of Object.entries(env ?? {})) {
+    const v = String(value ?? '').trim();
+    if (v.length >= 8 && looksSecret(name)) values.push(v);
+  }
+  return values.sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Scrub credentials out of a free-text string: secret query parameters,
+ * bearer/basic tokens, and any literal value of a secret env var.
+ *
+ * @param {string} text
+ * @param {object} [options]
+ * @param {string} [options.mask='[REDACTED]']
+ * @param {NodeJS.ProcessEnv} [options.env=process.env]
+ * @returns {string}
+ */
+export function scrubSecrets(text, { mask = '[REDACTED]', env = process.env } = {}) {
+  if (typeof text !== 'string' || !text) return text;
+  let out = text
+    .replace(SECRET_PARAM_RE, `$1${mask}`)
+    .replace(AUTH_HEADER_RE, `$1${mask}`)
+    .replace(BEARER_RE, `$1 ${mask}`);
+  for (const value of knownSecretValues(env)) {
+    if (out.includes(value)) out = out.split(value).join(mask);
+  }
+  return out;
 }
 
 /**
@@ -154,22 +214,31 @@ function normalizeFreshnessMode(raw) {
 }
 
 /**
- * Produce a shallow copy of an object with secret-looking values redacted.
+ * Produce a copy of an object with secret-looking values redacted.
  * Use before logging any structured payload that may contain credentials.
  *
- * @param {Record<string, any>} obj
+ * Two layers: a value under a secret-looking KEY is masked whole, and every
+ * string VALUE is scrubbed (see scrubSecrets) — because a key name like
+ * `url` or `error` says nothing about the app_key embedded in it.
+ *
+ * @param {any} obj
  * @param {string} [mask='[REDACTED]']
- * @returns {Record<string, any>}
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env=process.env] source of known secret values
+ * @returns {any}
  */
-export function redact(obj, mask = '[REDACTED]') {
+export function redact(obj, mask = '[REDACTED]', { env = process.env } = {}) {
+  if (typeof obj === 'string') return scrubSecrets(obj, { mask, env });
   if (!obj || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map((v) => redact(v, mask));
+  if (Array.isArray(obj)) return obj.map((v) => redact(v, mask, { env }));
   const out = {};
   for (const [key, value] of Object.entries(obj)) {
     if (looksSecret(key)) {
       out[key] = mask;
     } else if (value && typeof value === 'object') {
-      out[key] = redact(value, mask);
+      out[key] = redact(value, mask, { env });
+    } else if (typeof value === 'string') {
+      out[key] = scrubSecrets(value, { mask, env });
     } else {
       out[key] = value;
     }

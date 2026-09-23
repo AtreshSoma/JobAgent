@@ -20,7 +20,7 @@
  */
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { join, normalize, extname, dirname } from 'node:path';
+import { join, normalize, extname, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
@@ -39,6 +39,22 @@ const TYPES = {
   '.woff2': 'font/woff2',
 };
 
+/**
+ * Resolve a request path to a file INSIDE `root`, or null.
+ *
+ * The check is `startsWith(root + sep)`, not `startsWith(root)`: the bare
+ * prefix test also accepted a SIBLING directory whose name merely starts with
+ * the root's (…/learn-private/secret.txt passes a startsWith('…/learn') test).
+ *
+ * @param {string} root absolute directory
+ * @param {string} pathname decoded URL path
+ * @returns {string|null}
+ */
+export function resolveInside(root, pathname) {
+  const filePath = normalize(join(root, pathname));
+  return filePath === root || filePath.startsWith(root + sep) ? filePath : null;
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url, 'http://localhost');
@@ -46,8 +62,8 @@ const server = createServer(async (req, res) => {
     if (pathname === '/' || pathname.endsWith('/')) pathname += 'index.html';
 
     // Resolve safely inside ROOT — block path traversal.
-    const filePath = normalize(join(ROOT, pathname));
-    if (!filePath.startsWith(ROOT)) {
+    const filePath = resolveInside(ROOT, pathname);
+    if (!filePath) {
       res.writeHead(403).end('Forbidden');
       return;
     }
@@ -67,19 +83,40 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// 127.0.0.1 only — this is a local study site, never a public server.
-server.listen(PORT, '127.0.0.1', () => {
-  const url = `http://127.0.0.1:${PORT}`;
-  console.log('\n  📚  Data Engineer Interview Academy');
-  console.log(`  ➜  ${url}`);
-  console.log('  ➜  Press Ctrl+C to stop.\n');
-  if (!process.env.LEARN_NO_OPEN) openBrowser(url);
-});
+// Only when run as a script (tests import resolveInside without a server).
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // A second `npm run learn` used to die with a raw EADDRINUSE stack trace.
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error(`\n  Port ${PORT} is already in use — the study site is probably already running at `
+        + `http://127.0.0.1:${PORT}. Open that, or pick another port: LEARN_PORT=4748 npm run learn\n`);
+    } else {
+      console.error(`\n  Could not start the study site: ${err.message}\n`);
+    }
+    process.exit(1);
+  });
+  // 127.0.0.1 only — this is a local study site, never a public server.
+  server.listen(PORT, '127.0.0.1', () => {
+    const url = `http://127.0.0.1:${PORT}`;
+    console.log('\n  📚  Data Engineer Interview Academy');
+    console.log(`  ➜  ${url}`);
+    console.log('  ➜  Press Ctrl+C to stop.\n');
+    if (!process.env.LEARN_NO_OPEN) openBrowser(url);
+  });
+}
 
-/** Best-effort open of the default browser; silent if it fails. */
+/**
+ * Best-effort open of the default browser. A missing opener (no xdg-open on a
+ * headless Linux box) is reported ASYNCHRONOUSLY as an 'error' event, which
+ * the try/catch never saw — an unhandled 'error' crashed the server.
+ */
 function openBrowser(url) {
   const cmd = process.platform === 'win32' ? 'cmd'
     : process.platform === 'darwin' ? 'open' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
-  try { spawn(cmd, args, { stdio: 'ignore', detached: true }).unref(); } catch { /* ignore */ }
+  try {
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.once('error', () => console.log(`  (could not open a browser; visit ${url} yourself)`));
+    child.unref();
+  } catch { /* ignore */ }
 }
