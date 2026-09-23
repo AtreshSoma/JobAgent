@@ -4,11 +4,11 @@ export default defineConfig({
   test: {
     include: ['tests/node/**/*.test.js'],
     environment: 'node',
-    // Seeds config/candidate.json, config/screening_answers.json and the master
-    // resume from their tracked .example files when absent. Those files are
-    // gitignored (PII), and ~24 test files call loadConfig() at module scope —
-    // without this a fresh clone cannot COLLECT 27 of 96 test files, which is
-    // what kept CI red on main. Never overwrites a real local config.
+    // Builds a throwaway workspace (shared config + the fictional fixture
+    // profile + the synthetic example resume) and points JOB_AGENT_ROOT at it,
+    // so no test reads the developer's real candidate.json / master resume or
+    // writes to their real data/applied_jobs.db — and a clean clone, which has
+    // none of those gitignored files, runs exactly the same suite.
     globalSetup: ['tests/node/globalSetup.js'],
   },
 });

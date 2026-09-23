@@ -3,6 +3,7 @@ import { chromium } from 'playwright';
 
 import { openDatabase } from '../../src/logging/db.js';
 import { startDashboard } from '../../src/dashboard/server.js';
+import { PROJECT_ROOT } from '../../src/config/loadConfig.js';
 
 describe('dashboard Auto-fill browser flow', () => {
   let browser;
@@ -44,7 +45,7 @@ describe('dashboard Auto-fill browser flow', () => {
 
     let receivedOptions = null;
     const dash = await startDashboard({
-      config: { root: process.cwd(), jobboards: { sources: [] } },
+      config: { root: PROJECT_ROOT, jobboards: { sources: [] } },
       db, logger: null, port: 0,
       deps: {
         now: () => new Date('2026-07-22T15:00:00Z'),

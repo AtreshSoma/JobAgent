@@ -20,8 +20,15 @@ import { normalizeProfile } from '../profile/model.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Repo root is two levels up from src/config. */
-export const PROJECT_ROOT = resolve(__dirname, '..', '..');
+/**
+ * Repo root is two levels up from src/config — unless JOB_AGENT_ROOT names a
+ * different workspace (config/, data/, logs/, resumes/ ...). The test suite
+ * sets it to a throwaway copy so it never reads a developer's real profile or
+ * master resume, nor writes to their real database.
+ */
+export const PROJECT_ROOT = process.env.JOB_AGENT_ROOT
+  ? resolve(process.env.JOB_AGENT_ROOT)
+  : resolve(__dirname, '..', '..');
 
 /** Config files (logical name -> filename under config/). */
 export const CONFIG_FILES = {

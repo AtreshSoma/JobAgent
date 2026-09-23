@@ -501,7 +501,7 @@ describe('profiles can be saved, switched and re-run without editing source', ()
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'job-agent-profiles-'));
     mkdirSync(join(root, 'config', 'schemas'), { recursive: true });
-    for (const file of ['candidate.json', 'scoring.json', 'exclusions.json']) {
+    for (const file of ['scoring.json', 'exclusions.json']) {
       writeFileSync(join(root, 'config', file), readFileSync(join(REPO, 'config', file)));
     }
     // The fixture candidate, so the temp root never carries real personal data.

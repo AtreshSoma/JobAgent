@@ -1,29 +1,86 @@
 /**
- * Vitest globalSetup: make a clean clone testable.
+ * Vitest globalSetup: run the whole suite against a THROWAWAY workspace.
  *
- * ~24 test files call `loadConfig()` at module scope. The configs they read are
- * gitignored (they hold PII), so on a fresh checkout those files failed to
- * COLLECT — not to assert — and 353 tests silently never ran. CI executed
- * `npm test` on a bare checkout, so this is why `main` was red while the
- * author's machine was green.
+ * Why
+ * ---
+ * This used to seed config/candidate.json, screening answers, the cover letter
+ * and the master resume into the REAL checkout when they were missing. On a
+ * clean clone that was enough; on a developer's machine it meant the opposite
+ * of isolation — every `loadConfig()` read that person's real profile and
+ * resume, every default `openDatabase()` opened their real
+ * data/applied_jobs.db, and logs landed in their real logs/. A test could pass
+ * or fail depending on whose laptop ran it.
  *
- * Seeding the example files here (never overwriting a real local config) is the
- * smallest change that makes the checked-out repository self-sufficient. It runs
- * once per suite, before any test file is collected.
+ * Now a temp root is built once per run:
+ *   config/      the repo's SHARED config (scoring, jobboards, schemas, role
+ *                families …) with the fictional fixtures from
+ *                tests/node/fixtures/config/ as candidate.json,
+ *                screening_answers.json and cover_letter.json. Saved search
+ *                profiles (config/profiles/) are deliberately NOT copied.
+ *   resumes/base/MASTER_RESUME.docx   the synthetic example resume
+ *   data/ logs/ reports/ resumes/output/ applications/output/   empty
+ *
+ * and JOB_AGENT_ROOT points at it. src/config/loadConfig.js resolves
+ * PROJECT_ROOT from that variable, so the config loader, the default database
+ * path and the log directory all follow. Workers are forked after this runs
+ * and inherit the variable. The directory is removed on teardown.
+ *
+ * Tests that need the REPOSITORY itself (fixture files, schemas, launchers)
+ * keep resolving it from their own file location, which is unaffected.
  */
 
-import { materializeLocalFiles } from '../../scripts/setupLocalConfig.mjs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const FIXTURE_CONFIG = join(REPO, 'tests', 'node', 'fixtures', 'config');
+
+/** Personal (gitignored) config: never copied from the checkout. */
+const PERSONAL = new Set(['candidate.json', 'screening_answers.json', 'cover_letter.json']);
+
+/**
+ * Build the isolated workspace.
+ * @param {string} [repo=REPO]
+ * @returns {string} the temp root
+ */
+export function buildTestRoot(repo = REPO) {
+  const root = mkdtempSync(join(tmpdir(), 'jobagent-test-root-'));
+  const src = join(repo, 'config');
+  const dst = join(root, 'config');
+  cpSync(src, dst, {
+    recursive: true,
+    filter: (path) => {
+      const name = basename(path);
+      if (path === src) return true;
+      if (dirname(path) === src && PERSONAL.has(name)) return false;
+      if (name === 'profiles' || name === 'derived' || name.endsWith('.bak')) return false;
+      return true;
+    },
+  });
+  for (const name of PERSONAL) {
+    const fixture = join(FIXTURE_CONFIG, name);
+    if (!existsSync(fixture)) throw new Error(`test fixture missing from the repository: ${fixture}`);
+    copyFileSync(fixture, join(dst, name));
+  }
+
+  const example = join(repo, 'resumes', 'base', 'MASTER_RESUME.example.docx');
+  if (!existsSync(example)) throw new Error(`example resume missing from the repository: ${example}`);
+  mkdirSync(join(root, 'resumes', 'base'), { recursive: true });
+  copyFileSync(example, join(root, 'resumes', 'base', 'MASTER_RESUME.example.docx'));
+  copyFileSync(example, join(root, 'resumes', 'base', 'MASTER_RESUME.docx'));
+
+  for (const dir of ['data', 'logs', 'reports', join('resumes', 'output'), join('applications', 'output')]) {
+    mkdirSync(join(root, dir), { recursive: true });
+  }
+  return root;
+}
 
 export default function setup() {
-  const { created, missingExample } = materializeLocalFiles();
-
-  if (missingExample.length) {
-    throw new Error(
-      `Example fixtures missing from the repository: ${missingExample.join(', ')}. `
-      + 'Tests cannot run without them.',
-    );
-  }
-  if (created.length) {
-    console.log(`[globalSetup] seeded from examples: ${created.join(', ')}`);
-  }
+  const root = buildTestRoot();
+  process.env.JOB_AGENT_ROOT = root;
+  return () => {
+    rmSync(root, { recursive: true, force: true });
+  };
 }

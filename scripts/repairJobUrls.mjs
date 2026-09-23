@@ -184,7 +184,13 @@ async function main() {
   console.log(`  Remaining rows in the broken shape: ${left}`);
 }
 
-main().catch((err) => {
-  console.error(`repairJobUrls failed: ${err.stack ?? err.message}`);
-  process.exitCode = 1;
-});
+// Only when run as a script. tests/node/workdayJobUrl.test.js imports
+// repairWorkdayUrl from here, and an unconditional main() made every test run
+// open the developer's REAL data/applied_jobs.db (and parse vitest's argv as
+// this script's flags).
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((err) => {
+    console.error(`repairJobUrls failed: ${err.stack ?? err.message}`);
+    process.exitCode = 1;
+  });
+}

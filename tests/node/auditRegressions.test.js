@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { answerScreeningQuestion, experienceSubject } from '../../src/apply/screeningQA.js';
 import { isPlaceholderValue, findPlaceholders } from '../../src/config/placeholders.js';
 import { singularize, normalizeForMatch } from '../../src/utils/textNormalize.js';
-import { readJson } from '../../src/config/loadConfig.js';
+import { readJson, PROJECT_ROOT } from '../../src/config/loadConfig.js';
 import {
   deriveAppStatus, APP_STATUS, dashboardStats, LIFECYCLE_TO_APP_STATUS,
 } from '../../src/dashboard/data.js';
@@ -220,7 +220,7 @@ describe('§5 P2 — duplicate JSON keys are rejected, not silently dropped', ()
 
   it('every shipped config file is free of duplicate keys', () => {
     for (const f of [
-      'scoring.json', 'exclusions.json', 'jobboards.json', 'cover_letter.json',
+      'scoring.json', 'exclusions.json', 'jobboards.json', 'cover_letter.example.json',
       'ats_resume.json', 'humanizer_patterns.json',
       'candidate.example.json', 'screening_answers.example.json',
     ]) {
@@ -276,7 +276,7 @@ describe('§4 P1 — every run leaves a record', () => {
   it('writes a run_log row with counters and a duration, and serves it at /api/runs', async () => {
     const db = openDatabase({ path: ':memory:' });
     const dash = await startDashboard({
-      config: { root: process.cwd() }, db, logger: null, port: 0,
+      config: { root: PROJECT_ROOT }, db, logger: null, port: 0,
       deps: {
         discoverFn: async () => ({
           counters: { jobs_found: 7, jobs_scored: 3, jobs_discarded: 2 }, errors: [], perSource: [],

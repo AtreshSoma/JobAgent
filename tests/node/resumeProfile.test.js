@@ -24,7 +24,7 @@ import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
 import { normalizeJob } from '../../src/search/normalize.js';
 import { extractDocxText } from '../../src/resume/docxText.js';
-import { fixtureCandidate } from './helpers/testConfig.js';
+import { fixtureCandidate, FIXTURE_CONFIG_DIR } from './helpers/testConfig.js';
 
 /** A data-engineering resume, in the shape real ones take. */
 const DE_RESUME = [
@@ -261,7 +261,7 @@ describe('adopting evidence is explicit, additive and validated', () => {
     root = mkdtempSync(join(tmpdir(), 'adopt-'));
     cpSync(join(PROJECT_ROOT, 'config'), join(root, 'config'), { recursive: true });
     copyFileSync(
-      join(PROJECT_ROOT, 'tests', 'node', 'fixtures', 'config', 'candidate.json'),
+      join(FIXTURE_CONFIG_DIR, 'candidate.json'),
       join(root, 'config', 'candidate.json'),
     );
   });
@@ -318,7 +318,7 @@ describe('ad-hoc query search', () => {
     root = mkdtempSync(join(tmpdir(), 'qsearch-'));
     cpSync(join(PROJECT_ROOT, 'config'), join(root, 'config'), { recursive: true });
     copyFileSync(
-      join(PROJECT_ROOT, 'tests', 'node', 'fixtures', 'config', 'candidate.json'),
+      join(FIXTURE_CONFIG_DIR, 'candidate.json'),
       join(root, 'config', 'candidate.json'),
     );
     config = loadConfig({ root, loadEnv: false, env: {} });

@@ -371,6 +371,12 @@ describe('the two searches cannot run at the same time', () => {
   let db;
   let dash;
   let root;
+  // Deferred gates instead of sleeps. The fake search used to take a fixed
+  // 400 ms while the test slept 120 ms and hoped the search was mid-flight —
+  // on a loaded CI runner either side of that race could lose. Now the test
+  // KNOWS the search has started, and decides when it finishes.
+  let searchStarted;
+  let releaseSearch;
 
   const post = (p, body) => fetch(dash.url + p, {
     method: 'POST',
@@ -380,6 +386,10 @@ describe('the two searches cannot run at the same time', () => {
   const status = () => fetch(dash.url + '/api/run/status').then((r) => r.json());
 
   beforeEach(async () => {
+    const started = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    searchStarted = started.promise;
+    releaseSearch = release.resolve;
     root = makeRoot();
     db = openDatabase({ path: ':memory:' });
     const load = ({ root: r = root } = {}) => loadConfig({ root: r, loadEnv: false, env: {} });
@@ -387,9 +397,10 @@ describe('the two searches cannot run at the same time', () => {
       config: load(), db, logger: null, port: 0,
       deps: {
         extensionKey: 'k'.repeat(32), loadConfigImpl: load,
-        // A role search that takes long enough to overlap, as a real one does.
+        // A role search that stays in flight until the test releases it.
         querySearchFn: async ({ query }) => {
-          await new Promise((r) => setTimeout(r, 400));
+          started.resolve();
+          await release.promise;
           return { query, counters: {}, sources: ['ats-search'], errors: [] };
         },
         searchFn: searchFnFor([]),
@@ -398,10 +409,20 @@ describe('the two searches cannot run at the same time', () => {
   });
 
   afterEach(async () => {
+    releaseSearch();
     await dash.close();
     db.close();
     rmSync(root, { recursive: true, force: true });
   });
+
+  /** Poll run status until `running` is false (bounded; the release is async). */
+  const lockReleased = async () => {
+    for (let i = 0; i < 100; i += 1) {
+      if (!(await status()).running) return true;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    return false;
+  };
 
   it('a role search HOLDS the run lock, not just checks it', async () => {
     // This endpoint checked `runState.running` and never set it, so exclusion
@@ -410,20 +431,21 @@ describe('the two searches cannot run at the same time', () => {
     // and with the two modes writing different `discovery_mode` values to the
     // same rows, persistJob's ownership rule would be racing too.
     const search = post('/api/search', { query: 'Product Manager' });
-    await new Promise((r) => setTimeout(r, 120));
+    await searchStarted;
 
     expect((await status()).running).toBe(true);
     const run = await post('/api/run', { phase: 'discover' });
     expect(run.status).toBe(409);
 
+    releaseSearch();
     await search;
   });
 
   it('releases the lock afterwards, including when the search fails', async () => {
+    releaseSearch();
     const search = post('/api/search', { query: 'Product Manager' });
     await search;
-    await new Promise((r) => setTimeout(r, 50));
-    expect((await status()).running).toBe(false);
+    expect(await lockReleased()).toBe(true);
     // And a normal run may start again — a stranded lock would 409 forever.
     expect((await post('/api/run', { phase: 'discover' })).status).toBe(202);
   });
