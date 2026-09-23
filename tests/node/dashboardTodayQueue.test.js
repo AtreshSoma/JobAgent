@@ -137,3 +137,58 @@ describe('P3 — board projection, page clamp, narrow reports and documents', ()
     db.close();
   });
 });
+
+describe('Today reflects the machine as it is now, and is never empty beside good matches', () => {
+  it('a live "browser installed" check turns old browser failures into retry work, not an install notice', () => {
+    const db = openDatabase({ path: ':memory:' });
+    seed(db);
+    const today = todayQueue(db, { now: NOW, browserAvailable: true });
+    expect(today.systemNotices.map((n) => n.code)).toEqual(['browser_recovered']);
+    const retry = today.items.filter((i) => i.id === 'nobrowser' || i.id === 'nobrowser2');
+    expect(retry.map((i) => i.nextAction.kind)).toEqual(['autofill', 'autofill']);
+    db.close();
+  });
+
+  it('a live "browser missing" check raises the install notice even with no failure rows', () => {
+    const db = openDatabase({ path: ':memory:' });
+    const today = todayQueue(db, { now: NOW, browserAvailable: false });
+    expect(today.systemNotices.map((n) => n.code)).toEqual(['browser_unavailable']);
+    db.close();
+  });
+
+  it('tops up a quiet day with the best undecided fits, strongest first', () => {
+    const db = openDatabase({ path: ':memory:' });
+    // Old posting dates: none qualifies as "new strong fit in the last 24 h".
+    for (const [id, score, tier] of [['s1', 91, 'Priority'], ['s2', 86, 'Apply'], ['m1', 62, 'Queue']]) {
+      db.upsertJob({ id, title: id, status: 'scored', score, tier, posted_at: '2026-09-01T00:00:00.000Z' });
+    }
+    db.upsertJob({ id: 'decided', title: 'd', status: 'scored', score: 95, tier: 'Priority',
+      posted_at: '2026-09-01T00:00:00.000Z', user_decision: 'rejected' });
+    const items = todayQueue(db, { now: NOW, browserAvailable: true }).items;
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.map((i) => i.id)).not.toContain('decided');
+    const scores = items.map((i) => i.score);
+    expect([...scores].sort((a, b) => b - a)).toEqual(scores);
+    for (const item of items) expect(item.reason).toMatch(/score \d+/);
+    db.close();
+  });
+});
+
+describe('browser-failure labels follow the live check, not the history', () => {
+  it('relabels old "browser not installed" rows as retryable once the browser is present', async () => {
+    const data = await import('../../src/dashboard/data.js');
+    const db = openDatabase({ path: ':memory:' });
+    seed(db);
+    try {
+      data.setBrowserAvailability(true);
+      const blocked = data.classifyAttention({ assist_blockers: JSON.stringify([`browser_unavailable: ${BANNER}`]) }, "failed");
+      expect(blocked).toMatchObject({ kind: 'retry', label: data.SETUP_BROWSER_RECOVERED_LABEL });
+      data.setBrowserAvailability(null);
+      const unknown = data.classifyAttention({ assist_blockers: JSON.stringify([`browser_unavailable: ${BANNER}`]) }, "failed");
+      expect(unknown).toMatchObject({ kind: 'setup_browser' });
+    } finally {
+      data.setBrowserAvailability(null);
+      db.close();
+    }
+  });
+});

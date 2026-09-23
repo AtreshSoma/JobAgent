@@ -1,5 +1,6 @@
 /** The detail rail / sheet: keyed sections, notes autosave, action plans, resume card. */
 
+import { compactLocation } from './format.js';
 import { $, el, esc, safeHref, shortStamp, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
@@ -216,9 +217,11 @@ export function detailSections(job) {
   }));
   const headMain = el('div', { class: 'grow-1' });
   headMain.append(el('h2', { class: 'detail-title', text: `${job.company || 'Company on posting'} — ${job.title}` }));
-  const meta = [job.location, job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
+  const fullMeta = [job.location, job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
     job.atsPlatform ? `ATS ${job.atsPlatform}` : null].filter(Boolean).join(' · ');
-  headMain.append(el('div', { class: 'muted detail-meta', title: meta, text: meta }));
+  const meta = [compactLocation(job.location), job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
+    job.atsPlatform ? `ATS ${job.atsPlatform}` : null].filter(Boolean).join(' · ');
+  headMain.append(el('div', { class: 'muted detail-meta', title: fullMeta, text: meta }));
 
   const chips = el('div', { class: 'chiprow' });
   chips.append(el('span', {
@@ -914,3 +917,4 @@ export async function openResumePreview(id) {
     }));
   }
 }
+

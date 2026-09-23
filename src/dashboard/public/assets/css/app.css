@@ -706,7 +706,15 @@ button.stat:hover { background: none; border-color: transparent; }
   font-size: var(--fs-sm); font-weight: 800; background: var(--warn-soft); color: var(--warn);
 }
 .notice.is-error .notice-mark { background: var(--bad-soft); color: var(--bad); }
-.notice-body { min-width: 0; font-size: var(--fs-md); }
+.notice-body { min-width: 0; flex: 1 1 0; font-size: var(--fs-md); }
+/* On a phone the action button beside the text squeezed the message into a
+   ~120 px column (eight lines for one sentence). Stack it under the text. */
+@media (max-width: 720px) {
+  .notice { flex-wrap: wrap; }
+  .notice > button { flex-basis: auto; margin-left: calc(20px + var(--s3)); }
+  .notice > button { order: 3; }
+  .notice-body { flex-basis: calc(100% - 20px - var(--s3)); }
+}
 .notice-fix { margin-top: 3px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .notice-fix code, .setup-list code {
   font-family: var(--mono); font-size: var(--fs-sm); background: var(--surface-2);

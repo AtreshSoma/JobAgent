@@ -106,7 +106,10 @@ check('configuration loads and validates', () => {
 check('database opens', () => {
   const db = openDatabase();
   try {
-    const n = db.listJobs().length;
+    // COUNT(*): listJobs() reads every row, descriptions included, just to count them.
+    const n = typeof db.db?.prepare === 'function'
+      ? Number(db.db.prepare('SELECT count(*) AS n FROM jobs').get().n)
+      : db.listJobs().length;
     return `${n} job(s) in store`;
   } finally {
     db.close();

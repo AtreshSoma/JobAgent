@@ -84,7 +84,7 @@ import {
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
   buildDocuments, buildMasterResume, MASTER_RESUME_RELATIVE, MASTER_HISTORY_RELATIVE,
-  setDuringBulkRun, todayQueue, undoDecision, noteUserMutation,
+  setDuringBulkRun, todayQueue, undoDecision, noteUserMutation, setBrowserAvailability,
 } from './data.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import {
@@ -398,6 +398,28 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
    * It is deferred, coalesced, and yields to a run (the run's own end-of-run
    * rescore covers it).
    */
+  /**
+   * Is the Playwright browser installed RIGHT NOW? Cached for a minute: it is a
+   * stat() behind a dynamic import, cheap but not free on a polled endpoint,
+   * and it only changes when the user runs the install command.
+   */
+  let browserCheck = { at: 0, value: null };
+  async function browserAvailableCached() {
+    if (deps.browserAvailable !== undefined) return deps.browserAvailable;
+    // Tests set this so a label never depends on whether the machine running
+    // the suite happens to have Chromium installed.
+    if (process.env.JOB_AGENT_BROWSER_CHECK === 'off') return null;
+    if (Date.now() - browserCheck.at < 60_000) return browserCheck.value;
+    let value = null;
+    try {
+      const { checkBrowserAvailable } = await import('../automation/browser.js');
+      value = (await checkBrowserAvailable({ channel: config?.runtime?.browserChannel ?? null })).ok === true;
+    } catch { value = null; }
+    browserCheck = { at: Date.now(), value };
+    setBrowserAvailability(value);
+    return value;
+  }
+
   let rescoreTimer = null;
   function scheduleRescore() {
     if (rescoreTimer || !config?.root) return;
@@ -1743,7 +1765,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     }
     // The Today queue: the ten next actions + setup notices (see todayQueue).
     if (req.method === 'GET' && path === '/api/today') {
-      return sendJson(res, 200, todayQueue(db, { now: nowDate(), config }));
+      return sendJson(res, 200, todayQueue(db, { now: nowDate(), config, browserAvailable: await browserAvailableCached() }));
     }
     if (req.method === 'GET' && path === '/api/jobs') {
       const filters = Object.fromEntries(url.searchParams.entries());
@@ -2431,7 +2453,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   }
 
   return {
-    server, runState, inFlight, flushTracker,
+    server, runState, inFlight, flushTracker, browserAvailableCached,
     // The LIVE bundle, not the one booted with: routes that rewrite config
     // files reload it into this closure, and `startDashboard` cannot see that
     // from its own immutable parameter.
@@ -2446,7 +2468,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
  * @returns {Promise<{ server: import('node:http').Server, port: number, url: string, close: Function }>}
  */
 export function startDashboard({ config, db, logger, port = 4646, deps = {} } = {}) {
-  const { server, runState, inFlight, flushTracker, currentConfig } = createDashboardServer({ config, db, logger, deps });
+  const {
+    server, runState, inFlight, flushTracker, currentConfig, browserAvailableCached,
+  } = createDashboardServer({ config, db, logger, deps });
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       if (err?.code === 'EADDRINUSE') {
@@ -2460,6 +2484,9 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
     // 127.0.0.1 only — the dashboard must never be reachable from the network.
     server.listen(port, '127.0.0.1', () => {
       const actual = server.address().port;
+      // Learn the browser's real state once at boot so the first page's labels
+      // are right; afterwards /api/today refreshes it at most once a minute.
+      browserAvailableCached().catch(() => {});
       resolve({
         server,
         runState,

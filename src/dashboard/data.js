@@ -134,6 +134,27 @@ export function isEnvironmentFailure(jobOrRow = {}) {
 /** The one label every surface uses for an environmental failure. */
 export const SETUP_BROWSER_LABEL = 'Setup: browser not installed';
 
+/** The same failure once a live check says the browser IS installed now. */
+export const SETUP_BROWSER_RECOVERED_LABEL = 'Retry: browser now installed';
+
+/**
+ * Is the Playwright browser installed right now? Set by the server from a live
+ * check; null = unknown (tests, CLI), in which case a recorded failure is taken
+ * at its word. Rows are history — on 2026-09-23 four rows still said
+ * "Executable doesn't exist" eight days after Chromium was installed, and every
+ * surface kept telling the user to install a browser they already had.
+ */
+let browserInstalledNow = null;
+export function setBrowserAvailability(value) {
+  const next = value === true ? true : value === false ? false : null;
+  if (next === browserInstalledNow) return;
+  browserInstalledNow = next;
+  noteUserMutation(); // attention labels are cached with the decorated rows
+}
+function browserRecovered() {
+  return browserInstalledNow === true;
+}
+
 /**
  * Drop box-drawing / block characters and collapse the whitespace they leave.
  * Playwright's "Executable doesn't exist" error arrives wrapped in a
@@ -228,6 +249,12 @@ export function classifyAttention(job = {}, appStatus = '') {
   };
   // Checked before every per-site rule: a missing browser is not a login wall
   // or a navigation problem, and nothing about the posting needs fixing.
+  if (ENVIRONMENT_FAILURE_RE.test(reason) && browserRecovered()) return {
+    kind: 'retry', label: SETUP_BROWSER_RECOVERED_LABEL,
+    summary: 'The last attempt failed only because the browser was not installed. It is now — retry Auto-fill '
+      + '(prepare the packet again first if it is refused as another profile\'s).',
+    retryable: true,
+  };
   if (ENVIRONMENT_FAILURE_RE.test(reason)) return {
     kind: 'setup_browser', label: SETUP_BROWSER_LABEL,
     summary: 'Auto-fill can’t start: the Playwright browser is not installed. Run: npx playwright install chromium, then retry.',
@@ -1072,7 +1099,16 @@ export function buildNextActions(totals, strongUntriaged = 0) {
   // used to be counted inside "Unblock applications" and described as "a
   // login, CAPTCHA or unanswered question", which is exactly what it is not.
   const setup = Math.min(Number(totals.blockedSetup ?? 0), Number(totals.blocked ?? 0));
-  if (setup > 0) {
+  if (setup > 0 && browserRecovered()) {
+    add({
+      count: setup,
+      verb: SETUP_BROWSER_RECOVERED_LABEL,
+      detail: 'these failed only because the browser was missing; it is installed now',
+      text: `${setup} auto-fill(s) failed only because the browser was missing — it is installed now, retry them`,
+      filter: { view: 'blocked' },
+      kind: 'system',
+    });
+  } else if (setup > 0) {
     add({
       count: setup,
       verb: SETUP_BROWSER_LABEL,
@@ -1890,7 +1926,7 @@ function blockerReason(row) {
   if (!first) return 'Unknown — open it to see why';
   const b = String(first).toLowerCase();
   // First: a missing browser is a setup problem, not a login/navigation wall.
-  if (ENVIRONMENT_FAILURE_RE.test(b)) return SETUP_BROWSER_LABEL;
+  if (ENVIRONMENT_FAILURE_RE.test(b)) return browserRecovered() ? SETUP_BROWSER_RECOVERED_LABEL : SETUP_BROWSER_LABEL;
   if (b.includes('captcha')) return 'CAPTCHA / bot wall';
   if (b.includes('login') || b.includes('sign in') || b.includes('account')) return 'Login / account required';
   if (b.includes('mfa') || b.includes('verification')) return 'MFA / verification';
@@ -2051,9 +2087,40 @@ function todayAction(row) {
   }
 }
 
+/**
+ * Top-up for a quiet day: the best open fits nobody has decided on yet.
+ *
+ * Measured on the live store (2026-09-23): 8 strong and 62 medium fits open,
+ * yet the queue was EMPTY — the only "fresh work" rule wants a strong fit
+ * posted in the last 24 h with a confirmed date. A landing page that says
+ * "nothing to do" beside 70 undecided good matches sends people back to the
+ * 6,000-row board, which is the behaviour the queue exists to replace.
+ */
+function todayTopUp(row) {
+  if (row.userDecision) return null;
+  if (row.appStatus !== APP_STATUS.SCORED && row.appStatus !== APP_STATUS.DISCOVERED) return null;
+  if (row.fit === 'strong') {
+    return row.sponsorshipGated
+      ? { rank: 9, kind: 'review', label: 'Strong fit — check sponsorship, then decide' }
+      : { rank: 9, kind: 'prepare', label: 'Strong fit — prepare an application' };
+  }
+  if (row.fit === 'medium') return { rank: 10, kind: 'review', label: 'Possible fit — review and decide' };
+  return null;
+}
+
 /** Why this row is on the list, in one line. */
 function todayReason(row, action) {
   if (action.rank === 8) return `Strong fit posted ${row.postedLabel ?? 'in the last 24 hours'}`;
+  if (action.recovered) {
+    return 'The last attempt failed only because the browser was not installed. It is now; if the packet was '
+      + 'built for another profile it will be refused — prepare it again first.';
+  }
+  if (action.rank >= 9) {
+    const parts = [row.grade?.label, row.score != null ? `score ${Math.round(row.score)}` : null,
+      row.sponsorship ? `sponsorship ${String(row.sponsorship).toLowerCase()}` : null,
+      row.postedLabel ? `posted ${row.postedLabel}` : null].filter(Boolean);
+    return parts.join(' · ') || 'Undecided match';
+  }
   const text = row.statusReason ? stripBannerChars(row.statusReason) : (row.statusLabel ?? row.appStatus);
   return text.length > TODAY_REASON_MAX ? `${text.slice(0, TODAY_REASON_MAX - 1)}…` : text;
 }
@@ -2065,9 +2132,24 @@ function todayReason(row, action) {
  * @param {object|null} config loadConfig() bundle (for placeholder detection)
  * @returns {Array<{code: string, severity: 'error'|'warn', message: string, fix: string}>}
  */
-export function systemNotices(rows = [], config = null) {
+export function systemNotices(rows = [], config = null, { browserAvailable = null } = {}) {
   const notices = [];
-  const browserMissing = rows.some((r) => VIEW_BLOCKED.has(r.appStatus) && isEnvironmentFailure(r));
+  const envFailed = rows.filter((r) => VIEW_BLOCKED.has(r.appStatus) && isEnvironmentFailure(r));
+  // `browserAvailable` is a LIVE check from the server (true/false); null means
+  // unknown, and only then do old failure rows stand in for it. Rows are
+  // history: on 2026-09-23 four rows still said "Executable doesn't exist"
+  // eight days after Chromium was installed, and the notice kept telling the
+  // user to install a browser they already had.
+  const browserMissing = browserAvailable === false || (browserAvailable == null && envFailed.length > 0);
+  if (browserAvailable === true && envFailed.length) {
+    notices.push({
+      code: 'browser_recovered',
+      severity: 'warn',
+      message: `The browser is installed now — ${envFailed.length} earlier auto-fill attempt(s) failed only because `
+        + 'it was missing. Those jobs are listed below to retry.',
+      fix: 'Retry auto-fill on each (re-prepare first if the packet is refused as another candidate\'s)',
+    });
+  }
   if (browserMissing) {
     notices.push({
       code: 'browser_unavailable',
@@ -2111,13 +2193,34 @@ export function systemNotices(rows = [], config = null) {
  * @param {number} [options.limit=10]
  * @returns {{ generatedAt: string, items: object[], systemNotices: object[] }}
  */
-export function todayQueue(db, { now = new Date(), config = null, limit = TODAY_LIMIT } = {}) {
+export function todayQueue(db, {
+  now = new Date(), config = null, limit = TODAY_LIMIT, browserAvailable = null,
+} = {}) {
   const rows = openBoardRows(db, now);
   const candidates = [];
+  const topUp = [];
   for (const row of rows) {
-    if (isEnvironmentFailure(row)) continue;
+    if (isEnvironmentFailure(row)) {
+      // Still non-actionable while the browser is missing (or unknown); once a
+      // live check says it is installed, the job is ordinary retry work.
+      if (browserAvailable === true) {
+        candidates.push({
+          row,
+          action: { rank: 6, kind: 'autofill', label: 'Retry auto-fill — the browser is installed now', recovered: true },
+        });
+      }
+      continue;
+    }
     const action = todayAction(row);
     if (action) candidates.push({ row, action });
+    else {
+      const extra = todayTopUp(row);
+      if (extra) topUp.push({ row, action: extra });
+    }
+  }
+  if (candidates.length < TODAY_LIMIT) {
+    topUp.sort((a, b) => a.action.rank - b.action.rank || (b.row.score ?? -1) - (a.row.score ?? -1));
+    candidates.push(...topUp.slice(0, TODAY_LIMIT - candidates.length));
   }
   candidates.sort((a, b) => a.action.rank - b.action.rank
     || (b.row.score ?? -1) - (a.row.score ?? -1)
@@ -2136,7 +2239,7 @@ export function todayQueue(db, { now = new Date(), config = null, limit = TODAY_
     reason: todayReason(row, action),
     nextAction: { kind: action.kind, label: action.label },
   }));
-  return { generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config) };
+  return { generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config, { browserAvailable }) };
 }
 
 /** Columns for the rich CSV/spreadsheet export, in order. */

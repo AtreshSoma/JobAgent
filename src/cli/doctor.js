@@ -28,7 +28,7 @@
  * delete a single temp file inside each output directory.
  */
 
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
@@ -134,10 +134,36 @@ function doctorPythonCandidates(env = {}, root) {
   return pythonCandidates(env, { root });
 }
 
-/** Run a command synchronously; returns { ok, stdout, stderr } and never throws. */
-function tryRun(spawnImpl, cmd, args) {
+/**
+ * spawnSync's result shape, without blocking the event loop.
+ *
+ * Doctor also backs the dashboard's /api/health, and four synchronous Python
+ * probes froze EVERY other request for ~2.8 s on a cold start (measured
+ * 2026-09-23: the board, Today and the run poll all waited behind it).
+ */
+function spawnAsync(cmd, args, { timeout = 15000 } = {}) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    } catch (error) {
+      resolve({ status: null, stdout: '', stderr: '', error });
+      return;
+    }
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8').on('data', (d) => { stdout += d; });
+    child.stderr.setEncoding('utf8').on('data', (d) => { stderr += d; });
+    const timer = setTimeout(() => child.kill(), timeout);
+    child.on('error', (error) => { clearTimeout(timer); resolve({ status: null, stdout, stderr, error }); });
+    child.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
+}
+
+/** Run a command; resolves { ok, stdout, stderr } and never throws. */
+async function tryRun(spawnImpl, cmd, args) {
   try {
-    const r = spawnImpl(cmd, args, { encoding: 'utf8', timeout: 15000 });
+    const r = await spawnImpl(cmd, args, { encoding: 'utf8', timeout: 15000 });
     return {
       ok: r.status === 0 && !r.error,
       stdout: (r.stdout ?? '').trim(),
@@ -237,7 +263,7 @@ function makeCheck(id, label, severity, detail, fix = null) {
  * @returns {Promise<{ checks: object[], summary: {pass:number,warn:number,fail:number}, ok: boolean }>}
  */
 export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps = {} } = {}) {
-  const spawnImpl = deps.spawnImpl ?? spawnSync;
+  const spawnImpl = deps.spawnImpl ?? spawnAsync;
   const loadConfigImpl = deps.loadConfigImpl ?? loadConfig;
   const checks = [];
 
@@ -288,7 +314,12 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
     const { openDatabase } = await import('../logging/db.js');
     const db = openDatabase({ path: join(root, 'data', 'applied_jobs.db') });
     try {
-      const n = db.listJobs({}).length;
+      // COUNT(*), not listJobs().length: that read every row INCLUDING jd_text
+      // (~411 MB on a real store) to count them — 1.2 s of SQL plus 0.6 s of
+      // GC, blocking the dashboard's event loop on every /api/health.
+      const n = typeof db.db?.prepare === 'function'
+        ? Number(db.db.prepare('SELECT count(*) AS n FROM jobs').get().n)
+        : db.listJobs({}).length;
       checks.push(makeCheck('db', 'Job database', SEVERITY.PASS, `data/applied_jobs.db opens (${n} job(s) tracked)`));
     } finally {
       db.close();
@@ -380,7 +411,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
   let pythonExe = null;
   let pythonDetail = '';
   for (const candidate of doctorPythonCandidates(env, root)) {
-    const r = tryRun(spawnImpl, candidate, ['--version']);
+    const r = await tryRun(spawnImpl, candidate, ['--version']);
     if (r.ok) {
       pythonExe = candidate;
       pythonDetail = r.stdout || r.stderr;
@@ -396,7 +427,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
       + '.venv/bin/python -m pip install -r requirements.txt (or set PYTHON in .env).'));
   } else if (pythonExe) {
     checks.push(makeCheck('python', 'Python', SEVERITY.PASS, `${pythonExe} — ${pythonDetail}`));
-    const docx = tryRun(spawnImpl, pythonExe, ['-c', 'import docx; print(docx.__version__ if hasattr(docx, "__version__") else "ok")']);
+    const docx = await tryRun(spawnImpl, pythonExe, ['-c', 'import docx; print(docx.__version__ if hasattr(docx, "__version__") else "ok")']);
     if (docx.ok) {
       checks.push(makeCheck('python-docx', 'python-docx package', SEVERITY.PASS, `importable (${docx.stdout || 'ok'})`));
     } else {
@@ -409,7 +440,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
     // surface later as an unexplained dashboard preview error. Report the
     // capability here, once, up front. WARN not FAIL: the DOCX is the
     // deliverable and is always produced; only the preview degrades.
-    const pdfProbe = tryRun(spawnImpl, pythonExe, ['-c',
+    const pdfProbe = await tryRun(spawnImpl, pythonExe, ['-c',
       'import sys, json; sys.path.insert(0, "src/resume"); '
       + 'from pdfExport import converter_availability; print(json.dumps(converter_availability()))']);
     let pdfInfo = null;
@@ -425,7 +456,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
         + 'or set resumeExportPdf=false to stop attempting the conversion.'));
     }
 
-    const pytest = tryRun(spawnImpl, pythonExe, ['-m', 'pytest', '--version']);
+    const pytest = await tryRun(spawnImpl, pythonExe, ['-m', 'pytest', '--version']);
     checks.push(pytest.ok
       ? makeCheck('pytest', 'pytest', SEVERITY.PASS, pytest.stdout.split('\n')[0])
       : makeCheck('pytest', 'pytest', SEVERITY.WARN,
