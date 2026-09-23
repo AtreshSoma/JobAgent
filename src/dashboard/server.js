@@ -94,6 +94,7 @@ import {
 import { assistApply } from '../automation/applyRunner.js';
 import { rescoreStale } from '../pipeline/index.js';
 import { sweepPostings } from '../search/postingLiveness.js';
+import { reconcileStalePackets } from '../apply/packetHygiene.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
 import {
@@ -118,7 +119,7 @@ import {
   listProfiles as listSearchProfiles, readProfile as readSearchProfile,
   readActiveProfile, activateProfile, saveProfile as saveSearchProfile, acknowledgeResumeMismatch,
   deleteProfile as deleteSearchProfile, migrateLegacyCandidate,
-  proposeProfileFromResume, mergeIntoActiveProfile,
+  proposeProfileFromResume, mergeIntoActiveProfile, refreshBackgroundFromResume,
 } from '../profile/store.js';
 import { deriveFromProfile } from '../profile/derive.js';
 
@@ -379,6 +380,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       // A new profile / scoring / gate changes what the board SHOWS without
       // writing a row, so the data-keyed caches must be told.
       noteUserMutation();
+      // A profile switch turns the previous profile's packets into someone
+      // else's; withdraw them now rather than when Auto-fill refuses them.
+      reconcilePackets();
       return null;
     } catch (err) {
       const message = sanitizeErrorMessage(err.message);
@@ -466,6 +470,26 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       clearInterval(every);
       postingSweep.controller?.abort();
     });
+  }
+
+  /**
+   * Withdraw approved packets that can no longer be filled (built for another
+   * profile, or the file is gone) so Today never offers a retry that can only
+   * be refused. See apply/packetHygiene.js. Cheap: a handful of approval rows.
+   */
+  function reconcilePackets() {
+    if (process.env.JOB_AGENT_PACKET_HYGIENE === 'off' || !config?.candidate) return null;
+    try {
+      const out = reconcileStalePackets({ db, config, ...(deps.loadPacketImpl ? { loadPacketImpl: deps.loadPacketImpl } : {}) });
+      if (out.superseded.length) {
+        noteUserMutation();
+        logger?.info?.(`withdrew ${out.superseded.length} unusable packet(s): ${out.superseded.map((s) => s.jobId).join(', ')}`);
+      }
+      return out;
+    } catch (err) {
+      logger?.warn?.(`packet check failed: ${sanitizeErrorMessage(err?.message ?? String(err))}`);
+      return null;
+    }
   }
 
   let rescoreTimer = null;
@@ -1986,6 +2010,23 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
      * different thing: the contact details the FORM FILLER types. This is what
      * the agent LOOKS FOR.
      */
+    // Re-read the active profile's background (roles, employers, education,
+    // skills) from the master resume — the fix for a profile still carrying
+    // the template's "Example Corp". Search goals are never touched.
+    if (req.method === 'POST' && path === '/api/search-profiles/refresh-background') {
+      if (runState.running) {
+        return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — try again when it finishes` });
+      }
+      const root = requireConfigRoot();
+      const result = await refreshBackgroundFromResume(root, join(root, MASTER_RESUME_RELATIVE), { db });
+      if (!result.ok) return sendJson(res, 409, { error: result.reason });
+      let warning = null;
+      if (result.changed.length) {
+        warning = reloadConfig();
+        if (!warning) scheduleRescore();
+      }
+      return sendJson(res, 200, { id: result.id, changed: result.changed, warning });
+    }
     if (req.method === 'GET' && path === '/api/search-profiles') {
       const root = requireConfigRoot();
       const listing = listSearchProfiles(root);
@@ -2525,6 +2566,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   }
 
   schedulePostingSweeps();
+  reconcilePackets();
 
   return {
     server, runState, inFlight, flushTracker, browserAvailableCached,

@@ -220,3 +220,28 @@ export async function sweepClosedPostings() {
   };
   setTimeout(poll, 3000);
 }
+
+
+/**
+ * Replace the template background in the active profile with what the master
+ * resume states (roles, employers, education, skills). Search goals are left
+ * alone. The placeholder notice's one-click fix.
+ */
+export async function fillProfileFromResume() {
+  try {
+    const result = await postJson('/api/search-profiles/refresh-background', {});
+    if (!result.changed?.length) {
+      toast('Your profile already matches your master resume.', 'good');
+    } else {
+      const names = { workHistory: 'work history', education: 'education', skills: 'skills', yearsExperience: 'years of experience',
+        currentRoles: 'current roles', earlierRoles: 'earlier roles', certifications: 'certifications', industries: 'industries',
+        seniority: 'seniority', leadership: 'leadership' };
+      toast(`Profile updated from your resume: ${result.changed.map((k) => names[k] ?? k).join(', ')}.`
+        + (result.warning ? ` ${result.warning}` : ''), result.warning ? 'bad' : 'good');
+    }
+    scheduleTodayReload();
+    scheduleBoardReload();
+  } catch (err) {
+    toast(err.message, 'bad');
+  }
+}

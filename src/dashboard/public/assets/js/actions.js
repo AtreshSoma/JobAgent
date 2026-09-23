@@ -8,7 +8,7 @@ import { loadSections, renderTabs } from './analytics.js';
 import { loadBoard } from './board.js';
 import { cssEscape, loadDetail, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
 import { closeDialog, openDialog, runPendingConfirm } from './dialogs.js';
-import { autofillOne, checkLink, sweepClosedPostings, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
+import { autofillOne, checkLink, sweepClosedPostings, fillProfileFromResume, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
 import { setView, todayAct } from './today.js';
 import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection, reasonHandlers, showCompare, toggleSelect } from './selection.js';
 import { openDocuments, openReports } from './reports.js';
@@ -229,6 +229,7 @@ export const ACTIONS = {
   'prepare-one': (target) => prepareOne(target.dataset.id),
   'check-link': (target) => checkLink(target.dataset.id),
   'sweep-postings': () => sweepClosedPostings(),
+  'fill-profile-from-resume': () => fillProfileFromResume(),
   'preview-resume': (target) => openResumePreview(target.dataset.id),
   'copy-id': (target) => copyText(target.dataset.id, 'Job id copied'),
   'save-note': () => saveNote(),
@@ -277,7 +278,7 @@ export const BUSY_ACTIONS = new Set([
   'save-answers', 'delete-answer', 'export-jobs', 'export-tracker', 'clear-role-search',
   'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare',
   'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
-  'check-link', 'save-note', 'today-act', 'decision-reason',
+  'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
 ]);
 

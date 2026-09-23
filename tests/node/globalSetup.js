@@ -87,6 +87,9 @@ export default function setup() {
   process.env.JOB_AGENT_BROWSER_CHECK = 'off';
   // No background posting-status sweep (it would call real ATS APIs).
   process.env.JOB_AGENT_POSTING_SWEEP = 'off';
+  // Fixture approvals point at packets that do not exist on disk; the boot-time
+  // packet check would withdraw them. packetHygiene.test.js turns it back on.
+  process.env.JOB_AGENT_PACKET_HYGIENE = 'off';
   const root = buildTestRoot();
   process.env.JOB_AGENT_ROOT = root;
   return () => {

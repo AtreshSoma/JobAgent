@@ -430,7 +430,10 @@ function addColumnIfMissing(db, table, column, type) {
  * 455 -> 211 ms, both now COVERING). See tests/node/dbMigrations.test.js.
  */
 /** Statuses a closed posting is retired from (open, nobody has acted on it). */
-const RETIREABLE_STATUSES = new Set(['scored', 'needs_description']);
+const RETIREABLE_STATUSES = new Set(['scored', 'needs_description', 'near_miss', 'queued']);
+
+/** Statuses where a packet may exist but nothing was submitted or is mid-fill. */
+const UNSUBMITTED_PACKET_STATUSES = new Set(['queued', 'prepared', 'failed', 'assist_blocked', 'cancelled', 'skipped']);
 
 export const MIGRATIONS = Object.freeze([
   {
@@ -1194,6 +1197,17 @@ export class Database {
       && Number(row.applied ?? 0) !== 1
       && !row.application_packet_path
       && !['shortlisted', 'approved'].includes(row.user_decision ?? '');
+    // A closed posting with an unsubmitted packet: the packet can never be used
+    // (the four "Retry auto-fill" jobs on 2026-09-23 included two of these).
+    const deadPacket = state === 'closed'
+      && Number(row.applied ?? 0) !== 1
+      && Boolean(row.application_packet_path)
+      && UNSUBMITTED_PACKET_STATUSES.has(row.status);
+    if (deadPacket) {
+      const out = this.supersedePacket(id, { reason: `the employer closed this posting${via ? ` (${via})` : ''}`, retire: true });
+      this.prepareCached('UPDATE jobs SET link_state = ?, link_checked_at = ? WHERE id = ?').run(state, checkedAt, id);
+      return { id, state, retired: out.action === 'retired' };
+    }
     if (retireable) {
       this.setJobStatus(id, 'discarded', {
         reason: `expired: the employer closed this posting${via ? ` (${via})` : ''}`,
@@ -1214,7 +1228,8 @@ export class Database {
    */
   listPostingsToCheck({ olderThan, limit = 300 } = {}) {
     return this.db.prepare(`SELECT id, source, url, company, title FROM jobs
-      WHERE status IN ('scored', 'needs_description')
+      WHERE status IN ('scored', 'needs_description', 'near_miss', 'queued', 'prepared',
+                       'failed', 'assist_blocked', 'cancelled', 'skipped')
         AND COALESCE(applied, 0) = 0
         AND (link_checked_at IS NULL OR link_checked_at < ?)
       ORDER BY COALESCE(score, 0) DESC
@@ -1460,6 +1475,63 @@ export class Database {
       approval_status,
       approved_by_user: approved_by_user ? 1 : 0,
       approved_at,
+    });
+  }
+
+  /**
+   * Withdraw a packet that can no longer be used, and put the job back where a
+   * fresh one can be prepared.
+   *
+   * Two ways a packet goes bad after approval: it was built for ANOTHER profile
+   * (the template "Jane Doe", or a profile since switched away from — every
+   * fill path now refuses those), or its file is gone. Leaving it approved kept
+   * the job on Today as "Retry auto-fill" forever, a button that could only
+   * fail. Rejecting the approval instead would read on the board as if the
+   * user had rejected the JOB, which they did not.
+   *
+   * So: the approval row is removed (with an event recording why), the
+   * pointers to the old documents are cleared (the files stay on disk), and
+   * the job returns to `queued` + shortlisted — the user already chose it once.
+   * A closed posting is retired instead: nothing can be applied to there.
+   *
+   * @param {string} jobId
+   * @param {{ reason: string, retire?: boolean }} options
+   * @returns {{ id: string, action: 'requeued'|'retired'|'skipped' }}
+   */
+  supersedePacket(jobId, { reason, retire = false } = {}) {
+    return this.transaction(() => {
+      const job = this.prepareCached(
+        'SELECT status, applied, user_decision FROM jobs WHERE id = ?',
+      ).get(jobId);
+      // Never touch a submission, or a form the human may be finishing.
+      if (!job || Number(job.applied) === 1
+        || ['submitted', 'submit_unverified', 'ready_for_submit', 'assist_started'].includes(job.status)) {
+        return { id: jobId, action: 'skipped' };
+      }
+      this.prepareCached('DELETE FROM approval_queue WHERE job_id = ?').run(jobId);
+      const cleared = {
+        application_packet_path: null, resume_path: null, resume_docx_path: null, resume_pdf_path: null,
+        cover_letter_path: null, output_folder_path: null, prepared_at: null, assist_blockers: null,
+      };
+      const now = new Date().toISOString();
+      if (retire) {
+        this.upsertJob({
+          id: jobId, ...cleared, status: 'discarded',
+          discard_reason: `expired: the employer closed this posting (checked ${now.slice(0, 10)})`,
+        });
+      } else {
+        this.upsertJob({
+          id: jobId, ...cleared, status: 'queued',
+          user_decision: job.user_decision === 'rejected' || job.user_decision === 'archived'
+            ? job.user_decision : 'shortlisted',
+        });
+      }
+      this.insertEvent({
+        id: randomUUID(), job_id: jobId, event_type: 'packet_superseded',
+        message: `${retire ? 'retired' : 'returned to prepare'}: ${reason}`,
+        metadata: { from: job.status, reason, retire },
+      });
+      return { id: jobId, action: retire ? 'retired' : 'requeued' };
     });
   }
 

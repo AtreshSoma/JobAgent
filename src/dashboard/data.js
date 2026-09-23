@@ -2205,23 +2205,29 @@ export function todayQueue(db, {
   const candidates = [];
   const topUp = [];
   for (const row of rows) {
+    // A posting its employer closed is never "worth your time" — checked FIRST,
+    // or a closed job whose last fill also failed on a missing browser was
+    // offered as "Retry auto-fill" (2026-09-23: Instacart and Backblaze).
+    // Rows nobody acted on are already retired by the posting check; one you
+    // shortlisted or prepared stays, and the only useful next step is to
+    // archive it.
+    if (row.linkState === 'closed') {
+      // Only work the user put in earns an Archive chore; an untouched closed
+      // row simply leaves the list (the posting check retires it).
+      if ([APP_STATUS.SHORTLISTED, APP_STATUS.NEEDS_REVIEW, APP_STATUS.APPROVED, APP_STATUS.FAILED,
+        APP_STATUS.BLOCKED, APP_STATUS.CANCELLED].includes(row.appStatus)) {
+        candidates.push({ row, action: { rank: 9, kind: 'archive', label: 'Archive — the posting is closed', closed: true } });
+      }
+      continue;
+    }
     if (isEnvironmentFailure(row)) {
       // Still non-actionable while the browser is missing (or unknown); once a
       // live check says it is installed, the job is ordinary retry work.
       if (browserAvailable === true) {
         candidates.push({
           row,
-          action: { rank: 6, kind: 'autofill', label: 'Retry auto-fill — the browser is installed now', recovered: true },
+          action: { rank: 6, kind: 'autofill', label: 'Retry auto-fill', recovered: true },
         });
-      }
-      continue;
-    }
-    // A posting its employer closed is never "worth your time". Rows nobody
-    // acted on are already retired by the posting check; one you shortlisted or
-    // prepared stays, and the only useful next step is to archive it.
-    if (row.linkState === 'closed') {
-      if ([APP_STATUS.SHORTLISTED, APP_STATUS.NEEDS_REVIEW, APP_STATUS.APPROVED].includes(row.appStatus)) {
-        candidates.push({ row, action: { rank: 9, kind: 'review', label: 'The employer closed this posting — archive it', closed: true } });
       }
       continue;
     }

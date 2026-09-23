@@ -5,7 +5,7 @@ import { state } from './state.js';
 import { api, apiOptional } from './api.js';
 import { statusLabel } from './board.js';
 import { fitLabel, markCurrentRow, renderDetail, selectJob } from './detail.js';
-import { autofillOne, prepareOne, simpleAction } from './mutations.js';
+import { autofillOne, decide, prepareOne, simpleAction } from './mutations.js';
 import { syncSelectionBar } from './selection.js';
 import { openHealth, openProfile } from './profile.js';
 import { openSubmitDialog } from './actions.js';
@@ -175,14 +175,19 @@ export function renderNotices() {
       el('div', { class: 'notice-body' },
         el('b', { text: notice.message }),
         notice.fix ? fixLine(notice.fix) : null),
-      NOTICE_ACTION[notice.code] ? el('button', {
-        type: 'button', class: 'small', 'data-action': NOTICE_ACTION[notice.code][0], text: NOTICE_ACTION[notice.code][1],
-      }) : null));
+      NOTICE_ACTION[notice.code] ? el('div', { class: 'notice-actions' },
+        ...NOTICE_ACTION[notice.code].map(([action, label], i) => el('button', {
+          type: 'button', class: i === 0 ? 'small primary' : 'small', 'data-action': action, text: label,
+        }))) : null));
   }
 }
 
 /** Notice code -> the dialog that resolves it. */
-export const NOTICE_ACTION = { profile_placeholders: ['open-profile', 'Open application profile'] };
+export const NOTICE_ACTION = {
+  // The resume already states every value the template left behind, so the
+  // one-click fix comes first; the editor stays for anything it cannot know.
+  profile_placeholders: [['fill-profile-from-resume', 'Fill from my resume'], ['open-profile', 'Edit profile…']],
+};
 
 /** Why an Auto-fill control is unavailable, or null when it can be used. */
 export function autofillBlockedReason() {
@@ -277,6 +282,8 @@ export async function todayAct(target) {
     case 'answer': await openProfile(); break;
     case 'submit': openSubmitDialog(id); break;
     case 'fix_setup': await openHealth(); break;
+    // A closed posting: archiving is the whole next step (with the usual Undo).
+    case 'archive': await decide(id, 'archived'); break;
     default: await selectJob(id, { user: true });
   }
   scheduleTodayReload(600);

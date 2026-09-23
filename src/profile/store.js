@@ -468,6 +468,63 @@ export async function proposeProfileFromResume(root, resumePath, { extractDocxTe
 }
 
 /**
+ * Re-read the ACTIVE profile's background (what the candidate has DONE) from
+ * the master resume, leaving the search intent (what they WANT) untouched.
+ *
+ * Why this exists: a profile migrated from the template candidate.json kept
+ * the template's background — "Example Corp", "Example University", a
+ * placeholder achievement bullet, no skills. Those values fail the placeholder
+ * guard, so no application could ever be prepared, and nothing in the product
+ * could replace them short of hand-editing JSON. The resume already states
+ * every one of them.
+ *
+ * Refuses when the resume names a different person than the profile — the
+ * same guard `proposeProfileFromResume` applies — so one candidate's history
+ * can never land in another's applications. A field the resume does not state
+ * keeps its current value unless that value is template text.
+ *
+ * @param {string} root
+ * @param {string} resumePath
+ * @param {{ extractDocxText?: Function, db?: object, now?: Date }} [deps]
+ * @returns {Promise<{ ok: boolean, reason?: string, id?: string, changed?: string[], activated?: object }>}
+ */
+export async function refreshBackgroundFromResume(root, resumePath, { extractDocxText, db = null, now = new Date() } = {}) {
+  if (!existsSync(resumePath)) return { ok: false, reason: 'no master resume has been uploaded yet' };
+  const active = readActiveProfile(root);
+  if (!active) return { ok: false, reason: 'no search profile is active — create one first' };
+  const { buildBackground, namesSamePerson } = await import('./fromResume.js');
+  const { isPlaceholderValue } = await import('../config/placeholders.js');
+  const extract = extractDocxText ?? (await import('../resume/docxText.js')).extractDocxText;
+  const { paragraphs } = extract(readFileSync(resumePath));
+  const fresh = buildBackground(paragraphs, { sourceFile: resumePath, now });
+  if (fresh._name && !namesSamePerson(fresh, active)) {
+    return { ok: false, reason: `the master resume names ${fresh._name}, not the active profile's candidate — create a separate profile for them instead` };
+  }
+  const templated = (v) => {
+    if (Array.isArray(v)) return v.length === 0 || v.every((x) => templated(x));
+    if (v && typeof v === 'object') return Object.values(v).some((x) => typeof x === 'string' && isPlaceholderValue(x));
+    return v == null || v === '' || (typeof v === 'string' && isPlaceholderValue(v));
+  };
+  const before = active.background ?? {};
+  const next = { ...before };
+  const changed = [];
+  for (const key of ['currentRoles', 'earlierRoles', 'yearsExperience', 'seniority', 'skills', 'industries',
+    'certifications', 'education', 'workHistory', 'leadership']) {
+    const value = fresh[key];
+    const empty = value == null || value === '' || (Array.isArray(value) && value.length === 0);
+    if (empty && !templated(before[key])) continue; // the resume is silent; keep what the user has
+    if (JSON.stringify(before[key]) === JSON.stringify(value)) continue;
+    next[key] = empty ? (Array.isArray(before[key]) ? [] : null) : value;
+    changed.push(key);
+  }
+  Object.assign(next, { source: 'resume', sourceFile: resumePath, extractedAt: now.toISOString() });
+  if (!changed.length) return { ok: true, id: active.id, changed: [] };
+  saveProfile(root, { ...active, background: next, updatedAt: now.toISOString() });
+  const activated = activateProfile(root, active.id, { db });
+  return { ok: true, id: active.id, changed, activated };
+}
+
+/**
  * Merge selected evidence from a proposal into the ACTIVE profile.
  *
  * Additive only, and it only ever touches the two things a resume is evidence

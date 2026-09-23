@@ -13,6 +13,7 @@
  *   profiles preview <id>         the same, computing but writing nothing
  *   profiles from-resume [--save] build a profile from the master resume
  *   profiles migrate              import an existing candidate.json as profile 1
+ *   profiles refresh-background   re-read the active profile's background from the master resume
  *   profiles delete <id>
  */
 
@@ -22,7 +23,7 @@ import { existsSync } from 'node:fs';
 import { PROJECT_ROOT } from '../config/loadConfig.js';
 import {
   listProfiles, readProfile, readActiveProfile, activateProfile, deleteProfile,
-  migrateLegacyCandidate, saveProfile, proposeProfileFromResume,
+  migrateLegacyCandidate, saveProfile, proposeProfileFromResume, refreshBackgroundFromResume,
 } from '../profile/store.js';
 import { deriveFromProfile } from '../profile/derive.js';
 import { loadRoleFamilies } from '../profile/roleFamilies.js';
@@ -49,11 +50,12 @@ export async function runProfiles({ parsed, root = PROJECT_ROOT } = {}) {
     case 'activate': return activateAction(root, id, { dryRun: false });
     case 'from-resume': return fromResumeAction(root, parsed);
     case 'migrate': return migrateAction(root);
+    case 'refresh-background': return refreshBackgroundAction(root);
     case 'delete': return deleteAction(root, id);
     default:
       throw new Error(
         `unknown profiles subcommand "${action}". `
-        + 'Use: list, show, preview, activate, from-resume, migrate, delete.',
+        + 'Use: list, show, preview, activate, from-resume, refresh-background, migrate, delete.',
       );
   }
 }
@@ -196,6 +198,21 @@ async function fromResumeAction(root, parsed) {
   out(`Saved profile "${saved.id}". It is NOT active yet — activate it with:`);
   out(`  npm run profiles activate ${saved.id}`);
   return { command: 'profiles', ok: true, saved: true, id: saved.id, proposal, comparison };
+}
+
+async function refreshBackgroundAction(root) {
+  const result = await refreshBackgroundFromResume(root, join(root, MASTER_RESUME));
+  if (!result.ok) {
+    out(`Not changed — ${result.reason}.`);
+    return { command: 'profiles', ...result };
+  }
+  if (!result.changed.length) {
+    out('Your profile background already matches the master resume. Nothing to change.');
+    return { command: 'profiles', ...result };
+  }
+  out(`Updated "${result.id}" from the master resume: ${result.changed.join(', ')}.`);
+  out('Your search goals (target roles, locations, pay, authorization) were not touched.');
+  return { command: 'profiles', ...result };
 }
 
 function migrateAction(root) {

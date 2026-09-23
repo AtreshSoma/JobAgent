@@ -213,7 +213,7 @@ describe('Today never recommends a closed posting', () => {
     db.upsertJob({ id: 'c', title: 'C', status: 'scored', score: 60, tier: 'Queue', user_decision: 'shortlisted' });
     const items = todayQueue(db, { now: new Date('2026-09-23T12:00:00.000Z') }).items;
     expect(items.map((i) => i.id)).not.toContain('b');
-    expect(items.find((i) => i.id === 'a')?.nextAction.label).toMatch(/closed this posting/);
+    expect(items.find((i) => i.id === 'a')?.nextAction).toMatchObject({ kind: 'archive', label: expect.stringMatching(/posting is closed/) });
     db.close();
   });
 });

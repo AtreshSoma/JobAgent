@@ -86,7 +86,7 @@ export function buildBackground(paragraphs = [], { sourceFile = '', now = new Da
     industries: industriesIn(allText),
     certifications: certificationsIn(sections),
     education: educationIn(sections),
-    workHistory: [],
+    workHistory: workHistoryIn(sections),
     leadership: leadershipIn(allText),
     // Not part of the stored background — returned so the caller can ask
     // "is this the same person?" before overwriting anything.
@@ -216,15 +216,82 @@ export function educationIn(sections) {
       const degreeLike = /\b(bachelor|master|associate|doctor|phd|ph\.d|mba|b\.?s|m\.?s|b\.?a|m\.?a|diploma|certificate)\b/i;
       const degreePart = [head, ...rest].find((p) => degreeLike.test(p)) ?? '';
       const institution = [head, ...rest].find((p) => p && p !== degreePart && !/^\d{4}$/.test(p.trim())) ?? head ?? '';
+      // "Master of Science in Computer Science" is a degree AND a field; the
+      // eligibility gate and the application form each want one of them.
+      const degreeText = String(degreePart).trim();
+      const split = /^(.*?\b(?:bachelor|master|associate|doctor)\w*(?:'s)?(?:\s+of\s+[A-Za-z]+)?)\s+in\s+(.+)$/i.exec(degreeText);
       out.push({
         institution: String(institution).trim(),
-        degree: String(degreePart).trim(),
-        field: '',
+        degree: split ? split[1].trim() : degreeText,
+        field: split ? split[2].replace(/\s*\(.*$/, '').trim() : '',
         graduationYear: year,
       });
     }
   }
   return out.slice(0, 20);
+}
+
+const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\\.?';
+const DATE_POINT = `(?:${MONTH}\\s+)?(?:19|20)\\d{2}`;
+/** "April 2022 - Present", "2019 – 2021", "Jan 2020 to Mar 2022". */
+const DATE_RANGE_RE = new RegExp(`(${DATE_POINT})\\s*(?:[-–—]|to)\\s*(${DATE_POINT}|present|current|now)`, 'i');
+/** An achievement bullet opens with a past-tense verb ("Architected", "Led", "Built"). */
+const ACHIEVEMENT_RE = /^(?:[•▪◦·*-]\s*)?(?:[A-Z][a-z]+ed|Built|Led|Ran|Won|Grew|Drove|Made|Cut|Set|Wrote|Taught|Oversaw|Shipped|Mentored|Brought|Sold|Held|Kept|Spun|Leads?|Owns?|Drives?|Builds?|Manages?|Designs?)\b/;
+
+/**
+ * The roles on the resume: employer, title, place, dates and the first few
+ * achievement bullets, copied VERBATIM.
+ *
+ * A role opens with a header line ("Senior Data Engineer, Finance Analytics |
+ * Capgemini America") followed by a line holding a date range ("Raleigh, NC
+ * (Remote) | April 2022 - Present"); either order of the two halves is read.
+ * Nothing is paraphrased or inferred — a field the resume does not state is
+ * left empty, which is what lets the profile carry the resume's own words
+ * instead of the template's "Example Corp" (the placeholders that blocked
+ * every application on 2026-09-23).
+ *
+ * @param {Array<{kind: string, lines: string[]}>} sections
+ * @returns {Array<{employer: string, title: string, location: string, startDate: string, endDate: string, current: boolean, highlights: string[]}>}
+ */
+export function workHistoryIn(sections) {
+  const roles = [];
+  const clean = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
+  for (const section of sections) {
+    if (section.kind !== 'experience') continue;
+    const lines = section.lines.map(clean).filter(Boolean);
+    for (let i = 0; i < lines.length - 1; i += 1) {
+      const dates = DATE_RANGE_RE.exec(lines[i + 1]);
+      if (!dates || DATE_RANGE_RE.test(lines[i]) || lines[i].length > 160) continue;
+      // Header: "Title, Team | Employer (note)" — the employer is the side
+      // after the bar; without a bar, "Title at Employer" / "Title — Employer".
+      const header = lines[i];
+      let [titlePart, employerPart] = header.includes('|')
+        ? header.split('|').map(clean)
+        : header.split(/\s+(?:at|@|—|–)\s+/).map(clean);
+      employerPart = clean(String(employerPart ?? '').replace(/\([^)]*\)/g, ''));
+      const title = clean(String(titlePart ?? '').split(',')[0]);
+      if (!title || !employerPart) continue;
+      const location = clean(lines[i + 1].replace(dates[0], '').replace(/[|,–—-]\s*$/, '').replace(/\s*\|\s*$/, ''));
+      const end = dates[2];
+      const current = /present|current|now/i.test(end);
+      const highlights = [];
+      for (let j = i + 2; j < lines.length && highlights.length < 3; j += 1) {
+        if (j + 1 < lines.length && DATE_RANGE_RE.test(lines[j + 1])) break; // next role
+        if (ACHIEVEMENT_RE.test(lines[j]) && lines[j].length >= 40) highlights.push(lines[j].replace(/^[•▪◦·*-]\s*/, ''));
+      }
+      roles.push({
+        employer: employerPart,
+        title,
+        location: location.replace(/^\||\|$/g, '').trim(),
+        startDate: clean(dates[1]),
+        endDate: current ? '' : clean(end),
+        current,
+        highlights,
+      });
+      i += 1;
+    }
+  }
+  return roles.slice(0, 30);
 }
 
 /** People-leadership evidence, with the lines that produced it. */
