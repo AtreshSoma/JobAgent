@@ -1968,6 +1968,18 @@ kbd {
    button rather than the plain text of an ordinary notice. */
 .undo-toast { display: flex; align-items: center; gap: var(--s3); padding-right: 10px; }
 .undo-toast button { flex: none; }
+.undo-toast[data-reasons] { flex-wrap: wrap; max-width: min(560px, 92vw); }
+.reason-row { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 12px; }
+.chipbtn {
+  padding: 2px 9px; border-radius: var(--r-full); font-size: 12px; min-height: 24px;
+  background: var(--chip); border-color: transparent; color: var(--text-dim);
+}
+.chipbtn:hover { color: var(--text); border-color: var(--line); background: var(--surface-3); }
+.reason-form { display: flex; gap: 6px; flex: 1; }
+.reason-note {
+  flex: 1; min-width: 0; background: var(--surface); color: var(--text);
+  border: 1px solid var(--line); border-radius: var(--r-xs); padding: 3px 8px; font: inherit; font-size: 12px;
+}
 @keyframes toastin { from { opacity: 0; transform: translateY(6px); } }
 
 #selbar {

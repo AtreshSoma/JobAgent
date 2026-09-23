@@ -202,3 +202,30 @@ describe('run history (U8)', () => {
     expect(app).toContain('function slowProgress(host, message)');
   });
 });
+
+describe('closing a job can be undone, and can say why (U9)', () => {
+  it('offers undo for a single Reject/Archive, not only for batches', () => {
+    const fn = app.slice(app.indexOf('function announceDecision'), app.indexOf('function offerUndo'));
+    expect(fn).toContain("decision !== 'rejected' && decision !== 'archived'");
+    expect(fn).toContain('offerUndo(');
+    expect(fn).toContain('reasonFor: { jobIds: [id], decision }');
+    expect(app).toContain('closes ? { reasonFor: { jobIds: [...done], decision } } : {}');
+  });
+
+  it('offers the eight reason chips and posts the contract fields', () => {
+    for (const key of ['salary', 'location', 'seniority', 'sponsorship', 'stack', 'company', 'stale', 'other']) {
+      expect(app).toContain(`['${key}', `);
+    }
+    expect(app).toContain("const body = { decision, reason, ...(reasonNote ? { reasonNote } : {}) };");
+    expect(app).toContain("postJson('/api/decide-batch', { jobIds, ...body })");
+  });
+
+  it('does not let the undo toast expire under the pointer or focus', () => {
+    expect(app).toContain("node.addEventListener('focusin', hold);");
+    expect(app).toContain("node.addEventListener('pointerenter', hold);");
+  });
+
+  it('shows a recorded decision reason in the rail', () => {
+    expect(app).toContain('if (job.decisionReason)');
+  });
+});

@@ -2798,9 +2798,23 @@ async function checkLink(id) {
   }
 }
 
-/** Confirm a single decision (replaced by the undo toast in the Today work). */
-function announceDecision(_id, decision) {
-  toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
+/**
+ * Say what a single decision did — with a way back when it closed the job.
+ *
+ * Reject and Archive in the rail used to write immediately with nothing but a
+ * "Marked rejected" toast; one mis-click lost the job from the board with no
+ * recovery short of finding it under Closed jobs. They now get the same undo
+ * the batch actions have, plus the optional one-click reason.
+ */
+function announceDecision(id, decision, wasDecision) {
+  if (decision !== 'rejected' && decision !== 'archived') {
+    toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
+    return;
+  }
+  const job = state.known.get(id);
+  const name = job?.title ? `“${job.title}”` : 'this job';
+  offerUndo(`${decision === 'rejected' ? 'Rejected' : 'Archived'} ${name}`,
+    new Map([[id, wasDecision]]), { reasonFor: { jobIds: [id], decision } });
 }
 
 /* ─────────────────────────── Today ───────────────────────────
@@ -3257,8 +3271,10 @@ async function batchDecide(decision) {
     clearSelection();
     scheduleRefresh(0);
     const done = new Set(result.updated);
+    const closes = decision === 'rejected' || decision === 'archived';
     offerUndo(`Marked ${result.updated.length} as ${decision}`,
-      new Map([...before].filter(([id]) => done.has(id))));
+      new Map([...before].filter(([id]) => done.has(id))),
+      closes ? { reasonFor: { jobIds: [...done], decision } } : {});
   } catch (err) { toast(err.message, 'bad'); }
 }
 
@@ -3268,14 +3284,15 @@ async function batchDecide(decision) {
  * Restoring is grouped by prior value so N jobs cost one request per DISTINCT
  * previous decision — typically one or two — rather than one per job.
  */
-function offerUndo(message, wasDecision) {
+function offerUndo(message, wasDecision, { reasonFor = null } = {}) {
   if (!wasDecision.size) { toast(message, 'good'); return; }
   const groups = new Map();
   for (const [id, was] of wasDecision) {
     if (!groups.has(was)) groups.set(was, []);
     groups.get(was).push(id);
   }
-  const node = el('div', { class: 'toast good undo-toast' }, el('span', { text: message }));
+  const node = el('div', { class: 'toast good undo-toast', role: 'group', 'aria-label': message },
+    el('span', { class: 'undo-msg', text: message }));
   const button = el('button', { class: 'small', type: 'button', text: '↩ Undo' });
   button.addEventListener('click', async () => {
     button.disabled = true;
@@ -3292,9 +3309,62 @@ function offerUndo(message, wasDecision) {
     }
   });
   node.append(button);
+  if (reasonFor) node.append(reasonChips(reasonFor, node));
   $('toasts').append(node);
   // Longer than an ordinary toast: an undo you cannot reach is not an undo.
-  setTimeout(() => node.remove(), 12000);
+  // And never while the pointer or focus is on it — choosing a reason, or
+  // reaching Undo by keyboard, must not race a timer.
+  let timer = null;
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => node.remove(), 12000); };
+  const hold = () => clearTimeout(timer);
+  node.addEventListener('pointerenter', hold);
+  node.addEventListener('pointerleave', () => { if (!node.contains(document.activeElement)) arm(); });
+  node.addEventListener('focusin', hold);
+  node.addEventListener('focusout', (event) => { if (!node.contains(event.relatedTarget)) arm(); });
+  arm();
+}
+
+/**
+ * "Why?" — optional, one click. Recorded as `reason` on the same decision
+ * (the server treats a repeated decision as idempotent), so skipping it costs
+ * nothing and choosing one never changes what was decided.
+ */
+const reasonHandlers = new WeakMap();
+
+function reasonChips({ jobIds, decision }, toastNode) {
+  const row = el('div', { class: 'reason-row', role: 'group', 'aria-label': 'Why? (optional)' },
+    el('span', { class: 'faint', text: 'Why?' }));
+  const send = async (reason, reasonNote) => {
+    const body = { decision, reason, ...(reasonNote ? { reasonNote } : {}) };
+    if (jobIds.length === 1) await postJson(`/api/jobs/${encodeURIComponent(jobIds[0])}/decision`, body);
+    else await postJson('/api/decide-batch', { jobIds, ...body });
+    for (const id of jobIds) {
+      const known = state.known.get(id);
+      if (known) known.decisionReason = reason;
+      if (state.detailJob?.id === id) { state.detailJob.decisionReason = reason; renderDetail(state.detailJob); }
+    }
+    row.replaceChildren(el('span', { class: 'faint', text: `Reason saved: ${reasonLabel(reason)}` }));
+  };
+  for (const [key, label] of DECISION_REASONS) {
+    row.append(el('button', {
+      type: 'button', class: 'chipbtn', 'data-action': 'decision-reason', 'data-reason': key, text: label,
+    }));
+  }
+  reasonHandlers.set(row, async (reason) => {
+    if (reason !== 'other') { await send(reason); return; }
+    // "Other" asks for a word or two rather than recording an empty category.
+    const input = el('input', { type: 'text', class: 'reason-note', 'aria-label': 'Reason', placeholder: 'A few words…', maxlength: '200' });
+    const save = el('button', { type: 'submit', class: 'small', text: 'Save' });
+    const form = el('form', { class: 'reason-form' }, input, save);
+    form.addEventListener('submit', (submit) => {
+      submit.preventDefault();
+      withBusy(save, () => send('other', input.value.trim()).catch((err) => toast(err.message, 'bad')));
+    });
+    row.replaceChildren(form);
+    input.focus();
+  });
+  toastNode.dataset.reasons = 'true';
+  return row;
 }
 
 async function showCompare() {
@@ -5104,6 +5174,13 @@ const ACTIONS = {
   'copy-text': (target) => copyText(target.dataset.text, 'Copied'),
   'confirm-submitted': confirmSubmitted,
   'confirm-go': runPendingConfirm,
+  'decision-reason': async (target) => {
+    // The toast's reason row owns the request; the delegated click hands it
+    // the choice, so the busy guard spans the write.
+    const handler = reasonHandlers.get(target.closest('.reason-row'));
+    if (!handler) return;
+    try { await handler(target.dataset.reason); } catch (err) { toast(err.message, 'bad'); }
+  },
   'close-dialog': (target) => closeDialog(target.closest('dialog')),
 };
 
