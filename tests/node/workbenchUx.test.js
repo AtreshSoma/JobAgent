@@ -8,7 +8,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const read = (rel) => readFileSync(new URL(rel, import.meta.url), 'utf8');
 const html = read('../../src/dashboard/public/index.html');
-const css = read('../../src/dashboard/public/assets/css/app.css');
+const css = read('../../src/dashboard/public/assets/css/app.css').replace(/\r\n?/g, '\n');
 const jsDir = new URL('../../src/dashboard/public/assets/js/', import.meta.url);
 // Every module, in a stable order, so assertions do not care which file a
 // function lives in.

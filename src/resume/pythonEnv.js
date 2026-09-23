@@ -37,7 +37,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Project root (src/resume/ -> ../..). */
@@ -46,8 +46,8 @@ export const PROJECT_ROOT = fileURLToPath(new URL('../../', import.meta.url));
 /** The project virtualenv's interpreter for this platform. */
 export function venvPython(root = PROJECT_ROOT, platform = process.platform) {
   return platform === 'win32'
-    ? join(root, '.venv', 'Scripts', 'python.exe')
-    : join(root, '.venv', 'bin', 'python');
+    ? win32.join(root, '.venv', 'Scripts', 'python.exe')
+    : posix.join(root, '.venv', 'bin', 'python');
 }
 
 /**
