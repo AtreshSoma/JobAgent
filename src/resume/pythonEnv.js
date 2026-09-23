@@ -37,7 +37,7 @@
  */
 
 import { existsSync } from 'node:fs';
-import { delimiter, join, posix, win32 } from 'node:path';
+import { posix, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Project root (src/resume/ -> ../..). */
@@ -89,14 +89,15 @@ function pathNames(platform) {
 
 /** Is `name` an executable file somewhere on PATH? (no spawn) */
 function onPath(name, env, platform, exists) {
-  const dirs = String(env?.PATH ?? env?.Path ?? '').split(platform === 'win32' ? ';' : delimiter).filter(Boolean);
+  const pathApi = platform === 'win32' ? win32 : posix;
+  const dirs = String(env?.PATH ?? env?.Path ?? '').split(pathApi.delimiter).filter(Boolean);
   const exts = platform === 'win32'
     ? String(env?.PATHEXT ?? '.EXE;.CMD;.BAT').split(';').filter(Boolean).concat([''])
     : [''];
   return dirs
     // The App Execution Alias stubs are not interpreters (see pathNames).
     .filter((dir) => !(platform === 'win32' && /[\\/]WindowsApps[\\/]?$/i.test(dir)))
-    .some((dir) => exts.some((ext) => exists(join(dir, `${name}${ext.toLowerCase()}`)) || exists(join(dir, `${name}${ext}`))));
+    .some((dir) => exts.some((ext) => exists(pathApi.join(dir, `${name}${ext.toLowerCase()}`)) || exists(pathApi.join(dir, `${name}${ext}`))));
 }
 
 /**

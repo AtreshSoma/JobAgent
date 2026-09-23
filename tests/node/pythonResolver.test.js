@@ -26,6 +26,9 @@ describe('pythonExe / pythonCandidates', () => {
       .toBe('python3');
     expect(pythonExe({ PATH: '/bin' }, { root: '/r', platform: 'linux', exists: has('/bin/python') })).toBe('python');
     expect(venvPython('C:\\r', 'win32')).toMatch(/\.venv[\\/]Scripts[\\/]python\.exe$/);
+    expect(pythonExe({ PATH: 'C:\\Tools;C:\\Users\\Alice\\WindowsApps' }, {
+      root: 'C:\\r', platform: 'win32', exists: has('C:\\Tools\\python.exe'),
+    })).toBe('python');
     expect(pythonCandidates({}, { root: '/r', exists: has('/r/.venv/bin/python'), platform: 'linux' }))
       .toEqual(['/r/.venv/bin/python', 'python3', 'python']);
   });
