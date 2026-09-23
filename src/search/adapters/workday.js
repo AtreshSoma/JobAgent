@@ -788,21 +788,61 @@ async function getJson(fetchImpl, url, requestTimeoutMs) {
  * @returns {string|null} ISO-8601 date, or null when there is nothing to read
  */
 export function parseWorkdayPostedOn(postedOn, now = new Date()) {
+  const range = postedOnRange(postedOn);
+  if (!range) return null;
+  // A UTC DATE, never a timestamp. This returned `now − N days` with the
+  // current time of day, so the same unchanged requisition got a new
+  // `posted_at` on every run — measured: 23,614 rows rewritten per run, each
+  // one failing `materiallyUnchanged` and paying for a full re-score. The label
+  // is day-accurate, so the date is all the precision it supports.
+  return utcDate(new Date(now.getTime() - range.days * DAY_MS));
+}
+
+/** One day in milliseconds. */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** `YYYY-MM-DD` of a Date in UTC. */
+function utcDate(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * What a relative label claims: N days ago, and whether N is a lower bound.
+ * @param {unknown} postedOn
+ * @returns {{days: number, atLeast: boolean}|null}
+ */
+function postedOnRange(postedOn) {
   const s = String(postedOn ?? '').trim().toLowerCase();
   if (!s) return null;
-
-  const daysAgo = (n) => new Date(now.getTime() - n * 24 * 60 * 60 * 1000).toISOString();
-
-  if (/\bposted\s+today\b/.test(s)) return now.toISOString();
-  if (/\bposted\s+yesterday\b/.test(s)) return daysAgo(1);
-
-  const days = /\bposted\s+(\d+)\+?\s*days?\s+ago\b/.exec(s);
-  if (days) return daysAgo(Number(days[1]));
-
-  const months = /\bposted\s+(\d+)\+?\s*months?\s+ago\b/.exec(s);
-  if (months) return daysAgo(Number(months[1]) * 30);
-
+  if (/\bposted\s+today\b/.test(s)) return { days: 0, atLeast: false };
+  if (/\bposted\s+yesterday\b/.test(s)) return { days: 1, atLeast: false };
+  const days = /\bposted\s+(\d+)(\+?)\s*days?\s+ago\b/.exec(s);
+  if (days) return { days: Number(days[1]), atLeast: days[2] === '+' };
+  const months = /\bposted\s+(\d+)(\+?)\s*months?\s+ago\b/.exec(s);
+  if (months) return { days: Number(months[1]) * 30, atLeast: true };
   return null;
+}
+
+/**
+ * Does a previously stored posting date still agree with today's label?
+ *
+ * "Posted 30+ Days Ago" is satisfied by ANY date at least 30 days back, and
+ * "Posted 5 Days Ago" by a date within a day of five days back (the label
+ * rolls over at the tenant's midnight, not ours). When it agrees, the stored
+ * date is kept, so a requisition that has not changed is not rewritten.
+ *
+ * @param {unknown} postedOn today's relative label
+ * @param {string|null} stored the stored posted_at
+ * @param {Date} [now]
+ * @returns {boolean}
+ */
+export function postedOnAgrees(postedOn, stored, now = new Date()) {
+  const range = postedOnRange(postedOn);
+  const at = Date.parse(String(stored ?? ''));
+  if (!range || !Number.isFinite(at)) return false;
+  const ageDays = (Date.parse(utcDate(now)) - Date.parse(utcDate(new Date(at)))) / DAY_MS;
+  if (range.atLeast) return ageDays >= range.days - 1;
+  return Math.abs(ageDays - range.days) <= 1;
 }
 
 /**
