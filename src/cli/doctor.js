@@ -37,6 +37,7 @@ import {
 import { loadConfig, PROJECT_ROOT } from '../config/loadConfig.js';
 import { ui } from './ui.js';
 import { findPlaceholders } from '../config/placeholders.js';
+import { pythonCandidates, checkPythonVersion, MIN_PYTHON } from '../resume/pythonEnv.js';
 
 export const SEVERITY = Object.freeze({ PASS: 'pass', WARN: 'warn', FAIL: 'fail' });
 
@@ -116,10 +117,14 @@ export function optionalProfileGaps(candidate = {}) {
   return OPTIONAL_PROFILE_FIELDS.filter((f) => !present(dig(candidate, f.path)));
 }
 
-/** Resolve the python executable the tailor will use (same logic as tailorRunner). */
-function pythonCandidates(env = {}) {
-  const fromEnv = env.PYTHON || env.PYTHON_EXECUTABLE;
-  return fromEnv ? [fromEnv] : ['python', 'python3'];
+/**
+ * Interpreters to probe, in the SAME order the tailor resolves them
+ * (src/resume/pythonEnv.js). Doctor used to probe `python` then `python3`
+ * while the tailor ran `python`, so it could pass on an interpreter the tailor
+ * never used and ignore the project `.venv` that actually had python-docx.
+ */
+function doctorPythonCandidates(env = {}, root) {
+  return pythonCandidates(env, { root });
 }
 
 /** Run a command synchronously; returns { ok, stdout, stderr } and never throws. */
@@ -349,7 +354,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
   /* ── Python toolchain (tailoring; degrades gracefully) ───────────────── */
   let pythonExe = null;
   let pythonDetail = '';
-  for (const candidate of pythonCandidates(env)) {
+  for (const candidate of doctorPythonCandidates(env, root)) {
     const r = tryRun(spawnImpl, candidate, ['--version']);
     if (r.ok) {
       pythonExe = candidate;
@@ -357,7 +362,14 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
       break;
     }
   }
-  if (pythonExe) {
+  const pyVersion = pythonExe ? checkPythonVersion(pythonDetail) : null;
+  if (pythonExe && !pyVersion.ok) {
+    checks.push(makeCheck('python', 'Python', SEVERITY.WARN,
+      `${pythonExe} is ${pyVersion.version ? `Python ${pyVersion.version}` : `unrecognised (${pythonDetail})`}`
+      + ` — this project needs ${MIN_PYTHON.join('.')}+; resume tailoring may fail and fall back to the master resume`,
+      `Install Python ${MIN_PYTHON.join('.')}+ and create the project venv: python3 -m venv .venv && `
+      + '.venv/bin/python -m pip install -r requirements.txt (or set PYTHON in .env).'));
+  } else if (pythonExe) {
     checks.push(makeCheck('python', 'Python', SEVERITY.PASS, `${pythonExe} — ${pythonDetail}`));
     const docx = tryRun(spawnImpl, pythonExe, ['-c', 'import docx; print(docx.__version__ if hasattr(docx, "__version__") else "ok")']);
     if (docx.ok) {
@@ -397,7 +409,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
   } else {
     checks.push(makeCheck('python', 'Python', SEVERITY.WARN,
       'no python/python3 on PATH — resume tailoring will fall back to the untailored master resume',
-      'Install Python 3.11+ and run: python -m pip install -r requirements.txt (or set PYTHON in .env).'));
+      `Install Python ${MIN_PYTHON.join('.')}+ and run: python3 -m pip install -r requirements.txt (or set PYTHON in .env).`));
   }
 
   /* ── Playwright browser (assist; discovery/scoring work without it) ─── */

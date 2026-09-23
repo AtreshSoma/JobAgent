@@ -22,6 +22,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
@@ -93,7 +94,38 @@ def converter_availability() -> Dict[str, Any]:
     }
 
 
-def _export_with_libreoffice(docx_path: Path, pdf_path: Path, timeout: int = 120) -> Dict[str, Any]:
+# Hard per-converter limits, in seconds. Their SUM must stay below the budget
+# Node allows a Python helper for PDF export (PYTHON_PDF_BUDGET_SECONDS in
+# src/resume/pythonEnv.js, 180 s): LibreOffice was allowed 120 s while Node
+# killed the whole tailor at 60 s, so a slow conversion lost the DOCX result
+# too; and docx2pdf had no limit at all, so a Word stuck on a dialog hung the
+# tailor until Node killed it.
+DOCX2PDF_TIMEOUT_S = 90
+LIBREOFFICE_TIMEOUT_S = 90
+
+
+def _export_with_word(docx_path: Path, pdf_path: Path, timeout: int = DOCX2PDF_TIMEOUT_S) -> str | None:
+    """Convert via docx2pdf in a CHILD interpreter so the call can time out.
+
+    Returns None on success, else the reason it failed.
+    """
+    code = "import sys; from docx2pdf import convert; convert(sys.argv[1], sys.argv[2])"
+    try:
+        proc = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code, str(docx_path), str(pdf_path)],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return f"Word conversion timed out after {timeout}s"
+    except Exception as err:  # noqa: BLE001
+        return f"Word conversion could not start: {err}"
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return f"Word conversion failed: {detail[-1][:200] if detail else f'exit {proc.returncode}'}"
+    return None if pdf_path.exists() else "Word reported success but wrote no PDF"
+
+
+def _export_with_libreoffice(docx_path: Path, pdf_path: Path, timeout: int = LIBREOFFICE_TIMEOUT_S) -> Dict[str, Any]:
     """Convert via LibreOffice headless.
 
     ``--convert-to`` always writes ``<stem>.pdf`` into ``--outdir`` and offers no
@@ -165,22 +197,18 @@ def export_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> 
     #    real Word installation, not just the package.
     word_reason = None
     try:
-        from docx2pdf import convert  # noqa: WPS433 (lazy, optional dependency)
+        import docx2pdf  # noqa: F401,WPS433 (lazy, optional dependency)
     except Exception as err:  # pragma: no cover - environment dependent
         word_reason = f"docx2pdf unavailable: {err}"
     else:
-        try:
-            convert(str(docx_path), str(pdf_path))
-            if pdf_path.exists():
-                return {
-                    "exported": True,
-                    "pdf_path": str(pdf_path),
-                    "pages": pdf_page_count(pdf_path),
-                    "reason": "ok (Word)",
-                }
-            word_reason = "Word reported success but wrote no PDF"
-        except Exception as err:  # pragma: no cover - requires Word
-            word_reason = f"Word conversion failed: {err}"
+        word_reason = _export_with_word(docx_path, pdf_path)  # pragma: no cover - requires Word
+        if word_reason is None:
+            return {
+                "exported": True,
+                "pdf_path": str(pdf_path),
+                "pages": pdf_page_count(pdf_path),
+                "reason": "ok (Word)",
+            }
 
     # 2. LibreOffice. The only converter that can work on Linux/CI, and the
     #    reason this function is no longer a guaranteed failure there.

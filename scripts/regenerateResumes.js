@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { loadConfig } from '../src/config/loadConfig.js';
 import { tailorResumeForJob } from '../src/resume/tailorRunner.js';
+import { pythonExe } from '../src/resume/pythonEnv.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -128,7 +129,8 @@ export function indexPacketsByResume(root) {
 /** Read all text from the master .docx via the Python keyword-audit helper. */
 export function readMasterText(root, env = process.env) {
   const master = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
-  const py = env.PYTHON || env.PYTHON_EXECUTABLE || 'python';
+  // The same resolver as the tailor (env override -> .venv -> python3 -> python).
+  const py = pythonExe(env, { root });
   const code =
     'import sys; sys.path.insert(0, sys.argv[2]); ' +
     'from keywordAudit import read_docx_text; ' +
