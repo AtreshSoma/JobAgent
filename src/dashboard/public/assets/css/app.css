@@ -92,6 +92,24 @@
   --rail: 420px;
   --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
   --mono: "Cascadia Code", "SF Mono", ui-monospace, Consolas, monospace;
+  /* The one place a name is read as a name (.sig-name), not UI chrome. */
+  --signature-font: "Fraunces", Georgia, "Times New Roman", serif;
+}
+
+/* Self-hosted, not linked from Google Fonts: this app's whole premise is that
+   nothing it does reaches a third-party server, and a footer credit is not
+   an exception. One italic weight, latin subset only, ~80KB, loaded lazily
+   (it is the last thing on the page) and skipped entirely offline — the
+   Georgia fallback above still reads as a signature, just not this one. */
+@font-face {
+  font-family: "Fraunces";
+  font-style: italic;
+  /* A variable file (wght 100-900, opsz 9-144); .sig-name pins its own weight
+     and lets optical sizing track the large display size automatically. */
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/assets/fonts/fraunces-italic-variable.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2122;
 }
 
 :root[data-theme="light"] {
@@ -1944,11 +1962,27 @@ kbd {
   font-size: var(--fs-xs); font-weight: 650; letter-spacing: 1.5px;
   text-transform: uppercase; color: var(--text-faint);
 }
-/* Full-strength ink at headline size — this is the only element on the page
-   whose job is to be read as a name. */
+/* The only element on the page whose job is to be read as a NAME, not as UI —
+   so it is the one place that steps out of the interface's system-UI sans and
+   into a serif italic built for exactly this (a byline, a signature). Weight
+   sits at 560: bold enough to anchor the plate, short of the heavy 700 that
+   made it read as another button label. The fill is the monogram's own
+   gradient, so the two feel like one mark rather than an icon plus a caption. */
 .sig-name {
-  font-size: var(--fs-2xl); font-weight: 700; line-height: 1.1;
-  letter-spacing: .3px; color: var(--text);
+  font-family: var(--signature-font);
+  font-style: italic;
+  font-optical-sizing: auto;
+  font-size: calc(var(--fs-2xl) * 1.2); font-weight: 560; line-height: 1.15;
+  letter-spacing: .2px;
+  color: var(--text); /* the fallback, and what forced-colors mode renders */
+  background: linear-gradient(100deg, var(--sig-a) 0%, var(--sig-b) 45%, var(--sig-c) 100%);
+  background-clip: text; -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+}
+/* A system font (the ital 500-700 fallback stack) has no italic OBLIQUE risk
+   here, but a screen reader with no visual rendering still has "Atresh" as
+   plain text — the gradient is paint, never content. */
+@media (forced-colors: active), (prefers-contrast: more) {
+  .sig-name { background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
 }
 /* Wide enough that the three facts sit on ONE line on a laptop — a colophon
    rule, not a paragraph. Narrower windows wrap it between clauses. */
@@ -1993,7 +2027,8 @@ kbd {
 @media print {
   .signature { padding: var(--s3) 0 0; margin-top: var(--s3); }
   .sig-rule, .sig-monogram { display: none; }
-  .sig-name { font-size: var(--fs-lg); }
+  /* Ink on paper, not a gradient a printer will render as flat grey. */
+  .sig-name { font-size: var(--fs-lg); background: none; -webkit-text-fill-color: currentColor; color: var(--text); }
 }
 
 /* ─────────────────── toasts + selection bar ─────────────────── */
