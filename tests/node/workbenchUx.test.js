@@ -273,3 +273,36 @@ describe('phones get the screen back (U11)', () => {
     expect(css).toMatch(/\.run-main \{[^}]*align-items: stretch;[^}]*overflow: hidden;/);
   });
 });
+
+describe('one design system (U12)', () => {
+  it('uses a six-step type scale and no ad-hoc font sizes', () => {
+    for (const step of ['xs', 'sm', 'md', 'lg', 'xl', '2xl']) expect(css).toContain(`--fs-${step}:`);
+    const raw = css.match(/font(?:-size)?: *[0-9.]+(?:px|rem|em)/g) ?? [];
+    expect(raw).toEqual([]);
+  });
+
+  it('does not frost the sticky bars', () => {
+    for (const selector of ['.topbar {', '.filterbar {', '.pagerbar {']) {
+      const rule = css.slice(css.indexOf(selector), css.indexOf('}', css.indexOf(selector)));
+      expect(rule, selector).not.toContain('backdrop-filter');
+    }
+  });
+
+  it('says what slow dialogs are doing, with elapsed time', () => {
+    expect(app).toContain("slowProgress(body, 'Building the report — reading the whole database…')");
+    expect(app).toContain("slowProgress(body, 'Running the system checks");
+    expect(app).toContain("slowProgress(body, 'Reading your master resume");
+  });
+
+  it('lists failing health checks on Today, linked to the dialog that fixes them', () => {
+    expect(html).toContain('id="setupChecklist"');
+    expect(app).toContain("'profile-placeholders': { action: 'open-profile'");
+    expect(app).toContain("resume: { action: 'open-master'");
+    expect(app).toContain("(window.requestIdleCallback ?? ((fn) => setTimeout(fn, 1500)))");
+  });
+
+  it('offers the profile and master resume wherever auto-fill can stall', () => {
+    expect(app).toContain('const setupLinks = () => [');
+    expect(app).toContain('...setupLinks()');
+  });
+});

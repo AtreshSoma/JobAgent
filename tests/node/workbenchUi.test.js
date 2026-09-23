@@ -151,7 +151,8 @@ describe('dashboard shell structure', () => {
     // Smaller controls and a hairline rule, not a second full-height toolbar.
     expect(lane).toMatch(/border-top:/);
     expect(lane).toMatch(/height: 30px/);
-    expect(lane).toMatch(/font-size: 12\.5px/);
+    // Secondary on the type scale (--fs-sm), below the primary lane's --fs-md.
+    expect(lane).toMatch(/font-size: var\(--fs-sm\)/);
   });
 
   it('declares the base control styles BEFORE the lane-2 overrides', () => {

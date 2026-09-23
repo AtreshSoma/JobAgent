@@ -3453,13 +3453,13 @@ function miniTable(headers, rows) {
 
 async function openReports() {
   const body = $('reportsBody');
-  body.textContent = '';
-  body.append(el('div', { class: 'skeleton' }), el('div', { class: 'skeleton' }));
+  const stop = slowProgress(body, 'Building the report — reading the whole database…');
   openDialog($('dlgReports'));
 
   let report;
   try { report = await api('/api/reports'); }
-  catch (err) { body.textContent = ''; body.append(el('div', { class: 'st-blocked', text: err.message })); return; }
+  catch (err) { stop(); body.textContent = ''; body.append(el('div', { class: 'st-blocked', text: err.message })); return; }
+  stop();
 
   const totals = report.dailySummary.totals;
   body.textContent = '';
@@ -3560,11 +3560,10 @@ function looksLikeHeading(line) {
 
 async function openMasterResume() {
   const body = $('masterBody');
-  body.textContent = '';
-  body.append(el('div', { class: 'skeleton' }), el('div', { class: 'skeleton' }));
+  const stop = slowProgress(body, 'Reading your master resume and comparing it with your search…');
   $('masterMsg').textContent = '';
   openDialog($('dlgMaster'));
-  await renderMasterResume();
+  try { await renderMasterResume(); } finally { stop(); }
 }
 
 /**
@@ -4105,11 +4104,10 @@ async function restoreMasterVersion(name) {
  */
 async function openProfile() {
   const body = $('profileBody');
-  body.textContent = '';
-  body.append(el('div', { class: 'skeleton' }), el('div', { class: 'skeleton' }));
+  const stop = slowProgress(body, 'Loading your application profile…');
   profileMessage('');
   openDialog($('dlgProfile'));
-  await renderProfile();
+  try { await renderProfile(); } finally { stop(); }
 }
 
 function profileMessage(text, tone = 'muted') {
@@ -4464,12 +4462,15 @@ async function loadProfileFlag() {
 
 async function openHealth() {
   const body = $('healthBody');
-  body.textContent = '';
-  body.append(el('div', { class: 'skeleton' }));
+  const stop = slowProgress(body, 'Running the system checks — config, Python, the browser…');
   openDialog($('dlgHealth'));
   let health;
   try { health = await api('/api/health'); }
-  catch (err) { body.textContent = ''; body.append(el('div', { class: 'st-blocked', text: err.message })); return; }
+  catch (err) { stop(); body.textContent = ''; body.append(el('div', { class: 'st-blocked', text: err.message })); return; }
+  stop();
+  // The same report feeds Today's setup checklist; keep the two in step.
+  state.health = health;
+  setSystemNotices(state.today?.systemNotices ?? []);
 
   body.textContent = '';
   const checks = Array.isArray(health.checks) ? health.checks : [];
