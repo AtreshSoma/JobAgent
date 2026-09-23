@@ -83,6 +83,11 @@
           "type": "number",
           "minimum": 0
         },
+        "payFit": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Penalty-only: raw points subtracted when a posting's stated pay is below the candidate's target (full penalty at 25% under). Applies only when both sides state pay. Not added to the denominator. Default 6."
+        },
         "eligibility": {
           "type": "number",
           "minimum": 0,
