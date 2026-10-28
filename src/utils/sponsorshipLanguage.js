@@ -218,8 +218,30 @@ const MODS = '(?:\\s*(?:work|employment|employer|visa|visas|immigration|h-?1-?b|
  * appear in the same sentence.
  */
 const DENIAL_BEFORE_RES = [
-  new RegExp(`\\b${NEG_HEAD}${CONNECT}${MODS}$`),
+  // The lookahead keeps "do not NEED sponsorship" / "doesn't require
+  // sponsorship" out: like "does not require" above, it describes WHICH
+  // candidates (often "…are also welcome") rather than refusing anyone, so it
+  // may suppress a confirmation but must not hard-discard. `must not require`
+  // is unaffected — the verb is part of that head, not after it.
+  new RegExp(`\\b${NEG_HEAD}(?!(?:\\s+(?:currently|presently|now))?\\s+(?:need|needs|require|requires)\\b)${CONNECT}${MODS}$`),
 ];
+
+/**
+ * "with or without" contains "without" but negates nothing: "applicants with or
+ * without sponsorship needs are welcome" is an OFFER. Blanked to the same length
+ * so indices stay valid against the other views.
+ */
+export function neutralizeEitherWay(text) {
+  return String(text ?? '').replace(/\bwith\s+or\s+without\b/gi, (m) => ' '.repeat(m.length));
+}
+
+/**
+ * "sponsored" is also an ordinary adjective — "company-sponsored certifications",
+ * "no sponsored relocation". As the visa topic it is a participle: it ends the
+ * clause or is followed by an agent/scope word ("…will not be sponsored for this
+ * role") or by a visa noun. Any other following word means it modifies that word.
+ */
+const SPONSORED_AS_TOPIC_RE = /^(?:\s*(?:$|[^\sa-z])|\s+(?:by|for|at|in|now|or|and|under|through|visas?|h-?1-?b|h1b|immigration|work|employment|status|candidates?|applicants?|positions?|roles?)\b)/;
 
 /**
  * Material a trailing denial may reach across: an example parenthetical and/or
@@ -325,11 +347,15 @@ export function detectSponsorshipDenial(text) {
   //   flat   — line breaks as spaces (evidence rendering)
   //   masked — abbreviation periods neutralized (pattern matching)
   const t = flatten(kept);
-  const masked = maskAbbreviations(kept);
+  const masked = maskAbbreviations(neutralizeEitherWay(kept));
   const evidence = [];
   SPONSOR_TOPIC_RE.lastIndex = 0;
   let m;
   while ((m = SPONSOR_TOPIC_RE.exec(masked)) !== null) {
+    if (m[0] === 'sponsored'
+      && !SPONSORED_AS_TOPIC_RE.test(masked.slice(m.index + m[0].length, m.index + m[0].length + 40))) {
+      continue;
+    }
     const span = denialAt(masked, m.index, m[0].length);
     if (span) {
       const phrase = t.slice(span.start, span.end).replace(/\s+/g, ' ').trim();
@@ -359,7 +385,7 @@ export function affirmativeSponsorshipHits(text, phrases = []) {
   // Phrases are matched against the FLAT view so a phrase that straddles a line
   // break still matches, while boundaries come from the line-preserving view.
   const t = flatten(kept);
-  const masked = maskAbbreviations(kept);
+  const masked = maskAbbreviations(neutralizeEitherWay(kept));
 
   for (const phrase of phrases) {
     const p = flatten(normalizeKeepLines(phrase)).trim();

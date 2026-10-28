@@ -331,6 +331,11 @@ function invokePython(request, deps = {}) {
       }
     });
 
+    // A Python that exits without reading stdin (the WindowsApps alias, a bad
+    // PYTHON, a startup crash) turns a large write into an async EPIPE on the
+    // STREAM. Unlistened, that is an uncaughtException that kills the whole
+    // CLI run; 'close' above already reports the real reason with stderr.
+    child.stdin?.on?.('error', () => {});
     try {
       child.stdin?.write(JSON.stringify(request));
       child.stdin?.end();

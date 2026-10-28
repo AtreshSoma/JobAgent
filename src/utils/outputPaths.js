@@ -19,6 +19,7 @@
  */
 
 import { join, relative } from 'node:path';
+import { createHash } from 'node:crypto';
 
 /** Candidate name fallback if config is unavailable. */
 export const DEFAULT_CANDIDATE_NAME = 'Atresh Somayajula';
@@ -128,6 +129,36 @@ export function folderDateOrId(value) {
   return fsSafeSegment(s) || 'undated';
 }
 
+/** Longest each name segment may be (see buildJobPaths for the arithmetic). */
+export const SEGMENT_CAP = Object.freeze({
+  companyFolder: 40, titleFolder: 55, titleFile: 45, companyFile: 24,
+});
+
+/**
+ * Shorten a name to at most `max` characters, preferring a word boundary so a
+ * title ends on a whole word ("Senior Data Engineer, Platform") rather than
+ * mid-word, and never leaving a trailing dot, space or separator — Windows
+ * silently strips trailing dots/spaces, which would desync the path we record.
+ * @param {string} name
+ * @param {number} max
+ * @returns {string}
+ */
+export function clipName(name, max) {
+  const s = String(name ?? '');
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const lastBreak = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('_'));
+  const head = lastBreak >= max * 0.6 ? cut.slice(0, lastBreak) : cut;
+  return head.replace(/[\s._,;:&()-]+$/g, '');
+}
+
+/** Preserve the identity lost by truncation without increasing the folder cap. */
+function folderName(name, max) {
+  if (name.length <= max) return name;
+  const suffix = createHash('sha256').update(name).digest('hex').slice(0, 10);
+  return `${clipName(name, max - suffix.length - 1)}_${suffix}`;
+}
+
 /**
  * Compute the professional output folder + filenames for one job.
  *
@@ -150,16 +181,22 @@ export function buildJobPaths({
 }) {
   const companyName = fromSlug ? deslug(company) : fsSafeSegment(company);
   const titleName = fromSlug ? deslug(title) : fsSafeSegment(title);
-  const companyFolder = fsSafeSegment(companyName) || 'Unknown Company';
-  const titleFolder = fsSafeSegment(titleName) || 'Untitled Role';
+  // Each segment is capped, because the title appears in the folder AND in
+  // every file name: a real 140-character title produced 421-character paths.
+  // Node writes those, but Python's document.save and Word's PDF export fail
+  // past Windows' 260-character MAX_PATH, so the tailored resume was silently
+  // replaced by the master. These caps keep the longest file under ~255
+  // characters from a typical project root.
+  const companyFolder = folderName(companyName, SEGMENT_CAP.companyFolder) || 'Unknown Company';
+  const titleFolder = folderName(titleName, SEGMENT_CAP.titleFolder) || 'Untitled Role';
   const jobFolder = `${titleFolder}_${folderDateOrId(dateOrId)}`;
 
   const relFolder = join('applications', 'output', companyFolder, jobFolder);
   const folder = join(root, relFolder);
 
   const candidate = candidatePrefix(candidateName);
-  const titleFile = fileToken(titleName);
-  const companyFile = fileToken(companyName);
+  const titleFile = clipName(fileToken(titleName), SEGMENT_CAP.titleFile) || 'Untitled';
+  const companyFile = clipName(fileToken(companyName), SEGMENT_CAP.companyFile) || 'Untitled';
 
   const resumeBase = `${candidate}_Resume_${titleFile}`;
   const coverLetterBase = `${candidate}_Cover_Letter_${titleFile}`;

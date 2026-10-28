@@ -251,6 +251,19 @@ describe('stats, board, decisions against a seeded db', () => {
     expect(() => markSubmittedByHuman(db, 'ghost')).toThrow(/unknown job/);
   });
 
+  it('a second report never downgrades a verified submission or moves its date', () => {
+    const first = new Date('2026-06-01T09:00:00Z');
+    markSubmittedByHuman(db, 'medium', { now: first, confirmationNumber: 'CONF-1' });
+
+    const r = markSubmittedByHuman(db, 'medium', { now: NOW });
+    expect(r.appStatus).toBe(APP_STATUS.SUBMITTED);
+    const job = db.getJob('medium');
+    expect(Number(job.applied)).toBe(1);
+    expect(job.status).toBe('submitted');
+    expect(job.applied_at).toBe(first.toISOString());
+    expect(job.submitted_confirmation).toBe('CONF-1');
+  });
+
   it('gives incomplete historical rows a usable title instead of a blank control label', () => {
     db.upsertJob({ id: 'medium', title: '' });
     const row = listBoardJobs(db, { now: NOW, q: 'globex' })[0];
@@ -721,5 +734,31 @@ describe('explainStatus + boardRow.statusReason', () => {
     expect(classifyAttention({ assist_blockers: ['login required'] }, APP_STATUS.BLOCKED).kind).toBe('sign_in');
     expect(classifyAttention({ url: 'https://linkedin.com/jobs/view/1', assist_blockers: [] }, APP_STATUS.BLOCKED).kind).toBe('aggregator');
     expect(classifyAttention({ assist_blockers: ['navigation failed: HTTP 404 not found'] }, APP_STATUS.BLOCKED).kind).toBe('dead_link');
+  });
+});
+
+describe('board row cache', () => {
+  it('moves clock-derived labels with time without rebuilding the rows', () => {
+    const db = openDatabase({ path: ':memory:' });
+    const now = new Date('2026-06-04T12:00:00Z');
+    db.upsertJob({
+      id: 'c1', company: 'Acme', title: 'Data Engineer', url: 'https://a.example.com/1',
+      source: 'greenhouse', score: 80, tier: 'Priority', status: 'scored',
+      posted_at: new Date(now.getTime() - 23 * 3_600_000).toISOString(),
+    });
+    const first = listBoardJobs(db, { now }).find((r) => r.id === 'c1');
+    expect(first).toMatchObject({ postedLabel: 'Today', postedLast24h: true });
+
+    // Two hours later, nothing written: the same row object is served (no
+    // rebuild), and only its clock fields have moved on.
+    const later = new Date(now.getTime() + 2 * 3_600_000);
+    const second = listBoardJobs(db, { now: later }).find((r) => r.id === 'c1');
+    expect(second).toBe(first);
+    expect(second).toMatchObject({ postedLabel: '1d ago', postedLast24h: false });
+
+    // A write still rebuilds.
+    db.upsertJob({ id: 'c1', notes: 'touched' });
+    expect(listBoardJobs(db, { now: later }).find((r) => r.id === 'c1')).not.toBe(first);
+    db.close();
   });
 });

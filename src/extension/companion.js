@@ -83,7 +83,13 @@ export function readApprovedArtifact({ db, config, jobId, kind, loadPacketImpl =
     : kind === 'cover-letter' ? packet.coverLetterPath : null;
   if (!raw) throw statusError(404, `approved packet has no ${kind} artifact`);
   const root = realpathSync(config.root);
-  const candidate = realpathSync(isAbsolute(raw) ? raw : resolve(root, raw));
+  let candidate;
+  try {
+    candidate = realpathSync(isAbsolute(raw) ? raw : resolve(root, raw));
+  } catch {
+    // The packet names a file that has since been moved or deleted.
+    throw statusError(404, `the approved ${kind} file is no longer on disk`);
+  }
   // Platform-correct containment (see utils/pathSafe.js): comparing strings
   // directly rejected valid artifacts whenever the drive-letter case differed.
   if (!isInsideDirectory(root, candidate)) {

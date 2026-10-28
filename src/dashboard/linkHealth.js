@@ -1,4 +1,6 @@
 /** Honest, non-bypassing health checks for job posting URLs. */
+import { publicOnlyFetch } from '../utils/publicUrl.js';
+
 const AGGREGATORS = /(^|\.)(linkedin|indeed|glassdoor|dice|ziprecruiter|simplyhired|monster)\./i;
 
 export function classifyJobUrl(value) {
@@ -19,8 +21,10 @@ export async function checkJobLink(value, { fetchImpl = fetch, timeoutMs = 12000
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetchImpl(value, {
-      method: 'GET', redirect: 'follow', signal: controller.signal,
+    // Redirects are followed, but each hop must itself be a public address —
+    // otherwise a posting could bounce this check onto the user's own network.
+    const response = await publicOnlyFetch(fetchImpl)(value, {
+      method: 'GET', signal: controller.signal,
       headers: {
         accept: 'text/html,application/xhtml+xml',
         'user-agent': 'JobAgent-LinkCheck/1.0 (local availability check; no form submission)',

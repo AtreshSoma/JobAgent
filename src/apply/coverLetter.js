@@ -41,7 +41,8 @@ export function generateCoverLetter(job, scoreResult, {
   const ctx = buildContext(job, scoreResult, candidate, coverLetter);
   let body = typeof compose === 'function' ? compose(ctx) : composeDefault(ctx, coverLetter);
 
-  body = humanize(body, humanizerPatterns);
+  // The employer's name and the role title are quoted, not written by us.
+  body = humanize(body, humanizerPatterns, { protect: [ctx.company, ctx.title] });
   body = enforceWordCount(body, coverLetter.wordCount);
 
   const text = [coverLetter.greeting, '', body, '', coverLetter.closing, candidate?.identity?.fullName]

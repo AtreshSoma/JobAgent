@@ -63,6 +63,9 @@ const OPTION_SELECTORS = ['[role="option"]', '.select__option', 'li[role="option
  */
 const MAX_COMBOBOX_AUTOPICK = 40;
 
+/** How long a typeahead gets to render its options after we type. */
+const OPTION_WAIT_MS = 1500;
+
 /**
  * After typing into a combobox/typeahead, pick the dropdown option that best
  * matches `value`. Returns the action taken or an error. Best-effort: tries the
@@ -73,6 +76,14 @@ async function pickComboboxOption(page, field, value) {
   const want = String(value ?? '').trim().toLowerCase();
   const allowTopMatch = want.length > 0 && want.length <= MAX_COMBOBOX_AUTOPICK;
   const scope = field.listboxSelector ? `${field.listboxSelector} ` : '';
+
+  // Async typeaheads (Greenhouse's location field) render results a beat after
+  // the keystrokes. Give them a moment before deciding nothing appeared.
+  if (typeof page.waitForSelector === 'function') {
+    const anyOption = OPTION_SELECTORS.map((base) => `${scope}${base}`).join(', ');
+    try { await page.waitForSelector(anyOption, { state: 'attached', timeout: OPTION_WAIT_MS }); }
+    catch { /* none rendered — handled below */ }
+  }
 
   for (const base of OPTION_SELECTORS) {
     const sel = `${scope}${base}`;
@@ -99,12 +110,11 @@ async function pickComboboxOption(page, field, value) {
     } catch { /* try the next container shape */ }
   }
 
-  // Nothing clickable found: commit the highlighted option via keyboard — but
-  // only for short values (never blindly commit after a long/sentence value).
-  if (allowTopMatch && page.keyboard && typeof page.keyboard.press === 'function') {
-    try { await page.keyboard.press('Enter'); return { ok: true, action: 'combobox-enter' }; }
-    catch { /* fall through */ }
-  }
+  // Nothing clickable found: the field goes to the human. There is deliberately
+  // NO "press Enter to commit" fallback. With no listbox open, Enter in a text
+  // input is the browser's implicit form submission — a native <input list>
+  // datalist or a typeahead that had not rendered yet would SUBMIT the
+  // application, bypassing every approval gate on the real submit path.
   return { ok: false, action: 'combobox', error: 'no matching option appeared' };
 }
 

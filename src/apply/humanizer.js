@@ -10,9 +10,13 @@
 /**
  * @param {string} text
  * @param {object} patterns parsed config/humanizer_patterns.json
+ * @param {object} [options]
+ * @param {string[]} [options.protect] proper names (company, job title) that
+ *   must reach the reader intact even when they contain a banned word —
+ *   "Rockstar Games" and "Ninja Van" are employers, not buzzwords.
  * @returns {string}
  */
-export function humanize(text, patterns = {}) {
+export function humanize(text, patterns = {}, { protect = [] } = {}) {
   if (typeof text !== 'string') return '';
   let out = text;
 
@@ -27,12 +31,28 @@ export function humanize(text, patterns = {}) {
     out = out.split(ch).join('');
   }
 
-  // Remove banned phrases (case-insensitive, whole phrase).
+  // Protected names are parked behind private-use placeholders while phrases
+  // are removed, then restored verbatim. They get the same character clean-up
+  // as the text first, so they still match after the dash/quote replacements.
+  const cleanChars = (s) => {
+    let v = s;
+    for (const [from, to] of Object.entries(replacements)) v = v.split(from).join(to);
+    for (const ch of patterns.bannedCharacters ?? []) v = v.split(ch).join('');
+    return v;
+  };
+  const parked = [...new Set(protect.filter((p) => typeof p === 'string' && p.trim()).map(cleanChars))]
+    .sort((a, b) => b.length - a.length);
+  parked.forEach((name, i) => { out = out.split(name).join(`${i}`); });
+
+  // Remove banned phrases (case-insensitive, whole words only — a plain
+  // substring match turned "Gurugram" into "gram" and "Synergy-based" into
+  // "-based").
   for (const phrase of patterns.bannedPhrases ?? []) {
     if (!phrase) continue;
-    const re = new RegExp(escapeRegExp(phrase), 'gi');
-    out = out.replace(re, '');
+    out = out.replace(phraseRegExp(phrase, 'gi'), '');
   }
+
+  parked.forEach((name, i) => { out = out.split(`${i}`).join(name); });
 
   const rules = patterns.rules ?? {};
   if (rules.collapseExclamation !== false) {
@@ -56,9 +76,14 @@ export function hasBannedContent(text, patterns = {}) {
     if (text.includes(ch)) return true;
   }
   for (const phrase of patterns.bannedPhrases ?? []) {
-    if (phrase && lower.includes(phrase.toLowerCase())) return true;
+    if (phrase && phraseRegExp(phrase, 'i').test(lower)) return true;
   }
   return false;
+}
+
+/** A banned phrase as a whole-word, case-insensitive pattern. */
+function phraseRegExp(phrase, flags) {
+  return new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(phrase)}(?![A-Za-z0-9])`, flags);
 }
 
 function escapeRegExp(s) {

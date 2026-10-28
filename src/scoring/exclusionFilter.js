@@ -17,7 +17,7 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 import { usLocationSignal, leadingForeignCountry } from '../utils/usGeography.js';
-import { detectSponsorshipDenial } from '../utils/sponsorshipLanguage.js';
+import { detectSponsorshipDenial, neutralizeEitherWay } from '../utils/sponsorshipLanguage.js';
 
 /**
  * @param {object} job normalized job
@@ -45,7 +45,9 @@ export function applyExclusions(job = {}, exclusions = {}, { now = new Date() } 
   // the reader found 773 real refusals the list missed — including
   // "This role is not eligible for work visa sponsorship", the phrasing that was
   // instead being scored as Confirmed.
-  const denial = matchedPhrases(text, exclusions.sponsorshipDenial ?? []);
+  // The config list is polarity-blind, so "with or without sponsorship" would
+  // match its "without sponsorship" entry; that idiom is blanked first.
+  const denial = matchedPhrases(neutralizeEitherWay(text), exclusions.sponsorshipDenial ?? []);
   if (denial.length) return discard('sponsorship_denial', denial);
   const detected = detectSponsorshipDenial(text);
   if (detected.denied) return discard('sponsorship_denial', detected.evidence.slice(0, 2));

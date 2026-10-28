@@ -23,11 +23,15 @@
   const LS_COLLAPSE = "de_academy_collapsed_v1";
 
   /* ----------------------------- storage ----------------------------- */
+  // Writes are guarded too: storage can throw (private windows, blocked site
+  // data, a full quota), and an unguarded throw here broke the click handler
+  // that called it, so "Mark as complete" silently did nothing.
+  const save = (key, value) => { try { localStorage.setItem(key, value); } catch { /* not persisted */ } };
   const store = {
     progress() { try { return JSON.parse(localStorage.getItem(LS_PROGRESS)) || {}; } catch { return {}; } },
-    setDone(id, done) { const p = store.progress(); if (done) p[id] = 1; else delete p[id]; localStorage.setItem(LS_PROGRESS, JSON.stringify(p)); },
+    setDone(id, done) { const p = store.progress(); if (done) p[id] = 1; else delete p[id]; save(LS_PROGRESS, JSON.stringify(p)); },
     collapsed() { try { return JSON.parse(localStorage.getItem(LS_COLLAPSE)) || {}; } catch { return {}; } },
-    setCollapsed(id, v) { const c = store.collapsed(); if (v) c[id] = 1; else delete c[id]; localStorage.setItem(LS_COLLAPSE, JSON.stringify(c)); },
+    setCollapsed(id, v) { const c = store.collapsed(); if (v) c[id] = 1; else delete c[id]; save(LS_COLLAPSE, JSON.stringify(c)); },
   };
 
   /* ----------------------------- helpers ----------------------------- */
@@ -264,7 +268,7 @@
         ${body}
         <div class="complete-bar">
           <button class="btn ${done ? "done" : ""}" id="completeBtn">${done ? "✓ Completed" : "Mark as complete"}</button>
-          <span style="color:var(--text-faint);font-size:13px">Track what you've studied — saved in your browser.</span>
+          <span style="color:var(--text-faint);font-size:13px">Track what you've studied, saved in your browser.</span>
         </div>
         <div class="pager">
           ${prev ? `<a href="#/${topicKey(prev)}"><span>← Previous</span><b>${prev.title}</b></a>` : `<a class="disabled"><span>← Previous</span><b>Start</b></a>`}
@@ -298,7 +302,9 @@
       const done = topics.filter((t) => progress[`${m.id}/${t.id}`]).length;
       const pct = topics.length ? Math.round((done / topics.length) * 100) : 0;
       const tools = (meta.tools || []).slice(0, 3).map((x) => `<span class="tool-chip sm">${x}</span>`).join("");
-      return `<button class="path-card" onclick="location.hash='#/${m.id}'">
+      // Links, not onclick handlers: the dashboard's CSP (script-src 'self')
+      // refuses inline handlers, which left every card and hero button dead.
+      return `<a class="path-card" href="#/${m.id}">
         <div class="path-top"><div class="ic">${m.icon}</div>${levelBadge(meta.level)}</div>
         <h4>${m.title}</h4>
         <p>${m.summary || ""}</p>
@@ -308,13 +314,13 @@
           <span class="path-cta">View Syllabus →</span>
         </div>
         ${done ? `<div class="path-prog" title="${done}/${topics.length} complete"><span style="width:${pct}%"></span></div>` : ""}
-      </button>`;
+      </a>`;
     }).join("");
 
     const tech = TECH_STACK.map((t) => `<div class="tech-chip"><span class="tech-ic">${t.i}</span>${t.n}</div>`).join("");
 
     const features = [
-      { i: "💡", t: "Concept", d: "The core idea explained in plain language — no jargon." },
+      { i: "💡", t: "Concept", d: "The core idea explained in plain language, no jargon." },
       { i: "🎯", t: "Scenario", d: "A concrete, worked example so the concept actually sticks." },
       { i: "💻", t: "Code", d: "Copy-paste-ready snippets with one-click copy." },
       { i: "⭐", t: "Key Takeaway", d: "The one thing to remember walking into the room." },
@@ -327,10 +333,10 @@
         <section class="hero">
           <div class="eyebrow">Data Engineer Interview Academy</div>
           <h1>Everything you need to land a<br>Senior / Lead Data Engineer offer.</h1>
-          <p>A complete, end-to-end course built from <strong>244 real Data Engineer job applications</strong> — every topic explained simply, with a hands-on scenario and interview-ready answers.</p>
+          <p>A complete, end-to-end course built from <strong>244 real Data Engineer job applications</strong> - every topic explained simply, with a hands-on scenario and interview-ready answers.</p>
           <div class="cta">
-            <button class="btn light" onclick="location.hash='#/intro/welcome'">Start learning free →</button>
-            <button class="btn outline" onclick="location.hash='#/intro/market'">See what's in demand</button>
+            <a class="btn light" href="#/intro/welcome">Start learning free →</a>
+            <a class="btn outline" href="#/intro/market">See what's in demand</a>
           </div>
         </section>
 
@@ -342,12 +348,12 @@
         </div>
 
         <h2 class="section-title">Learning paths</h2>
-        <p class="section-sub">From SQL foundations to system design — each path is self-contained. Start anywhere and track your progress.</p>
+        <p class="section-sub">From SQL foundations to system design, each path is self-contained. Start anywhere and track your progress.</p>
         <div class="path-grid">${paths}</div>
 
         <section class="tech-sec">
           <h2 class="section-title">Master the tools companies actually use</h2>
-          <p class="section-sub">The high-demand data engineering stack — cloud platforms, processing engines, and orchestration.</p>
+          <p class="section-sub">The high-demand data engineering stack, cloud platforms, processing engines, and orchestration.</p>
           <div class="tech-grid">${tech}</div>
         </section>
 
@@ -426,16 +432,25 @@
   }
 
   /* ----------------------------- chrome ------------------------------ */
-  function setTheme(t) {
+  function setTheme(t, persist = true) {
     document.documentElement.setAttribute("data-theme", t);
-    localStorage.setItem(LS_THEME, t);
+    if (persist) save(LS_THEME, t);
     $("#themeToggle").textContent = t === "dark" ? "☀️" : "🌙";
+    $("#themeToggle").setAttribute("aria-label", t === "dark" ? "Switch to light theme" : "Switch to dark theme");
+  }
+  /** A saved choice wins; otherwise follow the operating system's setting. */
+  function initialTheme() {
+    let saved = null;
+    try { saved = localStorage.getItem(LS_THEME); } catch { /* unavailable */ }
+    if (saved === "light" || saved === "dark") return { theme: saved, saved: true };
+    return { theme: matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light", saved: false };
   }
   function openSidebar() { $("#sidebar").classList.add("open"); $("#backdrop").classList.add("show"); }
   function closeSidebar() { $("#sidebar").classList.remove("open"); $("#backdrop").classList.remove("show"); }
 
   function init() {
-    setTheme(localStorage.getItem(LS_THEME) || "light");
+    const start = initialTheme();
+    setTheme(start.theme, start.saved);
     buildNav("");
     render();
 

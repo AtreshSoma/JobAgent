@@ -123,12 +123,13 @@ describe('dashboard shell structure', () => {
     expect(app).not.toMatch(/\$\((?:id|key)\)\.value = /);
   });
 
-  it('keeps every filter inline in two lanes, with no popover at all', () => {
+  it('keeps every filter inline in three aligned rows, with no popover at all', () => {
     // A dropdown pane covered the very rows it had just filtered, hid its own
     // active state behind a count badge, and needed open/close/outside-click/
-    // Escape/clear/done plumbing to be usable. Two visible lanes need none of it.
-    expect(html).toContain('class="filters filters-more"');
-    expect(css).toContain('.filters-more');
+    // Escape/clear/done plumbing to be usable. Visible rows need none of it.
+    for (const row of ['frow-find', 'frow-refine', 'frow-only']) {
+      expect(html, `missing row ${row}`).toContain(row);
+    }
     for (const gone of ['id="moreFilters"', 'id="moreFiltersPanel"', 'id="moreFiltersCount"',
       'toggle-more-filters', 'close-more-filters', 'clear-advanced-filters']) {
       expect(html, `"${gone}" should be gone`).not.toContain(gone);
@@ -138,53 +139,45 @@ describe('dashboard shell structure', () => {
       expect(app, `${gone}() should be gone`).not.toContain(gone);
     }
     expect(css).not.toContain('.secondary-filters');
-    // Each second-lane select names its own field, so no labels are needed and
+    // Each refine select names its own field, so no labels are needed and
     // nothing has to be opened to see what is on.
-    for (const placeholder of ['Any sponsorship', 'Any job type', 'Any source',
-      'Any ATS', 'Any resume']) {
+    for (const placeholder of ['Any fit', 'Any status', 'Any sponsorship', 'Any job type',
+      'Any source', 'Any ATS', 'Any resume']) {
       expect(html, `missing self-describing option "${placeholder}"`).toContain(`>${placeholder}<`);
     }
   });
 
-  it('keeps the second lane visually secondary rather than bulky', () => {
-    const lane = css.slice(css.indexOf('.filters-more {'), css.indexOf('.filters-sep {'));
-    // Smaller controls and a hairline rule, not a second full-height toolbar.
-    expect(lane).toMatch(/border-top:/);
-    expect(lane).toMatch(/height: 30px/);
-    expect(lane).toMatch(/font-size: 12\.5px/);
+  it('lays the refine row out as seven equal columns, so nothing is stranded', () => {
+    // A wrapped flex row left single controls ("City", "Closed jobs") alone on
+    // rows of their own. A grid of equal columns cannot.
+    const refine = html.slice(html.indexOf('frow-refine'), html.indexOf('frow-only'));
+    expect((refine.match(/<select /g) || []).length).toBe(7);
+    expect(css).toMatch(/\.frow-refine \{[^}]*grid-template-columns: repeat\(7, minmax\(0, 1fr\)\)/);
+    // The grid reflows by the card's width, never into a ragged last row.
+    expect(css).toContain('container-type: inline-size');
+    expect(css).toMatch(/@container filters \(max-width: 820px\)[\s\S]*repeat\(4, minmax\(0, 1fr\)\)/);
   });
 
-  it('declares the base control styles BEFORE the lane-2 overrides', () => {
-    // `.filters select` and `.filters-more select` have identical specificity,
-    // so source order decides. With the base rule last, lane 2's 30px controls
-    // were silently reset to 34px and the lane was never actually secondary.
-    const base = css.indexOf('.filters input[type=text], .filters input[type=search], .filters select');
-    const lane = css.indexOf('.filters-more select {');
-    expect(base).toBeGreaterThan(0);
-    expect(lane).toBeGreaterThan(base);
+  it('gives every filter control the same height', () => {
+    const base = css.slice(css.indexOf('.filters input[type=text], .filters input[type=search], .filters select {'));
+    expect(base).toMatch(/^[^}]*height: 34px/);
+    expect(css).toMatch(/\.toggle \{[^}]*height: 34px/);
+    expect(css).toMatch(/\.seg \{[^}]*height: 34px/);
   });
 
-  it('lets the second lane shrink so it can never spill onto a third row', () => {
-    // A <select> sizes to its WIDEST option ("Contract-to-hire"), ~40px more
-    // than the label it displays — enough to push the last toggle down a row.
-    const lane = css.slice(css.indexOf('.filters-more select {'), css.indexOf('.filters-more .toggle'));
-    expect(lane).toMatch(/flex: 1 1 \d+px/);
-    expect(lane).toMatch(/min-width: 0/);
-    expect(lane).toMatch(/max-width: \d+px/);
-  });
-
-  it('runs one left alignment axis down the page', () => {
-    // The tabs, the health facts, the filter card, the chips and the table all
-    // start at the same x. Right-aligning the health facts floated them away
-    // from everything else and put the numbers furthest from their tabs.
-    const band = css.slice(css.indexOf('.pipeline {'), css.indexOf('.health {'));
-    expect(band).toMatch(/align-items: flex-start/);
-    expect(band).toMatch(/flex-direction: column/);
-    expect(css.slice(css.indexOf('.health {'), css.indexOf('.stat {'))).not.toMatch(/margin-left: auto/);
-    expect(css).toContain('justify-content: flex-start');
-    // The run pill and its panel are anchored left too, next to the connection
-    // state, so the header reads identity -> status -> progress -> actions.
-    expect(html.indexOf('id="runbox"')).toBeLessThan(html.indexOf('class="spacer"'));
+  it('keeps status in one row under the header, with the loading bar on top', () => {
+    // The header reads identity -> stage tabs -> actions; everything that
+    // REPORTS state (connection, the run, health) is the header's second row,
+    // so a run result gets the full width instead of an ellipsis.
+    const header = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
+    expect(header.indexOf('id="tabs"')).toBeLessThan(header.indexOf('class="split menu"'));
+    const row = header.slice(header.indexOf('id="statusbar"'));
+    for (const id of ['id="conn"', 'id="runbox"', 'id="health"']) expect(row).toContain(id);
+    expect(row.indexOf('id="runbox"')).toBeLessThan(row.indexOf('class="spacer"'));
+    // The loading bar runs along the very top edge of the window.
+    expect(header).toContain('id="runline"');
+    expect(css).toContain('.topbar .runline { top: 0;');
+    // The run panel opens downward from the status row.
     expect(css.slice(css.indexOf('.run-details {'))).toMatch(/^\s*position: absolute; top: calc\(100% \+ 8px\); left: 0;/m);
   });
 
@@ -201,9 +194,11 @@ describe('dashboard shell structure', () => {
   });
 
   it('keeps the primary workflow reachable from the shell', () => {
-    for (const label of ['Find new jobs', 'Find &amp; prepare', 'Add by URL', 'Interview Prep']) {
+    // One primary button on the header; its siblings live in the split menu.
+    for (const label of ['>Find jobs<', 'Find jobs and prepare packets', 'Add a job by URL', 'Interview Prep']) {
       expect(html).toContain(label);
     }
+    for (const id of ['id="btnDiscover"', 'id="btnPrepare"', 'id="btnAddUrl"']) expect(html).toContain(id);
     for (const action of [
       'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare',
     ]) {
@@ -280,9 +275,10 @@ describe('board pagination and reconciliation', () => {
   });
 
   it('offers page navigation controls', () => {
-    for (const label of ['« First', '‹ Prev', 'Next ›', 'Last »']) {
-      expect(app).toContain(label);
+    for (const label of ['First page', 'Previous page', 'Next page', 'Last page']) {
+      expect(app).toContain(`'aria-label': '${label}'`);
     }
+    expect(app.match(/'data-action': 'page'/g)).toHaveLength(4);
   });
 
   it('clears manual filters when a tab scope is chosen so counts agree', () => {
@@ -393,15 +389,14 @@ describe('theme and responsive design', () => {
 });
 
 describe('the top pane states things once', () => {
-  it('puts the work queues and the health facts in one band', () => {
-    // Three stacked bands (topbar, nine metric tiles, tabs) spent ~90px before
-    // the first job row and restated several counts in two visual languages.
-    expect(html).toContain('class="pipeline"');
-    const band = html.slice(html.indexOf('class="pipeline"'), html.indexOf('<main'));
-    expect(band).toContain('id="tabs"');
-    expect(band).toContain('id="health"');
+  it('puts the work queues and the health facts in the header, not extra bands', () => {
+    // Separate bands (a metric strip, a tab band) spent vertical space before
+    // the first job row and restated counts in two visual languages.
+    const header = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
+    expect(header).toContain('id="tabs"');
+    expect(header).toContain('id="health"');
+    expect(html).not.toContain('class="pipeline"');
     expect(html).not.toContain('class="metrics"');
-    expect(css).toContain('.pipeline {');
   });
 
   it('never shows a number the tabs already carry', () => {
@@ -417,11 +412,13 @@ describe('the top pane states things once', () => {
     }
   });
 
-  it('shows attention flags only when they are non-zero and have no tab', () => {
+  it('shows attention flags only when they are non-zero and nothing else shows them', () => {
     const flags = app.slice(app.indexOf('const HEALTH_FLAGS'), app.indexOf('function statNode'));
-    for (const key of ['submitUnverified', 'needsSponsorshipCheck', 'undatedDropped']) {
+    for (const key of ['submitUnverified', 'undatedDropped']) {
       expect(flags).toContain(key);
     }
+    // The sponsor check is a Next-up rail action; a flag too showed 386 twice.
+    expect(flags).not.toMatch(/key: 'needsSponsorshipCheck'/);
     expect(app).toContain("if ((stats.totals[flag.key] ?? 0) === 0) continue;");
   });
 
@@ -438,7 +435,7 @@ describe('the top pane states things once', () => {
     const fn = app.slice(app.indexOf('function statNode'), app.indexOf('function renderHealth'));
     expect(fn).not.toContain('stats.totals[key] ?? 0');
     expect(fn).toContain("typeof raw === 'number'");
-    expect(fn).toContain("'—'");
+    expect(fn).toContain("'n/a'");
   });
 
   // REGRESSION: stats/board were only ever refetched in reaction to a user
@@ -537,7 +534,10 @@ describe('run state and recovery', () => {
     expect(css).toContain('.runline.indeterminate i');
     // A bar must not imply a fraction the server never reported.
     expect(app).toContain("line.classList.add('indeterminate')");
-    expect(app).toContain('Math.min(100, Math.round((done / total) * 100))');
+    // Driven by the server's real done/total, capped at full, and drawn as a
+    // transform so updates never re-lay out the header.
+    expect(app).toContain('scaleX(${Math.min(1, done / total).toFixed(3)})');
+    expect(css).toMatch(/\.runline i \{[^}]*transform-origin: left center;/);
   });
 
   it('shows elapsed time and progress against the real total', () => {
@@ -593,7 +593,7 @@ describe('run state and recovery', () => {
     // The dot became a CSS pseudo-element; leaving it in the text too rendered
     // "● ● connected".
     expect(css).toContain('.conn::before');
-    expect(app).toContain("conn.textContent = up ? 'connected' : 'disconnected';");
+    expect(app).toContain("conn.textContent = up ? 'Connected' : 'Disconnected';");
     expect(html).not.toContain('●');
   });
 

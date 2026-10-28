@@ -113,7 +113,7 @@ export function readProfile(root) {
       exists: false,
       fields: PROFILE_FIELDS.map((spec) => ({ ...spec, value: '', filled: false })),
       missing: PROFILE_FIELDS.filter((f) => f.required).map((f) => f.field),
-      error: 'config/candidate.json does not exist yet — copy config/candidate.example.json and fill it in, or save this form.',
+      error: 'config/candidate.json does not exist yet, copy config/candidate.example.json and fill it in, or save this form.',
     };
   }
   let candidate;
@@ -189,7 +189,7 @@ function assertCandidateValid(root, candidate) {
       const where = LABEL_BY_POINTER.get(e.instancePath) ?? e.instancePath ?? '(root)';
       return `${where} ${e.message}`;
     });
-    throw new Error(`That profile would not load — ${lines.join('; ')}`);
+    throw new Error(`That profile would not load, ${lines.join('; ')}`);
   }
 }
 
@@ -200,7 +200,7 @@ function assertCandidateValid(root, candidate) {
 function templateCandidate(root) {
   const example = join(root, 'config', 'candidate.example.json');
   if (existsSync(example)) return readJson(example);
-  throw new Error('config/candidate.example.json is missing — cannot create a new profile from scratch');
+  throw new Error('config/candidate.example.json is missing, cannot create a new profile from scratch');
 }
 
 /** Copy the current file aside as .bak before replacing it. Best effort. */
@@ -230,7 +230,7 @@ export function readScreeningAnswers(root) {
       exists: false,
       defaults: { unknownAction: 'ask_user' },
       answers: [],
-      error: 'config/screening_answers.json does not exist yet — copy config/screening_answers.example.json, or save an answer here to create it.',
+      error: 'config/screening_answers.json does not exist yet, copy config/screening_answers.example.json, or save an answer here to create it.',
     };
   }
   try {
@@ -273,13 +273,13 @@ export function validateAnswerEntry(entry, { question } = {}) {
   const patterns = Array.isArray(entry.patterns)
     ? entry.patterns.map((p) => String(p ?? '').trim()).filter(Boolean)
     : [];
-  if (patterns.length === 0) return fail('add at least one pattern — the phrase that identifies this question on a form');
+  if (patterns.length === 0) return fail('add at least one pattern, the phrase that identifies this question on a form');
   for (const pattern of patterns) {
     if (!/[a-z0-9]$/i.test(pattern)) {
       // The matcher wraps a pattern in word boundaries, so one ending in "?" or
       // ":" can never match anything. Failing loudly here beats saving an
       // answer that silently never fires.
-      return fail(`the pattern "${pattern}" ends in punctuation — it would never match. Remove the trailing character.`);
+      return fail(`the pattern "${pattern}" ends in punctuation, it would never match. Remove the trailing character.`);
     }
     if (isInvertedSponsorshipQuestion(pattern)) {
       return fail(`"${pattern}" is a reversed sponsorship question. Those are always left for you to answer by hand, `
@@ -290,7 +290,7 @@ export function validateAnswerEntry(entry, { question } = {}) {
   const answer = String(entry.answer ?? '');
   if (!answer.trim()) return fail('the answer cannot be empty');
   if (answer.length > MAX_ANSWER_CHARS) {
-    return fail(`that answer is ${answer.length} characters — the limit is ${MAX_ANSWER_CHARS}`);
+    return fail(`that answer is ${answer.length} characters, the limit is ${MAX_ANSWER_CHARS}`);
   }
   const forbidden = FORBIDDEN_ANSWER_FRAGMENTS.find((f) => answer.toLowerCase().includes(f));
   if (forbidden) {
@@ -317,14 +317,14 @@ export function validateScreeningAnswers(doc) {
   const answers = doc.answers;
   if (!Array.isArray(answers)) return { valid: false, error: 'answers must be a list' };
   if (answers.length > MAX_ANSWER_ENTRIES) {
-    return { valid: false, error: `that is ${answers.length} answers — the limit is ${MAX_ANSWER_ENTRIES}` };
+    return { valid: false, error: `that is ${answers.length} answers, the limit is ${MAX_ANSWER_ENTRIES}` };
   }
   const seen = new Set();
   for (const entry of answers) {
     const check = validateAnswerEntry(entry);
     if (!check.valid) return { valid: false, error: `answer "${entry?.id ?? '(no id)'}": ${check.error}` };
     const id = String(entry.id).trim().toLowerCase();
-    if (seen.has(id)) return { valid: false, error: `two answers share the id "${entry.id}" — ids must be unique` };
+    if (seen.has(id)) return { valid: false, error: `two answers share the id "${entry.id}" - ids must be unique` };
     seen.add(id);
   }
   return { valid: true, error: null };
@@ -376,7 +376,7 @@ export function upsertScreeningAnswer(root, entry, { question, replace = false }
   const answers = [...current.answers];
   const index = answers.findIndex((a) => String(a?.id ?? '').toLowerCase() === clean.id.toLowerCase());
   if (index >= 0 && !replace) {
-    throw new Error(`an answer with the id "${clean.id}" already exists — choose a different id, or edit that one.`);
+    throw new Error(`an answer with the id "${clean.id}" already exists, choose a different id, or edit that one.`);
   }
   if (index >= 0) answers[index] = clean; else answers.push(clean);
 

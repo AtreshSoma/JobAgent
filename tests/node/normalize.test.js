@@ -32,6 +32,15 @@ describe('normalize', () => {
     expect(htmlToText('a<br>b')).toBe('a\nb');
   });
 
+  it('htmlToText decodes numeric and typographic entities without double-decoding', () => {
+    expect(htmlToText('We can&#8217;t sponsor &mdash; don&rsquo;t &#x2014; ok'))
+      .toBe('We can’t sponsor — don’t — ok');
+    // An encoded ampersand never combines into a second entity.
+    expect(htmlToText('A&amp;rsquo;B &#38;lt;')).toBe('A&rsquo;B &lt;');
+    // Unknown names and invalid code points stay as written.
+    expect(htmlToText('&bogus; &#0;')).toBe('&bogus; &#0;');
+  });
+
   it('parseJsonLdJobs extracts a JobPosting from a real-ish page', () => {
     const jobs = parseJsonLdJobs(fixture('jobposting.html'), { source: 'public', url: 'http://x' });
     expect(jobs).toHaveLength(1);

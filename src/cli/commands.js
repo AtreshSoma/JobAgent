@@ -29,7 +29,7 @@ import { jsonList } from '../utils/json.js';
 import { writeFoundJobs } from '../outputs.js';
 import { emptyCounters } from '../outputs.js';
 import { LIFECYCLE, isProtectedJobRow } from '../lifecycle.js';
-import { assertPublicHttpUrl } from '../utils/publicUrl.js';
+import { assertPublicHttpUrl, publicOnlyFetch } from '../utils/publicUrl.js';
 import {
   listPending, approve, reject, APPROVAL_STATUS,
 } from '../apply/approvalQueue.js';
@@ -271,7 +271,10 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
     throw Object.assign(new Error(publicCheck.reason), { statusCode: 400 });
   }
   const now = deps.now ?? new Date();
-  const fetchImpl = deps.fetchImpl ?? fetch;
+  // The check above covers the pasted URL only; this keeps every redirect hop
+  // public too, so a posting cannot bounce the read onto a private address and
+  // have that page's content saved as a "job".
+  const fetchImpl = publicOnlyFetch(deps.fetchImpl ?? fetch);
 
   let parsed;
   try {

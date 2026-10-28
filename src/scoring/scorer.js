@@ -24,11 +24,15 @@ import { ageInDays } from '../utils/dates.js';
  *
  * `manual` / `manual-url` are direct by definition: the human pasted the
  * employer's own application URL.
+ *
+ * The single list: jobRanking.js imports it for its tie-break, so the score
+ * and the ordering can no longer disagree about what "direct" means.
  */
-const DIRECT_ATS_SOURCES = new Set([
+export const DIRECT_ATS_SOURCES = Object.freeze(new Set([
   'greenhouse', 'lever', 'ashby', 'smartrecruiters', 'workday', 'careers',
+  'icims', 'rippling', 'oracleRecruiting', 'amazonJobs',
   'manual', 'manual-url',
-]);
+]));
 
 /** Seniority ranking for seniorityFit. */
 const SENIORITY_RANK = { junior: 1, mid: 2, senior: 3, lead: 4, staff: 4, principal: 5, manager: 4 };

@@ -82,6 +82,12 @@ body {
 }
 a { color: var(--brand); text-decoration: none; }
 a:hover { text-decoration: underline; }
+/* Cards, the brand and buttons are links now (see app.js); they keep their own
+   look instead of picking up the inline-link underline and colour. */
+a.path-card, a.brand { color: inherit; }
+a.path-card, a.brand, a.btn { text-decoration: none; }
+a.path-card:hover, a.brand:hover, a.btn:hover { text-decoration: none; }
+a.btn { display: inline-flex; align-items: center; }
 
 /* ===================== Layout ===================== */
 .layout { display: flex; min-height: 100vh; }
@@ -157,11 +163,13 @@ a:hover { text-decoration: underline; }
 /* ===================== Main ===================== */
 .main { margin-left: var(--sidebar-w); flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
+/* Opaque. At 86% with a blur, the dark hero and its white buttons showed
+   through the bar as smeared shapes while scrolling. */
 .topbar {
   position: sticky; top: 0; z-index: 30;
-  background: color-mix(in srgb, var(--bg-elev) 86%, transparent);
-  backdrop-filter: saturate(160%) blur(10px);
+  background: var(--bg-elev);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(15, 23, 42, .03);
   display: flex; align-items: center; gap: 14px; padding: 11px 26px;
 }
 .crumb { font-size: 13px; color: var(--text-faint); display: flex; gap: 7px; align-items: center; min-width: 0; }

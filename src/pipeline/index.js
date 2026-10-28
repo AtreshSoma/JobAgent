@@ -372,7 +372,19 @@ export async function runPipeline({ config, db, logger, mode, deps = {} } = {}) 
     // eligible tiers, so normal runs are unchanged.
     const shouldPrepare = typeof deps.prepareFilter === 'function' ? deps.prepareFilter(job) : true;
     if (mode !== 'DRY_RUN' && PREPARE_TIERS.has(tier) && shouldPrepare) {
-      packetPath = await preparePacket({ config, db, logger, job, score, tier, deps, counters });
+      // Packet preparation does per-job file I/O, cover-letter composition and
+      // a Python subprocess. One job's failure there (a locked file, a path the
+      // OS rejects) is that job's problem: it stays scored and visible, and the
+      // remaining jobs, artifacts and report still happen.
+      try {
+        packetPath = await preparePacket({ config, db, logger, job, score, tier, deps, counters });
+      } catch (err) {
+        packetPath = null;
+        errors.push({ source: 'prepare', jobId: job.id, error: err?.message ?? String(err) });
+        logger.event(EVENT_TYPES.ERROR, {
+          jobId: job.id, message: `packet preparation failed: ${err?.message ?? err}`,
+        });
+      }
       if (packetPath) {
         lifecycle = LIFECYCLE.PREPARED;
         enriched.application_packet_path = packetPath;

@@ -229,7 +229,7 @@ export function explainStatus(job = {}, appStatus = '', approval = null) {
     case APP_STATUS.BLOCKED:
       if (blockers.length) return `Assisted fill stopped: ${blockers.join('; ')}`;
       return 'An assisted-fill attempt stopped at an application wall (login, CAPTCHA, an account step, '
-        + 'or a question it will not guess). The specific reason was not recorded — open the posting to finish '
+        + 'or a question it will not guess). The specific reason was not recorded, open the posting to finish '
         + 'manually, or re-run assisted fill to capture the current blocker.';
     case APP_STATUS.FAILED:
       return blockers.length
@@ -246,7 +246,7 @@ export function explainStatus(job = {}, appStatus = '', approval = null) {
         ? `Filtered out during scoring: ${job.discard_reason}`
         : 'Filtered out during scoring (below threshold or an exclusion rule matched).';
     case APP_STATUS.DATE_UNCONFIRMED:
-      return 'No reliable posting date was found, so its freshness cannot be trusted — verify before relying on "posted" age.';
+      return 'No reliable posting date was found, so its freshness cannot be trusted, verify before relying on "posted" age.';
     case APP_STATUS.SKIPPED:
       return 'You skipped this during an assisted-apply pass.';
     case APP_STATUS.ARCHIVED:
@@ -336,30 +336,67 @@ export function setDuringBulkRun(flag) {
 }
 
 const _memo = new WeakMap();
-function cached(db, kind, now, compute) {
+
+/** How often clock-derived values refresh when nothing was written. */
+const CLOCK_BUCKET_MS = 30_000;
+
+/**
+ * @param {object} [options]
+ * @param {number} [options.bucketMs] time bucket for a full recompute.
+ * @param {(val:any, now:Date) => void} [options.refreshClock] when given, the
+ *   cached value survives a time bucket change: only writes rebuild it, and a
+ *   new bucket calls this to refresh its clock-derived fields in place.
+ *
+ * REGRESSION GUARD. Every kind used to rebuild on every 30s bucket. Measured
+ * on a 186k-row database that is ~1.1s (board rows), ~1.2s (sections) and
+ * ~1.4s (stats) of blocked event loop every 30 seconds while the page is open
+ * (index.html and assets queued behind it too), only to update two
+ * time-derived row fields. Rows now rebuild on writes alone and refresh those
+ * two fields in place; stats, whose clock windows are coarse counts, rebuild
+ * at most every few minutes unless something is written.
+ */
+function cached(db, kind, now, compute, { bucketMs = CLOCK_BUCKET_MS, refreshClock } = {}) {
   const at = typeof now?.getTime === 'function' ? now.getTime() : Date.now();
-  const bucket = Math.floor(at / 30_000);
+  const bucket = Math.floor(at / (duringBulkRun ? CLOCK_BUCKET_MS : bucketMs));
   let key = `bulk:${bucket}`;
   if (!duringBulkRun) {
     let changes = -1;
     try { changes = db.db.prepare('SELECT total_changes() AS c').get().c; }
-    catch { return compute(); /* exotic db stub (tests) — skip caching */ }
-    key = `${changes}:${bucket}`;
+    catch { return compute(); /* exotic db stub (tests): skip caching */ }
+    key = refreshClock ? `${changes}` : `${changes}:${bucket}`;
   }
   let slot = _memo.get(db);
   if (!slot) { slot = {}; _memo.set(db, slot); }
-  if (slot[kind]?.key === key) return slot[kind].val;
+  const hit = slot[kind];
+  if (hit?.key === key) {
+    if (refreshClock && hit.bucket !== bucket) {
+      refreshClock(hit.val, now instanceof Date ? now : new Date(at));
+      hit.bucket = bucket;
+    }
+    return hit.val;
+  }
   const val = compute();
-  slot[kind] = { key, val };
+  slot[kind] = { key, val, bucket };
   return val;
 }
 
-/** All jobs decorated as board rows (cached — see above). */
+/** Re-derive the only two board-row fields that depend on the clock. */
+function refreshRowClock(rows, now) {
+  for (const row of rows) {
+    row.postedLabel = formatPostedRelative(row.postedAt, now);
+    row.postedLast24h = isWithinLast24Hours(row.postedAt, now);
+  }
+}
+
+/** Stats are coarse counts; between writes they may lag the clock this much. */
+const STATS_BUCKET_MS = 5 * 60_000;
+
+/** All jobs decorated as board rows (cached; see above). */
 function allBoardRows(db, now) {
   return cached(db, 'rows', now, () => {
     const approvals = approvalsByJob(db);
     return listSummaryRows(db).map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
-  });
+  }, { refreshClock: refreshRowClock });
 }
 
 /**
@@ -375,7 +412,7 @@ function openBoardRows(db, now) {
   return cached(db, 'openRows', now, () => {
     const approvals = approvalsByJob(db);
     return db.listOpenJobsSummary().map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
-  });
+  }, { refreshClock: refreshRowClock });
 }
 
 /**
@@ -618,7 +655,7 @@ function boardRow(job, approval, now) {
  * @returns {object}
  */
 export function dashboardStats(db, { now = new Date() } = {}) {
-  return cached(db, 'stats', now, () => computeDashboardStats(db, now));
+  return cached(db, 'stats', now, () => computeDashboardStats(db, now), { bucketMs: STATS_BUCKET_MS });
 }
 
 function computeDashboardStats(db, now) {
@@ -884,7 +921,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.submitUnverified,
       verb: 'Confirm auto-submits',
       detail: 'check your email for the ATS confirmation, then Mark submitted (or finish manually)',
-      text: `${totals.submitUnverified} auto-submit(s) could not be confirmed — check your email for the ATS `
+      text: `${totals.submitUnverified} auto-submit(s) could not be confirmed, check your email for the ATS `
         + 'confirmation, then Mark submitted (or finish manually)',
       filter: { appStatus: APP_STATUS.SUBMIT_UNVERIFIED },
     });
@@ -894,7 +931,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.readyForSubmit,
       verb: 'Submit filled applications',
       detail: 'review each browser tab and click Submit yourself',
-      text: `${totals.readyForSubmit} application(s) are filled and waiting — review each browser tab and click Submit yourself`,
+      text: `${totals.readyForSubmit} application(s) are filled and waiting, review each browser tab and click Submit yourself`,
       filter: { appStatus: APP_STATUS.READY_FOR_SUBMIT },
     });
   }
@@ -924,7 +961,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: strongUntriaged,
       verb: 'Decide on strong fits',
       detail: 'shortlist the ones worth pursuing, reject the rest',
-      text: `${strongUntriaged} strong-fit job(s) have no decision yet — shortlist or reject them`,
+      text: `${strongUntriaged} strong-fit job(s) have no decision yet, shortlist or reject them`,
       // "No decision yet" is exactly the Best matches view. The old
       // { fit: 'strong' } filter also showed every strong job already
       // shortlisted, prepared, or submitted, so the board returned far more
@@ -937,7 +974,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.needsSponsorshipCheck,
       verb: 'Verify sponsorship',
       detail: "check the employer's careers page and past H-1B filings, then shortlist and prepare",
-      text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check — verify the employer `
+      text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check, verify the employer `
         + 'sponsors H-1B (their careers page, past filings), then shortlist and prepare',
       // The count is isSponsorshipGated(); the board has a filter for exactly
       // that. Matching on sponsorship: 'Unconfirmed' both missed gated rows
@@ -950,7 +987,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.dateUnconfirmed,
       verb: 'Confirm posting dates',
       detail: 'the source gave no confirmed date, so these were held back',
-      text: `${totals.dateUnconfirmed} job(s) have no confirmed posting date — review them manually`,
+      text: `${totals.dateUnconfirmed} job(s) have no confirmed posting date, review them manually`,
       filter: { appStatus: APP_STATUS.DATE_UNCONFIRMED },
     });
   }
@@ -963,7 +1000,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: null,
       verb: 'Find new jobs',
       detail: 'nothing new has been found in the last 24 hours',
-      text: 'No new jobs found in the last 24h — run Discover (or Find & Prepare) to refresh the board',
+      text: 'No new jobs found in the last 24h, run Discover (or Find & Prepare) to refresh the board',
       filter: null,
       kind: 'system',
     });
@@ -1324,7 +1361,7 @@ export function applyDecision(db, jobId, decision) {
  */
 export function approveJobPacket(db, jobId) {
   const approval = db.getApprovalByJob?.(jobId);
-  if (!approval) throw httpError(409, `no prepared packet to approve for job ${jobId} — run Prepare first`);
+  if (!approval) throw httpError(409, `no prepared packet to approve for job ${jobId}, run Prepare first`);
   const r = approve(db, approval.id);
   return { id: jobId, approvalId: approval.id, status: r.status };
 }
@@ -1360,9 +1397,15 @@ export function rejectJobPacket(db, jobId) {
 export function markSubmittedByHuman(db, jobId, details = {}) {
   const job = db.getJob(jobId);
   if (!job) throw httpError(404, `unknown job id: ${jobId}`);
-  const appliedAt = (details.now ?? new Date()).toISOString();
+  const reportedAt = (details.now ?? new Date()).toISOString();
   const confirmation = String(details.confirmationNumber ?? '').trim().slice(0, 200) || null;
-  const verified = details.verified === true || Boolean(confirmation);
+  // A job already recorded as applied stays applied, at its ORIGINAL time. A
+  // second report (a stale tab, a double click) may add a confirmation number
+  // or a note, but must never downgrade it to unverified — that would also free
+  // a slot under the daily auto-submit cap — nor move its applied date.
+  const alreadyApplied = Number(job.applied) === 1;
+  const verified = alreadyApplied || details.verified === true || Boolean(confirmation);
+  const appliedAt = alreadyApplied ? (job.applied_at ?? reportedAt) : reportedAt;
 
   const patch = verified
     ? { id: jobId, applied: 1, applied_at: appliedAt, status: 'submitted' }
@@ -1370,8 +1413,8 @@ export function markSubmittedByHuman(db, jobId, details = {}) {
   if (confirmation) patch.submitted_confirmation = confirmation;
   const note = String(details.note ?? '').trim().slice(0, 2000);
   if (note) {
-    const stamp = appliedAt.slice(0, 16).replace('T', ' ');
-    const label = verified ? 'submitted' : 'submission reported — verification pending';
+    const stamp = reportedAt.slice(0, 16).replace('T', ' ');
+    const label = verified ? 'submitted' : 'submission reported, verification pending';
     patch.notes = job.notes ? `${job.notes}\n[${label} ${stamp}] ${note}` : `[${label} ${stamp}] ${note}`;
   }
   db.upsertJob(patch);
@@ -1379,7 +1422,7 @@ export function markSubmittedByHuman(db, jobId, details = {}) {
     id: jobId,
     appStatus: verified ? APP_STATUS.SUBMITTED : APP_STATUS.SUBMIT_UNVERIFIED,
     appliedAt: verified ? appliedAt : null,
-    reportedAt: appliedAt,
+    reportedAt,
     verified,
     confirmationNumber: confirmation,
   };
@@ -1420,7 +1463,7 @@ function sectionRow(row) {
 /** Extract the human-meaningful reason a blocked job stopped. */
 function blockerReason(row) {
   const first = (row.assistBlockers ?? [])[0];
-  if (!first) return 'Unknown — open it to see why';
+  if (!first) return 'Unknown, open it to see why';
   const b = String(first).toLowerCase();
   if (b.includes('captcha')) return 'CAPTCHA / bot wall';
   if (b.includes('login') || b.includes('sign in') || b.includes('account')) return 'Login / account required';
@@ -1632,7 +1675,10 @@ function reportRow(r) {
  */
 export function buildReports(db, { now = new Date() } = {}) {
   const stats = dashboardStats(db, { now });
-  const rows = listBoardJobs(db, { now, hideClosed: false, limit: 100000 });
+  // Every row, uncapped. A fixed 100000 cut the lowest-scored jobs from a DB
+  // that had already outgrown it — including ones the user really submitted,
+  // which then vanished from the application log.
+  const rows = listBoardJobs(db, { now, hideClosed: false, limit: Infinity });
 
   const byStatus = (status) => rows.filter((r) => r.appStatus === status).map(reportRow);
 

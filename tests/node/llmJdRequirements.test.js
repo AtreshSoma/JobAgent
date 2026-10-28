@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { extractJdRequirements } from '../../src/llm/jdRequirements.js';
-import { llmSettings, parseJsonObject } from '../../src/llm/client.js';
+import { completeJson, llmSettings, parseJsonObject } from '../../src/llm/client.js';
 
 const JD = [
   'We are hiring a Senior Data Engineer.',
@@ -129,6 +129,25 @@ describe('grounding verification makes fabrication structurally impossible', () 
     expect(r.ok).toBe(false);
     expect(r.phrases).toEqual([]);
     expect(r.provenance.skipped).toMatch(/connection refused/);
+  });
+
+  it('times out a provider that sends headers and then stalls the body', async () => {
+    const started = Date.now();
+    const r = await completeJson({ system: 's', user: 'u', settings: {
+      enabled: true, model: 'test-model', cacheDir: null,
+      timeoutMs: 100, baseUrl: 'https://example.invalid/v1', apiKey: 'k',
+    } }, {
+      // Headers arrive at once; the body only ever ends via the abort signal.
+      fetchImpl: async (_url, { signal }) => ({
+        ok: true,
+        json: () => new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })));
+        }),
+      }),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/timed out after 100ms/);
+    expect(Date.now() - started).toBeLessThan(5000);
   });
 
   it('falls back safely when the provider returns non-JSON', async () => {

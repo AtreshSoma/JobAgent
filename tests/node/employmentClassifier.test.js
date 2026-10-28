@@ -14,8 +14,22 @@ const MARKERS = {
 describe('classifyEmployment', () => {
   it('detects contract from the employmentType field', () => {
     const r = classifyEmployment({ employmentType: 'Contract', title: 'Data Engineer', jdText: '' }, MARKERS);
-    // "Contract" alone is not a configured multi-word phrase; the JD/title decide.
-    expect(r.category).toBe('full_time');
+    // The structured field is a controlled vocabulary, so a single word there
+    // is trusted (in prose it is not — see the next tests).
+    expect(r.category).toBe('contract');
+  });
+
+  it.each([
+    ['PART_TIME', 'part_time'], ['CONTRACTOR', 'contract'], ['TEMPORARY', 'contract'],
+    ['FULL_TIME', 'full_time'], ['FULL_TIME, PART_TIME', 'full_time'],
+  ])('reads the schema.org enum %s as %s', (employmentType, category) => {
+    expect(classifyEmployment({ employmentType, title: 'Data Engineer', jdText: '' }, MARKERS).category)
+      .toBe(category);
+  });
+
+  it('never trusts a single contract word outside the structured field', () => {
+    expect(classifyEmployment({ title: 'Data Contract Engineer', jdText: 'Own our data contracts.' }, MARKERS).category)
+      .toBe('full_time');
   });
 
   it('detects contract from a multi-word title/JD phrase', () => {

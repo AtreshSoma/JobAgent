@@ -26,7 +26,8 @@ def humanize(text: str, patterns: Dict[str, Any]) -> str:
     for phrase in patterns.get("bannedPhrases") or []:
         if not phrase:
             continue
-        out = re.sub(re.escape(phrase), "", out, flags=re.IGNORECASE)
+        # Whole words only: a bare substring match cut "guru" out of "Gurugram".
+        out = re.sub(_phrase_re(phrase), "", out, flags=re.IGNORECASE)
 
     rules = patterns.get("rules") or {}
     if rules.get("collapseExclamation", True):
@@ -47,6 +48,11 @@ def has_banned_content(text: str, patterns: Dict[str, Any]) -> bool:
         if ch in text:
             return True
     for phrase in patterns.get("bannedPhrases") or []:
-        if phrase and phrase.lower() in lower:
+        if phrase and re.search(_phrase_re(phrase), lower, flags=re.IGNORECASE):
             return True
     return False
+
+
+def _phrase_re(phrase: str) -> str:
+    """A banned phrase as a whole-word pattern (mirrors phraseRegExp in humanizer.js)."""
+    return r"(?<![A-Za-z0-9])" + re.escape(phrase) + r"(?![A-Za-z0-9])"

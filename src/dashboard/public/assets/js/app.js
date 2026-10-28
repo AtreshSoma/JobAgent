@@ -104,15 +104,21 @@ const SORT_DIRECTION = {
   updated: 'descending', discovered: 'descending',
 };
 
+/**
+ * Stage tabs, in pipeline order: the FIND group (browse what discovery found)
+ * then the ACT group (work waiting on you). Each carries a one-line purpose,
+ * shown as its tooltip, so a first-time user can tell where to go next.
+ * `urgent` warms the count when it is non-zero.
+ */
 const TABS = [
-  ['all', 'All jobs', false],
-  ['today', 'Today', true],
-  ['best', 'Best matches', false],
-  ['shortlisted', 'Shortlisted', false],
-  ['needs_review', 'Needs review', true],
-  ['ready_apply', 'Ready to apply', true],
-  ['blocked', 'Needs you', true],
-  ['submitted', 'Submitted', false],
+  { key: 'all', label: 'All jobs', group: 'find', hint: 'Every open job on the board' },
+  { key: 'today', label: 'Today', group: 'find', urgent: true, hint: 'Strong matches posted in the last 24 hours that you have not triaged yet' },
+  { key: 'best', label: 'Best matches', group: 'find', hint: 'The highest-scoring open jobs' },
+  { key: 'shortlisted', label: 'Shortlisted', group: 'find', hint: 'Jobs you saved for later' },
+  { key: 'needs_review', label: 'Needs review', group: 'act', urgent: true, hint: 'Packets are prepared: read the tailored resume, then approve it for auto-fill' },
+  { key: 'ready_apply', label: 'Ready to apply', group: 'act', urgent: true, hint: 'Approved: auto-fill the form, then you press Submit' },
+  { key: 'blocked', label: 'Needs you', group: 'act', urgent: true, hint: 'Applications stopped on something only you can answer' },
+  { key: 'submitted', label: 'Submitted', group: 'act', hint: 'Applications you sent' },
 ];
 
 /* ─────────────────────────── utilities ─────────────────────────── */
@@ -130,6 +136,39 @@ function esc(value) {
  *  HTMLUnknownElement for these, which renders as nothing at all. */
 const SVG_TAGS = new Set(['svg', 'polyline', 'circle', 'path', 'line', 'g', 'rect', 'text']);
 
+/**
+ * Em and en dashes never reach the screen. The UI's own copy is written
+ * without them, but job DATA is not ours: employers title roles "Engineer –
+ * Platform" and source adapters stored locations as "Hybrid — Austin".
+ * Unspaced between two characters it is a range or compound, so it becomes a
+ * hyphen ("A-Z"); spaced, it joins two phrases, so it becomes a comma; alone
+ * (an empty-value placeholder) or leading, a hyphen.
+ */
+function plainDashes(value) {
+  const s = String(value);
+  if (!/[–—]/.test(s)) return s;
+  return s.replace(/(\S?)(\s*)[–—](\s*)(\S?)/g, (m, a, sp1, sp2, b) => {
+    if (a && b && !sp1 && !sp2) return `${a}-${b}`;
+    // A numeric range stays a range even when spaced ("1 – 100" -> "1-100").
+    if (/\d/.test(a) && /\d/.test(b)) return `${a}-${b}`;
+    if (!a) return `${sp1}-${sp2}${b}`;
+    if (!b) return `${a}${sp1}-`;
+    return /[.,;:!?]/.test(a) ? `${a} ${b}` : `${a}, ${b}`;
+  });
+}
+
+/** Attributes a person reads (as opposed to ids, data, and URLs). */
+const READ_ATTRS = new Set(['title', 'aria-label', 'placeholder', 'alt']);
+
+/**
+ * One of the stylesheet's drawn icons (`--ic-<name>`), decorative and in the
+ * current text colour. Replaced Unicode glyphs (→ ↗ « ‹ › ») whose shape and
+ * weight changed with the font.
+ */
+function icon(name) {
+  return el('span', { class: 'mask-ic', style: `--ic: var(--ic-${name})`, 'aria-hidden': 'true' });
+}
+
 function el(tag, attrs = {}, ...children) {
   const svg = SVG_TAGS.has(tag);
   const node = svg
@@ -139,15 +178,16 @@ function el(tag, attrs = {}, ...children) {
     if (v === null || v === undefined || v === false) continue;
     // `className` on an SVG element is a read-only SVGAnimatedString.
     if (k === 'class') { if (svg) node.setAttribute('class', v); else node.className = v; }
-    else if (k === 'text') node.textContent = v;
+    else if (k === 'text') node.textContent = plainDashes(v);
     else if (k === 'html') node.innerHTML = v;
+    else if (READ_ATTRS.has(k)) node.setAttribute(k, plainDashes(v));
     else if (k.startsWith('data-') || k.startsWith('aria-')) node.setAttribute(k, v);
     else if (k === 'for') node.htmlFor = v;
     else node.setAttribute(k, v === true ? '' : v);
   }
   for (const child of children.flat()) {
     if (child === null || child === undefined || child === false) continue;
-    node.append(child.nodeType ? child : document.createTextNode(String(child)));
+    node.append(child.nodeType ? child : document.createTextNode(plainDashes(child)));
   }
   return node;
 }
@@ -183,7 +223,7 @@ async function api(path, options) {
     res = await fetch(path, options);
   } catch {
     setServerStatus(false);
-    throw new Error('Cannot reach the dashboard server — it may have stopped. '
+    throw new Error('Cannot reach the dashboard server, it may have stopped. '
       + 'Restart it with "npm run dashboard", then reload this page.');
   }
   setServerStatus(true);
@@ -214,7 +254,7 @@ function setServerStatus(up) {
   state.serverUp = up;
   const conn = $('conn');
   // The dot is a CSS pseudo-element now, so the text must not carry one too.
-  conn.textContent = up ? 'connected' : 'disconnected';
+  conn.textContent = up ? 'Connected' : 'Disconnected';
   conn.className = `conn ${up ? 'ok' : 'down'}`;
   $('offline').dataset.open = String(!up);
 }
@@ -291,10 +331,10 @@ function renderActiveFilters() {
   // the chip row is the one place that shows the WHOLE scope in one line.
   // Without it, "12 results" inside Needs review looks like 12 results overall.
   if (state.activeTab !== 'all') {
-    const tab = TABS.find(([key]) => key === state.activeTab);
+    const tab = TABS.find(({ key }) => key === state.activeTab);
     if (tab) {
-      host.append(el('span', { class: 'pill pill-scope' }, `In: ${tab[1]}`,
-        el('button', { 'data-action': 'clear-tab', 'aria-label': `Leave the ${tab[1]} tab`, text: '✕' })));
+      host.append(el('span', { class: 'pill pill-scope' }, `In: ${tab.label}`,
+        el('button', { 'data-action': 'clear-tab', 'aria-label': `Leave the ${tab.label} tab`, text: '✕' })));
     }
   }
   const labelFor = (id) => {
@@ -380,26 +420,32 @@ function applyFilterObject(filter = {}) {
 /* ───────────────────────── pipeline health ─────────────────────────
  * Only facts that are NOT already a tab. "Awaiting approval", "ready to
  * submit" and "submitted" were dropped from here because Needs review, Ready
- * to apply and Submitted are literally the same numbers one row away — showing
- * them twice, in two visual languages, is what made the top of the page busy.
+ * to apply and Submitted are literally the same numbers one row away. Labels
+ * are plain phrases ("posted in 24h"), not abbreviations ("posted 24h"), so a
+ * first-time reader or a mentor can read the row without a legend.
  */
 
 /** Always shown: how big the corpus is and how fresh it is. */
 const HEALTH_FACTS = [
-  { key: 'jobsTracked', label: 'tracked', filter: { includeClosed: true }, title: 'Every job ever seen, including closed ones' },
-  { key: 'discoveredLast24h', label: 'found 24h', tone: 'hot', title: 'Jobs discovered in the last 24 hours' },
-  { key: 'postedLast24h', label: 'posted 24h', tone: 'hot', filter: { postedWithinHours: '24' }, title: 'Jobs whose POSTING is less than 24 hours old' },
+  { key: 'jobsTracked', label: 'jobs tracked', filter: { includeClosed: true }, title: 'Every job ever seen, including closed ones. Click to show them all.' },
+  { key: 'discoveredLast24h', label: 'found in 24h', title: 'Jobs discovery found in the last 24 hours' },
+  { key: 'postedLast24h', label: 'posted in 24h', filter: { postedWithinHours: '24' }, title: 'Jobs whose posting is less than 24 hours old. Click to show them.' },
   // The 24h count is often single digits while a week holds hundreds. Without
-  // this chip the bar implies there is nothing to apply to.
-  { key: 'postedLast7d', label: 'posted 1w', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Jobs whose POSTING is less than 1 week old' },
-  { key: 'strongFit', label: 'strong fit', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match' },
+  // this fact the row implies there is nothing to apply to.
+  { key: 'postedLast7d', label: 'posted this week', filter: { postedWithinHours: '168' }, title: 'Jobs whose posting is less than a week old. Click to show them.' },
+  // "in total", because Best matches and the rail count only the strong fits
+  // still waiting on a decision; an unqualified label made the two disagree.
+  { key: 'strongFit', label: 'strong fits in total', filter: { fit: 'strong' }, title: 'All open jobs scored as a strong match, including ones you already decided on. Best matches shows those still waiting for a decision.' },
 ];
 
 /** Shown only when non-zero, and only where no tab already carries it. */
 const HEALTH_FLAGS = [
-  { key: 'submitUnverified', label: 'unverified submits', tone: 'bad', filter: { appStatus: 'submit_unverified' }, title: 'Auto-submits with no confirmation — only you can resolve these' },
-  { key: 'needsSponsorshipCheck', label: 'verify sponsor', tone: 'attn', filter: { sponsorshipGated: true }, title: 'Strong fits parked until you confirm the employer sponsors' },
-  { key: 'undatedDropped', label: 'undated', tone: 'attn', filter: { undated: true }, title: 'The source gave no confirmed posting date — held back, or still live but worth a quick check' },
+  { key: 'submitUnverified', label: 'submits to verify', tone: 'bad', filter: { appStatus: 'submit_unverified' }, title: 'Auto-submits with no confirmation yet. Only you can resolve these.' },
+  // The sponsor-check count is NOT repeated here: it is an action, and the
+  // Next-up rail already lists it. Showing it twice read as two problems.
+  // "Undated" names its own scope so it cannot be mistaken for the rail's
+  // "Confirm posting dates", which counts only the open jobs held for review.
+  { key: 'undatedDropped', label: 'dropped for no posting date', tone: 'attn', filter: { undated: true }, title: 'Every job, open or closed, that the freshness check set aside because the source gave no posting date. Worth a quick check.' },
 ];
 
 /**
@@ -413,7 +459,7 @@ const HEALTH_FLAGS = [
  * hot-reload edited source) can show an impossible state: "4 posted 24h, 0
  * posted 1w" is a contradiction (24h is a subset of 1w) that can only happen
  * if the "0" is not a real computed value but a fallback for a key the
- * server's in-memory code never set. An honest "—" makes that gap visible
+ * server's in-memory code never set. An honest "n/a" makes that gap visible
  * instead of masquerading as data.
  */
 function statNode({ key, label, tone, filter, title }, stats) {
@@ -422,7 +468,7 @@ function statNode({ key, label, tone, filter, title }, stats) {
   const value = known ? raw : 0;
   const attrs = {
     class: `stat ${known && value > 0 ? tone ?? '' : ''} ${filter ? 'clickable' : ''}`.trim().replace(/\s+/g, ' '),
-    title: known ? (title ?? '') : `${title ?? label} — not reported by the server (it may need a restart to pick up a recent update)`,
+    title: known ? (title ?? '') : `${title ?? label}: not reported by the server (it may need a restart to pick up a recent update)`,
   };
   // A REAL button when it does something, a plain span when it does not.
   // These were spans carrying role="button" + tabindex, which meant Enter and
@@ -436,10 +482,10 @@ function statNode({ key, label, tone, filter, title }, stats) {
       type: 'button',
       'data-action': 'metric-filter',
       'data-filter': JSON.stringify(filter),
-      'aria-label': `${fmt(value)} ${label} — filter the board to these`,
-    }, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
+      'aria-label': `${fmt(value)} ${label}. Filter the board to these.`,
+    }, el('b', { text: known ? fmt(value) : 'n/a' }), el('span', { class: 'l', text: label }));
   }
-  return el('span', attrs, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
+  return el('span', attrs, el('b', { text: known ? fmt(value) : 'n/a' }), el('span', { class: 'l', text: label }));
 }
 
 function renderHealth(stats) {
@@ -455,13 +501,13 @@ function renderHealth(stats) {
       class: 'stat',
       title: `Open jobs span ${coverage.statesCovered} of ${coverage.statesPossible} US states and territories`
         + `, plus ${fmt(coverage.nationwide)} nationwide/remote and ${fmt(coverage.unstated)} with no stated location.`,
-    }, el('b', { text: `${coverage.statesCovered}/${coverage.statesPossible}` }),
+    }, el('b', { text: `${coverage.statesCovered} of ${coverage.statesPossible}` }),
     el('span', { class: 'l', text: 'US states' })));
   }
 
   const last = relTime(stats.lastDiscoveryAt);
   host.append(el('span', { class: 'stat', title: 'When discovery last found anything' },
-    el('b', { text: last ?? 'never' }), el('span', { class: 'l', text: 'last run' })));
+    el('span', { class: 'l', text: 'last run' }), el('b', { text: last ?? 'never' })));
 
   for (const flag of HEALTH_FLAGS) {
     // An empty warning is noise; only real attention items get a pill.
@@ -482,7 +528,11 @@ function renderTabs() {
   const host = $('tabs');
   const keptFocus = host.contains(document.activeElement);
   host.textContent = '';
-  for (const [key, label, urgent] of TABS) {
+  TABS.forEach(({ key, label, group, urgent, hint }, index) => {
+    // A divider where the FIND group ends and the ACT group begins.
+    if (index > 0 && group !== TABS[index - 1].group) {
+      host.append(el('span', { class: 'tab-sep', role: 'presentation' }));
+    }
     const count = views[key] ?? 0;
     const selected = state.activeTab === key;
     host.append(el('button', {
@@ -500,10 +550,10 @@ function renderTabs() {
       'data-action': 'set-tab',
       'data-tab': key,
       title: filtered
-        ? `${fmt(count)} of these match the filters you have set`
-        : `${fmt(count)} job(s)`,
-    }, label, el('span', { class: 'badge', text: fmt(count) })));
-  }
+        ? `${hint}. ${fmt(count)} match the filters you have set.`
+        : `${hint}. ${fmt(count)} ${count === 1 ? 'job' : 'jobs'}.`,
+    }, label, el('span', { class: `badge${count === 0 ? ' zero' : ''}`, text: fmt(count) })));
+  });
   // Name the panel after whichever tab is currently showing in it.
   $('boardwrap').setAttribute('aria-labelledby', `tab-${state.activeTab}`);
 
@@ -581,7 +631,7 @@ function renderAnalytics(stats) {
 
   if (!srcEntries.length) {
     srcRows.textContent = '';
-    srcRows.append(el('tr', {}, el('td', { colspan: '3', class: 'muted', text: 'No jobs yet — run “Find new jobs”.' })));
+    srcRows.append(el('tr', {}, el('td', { colspan: '3', class: 'muted', text: 'No jobs yet, run “Find new jobs”.' })));
   } else {
     fillBreakdown(srcRows, srcEntries, ([src, v]) => el('tr', {},
       el('td', {}, el('button', {
@@ -683,13 +733,17 @@ function actionButton(action, className) {
 function renderNextActions(list) {
   const host = $('nextActions');
   host.textContent = '';
-  host.append(el('h2', { text: 'Next' }));
+  // Named for assistive tech, not with a visible kicker: the first action
+  // ("Approve prepared packets") is the heading a sighted reader needs.
+  host.setAttribute('role', 'region');
+  host.setAttribute('aria-label', 'Next up');
+  host.append(el('h2', { class: 'sr-only', text: 'Next up' }));
 
   const jobs = list.filter((a) => a.kind !== 'system');
   const notices = list.filter((a) => a.kind === 'system');
 
   if (!jobs.length && !notices.length) {
-    host.append(el('div', { class: 'muted', text: 'All caught up — nothing waiting on you.' }));
+    host.append(el('div', { class: 'muted', text: 'All caught up, nothing waiting on you.' }));
     return;
   }
 
@@ -701,7 +755,7 @@ function renderNextActions(list) {
     body.append(el('b', { text: first.verb }));
     body.append(el('span', { class: 'na-detail', text: first.detail }));
     primary.append(body);
-    primary.append(el('span', { class: 'na-go', 'aria-hidden': 'true', text: '→' }));
+    primary.append(el('span', { class: 'na-go', 'aria-hidden': 'true' }, icon('arrow')));
     host.append(primary);
   }
 
@@ -711,7 +765,7 @@ function renderNextActions(list) {
       const button = actionButton(action, 'na-row');
       button.append(el('span', { class: 'na-n', text: fmt(action.count) }));
       button.append(el('span', { class: 'na-verb', text: action.verb }));
-      button.append(el('span', { class: 'na-go', 'aria-hidden': 'true', text: '→' }));
+      button.append(el('span', { class: 'na-go', 'aria-hidden': 'true' }, icon('arrow')));
       button.title = action.detail;
       ul.append(el('li', {}, button));
     }
@@ -1032,9 +1086,9 @@ function rowFor(job) {
       role: 'img',
       'aria-label': grade ? `grade ${grade.letter}, ${grade.label}, score ${job.score}` : 'not scored yet',
       title: grade ? `${grade.label} · score ${job.score}` : 'Not scored yet',
-      text: grade ? grade.letter : '—',
+      text: grade ? grade.letter : '-',
     }),
-    el('div', { class: 'faint', 'aria-hidden': 'true', text: job.score ?? '—' })));
+    el('div', { class: 'faint', 'aria-hidden': 'true', text: job.score ?? '-' })));
 
   tr.append(nameCellFor(job));
 
@@ -1043,7 +1097,7 @@ function rowFor(job) {
   tr.append(el('td', { 'data-label': 'Sponsor' }, el('span', {
     class: `chip ${esc(job.sponsorship ?? '')}`,
     title: sponsorshipTitle(job),
-    text: job.sponsorship ?? '—',
+    text: job.sponsorship ?? '-',
   })));
 
   // posted
@@ -1068,7 +1122,7 @@ function rowFor(job) {
   // brand-new find (a board was only just added), and that is exactly the row
   // a user checking "what did the last run turn up?" wants to see.
   tr.append(el('td', { class: 'nowrap', 'data-label': 'Found', title: job.createdAt ?? '' },
-    relTime(job.createdAt) || '—'));
+    relTime(job.createdAt) || '-'));
 
   // resume — one click straight to the tailored document.
   //
@@ -1078,7 +1132,7 @@ function rowFor(job) {
   // button opened the document that state refers to. One control now does
   // both — narrower, and a 60px click target instead of a 22px one.
   const label = job.resumeStatus === 'tailored' ? 'tailored'
-    : job.resumeStatus === 'prepared' ? 'packet' : '—';
+    : job.resumeStatus === 'prepared' ? 'packet' : '-';
   const hasDoc = Boolean(job.resumeDocxPath || job.resumePdfPath);
   tr.append(el('td', { class: 'nowrap', 'data-label': 'Resume' }, hasDoc
     ? el('button', {
@@ -1159,9 +1213,9 @@ function nameCellFor(job) {
       // rest of the UI uses; the dispatcher lets real links navigate.
       'data-action': 'open-posting',
       title: aggregator
-        ? `${title}\n\nOpens ${hostLabel(job.url)} — an aggregator listing, not the employer's own application form.`
+        ? `${title}\n\nOpens ${hostLabel(job.url)}, an aggregator listing, not the employer's own application form.`
         : title,
-      'aria-label': `${title} at ${job.company || 'company on posting'} — opens the posting in a new tab`,
+      'aria-label': `${title} at ${job.company || 'company on posting'}, opens the posting in a new tab`,
       text: shown,
     });
     cell.append(link);
@@ -1172,7 +1226,7 @@ function nameCellFor(job) {
       // aggregator row cost a third of the row height on 48% of the board.
       aggChip = el('span', {
         class: 'chip agg',
-        title: 'Aggregator listing — follow Apply through to the employer site, then save that direct URL here.',
+        title: 'Aggregator listing, follow Apply through to the employer site, then save that direct URL here.',
         text: hostLabel(job.url),
       });
     }
@@ -1209,7 +1263,7 @@ function nameCellFor(job) {
 }
 
 /** Employment types worth calling out; full-time and unknown are the silent default. */
-const NOTABLE_TYPES = { contract: 'contract', contract_to_hire: 'contract→hire', part_time: 'part-time' };
+const NOTABLE_TYPES = { contract: 'contract', contract_to_hire: 'contract-to-hire', part_time: 'part-time' };
 
 /**
  * A chip for a non-standard employment type, or null when there is nothing to
@@ -1259,9 +1313,9 @@ function sponsorshipTitle(job) {
   const parts = [];
   const signals = job.sponsorshipSignals ?? [];
   if (signals.length) parts.push(`Read from the posting: "${signals.join('"; "')}"`);
-  else if (job.sponsorship) parts.push('No recorded evidence — re-score this job to capture it.');
+  else if (job.sponsorship) parts.push('No recorded evidence, re-score this job to capture it.');
   if (job.sponsorshipGated) {
-    parts.push('Strong fit parked by the sponsorship gate — verify the employer sponsors.');
+    parts.push('Strong fit parked by the sponsorship gate, verify the employer sponsors.');
   }
   if (job.sponsorship === 'Denied') {
     parts.push('The posting explicitly refuses sponsorship.');
@@ -1297,7 +1351,7 @@ function sponsorshipEvidence(job) {
     for (const signal of signals) list.append(el('li', {}, el('q', { text: signal })));
     wrap.append(list);
   } else if (job.sponsorship) {
-    wrap.append(el('div', { class: 'muted', text: 'No recorded evidence — re-score this job to capture it.' }));
+    wrap.append(el('div', { class: 'muted', text: 'No recorded evidence, re-score this job to capture it.' }));
   }
   if (job.sponsorship === 'Denied') {
     wrap.append(el('div', { class: 'attention' },
@@ -1339,16 +1393,16 @@ function renderPager(page) {
   const to = Math.min(page.offset + page.limit, page.total);
 
   const count = el('span', { class: 'count' });
-  count.append('Showing ', el('b', { text: `${fmt(from)}–${fmt(to)}` }), ' of ', el('b', { text: fmt(page.total) }));
+  count.append('Showing ', el('b', { text: `${fmt(from)}-${fmt(to)}` }), ' of ', el('b', { text: fmt(page.total) }));
   if (page.total > page.limit) count.append(` · page ${page.page} of ${page.pages}`);
   host.append(count);
 
   if (page.pages > 1) {
     host.append(
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': '1', disabled: page.page <= 1, text: '« First' }),
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page - 1), disabled: page.page <= 1, text: '‹ Prev' }),
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page + 1), disabled: page.page >= page.pages, text: 'Next ›' }),
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.pages), disabled: page.page >= page.pages, text: 'Last »' }),
+      el('button', { class: 'small', 'data-action': 'page', 'data-page': '1', disabled: page.page <= 1, 'aria-label': 'First page' }, icon('chevs-l'), 'First'),
+      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page - 1), disabled: page.page <= 1, 'aria-label': 'Previous page' }, icon('chev-l'), 'Prev'),
+      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page + 1), disabled: page.page >= page.pages, 'aria-label': 'Next page' }, 'Next', icon('chev-r')),
+      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.pages), disabled: page.page >= page.pages, 'aria-label': 'Last page' }, 'Last', icon('chevs-r')),
     );
   }
   if (state.selected.size) {
@@ -1367,8 +1421,8 @@ function renderPager(page) {
 let announceTimer = null;
 let lastAnnounced = null;
 function announceBoard(page) {
-  const tab = TABS.find(([key]) => key === state.activeTab);
-  const scope = state.activeTab === 'all' ? '' : ` in ${tab ? tab[1] : state.activeTab}`;
+  const tab = TABS.find(({ key }) => key === state.activeTab);
+  const scope = state.activeTab === 'all' ? '' : ` in ${tab ? tab.label : state.activeTab}`;
   const filters = hasActiveFilters() ? ', filtered' : '';
   const message = page.total === 0
     ? `No jobs match${scope ? ` ${scope.trim()}` : ''}${filters}.`
@@ -1423,10 +1477,10 @@ function renderDetail(job) {
   const head = el('div', { class: 'detail-head' });
   head.append(el('span', {
     class: `grade big ${job.grade ? job.grade.letter : 'none'}`,
-    text: job.grade ? job.grade.letter : '—',
+    text: job.grade ? job.grade.letter : '-',
   }));
   const headMain = el('div', { class: 'grow-1' });
-  headMain.append(el('h2', { text: `${job.company || 'Company on posting'} — ${job.title}` }));
+  headMain.append(el('h2', { text: `${job.company || 'Company on posting'}, ${job.title}` }));
   const meta = [job.location, job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
     job.atsPlatform ? `ATS ${job.atsPlatform}` : null].filter(Boolean).join(' · ');
   headMain.append(el('div', { class: 'muted', text: meta }));
@@ -1483,13 +1537,13 @@ function renderDetail(job) {
   // A row with no stored URL used to render a dead <a> with no href that looked
   // clickable and did nothing. Say what is missing instead.
   if (job.url) {
-    actions.append(el('a', { class: 'btn', href: job.url, target: '_blank', rel: 'noopener', text: 'Open posting ↗' }));
+    actions.append(el('a', { class: 'btn', href: job.url, target: '_blank', rel: 'noopener', }, 'Open posting', icon('external')));
     actions.append(el('button', { class: 'small', 'data-action': 'check-link', 'data-id': job.id, text: 'Check link' }));
   } else {
     actions.append(el('span', { class: 'chip bad', title: 'This job has no application URL stored', text: 'no posting URL' }));
   }
   actions.append(el('button', { class: 'small', 'data-action': 'open-link-dialog', 'data-id': job.id, text: 'Replace URL' }));
-  for (const [decision, label] of [['shortlisted', '★ Shortlist'], ['rejected', '✕ Reject'],
+  for (const [decision, label] of [['shortlisted', 'Shortlist'], ['rejected', 'Reject'],
     ['archived', 'Archive'], ['clear', 'Clear']]) {
     actions.append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
@@ -1537,7 +1591,7 @@ function renderDetail(job) {
   panel.append(el('h3', { text: 'Your notes' }));
   const notes = el('div', { class: 'notes' });
   const textarea = el('textarea', {
-    id: 'noteBox', rows: '3', placeholder: 'Private reminders — saved with this job and exported to CSV…',
+    id: 'noteBox', rows: '3', placeholder: 'Private reminders, saved with this job and exported to CSV…',
   });
   textarea.value = job.notes ?? '';
   notes.append(textarea, el('div', { class: 'actions' },
@@ -1571,7 +1625,7 @@ function renderDetail(job) {
     const ul = el('ul', { class: 'plan' });
     for (const event of job.events) {
       ul.append(el('li', {},
-        el('span', { class: 'faint', text: shortStamp(event.at) }), ` ${event.type} — ${event.message ?? ''}`));
+        el('span', { class: 'faint', text: shortStamp(event.at) }), ` ${event.type}, ${event.message ?? ''}`));
     }
     panel.append(ul);
   }
@@ -1627,22 +1681,21 @@ function nextBestAction(job) {
   return box;
 }
 
-const autofillButton = (id, label = '⚡ Auto-fill application') => el('button', {
+const autofillButton = (id, label = 'Auto-fill application') => el('button', {
   class: 'small primary', 'data-action': 'autofill-one', 'data-id': id,
-  title: 'Prepare a packet if needed, approve it, open the posting, fill everything it can — and stop before Submit.',
+  title: 'Prepare a packet if needed, approve it, open the posting, fill everything it can, and stop before Submit.',
   text: label,
 });
 
 function actionPlan(job) {
   const openPosting = () => el('a', {
-    class: 'btn small', href: job.url, target: '_blank', rel: 'noopener', text: 'Open posting ↗',
-  });
+    class: 'btn small', href: job.url, target: '_blank', rel: 'noopener', }, 'Open posting', icon('external'));
   const markSubmitted = () => el('button', {
     class: 'small primary', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself',
   });
 
   if (job.appStatus === 'submitted') {
-    return { text: 'Submitted — nothing further to do.', buttons: [] };
+    return { text: 'Submitted, nothing further to do.', buttons: [] };
   }
   if (job.appStatus === 'submit_unverified') {
     return {
@@ -1657,22 +1710,22 @@ function actionPlan(job) {
       buttons: [
         el('button', { class: 'small primary', 'data-action': 'preview-resume', 'data-id': job.id, text: '👁 Review resume' }),
         autofillButton(job.id),
-        el('button', { class: 'small', 'data-action': 'approve', 'data-id': job.id, text: '✓ Approve only' }),
+        el('button', { class: 'small', 'data-action': 'approve', 'data-id': job.id, text: 'Approve only' }),
       ],
     };
   }
   if (job.appStatus === 'approved') {
     return {
-      text: 'Approved. Open it in a browser — it fills the form and stops before Submit.',
+      text: 'Approved. Open it in a browser, it fills the form and stops before Submit.',
       buttons: [el('button', {
-        class: 'small primary', 'data-action': 'assist', 'data-id': job.id, text: '▶ Fill in browser',
+        class: 'small primary', 'data-action': 'assist', 'data-id': job.id, text: 'Fill in browser',
       }), el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': job.id, text: '👁 Resume' })],
     };
   }
   if (job.appStatus === 'ready_for_submit') {
     return {
-      text: 'Filled and waiting — review the open browser tab, click Submit yourself, then record it here.',
-      buttons: [markSubmitted(), autofillButton(job.id, '↻ Re-fill'), openPosting()],
+      text: 'Filled and waiting, review the open browser tab, click Submit yourself, then record it here.',
+      buttons: [markSubmitted(), autofillButton(job.id, 'Re-fill'), openPosting()],
     };
   }
   if (['blocked', 'failed', 'cancelled'].includes(job.appStatus)) {
@@ -1698,47 +1751,47 @@ function actionPlan(job) {
     return {
       text: job.attention?.summary
         || 'The assistant stopped because this step needs you. Complete it in the browser, then retry auto-fill.',
-      buttons: [openPosting(), autofillButton(job.id, '↻ Retry auto-fill')],
+      buttons: [openPosting(), autofillButton(job.id, 'Retry auto-fill')],
     };
   }
   if (job.sponsorshipGated) {
     return {
-      text: 'Strong fit, but sponsorship is unconfirmed — check the employer sponsors H-1B, then shortlist and prepare.',
+      text: 'Strong fit, but sponsorship is unconfirmed, check the employer sponsors H-1B, then shortlist and prepare.',
       buttons: [
         openPosting(),
-        el('button', { class: 'small primary', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: '★ Shortlist' }),
-        autofillButton(job.id, '⚡ Auto-fill anyway'),
+        el('button', { class: 'small primary', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: 'Shortlist' }),
+        autofillButton(job.id, 'Auto-fill anyway'),
       ],
     };
   }
   if (job.appStatus === 'shortlisted') {
     return {
-      text: 'Shortlisted — auto-fill prepares the tailored packet and fills the application in one pass.',
+      text: 'Shortlisted, auto-fill prepares the tailored packet and fills the application in one pass.',
       buttons: [autofillButton(job.id), el('button', {
-        class: 'small', 'data-action': 'prepare-one', 'data-id': job.id, text: '📄 Prepare only',
+        class: 'small', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare only',
       })],
     };
   }
   if (['no_fit', 'weak'].includes(job.fit)) {
     return {
-      text: 'Low fit — probably not worth your time. Reject it to keep the board focused.',
+      text: 'Low fit, probably not worth your time. Reject it to keep the board focused.',
       buttons: [el('button', {
-        class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'rejected', text: '✕ Reject',
+        class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'rejected', text: 'Reject',
       })],
     };
   }
   if (job.fit === 'strong') {
     return {
-      text: 'Strong fit — auto-fill tailors the resume, fills the application, and stops before Submit.',
+      text: 'Strong fit, auto-fill tailors the resume, fills the application, and stops before Submit.',
       buttons: [autofillButton(job.id), el('button', {
-        class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: '★ Shortlist',
+        class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: 'Shortlist',
       })],
     };
   }
   return {
     text: 'Review the fit and sponsorship below, then shortlist or reject.',
     buttons: [autofillButton(job.id), el('button', {
-      class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: '★ Shortlist',
+      class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'shortlisted', text: 'Shortlist',
     })],
   };
 }
@@ -1772,11 +1825,11 @@ function resumeCard(job) {
     card.append(head);
     card.append(el('div', { class: 'muted', text: 'No tailored resume yet. Prepare this job to generate one from your master resume.' }));
     card.append(el('div', { class: 'actions' },
-      el('button', { class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: '📄 Prepare resume' }),
+      el('button', { class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare resume' }),
       el('button', {
         class: 'small ghost', 'data-action': 'open-master',
         title: 'View, edit, or replace the master resume every tailored version is built from.',
-        text: '🧾 Master resume',
+        text: 'Master resume',
       })));
     return card;
   }
@@ -1785,7 +1838,7 @@ function resumeCard(job) {
     class: `chip ${packet?.resumeTailored ? 'good' : 'warn'}`,
     title: packet?.resumeTailored
       ? 'Built from your master resume for this posting'
-      : 'Tailoring did not run — your master resume was used as-is',
+      : 'Tailoring did not run, your master resume was used as-is',
     text: packet?.resumeTailored ? 'tailored' : 'master fallback',
   }));
   card.append(head);
@@ -1811,15 +1864,14 @@ function resumeCard(job) {
   if (job.resumePdfPath) {
     links.append(el('a', {
       class: 'btn small', href: `/api/jobs/${encodeURIComponent(job.id)}/resume?format=pdf`,
-      target: '_blank', rel: 'noopener', text: 'Open PDF ↗',
-    }));
+      target: '_blank', rel: 'noopener', }, 'Open PDF', icon('external')));
   }
   links.append(el('a', {
-    class: 'btn small', href: `/api/jobs/${encodeURIComponent(job.id)}/resume?format=docx`, text: '⬇ DOCX',
+    class: 'btn small', href: `/api/jobs/${encodeURIComponent(job.id)}/resume?format=docx`, text: 'DOCX',
   }));
   links.append(el('button', {
     class: 'small', 'data-action': 'prepare-one', 'data-id': job.id,
-    title: 'Regenerate the tailored resume and refresh this audit', text: '↻ Re-tailor',
+    title: 'Regenerate the tailored resume and refresh this audit', text: 'Re-tailor',
   }));
   card.append(links);
 
@@ -1840,8 +1892,8 @@ function packetSection(packet) {
 
   wrap.append(el('h3', { text: 'Application packet' }));
   const guarantee = el('div', { class: 'muted' });
-  guarantee.append(`Stops before submit: ${packet.stopBeforeSubmit ? 'yes' : 'NO — report this'} · `);
-  guarantee.append(`submit-ready flag: ${packet.submitReady ? 'YES — report this' : 'no'}`);
+  guarantee.append(`Stops before submit: ${packet.stopBeforeSubmit ? 'yes' : 'NO, report this'} · `);
+  guarantee.append(`submit-ready flag: ${packet.submitReady ? 'YES, report this' : 'no'}`);
   wrap.append(guarantee);
 
   if (packet.tailoring?.changes?.length || packet.tailoring?.gaps?.length) {
@@ -1851,7 +1903,7 @@ function packetSection(packet) {
       ul.append(el('li', { text: resumeChangeLabel(change) }));
     }
     if (!(packet.tailoring.changes ?? []).length) {
-      ul.append(el('li', { class: 'muted', text: 'Nothing needed reordering — the master resume already led with the right content.' }));
+      ul.append(el('li', { class: 'muted', text: 'Nothing needed reordering, the master resume already led with the right content.' }));
     }
     wrap.append(ul);
 
@@ -1880,12 +1932,12 @@ function packetSection(packet) {
       wrap.append(el('h3', { text: 'Asked for, but not in your resume' }));
       wrap.append(el('div', {
         class: 'evidence-note',
-        text: 'These were deliberately NOT added — they are job-description terms, not proven facts about you. '
+        text: 'These were deliberately NOT added, they are job-description terms, not proven facts about you. '
           + 'If you genuinely have the experience, add a truthful bullet to your master resume and re-tailor.',
       }));
       const gaps = el('ul', { class: 'change-list' });
       for (const gap of packet.tailoring.gaps.slice(0, 8)) {
-        gaps.append(el('li', {}, el('b', { text: gap.keyword ?? 'Requirement' }), ' — not evidenced'));
+        gaps.append(el('li', {}, el('b', { text: gap.keyword ?? 'Requirement' }), ' - not evidenced'));
       }
       wrap.append(gaps);
     }
@@ -1902,7 +1954,7 @@ function packetSection(packet) {
       note.append(`${llm.provenance.verified} requirement phrase(s) read from the posting`);
       if (llm.provenance.rejected) note.append(`, ${llm.provenance.rejected} rejected as not actually present`);
       note.append('. Every accepted phrase was found verbatim in the job description, and resume content '
-        + 'stayed evidence-gated — nothing was written for you.');
+        + 'stayed evidence-gated, nothing was written for you.');
     }
     wrap.append(note);
   }
@@ -1919,7 +1971,7 @@ function packetSection(packet) {
   if (packet.needsUser?.length) {
     wrap.append(el('h3', { text: 'Questions left for you' }));
     const ul = el('ul', { class: 'plan' });
-    for (const field of packet.needsUser) ul.append(el('li', { class: 'st-blocked', text: `${field.label} — needs you` }));
+    for (const field of packet.needsUser) ul.append(el('li', { class: 'st-blocked', text: `${field.label}, needs you` }));
     wrap.append(ul);
   }
   if (packet.blockers?.length) {
@@ -1956,7 +2008,7 @@ function resumeChangeLabel(change = {}) {
 async function openResumePreview(id) {
   const job = state.known.get(id) ?? state.detailJob;
   const dialog = $('dlgResume');
-  $('dlgResumeSub').textContent = job ? `${job.company ?? ''} — ${job.title ?? ''}` : '';
+  $('dlgResumeSub').textContent = job ? `${job.company ?? ''}, ${job.title ?? ''}` : '';
   $('resumeFrameHost').textContent = '';
   const links = $('dlgResumeLinks');
   links.textContent = '';
@@ -1974,15 +2026,14 @@ async function openResumePreview(id) {
     $('resumeFrameHost').append(frame);
     status.textContent = ready.generated ? 'Preview generated from the tailored DOCX.' : '';
     links.append(el('a', {
-      class: 'btn small', href: ready.url, target: '_blank', rel: 'noopener', text: 'Full size ↗',
-    }), el('a', {
-      class: 'btn small', href: `/api/jobs/${encodeURIComponent(id)}/resume?format=docx`, text: '⬇ DOCX',
+      class: 'btn small', href: ready.url, target: '_blank', rel: 'noopener', }, 'Full size', icon('external')), el('a', {
+      class: 'btn small', href: `/api/jobs/${encodeURIComponent(id)}/resume?format=docx`, text: 'DOCX',
     }));
   } catch (err) {
     status.className = 'preview-status bad';
     status.textContent = err.message;
     links.append(el('a', {
-      class: 'btn small', href: `/api/jobs/${encodeURIComponent(id)}/resume?format=docx`, text: '⬇ Download DOCX instead',
+      class: 'btn small', href: `/api/jobs/${encodeURIComponent(id)}/resume?format=docx`, text: 'Download DOCX instead',
     }));
   }
 }
@@ -2089,7 +2140,7 @@ async function runPhase(phase) {
 }
 
 async function autofillOne(id) {
-  if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  if (state.running) { toast('A run is in progress, wait for it to finish.', 'bad'); return; }
   const job = state.known.get(id);
   if (job && isAggregatorUrl(job.url)) {
     toast('Use the direct employer/ATS URL for auto-fill. Open the listing and save its Apply URL.', 'bad');
@@ -2097,13 +2148,13 @@ async function autofillOne(id) {
   }
   try {
     await postJson(`/api/jobs/${encodeURIComponent(id)}/auto-apply`, {});
-    toast('Auto-fill started — it stops before Submit.');
+    toast('Auto-fill started, it stops before Submit.');
     pollRun();
   } catch (err) { toast(err.message, 'bad'); }
 }
 
 async function prepareOne(id) {
-  if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  if (state.running) { toast('A run is in progress, wait for it to finish.', 'bad'); return; }
   try {
     await postJson('/api/prepare-batch', { jobIds: [id] });
     toast('Preparing the tailored resume + packet…');
@@ -2153,8 +2204,8 @@ function syncSelectionBar() {
   const autofill = $('autoApplyBtn');
   autofill.disabled = n === 0 || state.running;
   autofill.title = state.running
-    ? 'A run is in progress — wait for it to finish'
-    : 'Prepare if needed, approve, open each posting, and fill it — always stopping before Submit.';
+    ? 'A run is in progress, wait for it to finish'
+    : 'Prepare if needed, approve, open each posting, and fill it, always stopping before Submit.';
 }
 
 function clearSelection() {
@@ -2184,7 +2235,7 @@ async function selectedJobs() {
 }
 
 async function batchAutofill() {
-  if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  if (state.running) { toast('A run is in progress, wait for it to finish.', 'bad'); return; }
   const jobs = await selectedJobs();
   if (!jobs.length) return;
 
@@ -2214,7 +2265,7 @@ async function batchAutofill() {
 }
 
 async function batchPrepare() {
-  if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  if (state.running) { toast('A run is in progress, wait for it to finish.', 'bad'); return; }
   const ids = [...state.selected];
   if (!ids.length) return;
   try {
@@ -2275,7 +2326,7 @@ function offerUndo(message, wasDecision) {
     groups.get(was).push(id);
   }
   const node = el('div', { class: 'toast good undo-toast' }, el('span', { text: message }));
-  const button = el('button', { class: 'small', type: 'button', text: '↩ Undo' });
+  const button = el('button', { class: 'small', type: 'button', text: 'Undo' });
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
@@ -2298,7 +2349,7 @@ function offerUndo(message, wasDecision) {
 
 async function showCompare() {
   const jobs = (await selectedJobs()).slice(0, 4);
-  if (jobs.length < 2) { toast('Select 2–4 jobs to compare', 'bad'); return; }
+  if (jobs.length < 2) { toast('Select 2-4 jobs to compare', 'bad'); return; }
   const full = await Promise.all(jobs.map((j) => api(`/api/jobs/${encodeURIComponent(j.id)}`)));
 
   const body = $('compareBody');
@@ -2307,21 +2358,21 @@ async function showCompare() {
   const rows = [
     ['Company', (j) => j.company],
     ['Role', (j) => j.title],
-    ['Score', (j) => `${j.score ?? '—'} (${j.fit})`],
-    ['Grade', (j) => j.grade?.letter ?? '—'],
-    ['Sponsorship', (j) => j.sponsorship ?? '—'],
+    ['Score', (j) => `${j.score ?? '-'} (${j.fit})`],
+    ['Grade', (j) => j.grade?.letter ?? '-'],
+    ['Sponsorship', (j) => j.sponsorship ?? '-'],
     ['Posted', (j) => j.postedLabel],
-    ['Location', (j) => j.location ?? '—'],
-    ['Type', (j) => j.employmentLabel ?? '—'],
-    ['Source / ATS', (j) => `${j.source} / ${j.atsPlatform ?? '—'}`],
+    ['Location', (j) => j.location ?? '-'],
+    ['Type', (j) => j.employmentLabel ?? '-'],
+    ['Source / ATS', (j) => `${j.source} / ${j.atsPlatform ?? '-'}`],
     ['Status', (j) => statusLabel(j)],
-    ['ATS match', (j) => (j.atsScore != null ? `${j.atsScore}%` : '—')],
-    ['Matched skills', (j) => (j.matchedKeywords ?? []).slice(0, 10).join(', ') || '—'],
-    ['Missing', (j) => (j.missingKeywords ?? []).slice(0, 8).join(', ') || '—'],
+    ['ATS match', (j) => (j.atsScore != null ? `${j.atsScore}%` : '-')],
+    ['Matched skills', (j) => (j.matchedKeywords ?? []).slice(0, 10).join(', ') || '-'],
+    ['Missing', (j) => (j.missingKeywords ?? []).slice(0, 8).join(', ') || '-'],
   ];
   for (const [label, get] of rows) {
     const tr = el('tr', {}, el('th', { scope: 'row', text: label }));
-    for (const job of full) tr.append(el('td', { text: String(get(job) ?? '—') }));
+    for (const job of full) tr.append(el('td', { text: String(get(job) ?? '-') }));
     table.append(tr);
   }
   body.append(table);
@@ -2337,7 +2388,7 @@ function miniTable(headers, rows) {
   const tbody = el('tbody');
   for (const row of rows) {
     tbody.append(el('tr', {}, ...row.map((cell) => (
-      cell?.nodeType ? el('td', {}, cell) : el('td', { text: String(cell ?? '—') })
+      cell?.nodeType ? el('td', {}, cell) : el('td', { text: String(cell ?? '-') })
     ))));
   }
   table.append(tbody);
@@ -2357,8 +2408,8 @@ async function openReports() {
   const totals = report.dailySummary.totals;
   body.textContent = '';
   body.append(el('div', { class: 'actions' },
-    el('button', { class: 'small', 'data-action': 'export-jobs', text: '⬇ All jobs + scores' }),
-    el('button', { class: 'small', 'data-action': 'export-tracker', text: '⬇ Application tracker' })));
+    el('button', { class: 'small', 'data-action': 'export-jobs', text: 'All jobs + scores' }),
+    el('button', { class: 'small', 'data-action': 'export-tracker', text: 'Application tracker' })));
 
   body.append(el('h3', { text: 'Today' }));
   body.append(el('div', { class: 'muted', text:
@@ -2372,15 +2423,15 @@ async function openReports() {
   body.append(el('h3', { text: `Application log (${report.applicationLog.length})` }));
   body.append(miniTable(['Job', 'Status', 'When', 'Confirmation', 'Blockers'],
     report.applicationLog.slice(0, 200).map((r) => [
-      `${r.company} — ${r.title}`, String(r.appStatus).replace(/_/g, ' '),
-      shortStamp(r.appliedAt) || '—', r.confirmation ?? '—',
-      (r.blockers ?? []).join('; ') || '—',
+      `${r.company}, ${r.title}`, String(r.appStatus).replace(/_/g, ' '),
+      shortStamp(r.appliedAt) || '-', r.confirmation ?? '-',
+      (r.blockers ?? []).join('; ') || '-',
     ])));
 
   body.append(el('h3', { text: `Prepared packets awaiting action (${report.preparedPackets.length})` }));
   body.append(miniTable(['Job', 'Grade', 'Sponsorship', 'Status'],
     report.preparedPackets.map((r) => [
-      `${r.company} — ${r.title}`, r.grade?.letter ?? '—', r.sponsorship ?? '—',
+      `${r.company}, ${r.title}`, r.grade?.letter ?? '-', r.sponsorship ?? '-',
       String(r.appStatus).replace(/_/g, ' '),
     ])));
 
@@ -2411,7 +2462,7 @@ async function openDocuments() {
       class: docs.master.exists ? 'muted' : 'st-blocked',
       text: docs.master.exists
         ? `${kb(docs.master.bytes)}, updated ${shortStamp(docs.master.modifiedAt)}`
-        : 'NOT FOUND — tailoring cannot run without it',
+        : 'NOT FOUND, tailoring cannot run without it',
     }));
     row.append(el('button', {
       class: 'small', 'data-action': 'open-master',
@@ -2422,16 +2473,16 @@ async function openDocuments() {
   }
   body.append(el('h3', { text: `Tailored versions (${docs.tailored.length})` }));
   if (!docs.tailored.length) {
-    body.append(el('div', { class: 'muted', text: 'No tailored resumes yet — prepare a job to generate one.' }));
+    body.append(el('div', { class: 'muted', text: 'No tailored resumes yet, prepare a job to generate one.' }));
     return;
   }
   body.append(miniTable(['Job', 'Prepared', 'ATS', 'Updates', 'Gaps', 'Open'],
     docs.tailored.slice(0, 200).map((d) => [
-      `${d.company} — ${d.title}`,
-      shortStamp(d.preparedAt) || '—',
-      d.atsScore != null ? `${d.atsScore}%` : '—',
-      d.tailoring?.changeCount ?? '—',
-      d.tailoring?.gapCount ?? '—',
+      `${d.company}, ${d.title}`,
+      shortStamp(d.preparedAt) || '-',
+      d.atsScore != null ? `${d.atsScore}%` : '-',
+      d.tailoring?.changeCount ?? '-',
+      d.tailoring?.gapCount ?? '-',
       el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': d.jobId, text: '👁 View' }),
     ])));
 }
@@ -2494,13 +2545,13 @@ async function renderMasterResume() {
   const buttons = el('div', { class: 'row-gap' });
   if (master.exists) {
     buttons.append(el('a', {
-      class: 'btn small', href: '/api/master-resume/file', text: '⬇ Download to edit',
+      class: 'btn small', href: '/api/master-resume/file', text: 'Download to edit',
       title: 'Download, edit in Word or Google Docs, then upload it back here.',
     }));
   }
   buttons.append(el('button', {
     class: 'small primary', 'data-action': 'pick-master-file',
-    text: master.exists ? '⬆ Upload new version' : '⬆ Upload your resume',
+    text: master.exists ? 'Upload new version' : 'Upload your resume',
   }));
   card.append(buttons);
   body.append(card);
@@ -2508,7 +2559,7 @@ async function renderMasterResume() {
   if (!master.exists) {
     body.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }),
       el('div', {}, el('b', { text: 'No master resume yet.' }),
-        ' Tailoring cannot run without it — every packet would fall back to nothing. '
+        ' Tailoring cannot run without it, every packet would fall back to nothing. '
         + 'Upload a .docx here, or place the file at the path above.')));
   }
   if (master.textError) {
@@ -2518,14 +2569,14 @@ async function renderMasterResume() {
   }
 
   body.append(el('div', { class: 'evidence-note' },
-    'Tailoring opens this document read-only and writes a separate resume per job — '
+    'Tailoring opens this document read-only and writes a separate resume per job, '
     + 'the master is never edited in place. Uploading a new version keeps the previous one, '
     + 'so you can roll back in one click.'));
 
   if (master.stalePackets > 0) {
     body.append(el('div', { class: 'muted' },
       `${fmt(master.stalePackets)} tailored resume(s) were generated before this version. `
-      + 'Use “↻ Re-tailor” on a job to rebuild its resume from the current master.'));
+      + 'Use “Re-tailor” on a job to rebuild its resume from the current master.'));
   }
 
   // ── what is actually in it ─────────────────────────────────────────────
@@ -2537,14 +2588,14 @@ async function renderMasterResume() {
     }
     body.append(preview);
     if (master.truncated) {
-      body.append(el('div', { class: 'faint fineprint', text: 'Preview truncated — download the file to read it all.' }));
+      body.append(el('div', { class: 'faint fineprint', text: 'Preview truncated, download the file to read it all.' }));
     }
   }
 
   // ── rollback ───────────────────────────────────────────────────────────
   body.append(el('h3', { text: `Previous versions (${master.backups.length})` }));
   if (!master.backups.length) {
-    body.append(el('div', { class: 'muted', text: 'None yet — a copy is kept automatically whenever you upload a new version.' }));
+    body.append(el('div', { class: 'muted', text: 'None yet, a copy is kept automatically whenever you upload a new version.' }));
     return;
   }
   const list = el('ul', { class: 'mr-versions' });
@@ -2554,7 +2605,7 @@ async function renderMasterResume() {
       el('button', {
         class: 'small', 'data-action': 'restore-master', 'data-name': backup.name,
         title: 'Make this the master resume again (the current one is kept too).',
-        text: '↺ Restore',
+        text: 'Restore',
       })));
   }
   body.append(list);
@@ -2574,11 +2625,11 @@ async function uploadMasterResume(file) {
   const show = (text, tone = 'muted') => { msg.className = tone; msg.textContent = text; };
   if (!file) return;
   if (!/\.docx$/i.test(file.name)) {
-    show('Only .docx files can be used — export from Google Docs or “Save As” in Word.', 'st-blocked');
+    show('Only .docx files can be used, export from Google Docs or “Save As” in Word.', 'st-blocked');
     return;
   }
   if (file.size > MASTER_MAX_BYTES) {
-    show(`That file is ${kb(file.size)} — the limit is 8 MB.`, 'st-blocked');
+    show(`That file is ${kb(file.size)}, the limit is 8 MB.`, 'st-blocked');
     return;
   }
   show(`Checking and installing ${file.name}…`);
@@ -2590,7 +2641,7 @@ async function uploadMasterResume(file) {
     });
     show('');
     toast(result.backup
-      ? `Master resume replaced — previous version kept as ${result.backup}`
+      ? `Master resume replaced, previous version kept as ${result.backup}`
       : 'Master resume installed', 'good');
     await renderMasterResume();
   } catch (err) {
@@ -2607,7 +2658,7 @@ async function restoreMasterVersion(name) {
   try {
     await postJson('/api/master-resume/restore', { name });
     msg.textContent = '';
-    toast('Master resume restored — the version it replaced was kept too.', 'good');
+    toast('Master resume restored, the version it replaced was kept too.', 'good');
     await renderMasterResume();
   } catch (err) {
     msg.className = 'st-blocked';
@@ -2699,7 +2750,7 @@ function renderQuestionQueue(queue) {
     }));
     item.append(head);
 
-    const asked = (q.jobs ?? []).map((j) => [j.company, j.title].filter(Boolean).join(' — ')).filter(Boolean);
+    const asked = (q.jobs ?? []).map((j) => [j.company, j.title].filter(Boolean).join(' - ')).filter(Boolean);
     if (asked.length) item.append(el('div', { class: 'faint fineprint', text: `Seen on: ${asked.join(' · ')}` }));
     if (q.note) item.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }), el('div', { text: q.note })));
 
@@ -2765,12 +2816,12 @@ function renderProfileFields(profile) {
   const missing = profile.missing ?? [];
   const blankOptional = (profile.fields ?? []).filter((f) => !f.required && !f.filled).length;
   const optionalNote = blankOptional
-    ? ` ${blankOptional} optional field(s) are blank — a form asking for one gets nothing.`
+    ? ` ${blankOptional} optional field(s) are blank, a form asking for one gets nothing.`
     : '';
   section.append(el('div', { class: missing.length ? 'attention' : 'evidence-note' },
     missing.length ? el('span', { class: 'mark', text: '!' }) : null,
     el('div', {}, missing.length
-      ? `${missing.length} required field(s) are empty, so every application leaves them blank — `
+      ? `${missing.length} required field(s) are empty, so every application leaves them blank, `
         + `which is what turns an auto-fill run into "blocked".${optionalNote}`
       : `Every required field has a value, typed onto forms exactly as written here.${optionalNote}`)));
 
@@ -2813,10 +2864,14 @@ function renderSavedAnswers(screening) {
     row.append(el('label', { text: 'Matches questions containing' }));
     row.append(el('input', { type: 'text', 'data-a-patterns': entry.id, value: (entry.patterns ?? []).join(' | ') }));
     row.append(el('label', { text: 'Answer' }));
-    row.append(el('textarea', { rows: '2', 'data-a-answer': entry.id }, entry.answer ?? ''));
+    const answer = el('textarea', { rows: '2', 'data-a-answer': entry.id });
+    // Editable user content must survive a load/save unchanged; the shared
+    // display helper normalizes punctuation in text children.
+    answer.value = entry.answer ?? '';
+    row.append(answer);
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
-      text: '✕ Delete this answer',
+      text: 'Delete this answer',
     }));
     wrap.append(row);
   }
@@ -2840,7 +2895,7 @@ async function saveProfileDetails() {
     const result = await postJson('/api/profile', { values });
     profileMessage(result.warning ?? '', result.warning ? 'st-blocked' : 'muted');
     toast(result.changed.length
-      ? `Saved — ${result.changed.length} field(s) changed. New applications use these values.`
+      ? `Saved, ${result.changed.length} field(s) changed. New applications use these values.`
       : 'No changes to save.', 'good');
     await renderProfile();
   } catch (err) {
@@ -2915,13 +2970,17 @@ function renderHealthProfileFlag() {
   const open = data.questions?.openCount ?? 0;
   const missing = data.profile?.missing?.length ?? 0;
   if (!open && !missing) return;
-  const parts = [];
-  if (open) parts.push(`${open} question${open === 1 ? '' : 's'}`);
-  if (missing) parts.push(`${missing} empty field${missing === 1 ? '' : 's'}`);
+  // The bold number is the count, so the label must not repeat it: it read
+  // "1 1 question". With both kinds present, one total and the split in the
+  // tooltip.
+  const questions = `question${open === 1 ? '' : 's'} to answer`;
+  const fields = `empty profile field${missing === 1 ? '' : 's'}`;
+  const label = open && missing ? 'profile items to answer' : open ? questions : fields;
+  const detail = [open ? `${open} ${questions}` : null, missing ? `${missing} ${fields}` : null].filter(Boolean).join(', ');
   host.append(el('button', {
     type: 'button', class: 'stat clickable attn pf-flag', 'data-action': 'open-profile',
-    title: 'Open the application profile to resolve these.',
-  }, el('b', { text: String(open + missing) }), el('span', { class: 'l', text: parts.join(' · ') })));
+    title: `${detail}. Open the application profile to resolve them.`,
+  }, el('b', { text: String(open + missing) }), el('span', { class: 'l', text: label })));
 }
 
 async function loadProfileFlag() {
@@ -2957,10 +3016,10 @@ async function openHealth() {
   // Doctor severities: pass / warn / fail.
   const tone = { pass: 'good', warn: 'warn', fail: 'bad' };
   body.append(miniTable(['Check', 'Status', 'Detail', 'How to fix'], checks.map((c) => [
-    c.label ?? c.id ?? '—',
-    el('span', { class: `chip ${tone[c.status] ?? ''}`, text: c.status ?? '—' }),
-    c.detail ?? '—',
-    c.fix ?? '—',
+    c.label ?? c.id ?? '-',
+    el('span', { class: `chip ${tone[c.status] ?? ''}`, text: c.status ?? '-' }),
+    c.detail ?? '-',
+    c.fix ?? '-',
   ])));
 }
 
@@ -3199,10 +3258,10 @@ function applyRunGate(status) {
     line.hidden = false;
     if (Number.isFinite(total) && total > 0) {
       line.classList.remove('indeterminate');
-      $('runlineFill').style.width = `${Math.min(100, Math.round((done / total) * 100))}%`;
+      $('runlineFill').style.transform = `scaleX(${Math.min(1, done / total).toFixed(3)})`;
     } else {
       line.classList.add('indeterminate');
-      $('runlineFill').style.width = '';
+      $('runlineFill').style.transform = '';
     }
   } else if (status?.lastError && !dismissed) {
     box.dataset.state = 'error';
@@ -3215,13 +3274,26 @@ function applyRunGate(status) {
     // "failed" overstates it: a source that hit one bad page still delivered
     // the rest, and this line sits right above the per-source breakdown that
     // now says so. Naming the count of affected sources is the useful part.
+    const troubled = (status.rca ?? []).length;
     $('runMeta').textContent = status.partial
-      ? `${(status.rca ?? []).length || 'some'} source(s) had problems — results from healthy sources were kept`
+      ? `${troubled ? `${troubled} ${troubled === 1 ? 'source' : 'sources'}` : 'Some sources'} had problems. Results from the healthy ones were kept.`
       : '';
     line.hidden = true;
   } else {
     box.dataset.state = 'idle';
     line.hidden = true;
+  }
+
+  // The status row wears the run's state. When a run LANDS (running -> a
+  // result), it brightens once so a finished run is noticed, then settles.
+  const bar = $('statusbar');
+  const landed = bar.dataset.run === 'running' && ['ok', 'warn', 'error'].includes(box.dataset.state);
+  bar.dataset.run = box.dataset.state;
+  if (landed) {
+    bar.classList.remove('arrive');
+    void bar.offsetWidth; // restart the animation if it is already applied
+    bar.classList.add('arrive');
+    bar.addEventListener('animationend', () => bar.classList.remove('arrive'), { once: true });
   }
 
   const idle = box.dataset.state === 'idle';
@@ -3266,7 +3338,7 @@ async function pollRun() {
 const ACTIONS = {
   reload: () => location.reload(),
   'cancel-run': async () => {
-    try { await postJson('/api/run/cancel'); toast('Cancelling — finished work is kept.'); pollRun(); }
+    try { await postJson('/api/run/cancel'); toast('Cancelling, finished work is kept.'); pollRun(); }
     catch (err) { toast(err.message, 'bad'); }
   },
   run: (target) => runPhase(target.dataset.phase),
@@ -3423,7 +3495,7 @@ const ACTIONS = {
   decide: (target) => decide(target.dataset.id, target.dataset.decision),
   approve: (target) => simpleAction(target.dataset.id, 'approve', 'Packet approved'),
   'reject-packet': (target) => simpleAction(target.dataset.id, 'reject-packet', 'Packet rejected'),
-  assist: (target) => simpleAction(target.dataset.id, 'assist', 'Browser opening — it stops before Submit'),
+  assist: (target) => simpleAction(target.dataset.id, 'assist', 'Browser opening, it stops before Submit'),
   'autofill-one': (target) => autofillOne(target.dataset.id),
   'prepare-one': (target) => prepareOne(target.dataset.id),
   'check-link': (target) => checkLink(target.dataset.id),
@@ -3468,7 +3540,7 @@ const ACTIONS = {
     const dialog = $('dlgSubmit');
     dialog.dataset.jobId = target.dataset.id;
     const job = state.known.get(target.dataset.id);
-    $('dlgSubmitJob').textContent = job ? `${job.company} — ${job.title}` : target.dataset.id;
+    $('dlgSubmitJob').textContent = job ? `${job.company}, ${job.title}` : target.dataset.id;
     $('submitConf').value = '';
     $('submitNote').value = '';
     openDialog(dialog);
@@ -3487,7 +3559,7 @@ async function submitAddUrl() {
   try {
     const result = await postJson('/api/add-url', { url });
     closeDialog($('dlgAddUrl'));
-    toast(`Added ${result.company || 'job'} — scored ${result.score ?? '—'} (${result.tier})`, 'good');
+    toast(`Added ${result.company || 'job'}, scored ${result.score ?? '-'} (${result.tier})`, 'good');
     await refreshAll();
     if (result.id) selectJob(result.id);
   } catch (err) {
@@ -3526,7 +3598,7 @@ async function confirmSubmitted() {
     closeDialog(dialog);
     toast(result.verified
       ? 'Recorded as submitted with confirmation evidence.'
-      : 'Recorded as reported — pending your verification. Not counted as applied yet.',
+      : 'Recorded as reported, pending your verification. Not counted as applied yet.',
     result.verified ? 'good' : '');
     if (state.selectedId === id) selectJob(id);
     scheduleRefresh(0);
@@ -3883,6 +3955,19 @@ function syncTopbarHeight() {
 }
 new ResizeObserver(syncTopbarHeight).observe(topbarEl);
 syncTopbarHeight();
+
+/**
+ * The header's shadow appears only once the page has scrolled, so at rest it
+ * is a quiet hairline. A 1px sentinel at the top of the document plus an
+ * IntersectionObserver does this without a scroll listener on every frame.
+ */
+const scrollSentinel = document.createElement('div');
+scrollSentinel.setAttribute('aria-hidden', 'true');
+scrollSentinel.style.cssText = 'position:absolute;top:0;left:0;width:1px;height:1px;pointer-events:none;';
+document.body.prepend(scrollSentinel);
+new IntersectionObserver(([entry]) => {
+  topbarEl.dataset.scrolled = String(!entry.isIntersecting);
+}).observe(scrollSentinel);
 
 const savedTheme = readPreference('theme');
 if (savedTheme === 'light' || savedTheme === 'dark') {

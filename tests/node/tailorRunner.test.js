@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -115,6 +116,23 @@ describe('tailorResumeForJob', () => {
     expect(sent.vocabulary).toContain('Databricks');
     expect(sent.evidence_aliases).toEqual({ spark: ['pyspark'] });
     expect(sent.ats_config).toMatchObject({ coverage: {} });
+  });
+
+  it('survives a python that exits without reading a large request (async EPIPE)', async () => {
+    mkdirSync(join(root, 'resumes', 'base'), { recursive: true });
+    writeFileSync(masterResumePath(root), 'fake docx');
+    // A REAL child that exits at once, fed well past the ~64 KB pipe buffer, so
+    // the write fails asynchronously on the stream — previously an
+    // uncaughtException that ended the whole CLI run.
+    const spawnImpl = (_exe, _args, opts) => spawn(process.execPath, ['-e', 'process.exit(3)'], opts);
+    const r = await tailorResumeForJob({
+      job: { company: 'Acme', title: 'SDE', jdText: 'spark '.repeat(60_000) },
+      score: { matchedKeywords: ['spark'], missingKeywords: [] },
+      config: { root, humanizerPatterns: {} },
+      deps: { spawnImpl },
+    });
+    expect(r.tailored).toBe(false);
+    expect(r.usedFallback).toBe(true);
   });
 
   it('falls back with a warning when the python bridge reports an error', async () => {

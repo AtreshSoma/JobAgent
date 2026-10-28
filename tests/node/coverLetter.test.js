@@ -15,6 +15,21 @@ describe('humanizer (JS)', () => {
     expect(out).not.toContain('\u2014');
     expect(out.toLowerCase()).not.toContain('results-driven professional');
   });
+  it('removes banned phrases only as whole words', () => {
+    const out = humanize('Based in Gurugram, building Synergy-based tooling. A true rockstar.', humanizerPatterns);
+    expect(out).toContain('Gurugram');
+    expect(out).not.toMatch(/\brockstar\b/i);
+    expect(hasBannedContent('Based in Gurugram', humanizerPatterns)).toBe(false);
+  });
+
+  it('never edits a protected employer name or title', () => {
+    const out = humanize('I want to join Rockstar Games as a Data Wizard — and I am a rockstar.',
+      humanizerPatterns, { protect: ['Rockstar Games', 'Data Wizard'] });
+    expect(out).toContain('Rockstar Games');
+    expect(out).toContain('Data Wizard');
+    expect(out).not.toMatch(/a rockstar/i);
+  });
+
   it('detects residual banned content', () => {
     expect(hasBannedContent('an em dash \u2014 here', humanizerPatterns)).toBe(true);
     expect(hasBannedContent('clean text', humanizerPatterns)).toBe(false);
@@ -44,6 +59,12 @@ describe('generateCoverLetter', () => {
     expect(r.text).not.toContain('\u2014');
     expect(hasBannedContent(r.text, humanizerPatterns)).toBe(false);
     expect(r.cleaned).toBe(true);
+  });
+
+  it('keeps an employer whose name contains a banned word intact in the letter', () => {
+    const r = generateCoverLetter({ company: 'Ninja Van', title: 'Senior Data Engineer' }, highScore,
+      { coverLetter, candidate, humanizerPatterns });
+    expect(r.text).toContain('Ninja Van');
   });
 
   it('respects the configured word ceiling', () => {

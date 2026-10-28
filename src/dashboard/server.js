@@ -115,6 +115,9 @@ const MAX_RCA_ENTRIES = 25;
 /** Bound user-triggered batches so one local request cannot monopolize the UI. */
 const MAX_BATCH_JOBS = 200;
 
+/** Largest board page a request may ask for (the UI offers up to 500). */
+const MAX_JOBS_PAGE = 1000;
+
 /** Keep local resume previews bounded even when a DB path is corrupt. */
 const MAX_RESUME_PREVIEW_BYTES = 12 * 1024 * 1024;
 
@@ -403,13 +406,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   function liveSkipReason(jobId) {
     const live = db.getJob?.(jobId);
     if (!live) return null; // exotic test stubs — keep legacy behavior
-    if (isSubmittedOrUnverified(live)) return 'submitted while the batch was running — skipped';
+    if (isSubmittedOrUnverified(live)) return 'submitted while the batch was running, skipped';
     if (live.user_decision === 'rejected' || live.user_decision === 'archived') {
-      return `you ${live.user_decision} it while the batch was running — skipped`;
+      return `you ${live.user_decision} it while the batch was running, skipped`;
     }
     const liveApproval = db.getApprovalByJob?.(jobId);
     if (liveApproval && liveApproval.approval_status !== APPROVAL_STATUS.APPROVED) {
-      return 'its approval was revoked while the batch was running — skipped';
+      return 'its approval was revoked while the batch was running, skipped';
     }
     return null;
   }
@@ -661,17 +664,17 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       throw Object.assign(new Error(message), { statusCode });
     };
     if (!/\.docx$/i.test(String(filename ?? ''))) {
-      fail('the master resume must be a .docx file — the tailor reads Word documents only '
+      fail('the master resume must be a .docx file, the tailor reads Word documents only '
         + '(export from Google Docs as .docx, or "Save As" .docx in Word)', 400);
     }
     if (!bytes.length) fail('the uploaded file is empty', 400);
     if (bytes.length > MAX_MASTER_RESUME_BYTES) {
-      fail(`the file is ${Math.round(bytes.length / 1024)} KB — the limit is `
+      fail(`the file is ${Math.round(bytes.length / 1024)} KB, the limit is `
         + `${Math.round(MAX_MASTER_RESUME_BYTES / 1024 / 1024)} MB`, 413);
     }
     if (!isDocxBuffer(bytes)) {
       fail('that file is not a .docx. It has a .docx name but its contents are something else '
-        + '(often a PDF or an old .doc renamed) — open it in Word and use "Save As → .docx"', 415);
+        + '(often a PDF or an old .doc renamed), open it in Word and use "Save As → .docx"', 415);
     }
     let extracted;
     try {
@@ -906,13 +909,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     // Idempotency guard (same as the CLI): never re-fill a completed — or
     // unverified — application; that risks submitting it twice.
     if (isSubmittedOrUnverified(db.getJob?.(jobId))) {
-      const err = new Error('this job was already submitted (or has an unverified auto-submit) — not re-filling to avoid a duplicate application');
+      const err = new Error('this job was already submitted (or has an unverified auto-submit), not re-filling to avoid a duplicate application');
       err.statusCode = 409;
       throw err;
     }
     const approval = db.getApprovalByJob?.(jobId);
     if (!approval || approval.approval_status !== APPROVAL_STATUS.APPROVED) {
-      const err = new Error('packet is not human-approved — approve it first');
+      const err = new Error('packet is not human-approved, approve it first');
       err.statusCode = 400;
       throw err;
     }
@@ -962,7 +965,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         runState.finishedAt = new Date().toISOString();
       }
     })());
-    return { started: true, jobId, runId, note: 'browser will stop before submit — review and click Submit yourself' };
+    return { started: true, jobId, runId, note: 'browser will stop before submit, review and click Submit yourself' };
   }
 
   /**
@@ -1040,7 +1043,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         for (const jobId of ids) {
           if (autoSubmitEligible && !autoSubmitEligible.has(jobId)) continue;
           if (isSubmittedOrUnverified(db.getJob?.(jobId))) {
-            skipped.push({ jobId, reason: 'already submitted — skipped to avoid a duplicate application' });
+            skipped.push({ jobId, reason: 'already submitted, skipped to avoid a duplicate application' });
           } else {
             candidates.push(jobId);
           }
@@ -1050,7 +1053,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         //    + application packet). Failures are honest skips, not crashes.
         const needPacket = candidates.filter((id) => !db.getApprovalByJob?.(id));
         if (needPacket.length) {
-          runState.phase = `auto-apply — preparing ${needPacket.length} packet(s)…`;
+          runState.phase = `auto-apply, preparing ${needPacket.length} packet(s)…`;
           const prepareImpl = deps.prepareForJobsFn ?? preparePacketsForJobs;
           const prep = await prepareImpl({
             config, db, logger, jobIds: needPacket,
@@ -1101,7 +1104,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             runState.progress.completed += 1;
             continue;
           }
-          runState.phase = `auto-apply (${done + 1}/${queue.length}) — ${jobId}`;
+          runState.phase = `auto-apply (${done + 1}/${queue.length}), ${jobId}`;
           runState.progress.currentJobId = jobId;
           const progressItem = runState.progress.items.find((x) => x.jobId === jobId);
           if (progressItem) progressItem.status = 'opening';
@@ -1165,7 +1168,10 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     try {
       await route(req, res);
     } catch (err) {
-      sendJson(res, err.statusCode ?? 500, { error: sanitizeErrorMessage(err.message) });
+      // A malformed %-escape in a path segment (`/api/jobs/%E0%A4%A`) is the
+      // client's mistake, not a server fault.
+      const status = err.statusCode ?? (err instanceof URIError ? 400 : 500);
+      sendJson(res, status, { error: sanitizeErrorMessage(err.message) });
     }
   });
 
@@ -1238,6 +1244,13 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       }
       if (req.method === 'POST' && action === 'result') {
         const body = await readBody(req);
+        // Same approval/duplicate guards as payload and files. Without them a
+        // stale tab's late report could overwrite `submit_unverified` with
+        // `ready_for_submit` — lifting the very lock that prevents a second
+        // application — or upsert a phantom row for an unknown job id.
+        // Check after the await: a submission or revoked approval received
+        // while reading this body must win over the stale extension report.
+        buildExtensionPayload({ db, config, jobId, loadPacketImpl: deps.loadPacketImpl });
         const filled = Array.isArray(body.filled) ? body.filled.slice(0, 120).map((x) => ({
           field: String(x?.field ?? '').slice(0, 80),
           label: String(x?.label ?? '').slice(0, 120),
@@ -1283,7 +1296,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (String(req.headers['sec-fetch-site'] ?? '').toLowerCase() === 'cross-site') {
       return sendJson(res, 403, { error: 'forbidden: cross-site requests are not allowed' });
     }
-    if (req.method !== 'GET' && !isAllowedOrigin(req.headers.origin)) {
+    if (req.method !== 'GET' && !isAllowedOrigin(req.headers.origin, server.address()?.port)) {
       return sendJson(res, 403, { error: 'forbidden: cross-origin requests are not allowed' });
     }
 
@@ -1309,7 +1322,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     }
     // Static assets (css/js/img/fonts) for the dashboard and the /learn mini-site.
     if (req.method === 'GET' && (path.startsWith('/assets/') || path.startsWith('/learn/assets/'))) {
-      return serveStatic(res, path);
+      return serveStatic(res, path, req.headers['if-none-match']);
     }
     if (req.method === 'GET' && path === '/api/stats') {
       return sendJson(res, 200, dashboardStats(db, { now: nowDate() }));
@@ -1317,6 +1330,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (req.method === 'GET' && path === '/api/jobs') {
       const filters = Object.fromEntries(url.searchParams.entries());
       filters.now = nowDate();
+      // One page, not the table: `?limit=1e9` would serialize every row of a
+      // 100k-job database. The UI's largest page size is 500.
+      if (Number(filters.limit) > MAX_JOBS_PAGE) filters.limit = String(MAX_JOBS_PAGE);
       return sendJson(res, 200, boardPage(db, filters));
     }
     if (req.method === 'GET' && path === '/api/run/status') {
@@ -1375,7 +1391,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       // silently DISCARDS invalid characters, which would turn a mangled
       // upload into a plausible-looking but corrupt resume.
       if (!/^[A-Za-z0-9+/\r\n]*={0,2}$/.test(encoded)) {
-        return sendJson(res, 400, { error: 'the file contents were not transferred correctly — try again' });
+        return sendJson(res, 400, { error: 'the file contents were not transferred correctly, try again' });
       }
       const bytes = Buffer.from(encoded, 'base64');
       const result = replaceMasterResume({ filename: body.filename, bytes });
@@ -1731,7 +1747,7 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
       if (err?.code === 'EADDRINUSE') {
-        reject(new Error(`port ${port} is already in use — another dashboard is probably running. `
+        reject(new Error(`port ${port} is already in use, another dashboard is probably running. `
           + `Open http://127.0.0.1:${port} in your browser, or close the other process `
           + `(or start this one with a different port).`));
         return;
@@ -1817,11 +1833,19 @@ export function isLoopbackHost(host) {
  * (sandboxed iframe, file://) and is rejected like any foreign site.
  * @param {string|undefined} origin
  */
-export function isAllowedOrigin(origin) {
+export function isAllowedOrigin(origin, port) {
   if (origin === undefined || origin === '') return true;
   if (origin === 'null') return false;
   try {
-    return LOOPBACK_HOSTNAMES.has(new URL(origin).hostname);
+    const url = new URL(origin);
+    if (!LOOPBACK_HOSTNAMES.has(url.hostname)) return false;
+    // Loopback is not one origin: a dev server or another local app on
+    // 127.0.0.1:3000 is a different site, and its "simple" text/plain POST
+    // reaches us without a CORS preflight. When the caller knows our port,
+    // only a page served from THIS dashboard may change state.
+    if (port === undefined) return true;
+    const originPort = url.port || (url.protocol === 'https:' ? '443' : '80');
+    return originPort === String(port);
   } catch {
     return false;
   }
@@ -1916,10 +1940,16 @@ const MIME_TYPES = {
  * resolving the request and rejecting anything that escapes PUBLIC_DIR
  * (OWASP A01/A03). Returns 404 for missing files, 403 for escapes.
  *
+ * Assets revalidate instead of re-downloading: each carries an ETag built from
+ * its size and mtime, and `no-cache` (not `no-store`) lets the browser answer
+ * a reload with a 304 when nothing changed. An edited file gets a new ETag, so
+ * a stale script can never be served.
+ *
  * @param {import('node:http').ServerResponse} res
  * @param {string} urlPath request pathname (e.g. "/assets/js/app.js")
+ * @param {string} [ifNoneMatch] the request's If-None-Match header
  */
-function serveStatic(res, urlPath) {
+function serveStatic(res, urlPath, ifNoneMatch) {
   let rel;
   try { rel = decodeURIComponent(urlPath); }
   catch { rel = urlPath; }
@@ -1929,18 +1959,28 @@ function serveStatic(res, urlPath) {
   if (!isInsideDirectory(PUBLIC_DIR, abs)) {
     return sendJson(res, 403, { error: 'forbidden' });
   }
-  let buf;
+  let info;
   try {
-    buf = readFileSync(abs);
+    info = statSync(abs);
+    if (!info.isFile()) throw Object.assign(new Error('not a file'), { code: 'EISDIR' });
   } catch (err) {
-    if (err.code === 'ENOENT' || err.code === 'EISDIR') {
+    // ERR_INVALID_ARG_VALUE: the decoded path held a NUL byte (`/a%00.js`).
+    if (err.code === 'ENOENT' || err.code === 'EISDIR' || err.code === 'ERR_INVALID_ARG_VALUE') {
       return sendJson(res, 404, { error: `not found: ${urlPath}` });
     }
     throw err;
   }
+  const etag = `"${info.size.toString(36)}-${Math.trunc(info.mtimeMs).toString(36)}"`;
+  res.setHeader('cache-control', 'no-cache');
+  res.setHeader('etag', etag);
+  if (ifNoneMatch === etag) {
+    res.writeHead(304);
+    res.end();
+    return;
+  }
   const type = MIME_TYPES[extname(abs).toLowerCase()] ?? 'application/octet-stream';
   res.writeHead(200, { 'content-type': type });
-  res.end(buf);
+  res.end(readFileSync(abs));
 }
 
 /**
@@ -1980,8 +2020,13 @@ function readBody(req, maxBytes = 1_000_000) {
       if (tooLarge) return fail('body too large', 413);
       const data = Buffer.concat(chunks).toString('utf8');
       if (!data.trim()) return resolve({});
-      try { resolve(JSON.parse(data)); }
-      catch { fail('invalid JSON body', 400); }
+      let parsed;
+      try { parsed = JSON.parse(data); }
+      catch { return fail('invalid JSON body', 400); }
+      // Every route reads fields off the body; a bare `null` or `42` would
+      // surface as a TypeError (500) instead of a clear 400.
+      if (parsed === null || typeof parsed !== 'object') return fail('JSON body must be an object', 400);
+      resolve(parsed);
     });
     req.on('error', (err) => reject(err));
     req.on('aborted', () => fail('the request was interrupted before it finished', 400));

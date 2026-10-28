@@ -81,7 +81,32 @@ describe('dashboard server API', () => {
   it('serves the UI shell at /', async () => {
     const res = await fetch(dash.url + '/');
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('JobAgent — Dashboard');
+    expect(await res.text()).toContain('JobAgent Dashboard');
+  });
+
+  it('carries the full attribution and serves its self-hosted signature font', async () => {
+    const html = await (await fetch(dash.url + '/')).text();
+    expect(html).toContain('Designed and Engineered by');
+    expect(html).toContain('<span class="sig-name">Atresh Somayajula</span>');
+
+    const css = await (await fetch(dash.url + '/assets/css/app.css')).text();
+    expect(css).toMatch(/\.sig-name\s*\{[^}]*font-family:\s*"Playfair Display"/);
+
+    const font = await fetch(dash.url + '/assets/fonts/PlayfairDisplay-BoldItalic.woff2');
+    expect(font.status).toBe(200);
+    expect(font.headers.get('content-type')).toBe('font/woff2');
+    expect(Buffer.from(await font.arrayBuffer()).subarray(0, 4).toString('latin1')).toBe('wOF2');
+  });
+
+  it('lets the browser revalidate unchanged assets with a 304', async () => {
+    const first = await fetch(dash.url + '/assets/css/app.css');
+    const etag = first.headers.get('etag');
+    expect(etag).toMatch(/^"[0-9a-z]+-[0-9a-z]+"$/);
+    expect(first.headers.get('cache-control')).toBe('no-cache');
+    const again = await fetch(dash.url + '/assets/css/app.css', { headers: { 'if-none-match': etag } });
+    expect(again.status).toBe(304);
+    // A wrong validator still gets the full file.
+    expect((await fetch(dash.url + '/assets/css/app.css', { headers: { 'if-none-match': '"stale"' } })).status).toBe(200);
   });
 
   it('binds to 127.0.0.1 only', () => {
@@ -131,6 +156,46 @@ describe('dashboard server API', () => {
     });
     expect((await filled.json()).status).toBe('ready_for_submit');
     expect(db.getJob('j1').status).toBe('ready_for_submit');
+  });
+
+  it('a late extension result never lifts the submit_unverified lock or invents a job', async () => {
+    await post('/api/jobs/j1/approve');
+    db.upsertJob({ id: 'j1', status: 'submit_unverified' });
+    const headers = {
+      origin: `chrome-extension://${'a'.repeat(32)}`,
+      'content-type': 'application/json', 'x-job-agent-key': 'k'.repeat(32),
+    };
+    const body = JSON.stringify({ formDetected: true, readyForReview: true, filled: [{ field: 'email' }], blockers: [] });
+
+    const late = await fetch(dash.url + '/api/extension/jobs/j1/result', { method: 'POST', headers, body });
+    expect(late.status).toBe(409);
+    expect(db.getJob('j1').status).toBe('submit_unverified');
+
+    const phantom = await fetch(dash.url + '/api/extension/jobs/nope/result', { method: 'POST', headers, body });
+    expect(phantom.status).toBe(404);
+    expect(db.getJob('nope')).toBeFalsy();
+  });
+
+  it.each([
+    ['submission', 409],
+    ['revoked approval', 403],
+  ])('rechecks %s after receiving an extension result body', async (change, expectedStatus) => {
+    await post('/api/jobs/j1/approve');
+    // The request starts while approved; another action changes its state
+    // while the asynchronous body reader is still receiving the report.
+    dash.server.once('request', (req) => {
+      req.once('data', () => {
+        if (change === 'submission') db.upsertJob({ id: 'j1', status: 'submit_unverified' });
+        else db.updateApprovalStatus('ap1', { approval_status: 'rejected', approved_by_user: 0 });
+      });
+    });
+    const response = await fetch(dash.url + '/api/extension/jobs/j1/result', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-job-agent-key': 'k'.repeat(32) },
+      body: JSON.stringify({ formDetected: true, readyForReview: true, filled: [{ field: 'email' }], blockers: [] }),
+    });
+    expect(response.status).toBe(expectedStatus);
+    expect(db.getJob('j1').status).toBe(change === 'submission' ? 'submit_unverified' : 'prepared');
   });
 
   it('GET /api/stats returns tiles and breakdowns', async () => {
@@ -198,7 +263,12 @@ describe('dashboard server API', () => {
       writeFileSync(docx, 'docx-bytes');
       writeFileSync(pdf, '%PDF-1.4\n% stale preview');
       utimesSync(pdf, new Date(0), new Date(0));
-      utimesSync(docx, new Date(), new Date());
+      // A minute in the past, not "now": the regenerated PDF below is stamped by
+      // the filesystem, whose clock ticks coarser than Date (~15.6 ms on NTFS),
+      // so a DOCX stamped with Date.now() could look NEWER than a PDF written
+      // after it — and the preview would be rejected as stale.
+      const docxTime = new Date(Date.now() - 60_000);
+      utimesSync(docx, docxTime, docxTime);
       db.upsertJob({ id: 'j1', resume_docx_path: docx, resume_path: docx, resume_pdf_path: null });
       await dash.close();
       dash = await startDashboard({
@@ -340,6 +410,16 @@ describe('dashboard server API', () => {
     const r = await get('/api/nope');
     expect(r.status).toBe(404);
     expect(r.body.error).toContain('no route');
+  });
+
+  it('answers malformed client input with 4xx, never 500', async () => {
+    expect((await get('/api/jobs/%E0%A4%A')).status).toBe(400);
+    expect((await fetch(dash.url + '/assets/a%00.js')).status).toBe(404);
+    const nullBody = await fetch(dash.url + '/api/run', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: 'null',
+    });
+    expect(nullBody.status).toBe(400);
+    expect((await nullBody.json()).error).toMatch(/must be an object/);
   });
 
   it('a crashing pipeline run is captured, not fatal', async () => {

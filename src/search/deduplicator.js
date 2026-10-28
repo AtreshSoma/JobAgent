@@ -110,5 +110,13 @@ export function urlKeyFor(job = {}) {
 export function keyFor(job = {}) {
   const company = normalizeLoose(job.company);
   const title = normalizeLoose(job.title);
+  if (company && title) return `${company}::${title}`;
+  // With either half missing, company+title no longer identifies a role: two
+  // unrelated employers' "Data Engineer" postings (aggregators often drop the
+  // company) would collapse into one, and the other job would vanish. Fall back
+  // to the posting's own identity instead.
+  const urlKey = urlKeyFor(job);
+  if (urlKey) return `url:${urlKey}`;
+  if (job.id) return `id:${job.id}`;
   return [company, title].filter(Boolean).join('::');
 }
