@@ -18,8 +18,6 @@ export default [
       'playwright-report/**', 'test-results/**', 'PyProjects/**',
       // Local, gitignored scratch and browser-session directories.
       '.tmp/**', '.venv/**', 'venv/**', '.browser-profile*/**', '.impeccable/**',
-      // One-off historical scripts kept for reference, not maintained.
-      'scripts/archive/**',
       // Vendored/minified third-party code, if any lands in the public tree.
       '**/*.min.js',
     ],

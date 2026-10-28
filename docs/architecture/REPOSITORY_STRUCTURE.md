@@ -15,10 +15,10 @@ JobAgent/
 │   ├── dashboard/       Local server and public web assets
 │   └── ...              Domain, logging, reports, extension, utilities
 ├── extension/           Browser extension shipped separately
-├── scripts/             Maintained commands; archive/ holds retired probes
+├── scripts/             Maintained operational commands
 ├── tests/               Node and Python test suites
 ├── config/              Tracked defaults/examples and JSON schemas
-├── interview-prep/      Study course, modules/, and published exports
+├── interview-prep/      Study course and modules/ (PDF and Markdown exports are generated)
 ├── docs/                Architecture, support evidence, published audits
 ├── data/                Local job store and tracked manual input templates
 ├── resumes/             Local master and tailored documents
@@ -37,7 +37,7 @@ JobAgent/
 | `config/` | Commit examples, taxonomy, and schemas. Candidate profiles, answers, cover letter facts, and secrets remain local and gitignored. `npm run setup` seeds missing personal files from examples. |
 | `data/`, `resumes/`, `applications/`, `reports/`, `logs/` | Runtime state stays at these established paths. Only synthetic examples, manual input templates, and `.gitkeep` files are tracked. Do not move or publish a real resume, packet, database, or log while reorganizing source. |
 | `docs/` | Durable project references and dated reviews. A review is a historical snapshot; generated run reports stay under `reports/`. |
-| `interview-prep/` | The overview links into `modules/`. The PDF builder reads those modules and writes the combined Markdown and PDF at the course root. The live academy web assets have one source in `src/dashboard/public/learn/`. |
+| `interview-prep/` | The overview links into `modules/`. `npm run prep:pdf` reads those modules and generates a combined Markdown and PDF at the course root; those exports are gitignored build output. The live academy web assets have one source in `src/dashboard/public/learn/`. |
 
 ## Path rules for changes
 

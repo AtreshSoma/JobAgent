@@ -865,7 +865,7 @@ node scripts/relabelUndatedJobs.mjs           # report rows mislabelled "stale: 
 node scripts/relabelUndatedJobs.mjs --apply   # relabel them as "unknown posting date"
 node scripts/dbMaintenance.mjs --vacuum       # compact the SQLite store
 pip install -r requirements-llm.txt           # ONLY if you enable LLM_ASSIST
-python test_api_key.py                        # check the LLM key/endpoint (reads env only)
+python scripts/llm-check.py                       # check the LLM key/endpoint (reads env only)
 ```
 
 A typical phase-by-phase session:
@@ -948,7 +948,7 @@ src/              Node + Python modules
   utils/            shared helpers (geography, paths, retry, rate limiting)
 scripts/          operational tools, diagnostics, and archived one-off repairs (see scripts/README.md)
 extension/        unpacked Manifest V3 Chrome/Edge extension
-interview-prep/   course overview, modules/, build-pdf.mjs, and published study exports
+interview-prep/   course overview, modules/, and build-pdf.mjs (generates the study PDF)
 resumes/
   base/             master resume (read-only) + history/
   output/           tailored drafts + cover letters

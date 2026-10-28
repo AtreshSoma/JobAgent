@@ -86,6 +86,10 @@ logs/*
 !logs/.gitkeep
 !logs/README.md
 
+# --- Generated study exports (rebuild with `npm run prep:pdf`) ---
+interview-prep/Data-Engineer-Interview-Prep.md
+interview-prep/Data-Engineer-Interview-Prep.pdf
+
 # --- Reports (generated output at the repo root ONLY — never src/reports/) ---
 # Published reviews live in docs/audits/; everything under reports/ is runtime output.
 /reports/*
@@ -118,10 +122,10 @@ Thumbs.db
 .claude/
 
 # Design skills vendored by `npx skills add` (third-party Markdown, ~324 KB).
-# Ignored like node_modules: the content is someone else's, reinstallable in one
-# command, and skills-lock.json records exactly which ones and at what hash.
-# Delete this line if you would rather version them with the project.
+# Ignored like node_modules: the content is someone else's and reinstallable in
+# one command. Its lockfile is local tooling state too.
 .agents/
+skills-lock.json
 
 # Local design sessions can include private screenshots and discussion.
 .impeccable/
