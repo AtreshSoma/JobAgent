@@ -74,29 +74,12 @@ Search profiles separate **what you've done** (from your resume) from **what you
 
 ## 🔄 How it works
 
-```mermaid
-flowchart LR
-    subgraph AUTO["① Automatic"]
-        direction TB
-        A["🔎 Discover<br/>ATS APIs, aggregators, your CSV"] --> B["🧹 Normalize, drop duplicates"]
-        B --> C{"🚫 Hard exclusion?"}
-        C -- yes --> X["🗑️ Discard, reason logged"]
-        C -- no --> D["📊 Score 0–100 and assign tier"]
-        D --> E["📝 Tailor resume and cover letter"]
-        E --> F["📦 Build application packet"]
-    end
-    subgraph YOU["② With you"]
-        direction TB
-        G(["👤 You review and approve"]) --> H["🌐 Browser fills and uploads,<br/>stops before Submit"]
-        H --> I(["👤 You click Submit"])
-    end
-    AUTO ==> YOU
-
-    classDef human fill:#fef3c7,stroke:#d97706,stroke-width:2px,color:#78350f
-    classDef stop fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
-    class G,I human
-    class X stop
-```
+<div align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-dark.svg">
+  <img alt="Pipeline: six automatic stages (discover, normalize, exclude, score, tailor, packet), then three human-gated stages (you approve, the browser fills and stops before Submit, you click Submit)." src="docs/assets/pipeline-light.svg" width="100%">
+</picture>
+</div>
 
 | Stage | What happens | Where |
 | --- | --- | --- |
