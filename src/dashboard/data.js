@@ -206,7 +206,7 @@ function explainStatusRaw(job = {}, appStatus = '', approval = null) {
     case APP_STATUS.BLOCKED:
       if (blockers.length) return `Assisted fill stopped: ${blockers.join('; ')}`;
       return 'An assisted-fill attempt stopped at an application wall (login, CAPTCHA, an account step, '
-        + 'or a question it will not guess). The specific reason was not recorded — open the posting to finish '
+        + 'or a question it will not guess). The specific reason was not recorded, open the posting to finish '
         + 'manually, or re-run assisted fill to capture the current blocker.';
     case APP_STATUS.FAILED:
       return blockers.length
@@ -223,7 +223,7 @@ function explainStatusRaw(job = {}, appStatus = '', approval = null) {
         ? `Filtered out during scoring: ${job.discard_reason}`
         : 'Filtered out during scoring (below threshold or an exclusion rule matched).';
     case APP_STATUS.DATE_UNCONFIRMED:
-      return 'No reliable posting date was found, so its freshness cannot be trusted — verify before relying on "posted" age.';
+      return 'No reliable posting date was found, so its freshness cannot be trusted, verify before relying on "posted" age.';
     case APP_STATUS.SKIPPED:
       return 'You skipped this during an assisted-apply pass.';
     case APP_STATUS.ARCHIVED:
@@ -1075,7 +1075,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.submitUnverified,
       verb: 'Confirm auto-submits',
       detail: 'check your email for the ATS confirmation, then Mark submitted (or finish manually)',
-      text: `${totals.submitUnverified} auto-submit(s) could not be confirmed — check your email for the ATS `
+      text: `${totals.submitUnverified} auto-submit(s) could not be confirmed, check your email for the ATS `
         + 'confirmation, then Mark submitted (or finish manually)',
       filter: { appStatus: APP_STATUS.SUBMIT_UNVERIFIED },
     });
@@ -1085,7 +1085,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.readyForSubmit,
       verb: 'Submit filled applications',
       detail: 'review each browser tab and click Submit yourself',
-      text: `${totals.readyForSubmit} application(s) are filled and waiting — review each browser tab and click Submit yourself`,
+      text: `${totals.readyForSubmit} application(s) are filled and waiting, review each browser tab and click Submit yourself`,
       filter: { appStatus: APP_STATUS.READY_FOR_SUBMIT },
     });
   }
@@ -1140,7 +1140,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: strongUntriaged,
       verb: 'Decide on strong fits',
       detail: 'shortlist the ones worth pursuing, reject the rest',
-      text: `${strongUntriaged} strong-fit job(s) have no decision yet — shortlist or reject them`,
+      text: `${strongUntriaged} strong-fit job(s) have no decision yet, shortlist or reject them`,
       // "No decision yet" is exactly the Best matches view. The old
       // { fit: 'strong' } filter also showed every strong job already
       // shortlisted, prepared, or submitted, so the board returned far more
@@ -1153,7 +1153,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.needsSponsorshipCheck,
       verb: 'Verify sponsorship',
       detail: "check the employer's careers page and past H-1B filings, then shortlist and prepare",
-      text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check — verify the employer `
+      text: `${totals.needsSponsorshipCheck} strong-fit job(s) only need a sponsorship check, verify the employer `
         + 'sponsors H-1B (their careers page, past filings), then shortlist and prepare',
       // The count is isSponsorshipGated(); the board has a filter for exactly
       // that. Matching on sponsorship: 'Unconfirmed' both missed gated rows
@@ -1166,7 +1166,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: totals.dateUnconfirmed,
       verb: 'Confirm posting dates',
       detail: 'the source gave no confirmed date, so these were held back',
-      text: `${totals.dateUnconfirmed} job(s) have no confirmed posting date — review them manually`,
+      text: `${totals.dateUnconfirmed} job(s) have no confirmed posting date, review them manually`,
       filter: { appStatus: APP_STATUS.DATE_UNCONFIRMED },
     });
   }
@@ -1179,7 +1179,7 @@ export function buildNextActions(totals, strongUntriaged = 0) {
       count: null,
       verb: 'Find new jobs',
       detail: 'nothing new has been found in the last 24 hours',
-      text: 'No new jobs found in the last 24h — run Discover (or Find & Prepare) to refresh the board',
+      text: 'No new jobs found in the last 24h, run Discover (or Find & Prepare) to refresh the board',
       filter: null,
       kind: 'system',
     });
@@ -1789,7 +1789,7 @@ export function undoDecision(db, jobId) {
  */
 export function approveJobPacket(db, jobId) {
   const approval = db.getApprovalByJob?.(jobId);
-  if (!approval) throw httpError(409, `no prepared packet to approve for job ${jobId} — run Prepare first`);
+  if (!approval) throw httpError(409, `no prepared packet to approve for job ${jobId}, run Prepare first`);
   const r = approve(db, approval.id);
   noteUserMutation();
   return { id: jobId, approvalId: approval.id, status: r.status };
@@ -1928,7 +1928,7 @@ function sectionRow(row) {
 /** Extract the human-meaningful reason a blocked job stopped. */
 function blockerReason(row) {
   const first = (row.assistBlockers ?? [])[0];
-  if (!first) return 'Unknown — open it to see why';
+  if (!first) return 'Unknown, open it to see why';
   const b = String(first).toLowerCase();
   // First: a missing browser is a setup problem, not a login/navigation wall.
   if (ENVIRONMENT_FAILURE_RE.test(b)) return browserRecovered() ? SETUP_BROWSER_RECOVERED_LABEL : SETUP_BROWSER_LABEL;

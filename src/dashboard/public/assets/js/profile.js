@@ -255,7 +255,9 @@ export function renderSavedAnswers(screening) {
       value: (entry.patterns ?? []).join(' | '),
     }));
     row.append(el('label', { text: 'Answer', for: answerId }));
-    row.append(el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id }, entry.answer ?? ''));
+    const answer = el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id });
+    answer.value = entry.answer ?? '';
+    row.append(answer);
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
       text: '✕ Delete this answer',

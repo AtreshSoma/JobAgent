@@ -127,24 +127,15 @@ export function urlKeyFor(job = {}) {
 export function keyFor(job = {}) {
   const company = normalizeLoose(job.company);
   const title = normalizeLoose(job.title);
-  // A record with NO company must not collapse across employers: "Data
-  // Engineer" from an aggregator that dropped the employer name keyed as just
-  // "data engineer" and swallowed every other company-less Data Engineer in the
-  // run. Without a company, the posting's own host (or its source) stands in.
-  if (!company) {
-    const where = hostOf(job.url) || normalizeLoose(job.source) || 'unknown';
-    return ['~', where, title].filter(Boolean).join('::');
-  }
+  if (company && title) return `${company}::${title}`;
+  // With either half missing, company+title no longer identifies a role: two
+  // unrelated employers' "Data Engineer" postings (aggregators often drop the
+  // company) would collapse into one, and the other job would vanish. Fall back
+  // to the posting's own identity instead.
+  const urlKey = urlKeyFor(job);
+  if (urlKey) return `url:${urlKey}`;
+  if (job.id) return `id:${job.id}`;
   return [company, title].filter(Boolean).join('::');
-}
-
-/** Lowercased hostname of a URL, `www.` stripped, or ''. */
-function hostOf(url) {
-  try {
-    return new URL(String(url ?? '')).hostname.toLowerCase().replace(/^www\./, '');
-  } catch {
-    return '';
-  }
 }
 
 /** Record the loser's location on the winner, once, without touching `location`. */

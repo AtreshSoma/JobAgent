@@ -88,6 +88,23 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** Typographic entities common in job postings. (`amp` is decoded separately, last.) */
+const NAMED_ENTITIES = {
+  rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', sbquo: '‚', bdquo: '„',
+  ndash: '–', mdash: '—', hellip: '…', bull: '•', middot: '·',
+  trade: '™', reg: '®', copy: '©', deg: '°', euro: '€', pound: '£',
+  ensp: ' ', emsp: ' ', thinsp: ' ', zwnj: '', zwj: '', shy: '',
+};
+
+/** A decoded code point, or the original entity text when it is not a valid one. */
+function codePoint(n, original) {
+  // `&#38;` is an encoded ampersand; leave it for the &amp;-last rule so it can
+  // never combine with following text into a second, fake entity.
+  if (n === 38) return '&amp;';
+  return Number.isInteger(n) && n > 0 && n <= 0x10FFFF && !(n >= 0xD800 && n <= 0xDFFF)
+    ? String.fromCodePoint(n) : original;
+}
+
 /**
  * Strip HTML tags to readable plain text (dependency-free).
  * @param {string} html
@@ -105,6 +122,12 @@ export function htmlToText(html) {
     .replace(/&gt;/gi, '>')
     .replace(/&#39;|&apos;/gi, "'")
     .replace(/&quot;/gi, '"')
+    // Numeric and typographic entities. Left encoded, "can&#8217;t sponsor"
+    // and "don&rsquo;t offer sponsorship" hid refusals from the sponsorship
+    // reader, and keyword boundaries broke on "&ndash;"-joined terms.
+    .replace(/&#(\d{1,7});/g, (m, dec) => codePoint(Number(dec), m))
+    .replace(/&#x([0-9a-f]{1,6});/gi, (m, hex) => codePoint(parseInt(hex, 16), m))
+    .replace(/&([a-z]+);/gi, (m, name) => NAMED_ENTITIES[name.toLowerCase()] ?? m)
     // &amp; is decoded LAST so "&amp;lt;" yields the literal text "&lt;"
     // instead of double-decoding into a fake "<" tag character.
     .replace(/&amp;/gi, '&')

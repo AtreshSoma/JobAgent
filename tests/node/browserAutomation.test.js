@@ -6,6 +6,8 @@ import { createBrowserSession, openApplicationPage } from '../../src/automation/
 import { fillFields, requiredFieldsSatisfied } from '../../src/automation/fieldResolver.js';
 import { uploadFiles } from '../../src/automation/uploadRunner.js';
 import { browserUnavailable } from './helpers/browser.js';
+import { applyValue } from '../../src/automation/fieldFiller.js';
+import { clickAndSettle } from '../../src/automation/navigator.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const FORM_URL = pathToFileURL(join(FIXTURES, 'apply_form.html')).href;
@@ -43,6 +45,42 @@ describe('browser automation against a local fixture form', () => {
   }, 60000);
 
   afterAll(async () => { await session?.close?.(); }, 30000);
+
+  it('filling a datalist combobox inside a form never submits the form', async (ctx) => {
+    if (!available) return ctx.skip();
+    const { page } = session;
+    // A native <input list> is scanned as a combobox, but its <option>s match
+    // none of the option selectors — the exact case that used to fall back to
+    // pressing Enter, which is the browser's implicit submit.
+    await page.setContent(`
+      <form id="f" onsubmit="window.__submitted = true; return false;">
+        <input id="loc" list="cities" name="loc">
+        <datalist id="cities"><option value="Austin"><option value="Boston"></datalist>
+        <button type="submit">Submit application</button>
+      </form>`);
+    const res = await applyValue(page, { kind: 'combobox', selector: '#loc' }, 'Austin');
+    expect(res.ok).toBe(false); // left for the human, not guessed
+    expect(await page.evaluate(() => window.__submitted === true)).toBe(false);
+  }, 60000);
+
+  it('the advance fallback never resolves a "Review" step to "Review and Submit"', async (ctx) => {
+    if (!available) return ctx.skip();
+    const { page } = session;
+    await page.setContent(`
+      <form onsubmit="window.__submitted = true; return false;">
+        <button type="submit">Review and Submit</button>
+        <div role="button" tabindex="0" onclick="window.__advanced = true">Review</div>
+      </form>`);
+    // Selector-less control, as collected for the <div role=button>.
+    const clicked = await clickAndSettle(page, { selector: null, text: 'Review' }, { wait: async () => {} });
+    expect(clicked).toBe(true);
+    expect(await page.evaluate(() => window.__advanced === true)).toBe(true);
+    expect(await page.evaluate(() => window.__submitted === true)).toBe(false);
+
+    // And a submit-named control is never clicked by name at all.
+    expect(await clickAndSettle(page, { selector: null, text: 'Review and Submit' }, { wait: async () => {} })).toBe(false);
+    expect(await page.evaluate(() => window.__submitted === true)).toBe(false);
+  }, 60000);
 
   it('opens a clean form page without a guard block', async (ctx) => {
     if (!available) return ctx.skip();

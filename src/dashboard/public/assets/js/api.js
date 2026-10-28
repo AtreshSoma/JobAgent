@@ -68,7 +68,7 @@ export function setServerStatus(up) {
   state.serverUp = up;
   const conn = $('conn');
   // The dot is a CSS pseudo-element now, so the text must not carry one too.
-  conn.textContent = up ? 'connected' : 'disconnected';
+  conn.textContent = up ? 'Connected' : 'Disconnected';
   conn.className = `conn ${up ? 'ok' : 'down'}`;
   $('offline').dataset.open = String(!up);
 }

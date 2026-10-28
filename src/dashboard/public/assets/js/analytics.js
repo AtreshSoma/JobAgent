@@ -21,17 +21,16 @@ export const HEALTH_FACTS = [
   // though the board were hiding 122,934 of them.
   { key: 'jobsTracked', label: 'in store', filter: { includeClosed: true }, title: 'Every job ever stored, including closed and filtered-out ones — the whole corpus, not this board' },
   { key: 'discoveredLast24h', label: 'seen in last 24h', tone: 'hot', title: 'Postings discovery saw for the first time in the last 24 hours, across the whole store' },
-  { key: 'postedLast24h', label: 'posted 24h', tone: 'hot', filter: { postedWithinHours: '24' }, title: 'Jobs whose POSTING is less than 24 hours old' },
+  { key: 'postedLast24h', label: 'posted in 24h', tone: 'hot', filter: { postedWithinHours: '24' }, title: 'Jobs whose POSTING is less than 24 hours old' },
   // The 24h count is often single digits while a week holds hundreds. Without
   // this chip the bar implies there is nothing to apply to.
-  { key: 'postedLast7d', label: 'posted 1w', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Jobs whose POSTING is less than 1 week old' },
-  { key: 'strongFit', label: 'strong fit', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match' },
+  { key: 'postedLast7d', label: 'posted this week', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Jobs whose POSTING is less than 1 week old' },
+  { key: 'strongFit', label: 'strong fits in total', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match' },
 ];
 
 /** Shown only when non-zero, and only where no tab already carries it. */
 export const HEALTH_FLAGS = [
   { key: 'submitUnverified', label: 'unverified submits', tone: 'bad', filter: { appStatus: 'submit_unverified' }, title: 'Auto-submits with no confirmation — only you can resolve these' },
-  { key: 'needsSponsorshipCheck', label: 'verify sponsor', tone: 'attn', filter: { sponsorshipGated: true }, title: 'Strong fits parked until you confirm the employer sponsors' },
   { key: 'undatedDropped', label: 'undated', tone: 'attn', filter: { undated: true }, title: 'The source gave no confirmed posting date — held back, or still live but worth a quick check' },
 ];
 
@@ -70,9 +69,9 @@ export function statNode({ key, label, tone, filter, title }, stats) {
       'data-action': 'metric-filter',
       'data-filter': JSON.stringify(filter),
       'aria-label': `${fmt(value)} ${label} — filter the board to these`,
-    }, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
+    }, el('b', { text: known ? fmt(value) : 'n/a' }), el('span', { class: 'l', text: label }));
   }
-  return el('span', attrs, el('b', { text: known ? fmt(value) : '—' }), el('span', { class: 'l', text: label }));
+  return el('span', attrs, el('b', { text: known ? fmt(value) : 'n/a' }), el('span', { class: 'l', text: label }));
 }
 
 export function renderHealth(stats) {
@@ -116,6 +115,7 @@ export function renderTabs() {
   const keptFocus = host.contains(document.activeElement);
   host.textContent = '';
   for (const [key, label, urgent] of TABS) {
+    if (key === 'needs_review') host.append(el('span', { class: 'tab-sep', role: 'presentation' }));
     const count = views[key] ?? 0;
     const selected = state.activeTab === key;
     host.append(el('button', {
@@ -135,7 +135,7 @@ export function renderTabs() {
       title: filtered
         ? `${fmt(count)} of these match the filters you have set`
         : `${fmt(count)} job(s)`,
-    }, label, el('span', { class: 'badge', text: fmt(count) })));
+    }, label, el('span', { class: `badge${count === 0 ? ' zero' : ''}`, text: fmt(count) })));
   }
   // Name the panel after whichever tab is currently showing in it.
   $('boardwrap').setAttribute('aria-labelledby', `tab-${state.activeTab}`);

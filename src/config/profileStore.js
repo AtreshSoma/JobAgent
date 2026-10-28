@@ -133,7 +133,7 @@ export function readProfile(root) {
       exists: false,
       fields: PROFILE_FIELDS.map((spec) => ({ ...spec, value: '', filled: false })),
       missing: PROFILE_FIELDS.filter((f) => f.required).map((f) => f.field),
-      error: 'config/candidate.json does not exist yet — copy config/candidate.example.json and fill it in, or save this form.',
+      error: 'config/candidate.json does not exist yet, copy config/candidate.example.json and fill it in, or save this form.',
     };
   }
   let candidate;
@@ -389,7 +389,7 @@ function assertCandidateValid(root, candidate) {
       const where = LABEL_BY_POINTER.get(e.instancePath) ?? e.instancePath ?? '(root)';
       return `${where} ${e.message}`;
     });
-    throw new Error(`That profile would not load — ${lines.join('; ')}`);
+    throw new Error(`That profile would not load, ${lines.join('; ')}`);
   }
 }
 
@@ -400,7 +400,7 @@ function assertCandidateValid(root, candidate) {
 function templateCandidate(root) {
   const example = join(root, 'config', 'candidate.example.json');
   if (existsSync(example)) return readJson(example);
-  throw new Error('config/candidate.example.json is missing — cannot create a new profile from scratch');
+  throw new Error('config/candidate.example.json is missing, cannot create a new profile from scratch');
 }
 
 /** Copy the current file aside as .bak before replacing it. Best effort. */
@@ -472,14 +472,14 @@ export function validateScreeningAnswers(doc, { requiresSponsorship } = {}) {
   const answers = doc.answers;
   if (!Array.isArray(answers)) return { valid: false, error: 'answers must be a list' };
   if (answers.length > MAX_ANSWER_ENTRIES) {
-    return { valid: false, error: `that is ${answers.length} answers — the limit is ${MAX_ANSWER_ENTRIES}` };
+    return { valid: false, error: `that is ${answers.length} answers, the limit is ${MAX_ANSWER_ENTRIES}` };
   }
   const seen = new Set();
   for (const entry of answers) {
     const check = validateAnswerEntry(entry, { requiresSponsorship });
     if (!check.valid) return { valid: false, error: `answer "${entry?.id ?? '(no id)'}": ${check.error}` };
     const id = String(entry.id).trim().toLowerCase();
-    if (seen.has(id)) return { valid: false, error: `two answers share the id "${entry.id}" — ids must be unique` };
+    if (seen.has(id)) return { valid: false, error: `two answers share the id "${entry.id}" - ids must be unique` };
     seen.add(id);
   }
   return { valid: true, error: null };
@@ -554,7 +554,7 @@ export function upsertScreeningAnswer(root, entry, { question, replace = false }
   const answers = [...current.answers];
   const index = answers.findIndex((a) => String(a?.id ?? '').toLowerCase() === clean.id.toLowerCase());
   if (index >= 0 && !replace) {
-    throw new Error(`an answer with the id "${clean.id}" already exists — choose a different id, or edit that one.`);
+    throw new Error(`an answer with the id "${clean.id}" already exists, choose a different id, or edit that one.`);
   }
   if (index >= 0) answers[index] = clean; else answers.push(clean);
 

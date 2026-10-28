@@ -9,7 +9,7 @@ Local-first job discovery, deterministic scoring, human-approved applications
 It finds the roles, scores the fit, tailors the resume, and fills the form.<br>
 **You click Submit.**
 
-<sub>DESIGNED AND ENGINEERED BY&nbsp;&nbsp;<b>ATRESH</b></sub>
+<sub>DESIGNED AND ENGINEERED BY&nbsp;&nbsp;<b><i>Atresh Somayajula</i></b></sub>
 
 </div>
 
@@ -1059,7 +1059,7 @@ Run-level failures and partial source failures show up in the Activity/RCA drawe
 
 <div align="center">
 
-### Designed and engineered by **Atresh**
+### Designed and Engineered by ***Atresh Somayajula***
 
 <sub>Built for a senior data engineer profile that requires visa sponsorship.<br>Local-first, deterministic, and human-authorized by design.</sub>
 

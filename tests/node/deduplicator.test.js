@@ -43,4 +43,22 @@ describe('deduplicator', () => {
     expect(unique).toHaveLength(0);
     expect(duplicates[0].reason).toBe('exists_in_db');
   });
+
+  it('never merges different postings just because the company is missing', () => {
+    const { unique } = deduplicate([
+      { company: '', title: 'Data Engineer', url: 'https://a.example.com/1', source: 'adzuna' },
+      { company: '', title: 'Data Engineer', url: 'https://b.example.com/2', source: 'adzuna' },
+      { company: 'Acme', title: '', url: 'https://acme.example.com/3', source: 'json-ld' },
+      { company: 'Acme', title: '', url: 'https://acme.example.com/4', source: 'json-ld' },
+    ]);
+    expect(unique).toHaveLength(4);
+  });
+
+  it('still collapses the same untitled posting by its URL', () => {
+    const { unique } = deduplicate([
+      { company: '', title: 'Data Engineer', url: 'https://a.example.com/1?utm_source=x', source: 'adzuna' },
+      { company: '', title: 'Data Engineer', url: 'https://a.example.com/1', source: 'adzuna' },
+    ]);
+    expect(unique).toHaveLength(1);
+  });
 });

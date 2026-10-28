@@ -69,6 +69,9 @@ export function ensureResumePdf(docxPath, {
         finish({ exported: false, pdfPath: null, reason: `preview converter returned invalid output: ${err.message}` });
       }
     });
+    // An early-exiting converter makes the write fail asynchronously on the
+    // stream; without a listener that crashes the process ('close' reports it).
+    child.stdin?.on?.('error', () => {});
     try {
       child.stdin?.write(JSON.stringify({ docx_path: docxPath }));
       child.stdin?.end();

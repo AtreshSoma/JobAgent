@@ -44,8 +44,16 @@ const PRIVATE_IPV4_RE = new RegExp([
 
 const PRIVATE_IPV6_RE = /^(?:f[cd][0-9a-f]{2}:|fe[89ab][0-9a-f]:)/i;
 
-/** Hostname suffixes that only ever resolve inside a private network. */
-const INTERNAL_SUFFIXES = ['.local', '.internal', '.localdomain', '.home.arpa', '.lan'];
+/** Hostname suffixes that only ever resolve inside a private network.
+ *  `.localhost` is reserved for loopback (RFC 6761) and resolvers honour it:
+ *  `anything.localhost` is 127.0.0.1. */
+const INTERNAL_SUFFIXES = ['.localhost', '.local', '.internal', '.localdomain', '.home.arpa', '.lan'];
+
+/** Statuses whose Location a fetch would otherwise follow on its own. */
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+
+/** Redirect hops followed before giving up — browsers allow 20; postings need ~2. */
+export const MAX_REDIRECTS = 5;
 
 /**
  * Validate a URL as a fetchable public http(s) address.
@@ -68,7 +76,10 @@ export function assertPublicHttpUrl(value) {
   // Credentials in a job URL are always a mistake and would be sent upstream.
   if (url.username || url.password) return fail('remove the credentials from the URL');
 
-  const host = url.hostname.toLowerCase();
+  // A trailing dot is the fully-qualified spelling of the SAME name, so
+  // `localhost.` and `jobs.local.` resolve exactly like their dotless forms and
+  // must be judged as them.
+  const host = url.hostname.toLowerCase().replace(/\.+$/, '');
   const bare = host.replace(/^\[|\]$/g, '');
 
   if (LOOPBACK_HOSTNAMES.has(host) || LOOPBACK_HOSTNAMES.has(bare)) {
@@ -91,6 +102,50 @@ export function assertPublicHttpUrl(value) {
 /** Convenience boolean form. */
 export function isPublicHttpUrl(value) {
   return assertPublicHttpUrl(value).ok;
+}
+
+/**
+ * Wrap a fetch so it only ever talks to public http(s) addresses — including
+ * every hop of a redirect chain. Checking the URL once and then letting fetch
+ * follow redirects is not a check: a public posting that answers
+ * `302 Location: http://169.254.169.254/` walks straight past it. So redirects
+ * are followed by hand, and each Location is validated before it is requested.
+ *
+ * The result is fetch-compatible, so it drops into any `fetchImpl` slot.
+ *
+ * @param {typeof fetch} [fetchImpl]
+ * @param {{ maxRedirects?: number }} [options]
+ * @returns {typeof fetch}
+ */
+export function publicOnlyFetch(fetchImpl = fetch, { maxRedirects = MAX_REDIRECTS } = {}) {
+  return async function guardedFetch(input, init = {}) {
+    let current = String(input);
+    let { method, body } = init;
+    for (let hop = 0; ; hop += 1) {
+      const check = assertPublicHttpUrl(current);
+      if (!check.ok) {
+        throw Object.assign(
+          new Error(`${hop ? 'redirect blocked' : 'URL blocked'}: ${check.reason}`),
+          { code: 'BLOCKED_URL', retryable: false },
+        );
+      }
+      const response = await fetchImpl(current, { ...init, method, body, redirect: 'manual' });
+      const status = Number(response.status);
+      const location = REDIRECT_STATUSES.has(status) ? response.headers?.get?.('location') : null;
+      if (!location) return response;
+      if (hop >= maxRedirects) {
+        throw Object.assign(new Error(`too many redirects (more than ${maxRedirects})`), { retryable: false });
+      }
+      try { await response.body?.cancel?.(); } catch { /* nothing to release */ }
+      current = new URL(location, current).href;
+      // Same method rewrite a browser applies: 303 always becomes GET, and so
+      // does a POST answered with 301/302.
+      if (status === 303 || ((status === 301 || status === 302) && String(method ?? 'GET').toUpperCase() === 'POST')) {
+        method = 'GET';
+        body = undefined;
+      }
+    }
+  };
 }
 
 function fail(reason) {

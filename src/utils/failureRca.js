@@ -20,19 +20,19 @@ export const RCA_CATEGORIES = Object.freeze([
 
 /** Human guidance per category — actionable, never alarmist. */
 const GUIDANCE = Object.freeze({
-  timeout: 'The source did not answer in time. It is usually transient — retry; if it persists, the site may be slow or blocking automated clients.',
+  timeout: 'The source did not answer in time. It is usually transient, retry; if it persists, the site may be slow or blocking automated clients.',
   network: 'Could not reach the network endpoint. Check your internet connection, VPN, or proxy, then retry.',
   dns: 'The hostname could not be resolved. Check the source URL/domain in config/jobboards.json and your DNS/VPN.',
   auth: 'The source rejected the credentials (401/403). Verify the API token in .env is current and has the right scopes.',
-  quota_exhausted: 'The account has spent its usage allowance for the billing period, so the provider is refusing new work. Nothing is wrong with the setup and no other source is affected — raise the plan limit, or leave this source disabled until the cycle resets.',
+  quota_exhausted: 'The account has spent its usage allowance for the billing period, so the provider is refusing new work. Nothing is wrong with the setup and no other source is affected, raise the plan limit, or leave this source disabled until the cycle resets.',
   rate_limit: 'The source rate-limited us (429). It is throttling by host, so every board/tenant on that host shares one budget. Wait a few minutes and retry; if it repeats, raise rateLimitMs or lower detailConcurrency for this source.',
-  provider_error: 'The provider returned an error (5xx, or a 4xx rejecting our request). Usually on their side — retry later; if a 4xx repeats, the adapter contract needs updating.',
+  provider_error: 'The provider returned an error (5xx, or a 4xx rejecting our request). Usually on their side, retry later; if a 4xx repeats, the adapter contract needs updating.',
   invalid_json: 'The source answered with malformed JSON. Usually transient; if it persists the provider changed or is erroring.',
-  schema_changed: 'The response parsed but no longer matches the expected shape — the provider likely changed their API. The adapter needs updating.',
+  schema_changed: 'The response parsed but no longer matches the expected shape, the provider likely changed their API. The adapter needs updating.',
   empty_response: 'The source answered with no data. The board may genuinely be empty, or the query/token may be too restrictive.',
   db_busy: 'The local database was busy or locked. Close other Job Agent processes (or a DB browser) and retry.',
   missing_config: 'A required configuration file or field is missing. Run "npm run doctor" for the exact fix.',
-  missing_resume: 'The master resume is missing at resumes/base/MASTER_RESUME.docx — tailoring cannot run without it.',
+  missing_resume: 'The master resume is missing at resumes/base/MASTER_RESUME.docx, tailoring cannot run without it.',
   browser_launch: 'The browser could not be started. Close other automation windows using the same profile, or run "npx playwright install chromium".',
   budget_exhausted: 'Nothing failed. A per-source ceiling on how many descriptions to fetch was reached, so the postings past it were kept WITHOUT their description and stored as needs_description rather than being judged. Run "npm run enrich" to read and score them, or raise maxDetailFetches for that source in config/jobboards.json.',
   unknown: 'Unrecognized failure. Open the technical details; if it repeats, the message usually names the failing component.',
@@ -317,7 +317,7 @@ function defaultImpact({
       ? 'so that employer contributed nothing'
       : 'so a subset of its jobs is missing';
     return `"${source}" still returned ${jobs} job(s), which were kept. ${failures} failed, `
-      + `${cost} — not the whole source. Other sources are unaffected.`;
+      + `${cost}, not the whole source. Other sources are unaffected.`;
   }
   return `${n} "${source}" are missing from this run; other sources are unaffected.`;
 }

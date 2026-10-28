@@ -14,6 +14,7 @@
  */
 
 import { isWithinLast24Hours } from '../utils/dates.js';
+import { DIRECT_ATS_SOURCES } from './scorer.js';
 
 /** Higher rank = more feasible sponsorship outcome. */
 const SPONSORSHIP_RANK = Object.freeze({
@@ -22,11 +23,6 @@ const SPONSORSHIP_RANK = Object.freeze({
   Likely: 2,
   Unconfirmed: 1,
 });
-
-/** Direct-ATS / first-party sources outrank aggregators on a tie. */
-const DIRECT_ATS_SOURCES = Object.freeze(new Set([
-  'greenhouse', 'lever', 'workday', 'careers', 'manual',
-]));
 
 /** Read postedAt from either the normalized (camelCase) or db (snake_case) shape. */
 function postedOf(job) {
@@ -37,6 +33,7 @@ function sponsorshipRank(status) {
   return SPONSORSHIP_RANK[status] ?? 0;
 }
 
+/** Direct-ATS / first-party sources outrank aggregators on a tie (list shared with the scorer). */
 function sourceQualityRank(source) {
   return DIRECT_ATS_SOURCES.has(source) ? 2 : 1;
 }

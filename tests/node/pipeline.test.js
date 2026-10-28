@@ -119,6 +119,28 @@ describe('runPipeline', () => {
     db.close();
   });
 
+  it('one job failing packet preparation never aborts the rest of the run', async () => {
+    const baseline = makeCtx(root);
+    const normal = await runPipeline({ ...baseline, mode: 'PREPARE', deps: { searchFn, now: F.NOW, stamp: 'a' } });
+    baseline.db.close();
+    expect(normal.counters.jobs_prepared).toBeGreaterThanOrEqual(2);
+
+    const { db, logger, config } = makeCtx(mkdtempSync(join(tmpdir(), 'jobagent-prep-fail-')));
+    let reads = 0;
+    // The first job's preparation throws (as a locked file or rejected path
+    // would); every later read behaves normally.
+    config.coverLetter = {
+      ...base.coverLetter,
+      get enabled() { if (reads++ === 0) throw new Error('disk full'); return base.coverLetter.enabled; },
+    };
+    const result = await runPipeline({ config, db, logger, mode: 'PREPARE', deps: { searchFn, now: F.NOW, stamp: 'b' } });
+
+    expect(result.errors).toContainEqual(expect.objectContaining({ source: 'prepare', error: 'disk full' }));
+    expect(result.counters.jobs_prepared).toBe(normal.counters.jobs_prepared - 1);
+    expect(result.report).toBeTruthy();
+    db.close();
+  });
+
   it('never excludes a job that was hard-excluded from scoring', async () => {
     const { db, logger, config } = makeCtx(root);
     await runPipeline({ config, db, logger, mode: 'DRY_RUN', deps: { searchFn, now: F.NOW, stamp: 'test' } });

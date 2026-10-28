@@ -122,3 +122,6 @@ Thumbs.db
 # command, and skills-lock.json records exactly which ones and at what hash.
 # Delete this line if you would rather version them with the project.
 .agents/
+
+# Local design sessions can include private screenshots and discussion.
+.impeccable/

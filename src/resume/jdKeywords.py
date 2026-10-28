@@ -21,7 +21,12 @@ def _normalize(text: str) -> str:
 
 def _strip_non_role_boilerplate(text: str) -> str:
     """Remove recruiting-safety copy that must not become a job requirement."""
-    cleaned = text or ""
+    # Collapse whitespace FIRST. Both callers collapse it right afterwards, so
+    # the result is unchanged, but the lazy `\s+[^.]{0,160}?\s+` below
+    # backtracks roughly cubically over a long whitespace run: "legitimate"
+    # followed by ~6k spaces outlasted the 60 s tailor timeout and dropped the
+    # job to the master resume.
+    cleaned = re.sub(r"\s+", " ", text or "")
     patterns = (
         # Common Greenhouse/Anthropic-style fraud warning. Without this guard,
         # "banking information" is incorrectly tiered as required domain skill.

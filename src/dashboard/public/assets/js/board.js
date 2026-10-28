@@ -1,6 +1,6 @@
 /** The job board: page loading, rows, focus restore, pager, status line. */
 
-import { $, el, esc, fmt, relTime, safeHref } from './dom.js';
+import { $, el, esc, fmt, icon, relTime, safeHref } from './dom.js';
 import { state } from './state.js';
 import { api } from './api.js';
 import { filterParams, renderActiveFilters, TABS } from './filters.js';
@@ -553,10 +553,10 @@ export function renderPager(page) {
   if (page.pages > 1) {
     host.append(
       // First/Last carry `pg-edge` so a phone can fold the pager to one line.
-      el('button', { class: 'small pg-edge', 'data-action': 'page', 'data-page': '1', disabled: page.page <= 1, text: '« First' }),
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page - 1), disabled: page.page <= 1, text: '‹ Prev' }),
-      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page + 1), disabled: page.page >= page.pages, text: 'Next ›' }),
-      el('button', { class: 'small pg-edge', 'data-action': 'page', 'data-page': String(page.pages), disabled: page.page >= page.pages, text: 'Last »' }),
+      el('button', { class: 'small pg-edge', 'data-action': 'page', 'data-page': '1', disabled: page.page <= 1, 'aria-label': 'First page' }, icon('chevs-l'), 'First'),
+      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page - 1), disabled: page.page <= 1, 'aria-label': 'Previous page' }, icon('chev-l'), 'Prev'),
+      el('button', { class: 'small', 'data-action': 'page', 'data-page': String(page.page + 1), disabled: page.page >= page.pages, 'aria-label': 'Next page' }, 'Next', icon('chev-r')),
+      el('button', { class: 'small pg-edge', 'data-action': 'page', 'data-page': String(page.pages), disabled: page.page >= page.pages, 'aria-label': 'Last page' }, 'Last', icon('chevs-r')),
     );
   }
   if (state.selected.size) {

@@ -102,6 +102,10 @@ describe('dashboard server hardening', () => {
     // A loopback Origin (the dashboard itself) is fine.
     const ok = await post('/api/jobs/j1/note', { note: 'hi' }, { origin: `http://127.0.0.1:${dash.port}` });
     expect(ok.status).toBe(200);
+    // ...but another app on a different loopback port is not the dashboard.
+    const otherPort = dash.port === 3000 ? 3001 : 3000;
+    const neighbour = await post('/api/jobs/j1/note', { note: 'x' }, { origin: `http://127.0.0.1:${otherPort}` });
+    expect(neighbour.status).toBe(403);
   });
 
   it('rejects requests whose Host is not loopback (DNS rebinding)', async () => {
@@ -133,6 +137,11 @@ describe('dashboard server hardening', () => {
     expect(isAllowedOrigin('http://localhost:4646')).toBe(true);
     expect(isAllowedOrigin('https://evil.com')).toBe(false);
     expect(isAllowedOrigin('null')).toBe(false);
+    // With the server's port known, another local app is a different origin.
+    expect(isAllowedOrigin('http://127.0.0.1:4646', 4646)).toBe(true);
+    expect(isAllowedOrigin('http://localhost:4646', 4646)).toBe(true);
+    expect(isAllowedOrigin('http://127.0.0.1:3000', 4646)).toBe(false);
+    expect(isAllowedOrigin('http://localhost', 4646)).toBe(false);
   });
 
   it('GET /api/jobs returns { jobs, total, limit } so the UI can say "Showing N of M"', async () => {

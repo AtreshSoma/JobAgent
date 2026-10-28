@@ -134,8 +134,12 @@ export async function clickAndSettle(page, control, deps = {}, options = {}) {
     catch { loc = null; }
   }
   if (!loc && options.selectorOnly === true) return false;
-  if (!loc && typeof page.getByRole === 'function' && control.text) {
-    try { loc = page.getByRole('button', { name: control.text }).first(); } catch { loc = null; }
+  // The name fallback may never reach a submit. A submit-named control must
+  // earn a unique selector (see selectorOnly), and the match is EXACT: by
+  // default Playwright matches the name as a case-insensitive SUBSTRING, so
+  // a "Review" step resolved to a "Review and Submit" button and submitted.
+  if (!loc && typeof page.getByRole === 'function' && control.text && !SUBMIT_RE.test(control.text)) {
+    try { loc = page.getByRole('button', { name: control.text, exact: true }).first(); } catch { loc = null; }
   }
   if (!loc) return false;
 

@@ -163,6 +163,36 @@ export function folderDateOrId(value) {
   return fsSafeSegment(s) || 'undated';
 }
 
+/** Longest each name segment may be (see buildJobPaths for the arithmetic). */
+export const SEGMENT_CAP = Object.freeze({
+  companyFolder: 40, titleFolder: 55, titleFile: 45, companyFile: 24,
+});
+
+/**
+ * Shorten a name to at most `max` characters, preferring a word boundary so a
+ * title ends on a whole word ("Senior Data Engineer, Platform") rather than
+ * mid-word, and never leaving a trailing dot, space or separator — Windows
+ * silently strips trailing dots/spaces, which would desync the path we record.
+ * @param {string} name
+ * @param {number} max
+ * @returns {string}
+ */
+export function clipName(name, max) {
+  const s = String(name ?? '');
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const lastBreak = Math.max(cut.lastIndexOf(' '), cut.lastIndexOf('_'));
+  const head = lastBreak >= max * 0.6 ? cut.slice(0, lastBreak) : cut;
+  return head.replace(/[\s._,;:&()-]+$/g, '');
+}
+
+/** Preserve the identity lost by truncation without increasing the folder cap. */
+function folderName(name, max) {
+  if (name.length <= max) return name;
+  const suffix = createHash('sha256').update(name).digest('hex').slice(0, 10);
+  return `${clipName(name, max - suffix.length - 1)}_${suffix}`;
+}
+
 /**
  * Compute the professional output folder + filenames for one job.
  *
@@ -185,8 +215,8 @@ export function buildJobPaths({
 }) {
   const companyName = fromSlug ? deslug(company) : fsSafeSegment(company);
   const titleName = fromSlug ? deslug(title) : fsSafeSegment(title);
-  const companyFolder = fsSafeSegment(companyName) || 'Unknown Company';
-  const titleFolder = fsSafeSegment(titleName) || 'Untitled Role';
+  const companyFolder = folderName(fsSafeSegment(companyName), SEGMENT_CAP.companyFolder) || 'Unknown Company';
+  const titleFolder = folderName(fsSafeSegment(titleName), SEGMENT_CAP.titleFolder) || 'Untitled Role';
   // The job discriminator is what makes this path identify ONE requisition.
   // Omitted (migration script, legacy callers) the name is unchanged, so
   // existing folders keep resolving; supplied, two same-titled roles at the
@@ -200,8 +230,8 @@ export function buildJobPaths({
   const folder = join(root, relFolder);
 
   const candidate = candidatePrefix(candidateName);
-  const titleFile = fileToken(titleName);
-  const companyFile = fileToken(companyName);
+  const titleFile = clipName(fileToken(titleName), SEGMENT_CAP.titleFile) || 'Untitled';
+  const companyFile = clipName(fileToken(companyName), SEGMENT_CAP.companyFile) || 'Untitled';
 
   const resumeBase = `${candidate}_Resume_${titleFile}`;
   const coverLetterBase = `${candidate}_Cover_Letter_${titleFile}`;

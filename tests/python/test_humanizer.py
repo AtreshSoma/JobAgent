@@ -28,3 +28,11 @@ def test_collapses_exclamations_and_whitespace(humanizer_patterns):
 def test_has_banned_content(humanizer_patterns):
     assert has_banned_content("uses an em dash \u2014 here", humanizer_patterns) is True
     assert has_banned_content("clean professional text", humanizer_patterns) is False
+
+
+def test_removes_banned_phrases_only_as_whole_words():
+    patterns = {"bannedPhrases": ["guru", "rockstar"]}
+    out = humanize("Based in Gurugram. A true rockstar.", patterns)
+    assert "Gurugram" in out
+    assert "rockstar" not in out.lower()
+    assert has_banned_content("Based in Gurugram", patterns) is False

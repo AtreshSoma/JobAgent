@@ -17,6 +17,31 @@ export function esc(value) {
  *  HTMLUnknownElement for these, which renders as nothing at all. */
 export const SVG_TAGS = new Set(['svg', 'polyline', 'circle', 'path', 'line', 'g', 'rect', 'text']);
 
+export function plainDashes(value) {
+  const s = String(value);
+  if (!/[–—]/.test(s)) return s;
+  return s.replace(/(\S?)(\s*)[–—](\s*)(\S?)/g, (m, a, sp1, sp2, b) => {
+    if (a && b && !sp1 && !sp2) return `${a}-${b}`;
+    // A numeric range stays a range even when spaced ("1 – 100" -> "1-100").
+    if (/\d/.test(a) && /\d/.test(b)) return `${a}-${b}`;
+    if (!a) return `${sp1}-${sp2}${b}`;
+    if (!b) return `${a}${sp1}-`;
+    return /[.,;:!?]/.test(a) ? `${a} ${b}` : `${a}, ${b}`;
+  });
+}
+
+/** Attributes a person reads (as opposed to ids, data, and URLs). */
+const READ_ATTRS = new Set(['title', 'aria-label', 'placeholder', 'alt']);
+
+/**
+ * One of the stylesheet's drawn icons (`--ic-<name>`), decorative and in the
+ * current text colour. Replaced Unicode glyphs (→ ↗ « ‹ › ») whose shape and
+ * weight changed with the font.
+ */
+export function icon(name) {
+  return el('span', { class: 'mask-ic', style: `--ic: var(--ic-${name})`, 'aria-hidden': 'true' });
+}
+
 export function el(tag, attrs = {}, ...children) {
   const svg = SVG_TAGS.has(tag);
   const node = svg
@@ -29,14 +54,15 @@ export function el(tag, attrs = {}, ...children) {
     // There is deliberately no `html` key. It existed as an innerHTML escape
     // hatch; nothing needed it, and every caller that one day reached for it
     // with a job title or a provider message would have been an injection.
-    else if (k === 'text') node.textContent = v;
+    else if (k === 'text') node.textContent = tag === 'textarea' ? v : plainDashes(v);
+    else if (READ_ATTRS.has(k)) node.setAttribute(k, plainDashes(v));
     else if (k.startsWith('data-') || k.startsWith('aria-')) node.setAttribute(k, v);
     else if (k === 'for') node.htmlFor = v;
     else node.setAttribute(k, v === true ? '' : v);
   }
   for (const child of children.flat()) {
     if (child === null || child === undefined || child === false) continue;
-    node.append(child.nodeType ? child : document.createTextNode(String(child)));
+    node.append(child.nodeType ? child : document.createTextNode(tag === 'textarea' ? String(child) : plainDashes(child)));
   }
   return node;
 }

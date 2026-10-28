@@ -56,7 +56,10 @@ export function classifyEmployment(job = {}, markers = {}) {
   const fullTime = markers.fullTime ?? [];
   const defaultToFullTime = markers.defaultToFullTime !== false;
 
-  const primary = normalizeText([job.employmentType, job.title].join(' \n '));
+  // schema.org and ATS feeds spell the field as enum values (PART_TIME,
+  // FULL_TIME); `_` -> space lets the configured "part time" phrase see them.
+  const field = normalizeText(String(job.employmentType ?? '').replace(/_/g, ' '));
+  const primary = normalizeText([field, job.title].join(' \n '));
   const secondary = normalizeText(job.jdText);
   const inAny = (list) => [
     ...matchedPhrases(primary, list),
@@ -75,6 +78,13 @@ export function classifyEmployment(job = {}, markers = {}) {
   const c = inAny(contract);
   if (c.length) return { category: 'contract', matched: dedupe(c) };
 
+  // The structured field is a controlled vocabulary (schema.org CONTRACTOR /
+  // TEMPORARY, Ashby/Adzuna "Contract"), so a single word there is a reliable
+  // marker — unlike the same word in prose, which is why the config list is
+  // multi-word only. Read from the FIELD alone, never the title or body.
+  const fieldContract = field.match(STRUCTURED_CONTRACT_RE);
+  if (fieldContract) return { category: 'contract', matched: [fieldContract[0]] };
+
   // Full-time is checked BEFORE part-time and only from the reliable primary
   // text. This means a flexible "Full Time/Part Time" role is reported as
   // full_time (full-time IS available — the useful signal for a full-time
@@ -89,6 +99,9 @@ export function classifyEmployment(job = {}, markers = {}) {
   if (defaultToFullTime) return { category: 'full_time', matched: [] };
   return { category: 'unknown', matched: [] };
 }
+
+/** Contract-family enum values as they appear in a structured employmentType. */
+const STRUCTURED_CONTRACT_RE = /\b(?:contract|contractor|temporary|temp|freelance|per diem|seasonal)\b/;
 
 function dedupe(list) {
   return [...new Set(list)];

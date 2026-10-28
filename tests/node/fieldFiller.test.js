@@ -185,11 +185,11 @@ describe('fieldFiller.applyValue (combobox/typeahead)', () => {
     expect(page.calls).toContainEqual({ selector: '#lb [role="option"]', action: 'optionClick', index: 0, text: 'Remote' });
   });
 
-  it('falls back to Enter when no option container renders', async () => {
+  it('never presses Enter when no option renders (Enter would submit the form)', async () => {
     const page = makeComboboxPage({ inputSelector: '#loc', optionMap: {}, keyboard: true });
     const res = await applyValue(page, { kind: 'combobox', selector: '#loc' }, 'Anything');
-    expect(res).toMatchObject({ ok: true, action: 'combobox-enter' });
-    expect(page.calls).toContainEqual({ action: 'press', key: 'Enter' });
+    expect(res.ok).toBe(false);
+    expect(page.calls.some((c) => c.action === 'press')).toBe(false);
   });
 
   it('reports an error when no option appears and no keyboard fallback exists', async () => {

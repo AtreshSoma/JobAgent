@@ -103,6 +103,20 @@ describe('sponsorship denial detection (strict — it hard-discards)', () => {
     expect(affirmativeSponsorshipHits(jd, AFFIRMATIVE).affirmed).toContain('will sponsor');
   });
 
+  it.each([
+    ['inclusive "do not need"', 'We offer H-1B sponsorship. Candidates who do not need sponsorship are also welcome.'],
+    ['"with or without"', 'Visa sponsorship available; applicants with or without sponsorship needs welcome.'],
+    ['"sponsored" as an adjective', 'Includes company-sponsored certifications. No sponsored relocation.'],
+  ])('never hard-discards an offering posting over %s', (_label, jd) => {
+    expect(detectSponsorshipDenial(jd).denied).toBe(false);
+    expect(applyExclusions({ title: 'Data Engineer', jdText: jd }, exclusions).excluded).toBe(false);
+  });
+
+  it('still reads "sponsored" as the visa topic when it is a participle', () => {
+    expect(detectSponsorshipDenial('Visas will not be sponsored for this role.').denied).toBe(true);
+    expect(detectSponsorshipDenial('H-1B candidates cannot be sponsored.').denied).toBe(true);
+  });
+
   it('treats "not only … we sponsor" as the offer it is', () => {
     const jd = 'Not only do we sponsor H-1B, we also cover relocation.';
     expect(detectSponsorshipDenial(jd).denied).toBe(false);
