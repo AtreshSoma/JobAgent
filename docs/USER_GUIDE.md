@@ -39,7 +39,7 @@ Every strong match becomes a reviewable **application packet**: the job, its sco
 <table>
 <tr><th width="50%">Find and judge</th><th width="50%">Prepare and hand over</th></tr>
 <tr valign="top">
-<td><b>1. Finds jobs</b> from public ATS endpoints (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable), aggregator APIs, public JSON-LD pages, and CSV or URL lists you supply.<br><br><b>2. Normalizes and de-duplicates</b> everything into one canonical shape in local SQLite.<br><br><b>3. Excludes</b> the disqualifiers: no sponsorship, clearance required, too junior, wrong employment type, wrong geography, stale.<br><br><b>4. Classifies sponsorship</b> as Confirmed, Likely, or Unconfirmed.<br><br><b>5. Scores 0-100</b> across 13 weighted, config-driven categories.<br><br><b>6. Assigns a tier</b> and applies the sponsorship gate.</td>
+<td><b>1. Finds jobs</b> from public ATS endpoints (Greenhouse, Lever, Ashby, Workday, SmartRecruiters, Workable), aggregator APIs, public JSON-LD pages, and CSV or URL lists you supply.<br><br><b>2. Normalizes and de-duplicates</b> everything into one canonical shape in local SQLite.<br><br><b>3. Excludes</b> the disqualifiers: no sponsorship, clearance required, too junior, wrong employment type, wrong geography, stale.<br><br><b>4. Classifies sponsorship</b> as Confirmed, Likely, or Unconfirmed.<br><br><b>5. Scores 0-100</b> across weighted, config-driven categories (10 on the shipped config, 13 on the legacy shape).<br><br><b>6. Assigns a tier</b> and applies the sponsorship gate.</td>
 <td><b>7. Tailors your resume</b> by emphasizing skills you <i>already have</i>. It never invents one.<br><br><b>8. Drafts a cover letter</b> of 180-260 words, humanized, and only when the job warrants it.<br><br><b>9. Builds a packet</b> holding the detected ATS, the fill plan, screening answers, and the upload plan.<br><br><b>10. Queues it for your approval.</b><br><br><b>11. Assists the apply</b> if you want it to: real browser, fills fields, uploads documents, advances the safe steps, and <b>stops before Submit</b>.</td>
 </tr>
 </table>
@@ -85,7 +85,7 @@ The default path never submits. Once it has filled and uploaded everything it ca
 - **No template text reaches an employer.** A cover letter or planned answer containing an unfilled `{token}` is refused, and placeholder profile values (including work-history highlights, employer and school names) block preparation.
 - **Walls are judged by what the page shows**, not by vendor names inside its scripts, so a healthy application page is no longer mistaken for a bot wall.
 - **Documents go into the input labelled for them**: the resume never lands in a cover-letter or transcript slot, on current `job-boards.greenhouse.io` markup as well as the classic layout.
-- **Your own submit is noticed.** After hand-off the runner watches the open window; if a confirmation page appears it records the job as *submitted — pending your confirmation*. It still never counts as applied until you click **Mark submitted**.
+- **Your own submit is noticed.** After hand-off the runner watches the open window; if a confirmation page appears it records the job as *submitted — pending your confirmation*. It still never counts as applied until you click **I submitted it myself**.
 
 </details>
 
@@ -142,9 +142,9 @@ Three things need your input before the first real run.
 npm run setup          # npm run setup:check reports what is missing without writing
 ```
 
-It creates, **only when absent**, `config/candidate.json`, `config/screening_answers.json`, `config/cover_letter.json` (your years of experience and work-authorization sentence for cover letters) and a synthetic `resumes/base/MASTER_RESUME.docx`. They start as **placeholders**: `npm run doctor` fails, and nothing is prepared or submitted, until you replace the template values. All of them are **gitignored**, because they hold your personal data. You can also edit the contact fields from the dashboard under **More ▾ → 👤 Application profile…**
+It creates, **only when absent**, `config/candidate.json`, `config/screening_answers.json`, `config/cover_letter.json` (your years of experience and work-authorization sentence for cover letters) and a synthetic `resumes/base/MASTER_RESUME.docx`. They start as **placeholders**: `npm run doctor` fails, and nothing is prepared or submitted, until you replace the template values. All of them are **gitignored**, because they hold your personal data. You can also edit the contact fields from the dashboard under **More actions → Application profile**
 
-**2. Your master resume.** Put it at `resumes/base/MASTER_RESUME.docx`. It is opened **read-only** and never overwritten, and tailored copies go to `resumes/output/`. From **More ▾ → 🧾 Master resume…** you can read the document's real extracted text, so you see what tailoring actually reads rather than just the filename. You can download it to edit, then upload a replacement. Uploads are validated before they land, so a renamed PDF or a file with no readable text gets refused, and the version being replaced is kept in `resumes/base/history/` for one-click rollback.
+**2. Your master resume.** Put it at `resumes/base/MASTER_RESUME.docx`. It is opened **read-only** and never overwritten, and tailored copies go to `resumes/output/`. From **More actions → Master resume** you can read the document's real extracted text, so you see what tailoring actually reads rather than just the filename. You can download it to edit, then upload a replacement. Uploads are validated before they land, so a renamed PDF or a file with no readable text gets refused, and the version being replaced is kept in `resumes/base/history/` for one-click rollback.
 
 **3. Job sources.** The simplest input is a CSV at `data/jobs_input/manual_jobs.csv`:
 
@@ -297,7 +297,7 @@ flowchart TD
     B --> C{Hard exclusions?}
     C -- yes --> X[Discard + log reason]
     C -- no --> D[Classify sponsorship]
-    D --> E[Score 0-100 across 13 categories]
+    D --> E[Score 0-100 across weighted categories]
     E --> F[Assign tier + enforce sponsorship gate]
     F -- Discard/NearMiss/Queue --> R[Store + report]
     F -- Apply/Priority in PREPARE mode --> G[Tailor resume, python-docx]
@@ -327,7 +327,7 @@ flowchart TD
 | **Freshness** | `src/search/freshnessFilter.js` | Keeps dated postings per `JOB_FRESHNESS_MODE`. Widens to 3 days automatically when a strict window comes back thin (`INCLUDE_LAST_3_DAYS_FALLBACK`). Undated board jobs go to a visible review bucket instead of being dropped quietly (`INCLUDE_UNKNOWN_DATE_JOBS`). |
 | **Exclude** | `src/scoring/exclusionFilter.js` | Discards no-sponsorship, clearance, junior or unrelated, wrong-geo, and stale postings. |
 | **Sponsorship** | `src/scoring/sponsorshipClassifier.js` | Confirmed, Likely, or Unconfirmed, read from JD phrases plus the known-sponsor list in config. |
-| **Score** | `src/scoring/scorer.js` | 13 weighted categories, normalized to 0-100. Fully deterministic. |
+| **Score** | `src/scoring/scorer.js` | Weighted categories (10 on the shipped config), normalized to 0-100. Fully deterministic. |
 | **Tier and gate** | `src/scoring/explainScore.js` | Priority ≥ 85, Apply ≥ 75, Queue ≥ 60, Near miss ≥ 50, then the sponsorship gate. |
 | **Tailor resume** | `src/resume/tailor.py` | Bolds the skills you already have that match the JD. Never fabricates. |
 | **Cover letter** | `src/apply/coverLetter.js` | Deterministic template, humanized, 180-260 words, written only when warranted. |
@@ -392,8 +392,8 @@ A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies,
 <details>
 <summary><b>📄 Documents and answers</b>: master resume, application profile, the answer-once queue</summary>
 
-- **Master resume** under **More ▾ → 🧾 Master resume…** lets you read the real extracted text, download it to edit, upload a validated replacement, and roll back in one click.
-- **Application profile** under **More ▾ → 👤 Application profile…** holds the name, contact details, and links the form filler types on every application, edited in the browser instead of by hand in `config/candidate.json`. Every save is validated against the config schema before it lands, keeps the previous version, and gets picked up by the next run without restarting the dashboard. **Only the fields the filler can actually use are editable**, so a save can never blank out the work history and skills that tailoring and scoring depend on.
+- **Master resume** under **More actions → Master resume** lets you read the real extracted text, download it to edit, upload a validated replacement, and roll back in one click.
+- **Application profile** under **More actions → Application profile** holds the name, contact details, and links the form filler types on every application, edited in the browser instead of by hand in `config/candidate.json`. Every save is validated against the config schema before it lands, keeps the previous version, and gets picked up by the next run without restarting the dashboard. **Only the fields the filler can actually use are editable**, so a save can never blank out the work history and skills that tailoring and scoring depend on.
 - **Answer a question once, not every time.** When a live form asks something the screening matcher cannot answer, the run stops for you, and the question lands in a queue on that same page along with the jobs that asked it and how often. Answering it there writes a validated entry into `config/screening_answers.json`, so every future application asking the same thing fills it in automatically. **Coverage only grows.** The truthfulness rules apply at save time exactly as they do at fill time, so an answer that would misstate work authorization gets refused, including an innocuous-looking "Yes" to a reversed sponsorship question. A count of what is waiting shows in the header's health strip.
 
 </details>
@@ -404,7 +404,7 @@ A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies,
 - **Why it fits.** Every job shows its score explanation, the JD skills you have, and the JD skills not evidenced in your profile. A skill-alias ontology (`config/scoring.json` → `evidenceAliases`) keeps those two lists consistent, so "ADF" in a JD is evidenced by "Azure Data Factory" in your profile, and "lakehouse" by "Delta Lake" or "Databricks".
 - **Verify sponsorship queue.** Strong-fit roles at 75 or above with unverified sponsorship get a "verify" chip plus their own tile and next action, rather than disappearing into the medium bucket. The safety gate still keeps them out of auto-preparation until you confirm.
 - **Actions**: shortlist, reject, archive, approve packet, *Fill in browser (stops before submit)*, and *I submitted it myself*, which records a submission you confirm. Explicit per-run auto-submit can also record a submission after verification. Reject and Archive — single or batch — offer **Undo** and optional one-click reasons (salary, location, seniority, sponsorship, stack, company, stale, other), recorded with the decision so later tuning has something to learn from. Notes **autosave** as you type, and a background refresh never rebuilds the panel you are typing in.
-- **Run history** under **More ▾ → Run history…** (and from the run pill's Details) lists recent runs with mode, duration, found/new/scored/discarded and a per-source ok/partial/failed outcome.
+- **Run history** under **More actions → Run history** (and from the run pill's Details) lists recent runs with mode, duration, found/new/scored/discarded and a per-source ok/partial/failed outcome.
 - **Pipeline buttons.** Discover, Score, and Find & Prepare run the real pipeline in the background. A run shows live in the header as a progress pill telling you what it is doing, how many of how many boards are done, which board is current, elapsed time, and a determinate progress line. **Details** opens the per-board breakdown of found counts, errors, duration, and cache hits, and when something failed it shows the *cause*: failure category, HTTP status, the provider's own message, and what to do about it. Results stay until you dismiss them.
 - **Breakdowns** for found, strong, prepared and submitted per source; Confirmed, Likely and Unconfirmed sponsorship counts with how many of each are strong fits; and discovered, prepared and submitted per day for the last 7 days.
 - **Next actions**, a ranked to-do list covering filled apps waiting for your Submit, packets awaiting approval, blocked apps, strong fits with no decision, and unconfirmed posting dates. Each one links to the filtered board view.
@@ -421,7 +421,7 @@ The agent does the thinking deterministically first and hands you a finished pac
 <table>
 <tr><th width="50%">Before the browser opens</th><th width="50%">What <code>npm run assist</code> then does</th></tr>
 <tr valign="top">
-<td><b>Detects the ATS</b>, whether Greenhouse, Lever, Workday, iCIMS, Taleo, SmartRecruiters, Jobvite, or generic, from the URL and markup.<br><br><b>Builds a fill plan</b>, an explicit list of <code>field label → value → CSS selector → source</code> entries drawn from your profile and configured screening answers. Each platform adapter knows that ATS's common field selectors.<br><br><b>Builds an upload plan</b> that confirms the tailored resume, and the optional cover letter, exist and are valid file types.<br><br><b>Marks every plan</b> <code>submitReady: false</code> and <code>stopBeforeSubmit: true</code>.</td>
+<td><b>Detects the ATS</b>, whether Greenhouse, Lever, Ashby, Workday, iCIMS, Taleo, SmartRecruiters, Jobvite, or generic, from the URL and markup.<br><br><b>Builds a fill plan</b>, an explicit list of <code>field label → value → CSS selector → source</code> entries drawn from your profile and configured screening answers. Each platform adapter knows that ATS's common field selectors.<br><br><b>Builds an upload plan</b> that confirms the tailored resume, and the optional cover letter, exist and are valid file types.<br><br><b>Marks every plan</b> <code>submitReady: false</code> and <code>stopBeforeSubmit: true</code>.</td>
 <td><b>1.</b> Opens the apply page and runs <b>page guards</b>. On a CAPTCHA, login wall, MFA prompt, or bot-protection page it <b>stops</b> and leaves the browser open for you. It never tries to solve or evade any of them.<br><br><b>2.</b> Fills only the fields it can resolve confidently. Unknown screening questions become <b>blockers</b>.<br><br><b>3.</b> Uploads the tailored resume and cover letter to the file inputs.<br><br><b>4.</b> Clicks only <b>safe navigation</b> (Next, Continue, Review) to advance multi-step forms, and <b>stops before the final Submit</b>.</td>
 </tr>
 </table>
@@ -476,7 +476,7 @@ Rotate the key if it is ever exposed, and restart the dashboard afterwards.
 
 | | 🏢 Company-first | 🔍 Query-first |
 | --- | --- | --- |
-| **Sources** | Greenhouse, Lever, Ashby, SmartRecruiters, Workday, careers pages | `ats-search`, `adzuna`, `apify` |
+| **Sources** | Greenhouse, Lever, Ashby, SmartRecruiters, Workday, Rippling, Oracle Recruiting, Amazon Jobs, iCIMS, careers pages | `ats-search`, `adzuna`, `apify` |
 | **You configure** | a list of **boards** | a list of **titles** |
 | **Finds** | everything at those employers | matching roles at employers **you have never heard of** |
 | **Cost** | free, unmetered | free (`ats-search`), metered (`adzuna`, `apify`) |
@@ -606,10 +606,10 @@ Extraction is deterministic, with no model involved, and deliberately conservati
 
 ### Searching for a role you have not committed to
 
-**🔎 Search job boards**, next to the board filter, asks the boards a new question instead of filtering rows you already have:
+**Search job boards** asks the boards a new question instead of filtering rows you already have. Type in the board search field and choose its *Search job boards for …* action, or open **More actions → Search by job role**:
 
 ```
-🔎 Search job boards  →  "Senior Product Manager, payments"
+Search job boards  →  "Senior Product Manager, payments"
 ```
 
 Only the **query-first** sources run — Workable via `ats-search`, plus Adzuna if you have a key — because they search across employers from a phrase and answer in seconds. A full discovery pass spans 226 Workday tenants for about 14 minutes, which is not a search box.
@@ -627,7 +627,7 @@ An official aggregator API, and the closest keyed substitute for Apify's breadth
 node scripts/adzuna-check.mjs
 ```
 
-That validates your credentials against the live API **and runs the real adapter for one query**, so you see actual mapped jobs before trusting it. Once the key is present, `adzuna-aggregator` is enabled by default.
+That validates your credentials against the live API **and runs the real adapter for one query**, so you see actual mapped jobs before trusting it. The `adzuna-aggregator` source ships disabled, so then set `"enabled": true` on it in `config/jobboards.json`.
 
 **Verified live on 2026-08-01.** That same run exposed something worth knowing: `what_phrase` matches anywhere in the posting **body**, not just the title, so a bare "Data Engineer" query came back with **31,148 hits**, plenty of them unrelated roles. The same client-side title gate `ats-search` uses filters this out. Disable it with `options.strictTitleMatch: false` if it ever drops something you wanted.
 
@@ -698,7 +698,7 @@ Board enumeration is free and unmetered forever after, so **each harvested coord
 
 A job whose source completes a full listing in each of its last **three** runs without returning it is retired as `expired: not listed by source for 3 runs`; a past JSON-LD `validThrough` retires it too. Nothing expires when an aggregate source failed that run.
 
-**Closed postings leave the board.** Employers close postings long before the next full sweep notices, and a plain link check cannot tell — Workday serves its *"The page you are looking for doesn't exist"* page with HTTP 200. So the agent asks each posting's **own ATS API** whether it still exists (Workday, SmartRecruiters, Greenhouse, Lever, Oracle Recruiting, Ashby), the same public endpoints discovery already uses. The dashboard checks a few hundred open postings, best-scored first, a minute and a half after it starts and every six hours; **More ▾ → 🔗 Remove closed postings** runs one now, and **Check link** on a job asks the ATS first. A closed posting you never acted on is retired as `expired: the employer closed this posting`; one you shortlisted, prepared or applied to stays, flagged *posting closed*. Anything the ATS cannot answer is left alone — no posting is ever retired on a guess. When this shipped, 109 of the 300 best-scored open jobs on a real board turned out to be closed.
+**Closed postings leave the board.** Employers close postings long before the next full sweep notices, and a plain link check cannot tell — Workday serves its *"The page you are looking for doesn't exist"* page with HTTP 200. So the agent asks each posting's **own ATS API** whether it still exists (Workday, SmartRecruiters, Greenhouse, Lever, Oracle Recruiting, Ashby), the same public endpoints discovery already uses. The dashboard checks a few hundred open postings, best-scored first, a minute and a half after it starts and every six hours; **More actions → Remove closed postings** runs one now, and **Check link** on a job asks the ATS first. A closed posting you never acted on is retired as `expired: the employer closed this posting`; one you shortlisted, prepared or applied to stays, flagged *posting closed*. Anything the ATS cannot answer is left alone — no posting is ever retired on a guess. When this shipped, 109 of the 300 best-scored open jobs on a real board turned out to be closed.
 
 ```bash
 npm run postings:check     # dry run: check the 300 best-scored open postings, write nothing
