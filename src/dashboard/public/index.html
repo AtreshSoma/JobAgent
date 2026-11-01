@@ -1021,6 +1021,13 @@
 
     <label class="toggle person-toggle"><input type="checkbox" id="personRemote"> Remote jobs only</label>
     <label class="toggle person-toggle" id="personActivateRow"><input type="checkbox" id="personActivate"> Switch to this profile now</label>
+    <!-- Seeding: copy postings already found that clearly fit this person, so
+         their list does not start empty. Posting facts only — never the other
+         person's scores, notes or applications. -->
+    <div class="person-seed" id="personSeedRow" hidden>
+      <label class="toggle person-toggle"><input type="checkbox" id="personSeed" aria-describedby="personSeedHint"> <span id="personSeedLabel">Start with matching jobs already found</span></label>
+      <p class="fineprint muted" id="personSeedHint">Copies postings whose titles fit this person. Scores, notes and applications are never copied; their own search adds more.</p>
+    </div>
     <p class="field-error person-form-error" id="personFormError" role="alert" hidden></p>
   </div>
   <div class="dlg-foot">

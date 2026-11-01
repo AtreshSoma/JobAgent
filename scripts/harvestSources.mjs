@@ -37,14 +37,16 @@ import {
   harvestCoordinates, configuredCoordinateKeys, coordinateKey, mergeCoordinates, duplicateCoordinateKeys,
 } from '../src/search/sourceHarvest.js';
 import { mapWithConcurrency } from '../src/utils/concurrency.js';
+import { workspacePaths } from '../src/profile/workspace.js';
 import { fetchWithTimeout, discoveryHeaders } from '../src/utils/httpClient.js';
 import { writeFileAtomic } from '../src/utils/fsSafe.js';
 import { SCHEMA_FILES, validateConfig } from '../src/config/validateConfig.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG_PATH = join(ROOT, 'config', 'jobboards.json');
-const DB_PATH = join(ROOT, 'data', 'applied_jobs.db');
-const FOUND_PATH = join(ROOT, 'data', 'found_jobs.json');
+// The active person's store and last run report (src/profile/workspace.js).
+const DB_PATH = workspacePaths(ROOT).db;
+const FOUND_PATH = join(workspacePaths(ROOT).dataDir, 'found_jobs.json');
 
 /** Concurrent liveness probes. Each targets a different vendor host. */
 const VALIDATE_CONCURRENCY = 8;

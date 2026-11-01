@@ -17,6 +17,7 @@ import { join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 
 import { writeFileAtomic } from './utils/fsSafe.js';
+import { workspacePaths } from './profile/workspace.js';
 
 /** Canonical, zeroed counter block. */
 export function emptyCounters() {
@@ -76,7 +77,9 @@ function defaultWrite(dir, path, text) {
 /** Write a JSON artifact under <root>/data/<filename>. Returns the path. */
 function writeArtifact(root, filename, doc, deps = {}) {
   const writeImpl = deps.writeFileImpl ?? defaultWrite;
-  const dir = join(root, 'data');
+  // The active person's run reports live in their workspace (data/ for the
+  // original one): another person's run must not overwrite them.
+  const dir = workspacePaths(root).dataDir;
   const path = join(dir, filename);
   // Compact: found_jobs.json was ~40% whitespace at indent 2, and these files
   // are machine-read (harvestSources, the dashboard) — `jq .` pretty-prints.

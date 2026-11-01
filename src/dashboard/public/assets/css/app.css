@@ -2466,6 +2466,8 @@ kbd {
 .person-toggle { margin-top: var(--s3); width: max-content; max-width: 100%; }
 .field-error { margin: 4px 0 0; font-size: var(--fs-sm); color: var(--bad); }
 .person-form-error { margin-top: var(--s3); }
+.person-seed .person-toggle { margin-bottom: 0; }
+.person-seed .fineprint { margin: 4px 0 0 2px; max-width: 60ch; }
 [aria-invalid="true"] { border-color: var(--bad) !important; }
 .chips-input {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--h-md);

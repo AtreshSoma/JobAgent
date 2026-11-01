@@ -24,6 +24,7 @@
 import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { workspacePaths } from '../src/profile/workspace.js';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const APPLY = process.argv.includes('--apply');
@@ -37,13 +38,11 @@ const CLEAN_DIRS = [
 ];
 
 /** Individual generated files to remove. */
-const CLEAN_FILES = [
-  join(ROOT, 'data', 'found_jobs.json'),
-  join(ROOT, 'data', 'scored_jobs.json'),
-  join(ROOT, 'data', 'queued_jobs.json'),
-  join(ROOT, 'data', 'unknown_date_review.json'),
-  join(ROOT, 'data', 'job_tracker.csv'),
-];
+const GENERATED = ['found_jobs.json', 'scored_jobs.json', 'queued_jobs.json', 'unknown_date_review.json', 'job_tracker.csv'];
+// The original workspace's copies, plus the active person's when they have
+// their own workspace (src/profile/workspace.js).
+const CLEAN_FILES = [...new Set([join(ROOT, 'data'), workspacePaths(ROOT).dataDir])]
+  .flatMap((dir) => GENERATED.map((name) => join(dir, name)));
 
 /** Files that must never be deleted even inside a cleaned folder. */
 const PRESERVE = new Set(['.gitkeep', '.gitignore']);

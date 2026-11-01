@@ -157,9 +157,17 @@ const SWITCHED_KEY = 'jobagent.switched';
  * the one way to be certain nothing of theirs survives on screen; the
  * "Now searching as … [Switch back]" notice is carried across it.
  */
-export function reloadAsNewPerson(label, previousId) {
-  try { sessionStorage.setItem(SWITCHED_KEY, JSON.stringify({ label, previousId })); } catch { /* storage off: no notice, still correct */ }
+export function reloadAsNewPerson(label, previousId, note = '') {
+  try { sessionStorage.setItem(SWITCHED_KEY, JSON.stringify({ label, previousId, note })); } catch { /* storage off: no notice, still correct */ }
   location.reload();
+}
+
+/** "Added 312 matching jobs from Atresh's list; scoring them now." — or nothing. */
+export function seedNote(seeded) {
+  const n = Number(seeded) || 0;
+  if (!n) return '';
+  const owner = (document.body.dataset.person ?? '').split(' ')[0];
+  return `Added ${n} matching job${n === 1 ? '' : 's'}${owner ? ` from ${owner}'s list` : ''}; scoring them now.`;
 }
 
 /** After that reload: say who you are searching as now. */
@@ -169,7 +177,7 @@ export function announcePendingSwitch() {
     pending = JSON.parse(sessionStorage.getItem(SWITCHED_KEY) ?? 'null');
     sessionStorage.removeItem(SWITCHED_KEY);
   } catch { pending = null; }
-  if (pending?.label) announceSwitch(pending.label, pending.previousId ?? null);
+  if (pending?.label) announceSwitch(pending.label, pending.previousId ?? null, pending.note ?? '');
 }
 
 /** The id of the profile being searched as, from the last listing (null if unknown). */
@@ -183,12 +191,13 @@ export const activeProfileId = () => listingCache?.activeId ?? null;
  * @param {string} label the newly active profile's label
  * @param {string|null} previousId where "Switch back" goes; null for no button
  */
-export function announceSwitch(label, previousId) {
+export function announceSwitch(label, previousId, note = '') {
   const who = displayName(String(label ?? '').replace(/\s+[—-]\s+.*$/, '')) || label;
-  if (!previousId) { toast(`Now searching as ${who}.`, 'good'); return; }
+  const text = `Now searching as ${who}.${note ? ` ${note}` : ''}`;
+  if (!previousId) { toast(text, 'good'); return; }
   const before = previousId;
   const node = el('div', { class: 'toast good undo-toast', role: 'status' },
-    el('span', { text: `Now searching as ${who}.` }));
+    el('span', { text }));
   const back = el('button', { type: 'button', class: 'small', text: 'Switch back' });
   back.addEventListener('click', async () => {
     back.disabled = true;
@@ -269,6 +278,10 @@ function fillForm(values = {}) {
   $('personState').value = values.state ?? '';
   $('personSeniority').value = values.seniority ?? '';
   $('personRemote').checked = values.remoteOnly === true;
+  // Edit sends work modes only if this box is changed: it can express "remote
+  // only" or "anything", and saving untouched would flatten a narrower stored
+  // preference such as remote + hybrid into "anything".
+  form.remoteInitial = $('personRemote').checked;
   form.roles = [];
   form.phone = values.phone ?? '';
   addRoles((values.targetRoles ?? []).join(','));
@@ -277,7 +290,7 @@ function fillForm(values = {}) {
 
 /** Open the form to add a person (optionally pre-filled from a resume already in hand). */
 export async function openAddProfile({ file = null } = {}) {
-  Object.assign(form, { mode: 'add', id: null, resumeBase64: null });
+  Object.assign(form, { mode: 'add', id: null, resumeBase64: null, allowDuplicate: false });
   $('dlgPersonTitle').textContent = 'Add a profile';
   $('dlgPersonSub').textContent = 'Each person gets their own jobs, resume and applications.';
   $('personSave').textContent = 'Add profile';
@@ -285,6 +298,17 @@ export async function openAddProfile({ file = null } = {}) {
   $('personActivateRow').hidden = false;
   $('personActivate').checked = true;
   $('personResumeStatus').textContent = 'Optional. A .docx file; it becomes their own master resume.';
+  // The person's name feeds the seed label and the switch notice; on a cold
+  // start the form can open before the profile list has arrived.
+  if (!listingCache) await loadProfiles();
+  // Offer a head start only when there is a list to start from.
+  const { state } = await import('./state.js');
+  const tracked = state.stats?.totals?.jobsTracked ?? 0;
+  const owner = (document.body.dataset.person ?? '').split(' ')[0];
+  $('personSeedRow').hidden = tracked === 0;
+  $('personSeed').checked = tracked > 0;
+  $('personSeedLabel').textContent = owner
+    ? `Start with matching jobs from ${owner}'s list` : 'Start with matching jobs already found';
   fillForm({});
   const { openDialog } = await import('./dialogs.js');
   openDialog($('dlgPerson'));
@@ -302,6 +326,7 @@ export async function openEditProfile(id) {
   $('personSave').textContent = 'Save changes';
   $('personResumeRow').hidden = true;
   $('personActivateRow').hidden = true;
+  $('personSeedRow').hidden = true;
   fillForm({
     fullName: p.identity.fullName, email: p.contact.email, phone: p.contact.phone,
     city: p.location.city, state: p.location.state, seniority: p.searchIntent.seniority,
@@ -348,14 +373,16 @@ export async function savePerson() {
   const fields = {
     fullName: $('personName').value, email: $('personEmail').value, phone: form.phone,
     targetRoles: form.roles, city: $('personCity').value, state: $('personState').value,
-    seniority: $('personSeniority').value, remoteOnly: $('personRemote').checked,
+    seniority: $('personSeniority').value,
+    ...(form.mode === 'add' || $('personRemote').checked !== form.remoteInitial ? { remoteOnly: $('personRemote').checked } : {}),
+    ...(form.allowDuplicate ? { allowDuplicate: true } : {}),
   };
   for (const key of ['Name', 'Email', 'Roles', 'Form']) setFieldError(key, '');
   const before = listingCache?.activeId ?? null;
   try {
     const r = form.mode === 'add'
       ? await postJson('/api/search-profiles', {
-        fields, activate: $('personActivate').checked,
+        fields, activate: $('personActivate').checked, seed: !$('personSeedRow').hidden && $('personSeed').checked,
         ...(form.resumeBase64 ? { resume: { contentBase64: form.resumeBase64 } } : {}),
       })
       : await api(`/api/search-profiles/${encodeURIComponent(form.id)}`, {
@@ -363,12 +390,27 @@ export async function savePerson() {
       });
     const { closeDialog } = await import('./dialogs.js');
     closeDialog($('dlgPerson'));
-    if (r.workspaceChanged) { reloadAsNewPerson(r.activated?.label ?? fields.fullName, before); return; }
-    toast(form.mode === 'add' ? `Added ${displayName(fields.fullName)}.` : 'Saved.', 'good');
+    const seededNote = seedNote(r.seeded);
+    if (r.workspaceChanged) { reloadAsNewPerson(r.activated?.label ?? fields.fullName, before, seededNote); return; }
+    toast(form.mode === 'add' ? `Added ${displayName(fields.fullName)}.${seededNote ? ` ${seededNote}` : ''}` : 'Saved.', 'good');
     if (r.active) scheduleRefresh(0);
     await afterChange();
   } catch (err) {
     const fieldErrors = err.body?.fields ?? null;
+    const existing = err.body?.existing ?? null;
+    if (existing) {
+      // The same person already has a profile: offer it, or a deliberate copy.
+      const node = $('personFormError');
+      node.replaceChildren(
+        el('span', { text: `${displayName(existing.name)} already has a profile. ` }),
+        el('button', { type: 'button', class: 'small', 'data-action': 'person-use-existing', 'data-profile-id': existing.id, text: 'Switch to their profile' }),
+        ' ',
+        el('button', { type: 'button', class: 'small ghost', 'data-action': 'person-add-anyway', text: 'Add anyway' }),
+      );
+      node.hidden = false;
+      node.querySelector('button')?.focus();
+      return;
+    }
     if (fieldErrors) {
       const map = { fullName: 'Name', email: 'Email', targetRoles: 'Roles' };
       for (const [k, v] of Object.entries(fieldErrors)) if (map[k]) setFieldError(map[k], v);
@@ -400,3 +442,9 @@ $('personRoleInput')?.addEventListener('paste', (event) => {
   addRoles(text);
 });
 $('personResumeFile')?.addEventListener('change', (event) => readResumeIntoForm(event.target.files?.[0]));
+
+/** "Add anyway": the person asked for a second profile on purpose. */
+export function addAnyway() {
+  form.allowDuplicate = true;
+  return savePerson();
+}

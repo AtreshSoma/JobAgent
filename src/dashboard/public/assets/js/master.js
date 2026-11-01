@@ -4,7 +4,7 @@ import { $, el, fmt, shortStamp, slowProgress, toast } from './dom.js';
 import { api, postJson } from './api.js';
 import { openDialog } from './dialogs.js';
 import { classifyResumeLine, displayName, initials, looksLikeHeading } from './format.js';
-import { activeProfileId, announceSwitch, describeProfiles, loadProfiles, openAddProfile, profileSubline, reloadAsNewPerson } from './profiles.js';
+import { activeProfileId, announceSwitch, describeProfiles, loadProfiles, openAddProfile, profileSubline, reloadAsNewPerson, seedNote } from './profiles.js';
 import { confirmAction } from './dialogs.js';
 import { scheduleRefresh } from './mutations.js';
 
@@ -306,7 +306,7 @@ function resumeNotice(proposal, rows) {
   const firstName = resumeName.split(' ')[0];
   // Their profile may already be saved (and able to search): switch, do not copy.
   const saved = different
-    ? rows.find((p) => !p.active && p.ready && p.display.toLowerCase() === resumeName.toLowerCase())
+    ? rows.find((p) => !p.active && p.ready && sameName(p.display, resumeName))
     : null;
 
   const box = el('div', { class: 'attention mr-notice', role: 'group', 'aria-labelledby': 'mrNoticeHead' });
@@ -445,7 +445,7 @@ export async function chooseResumeProfile(choice, extra = {}) {
   try {
     const result = await postJson('/api/search-profiles/from-resume', { choice, ...extra });
     if (!result.changed) { toast(result.message ?? 'Nothing changed.', ''); return; }
-    if (result.workspaceChanged) { reloadAsNewPerson(result.activated.label, previous); return; }
+    if (result.workspaceChanged) { reloadAsNewPerson(result.activated.label, previous, seedNote(result.seeded)); return; }
     if (result.activated) announceSwitch(result.activated.label, previous !== result.id ? previous : null);
     else toast(`Saved profile "${result.id}". Switch to it to start searching with it.`, 'good');
     // The header's initials, the switcher and the board all depend on who is active.

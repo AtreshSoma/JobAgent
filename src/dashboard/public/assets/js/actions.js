@@ -23,7 +23,7 @@ import {
 } from './workspace.js';
 import { localDay } from './detail.js';
 import { openChangelog } from './changelog.js';
-import { deleteProfileAsk, openAddProfile, openEditProfile, removeRole, savePerson, switchProfile } from './profiles.js';
+import { activeProfileId, addAnyway, deleteProfileAsk, loadProfiles, openAddProfile, openEditProfile, removeRole, savePerson, switchProfile } from './profiles.js';
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -64,7 +64,11 @@ export const ACTIONS = {
   },
   'toggle-menu': () => toggleMenu($('mainMenu')),
   'toggle-activity-menu': () => toggleMenu($('activityMenu')),
-  'toggle-account-menu': () => toggleMenu($('accountMenu')),
+  'toggle-account-menu': () => {
+    toggleMenu($('accountMenu'));
+    // Opened before the profile list arrived (a cold start): fetch it now.
+    if (!activeProfileId()) loadProfiles();
+  },
   'toggle-bulk-menu': () => toggleMenu($('bulkMenu')),
   'toggle-theme': () => {
     // The attribute is ABSENT until a theme is chosen, so it cannot be read as
@@ -142,6 +146,11 @@ export const ACTIONS = {
   'open-add-profile': () => openAddProfile(),
   'open-edit-profile': (target) => openEditProfile(target?.dataset?.profileId).catch((err) => toast(err.message, 'bad')),
   'save-person': () => savePerson(),
+  'person-add-anyway': () => addAnyway(),
+  'person-use-existing': async (target) => {
+    closeDialog($('dlgPerson'));
+    try { await switchProfile(target.dataset.profileId); } catch (err) { toast(err.message, 'bad'); }
+  },
   'person-pick-resume': () => { $('personResumeFile').value = ''; $('personResumeFile').click(); },
   'remove-role': (target) => removeRole(target.dataset.index),
   'focus-role-input': (target, event) => { if (event?.target === target) $('personRoleInput').focus(); },
@@ -149,7 +158,7 @@ export const ACTIONS = {
   // Creating and activating in one step is deliberate here: the user has just
   // been shown exactly what this profile will search for and pressed the button
   // that says so. The API keeps them separable for every other caller.
-  'profile-from-resume-create': () => chooseResumeProfile('create', { activate: true }),
+  'profile-from-resume-create': () => chooseResumeProfile('create', { activate: true, seed: true }),
   'profile-from-resume-keep': () => chooseResumeProfile('keep'),
   // Merge opens the PICKER rather than submitting everything the resume
   // proposed. The button's own copy offers a choice of what to bring across,
@@ -326,7 +335,7 @@ export const BUSY_ACTIONS = new Set([
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
   'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',
-  'save-person', 'confirm-alt',
+  'save-person', 'confirm-alt', 'person-add-anyway',
 ]);
 
 /** Run one ACTIONS entry, busy-guarded when it mutates. */

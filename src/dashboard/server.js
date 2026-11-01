@@ -129,6 +129,7 @@ import {
 import { profileFromResume, buildBackground } from '../profile/fromResume.js';
 import { workspacePaths, masterResumeFile } from '../profile/workspace.js';
 import { openDatabase } from '../logging/db.js';
+import { seedJobsInto } from '../profile/seed.js';
 import { deriveFromProfile } from '../profile/derive.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'public');
@@ -300,6 +301,37 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (logger && typeof logger === 'object' && 'db' in logger) logger.db = handle;
     return true;
   }
+  /** The handle for one workspace's database, opening it on first use. */
+  function dbForWorkspace(workspaceId) {
+    const root = config?.root;
+    if (!root) return null;
+    const path = workspacePaths(root, workspaceId).db;
+    if (path === dbPath) return db;
+    let handle = workspaceDbs.get(path);
+    if (!handle) {
+      handle = (deps.openDatabaseImpl ?? openDatabase)({ path });
+      workspaceDbs.set(path, handle);
+    }
+    return handle;
+  }
+
+  /**
+   * Copy the postings in `fromDb` that clearly fit a new person into their
+   * workspace (src/profile/seed.js). Posting facts only; they arrive unscored
+   * and are scored under the new person's profile by the next rescore.
+   */
+  function seedNewPerson(root, profileId, fromDb) {
+    const profile = readSearchProfile(root, profileId);
+    if (!profile?.workspace || !fromDb) return { seeded: 0 };
+    const to = dbForWorkspace(profile.workspace);
+    if (!to || to === fromDb) return { seeded: 0 };
+    const { candidate } = deriveFromProfile(profile, { root });
+    const days = Number(config?.exclusions?.staleness?.skipOlderThanDays);
+    const result = seedJobsInto({ from: fromDb, to, candidate, ...(Number.isFinite(days) && days > 0 ? { maxAgeDays: days } : {}) });
+    if (result.seeded && to === db) noteUserMutation?.();
+    return result;
+  }
+
   function closeWorkspaceDbs() {
     for (const handle of workspaceDbs.values()) {
       if (handle !== bootDb) { try { handle.close(); } catch { /* best effort on shutdown */ } }
@@ -726,6 +758,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     const fail = (err) => sendJson(res, err?.statusCode ?? 400, {
       error: sanitizeErrorMessage(err?.message ?? String(err)),
       ...(err?.fields && typeof err.fields === 'object' ? { fields: err.fields } : {}),
+      ...(err?.existing && typeof err.existing === 'object' ? { existing: err.existing } : {}),
     });
     try {
       const out = work();
@@ -2303,15 +2336,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           delete resume.background._name; delete resume.background._headline; delete resume.background._contact;
         }
         const created = createPersonProfile(root, body.fields ?? {}, { resume });
+        // The list being viewed right now: seeding copies from it.
+        const viewedDb = db;
         let activated = null; let warning = null; let workspaceChanged = false;
         if (body.activate === true) {
           try { activated = activateProfile(root, created.id); }
           catch (err) { deleteSearchProfile(root, created.id); throw err; }
           warning = reloadConfig();
           workspaceChanged = useActiveWorkspace();
-          if (!warning) scheduleRescore();
         }
-        return sendJson(res, 200, { ...created, activated, warning, workspaceChanged });
+        const seed = body.seed === true ? seedNewPerson(root, created.id, viewedDb) : { seeded: 0 };
+        if (activated && !warning) scheduleRescore(); // scores the seeded copies under THEIR profile
+        return sendJson(res, 200, { ...created, activated, warning, workspaceChanged, seeded: seed.seeded });
       });
     }
     if (req.method === 'PATCH' && path.startsWith('/api/search-profiles/')) {
@@ -2413,12 +2449,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           });
           // Saving is not activating: a new profile never takes over the search
           // without a second, deliberate action.
+          const viewedDb = db;
           if (body.activate === true) {
             const summary = activateProfile(root, saved.id);
             const warning = reloadConfig();
             const workspaceChanged = useActiveWorkspace();
+            const seed = body.seed === true ? seedNewPerson(root, saved.id, viewedDb) : { seeded: 0 };
             if (!warning) scheduleRescore();
-            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning, workspaceChanged });
+            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning, workspaceChanged, seeded: seed.seeded });
           }
           return sendJson(res, 200, { choice, changed: true, ...saved, activated: null });
         }

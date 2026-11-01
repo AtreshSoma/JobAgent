@@ -121,7 +121,8 @@ describe('header: three menus and a theme toggle', () => {
   it('wires every menu trigger into the menu-button pattern', () => {
     for (const [pop, action] of [['activityMenu', 'toggle-activity-menu'], ['accountMenu', 'toggle-account-menu']]) {
       expect(js('menus.js')).toContain(`${pop}: '${action}'`);
-      expect(js('actions.js')).toContain(`'${action}': () => toggleMenu($('${pop}'))`);
+      // The handler toggles its own menu (the Profile one also fetches the profile list on a cold start).
+      expect(js('actions.js')).toMatch(new RegExp(`'${action}': \\(\\) => \\{?\\s*toggleMenu\\(\\$\\('${pop}'\\)\\)`));
       expect(header).toContain(`data-action="${action}" aria-haspopup="true"`);
     }
     expect(js('actions.js')).toMatch(/KEEP_MENU_OPEN = \[[\s\S]*'toggle-activity-menu', 'toggle-account-menu', 'toggle-bulk-menu'/);

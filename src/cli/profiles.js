@@ -17,7 +17,7 @@
  *   profiles delete <id>
  */
 
-import { join } from 'node:path';
+import { relative } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { PROJECT_ROOT } from '../config/loadConfig.js';
@@ -27,9 +27,11 @@ import {
 } from '../profile/store.js';
 import { deriveFromProfile } from '../profile/derive.js';
 import { loadRoleFamilies } from '../profile/roleFamilies.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
 /** Where the master resume lives, relative to the root. */
-const MASTER_RESUME = join('resumes', 'base', 'MASTER_RESUME.docx');
+/** The active person's master resume (each workspace has its own). */
+const masterResume = (root) => masterResumeFile(root);
 
 const out = (line = '') => process.stdout.write(`${line}\n`);
 
@@ -66,7 +68,7 @@ function listAction(root) {
     out('No search profiles yet.');
     out('');
     out('  npm run profiles migrate       import your existing config/candidate.json');
-    out('  npm run profiles from-resume   build one from resumes/base/MASTER_RESUME.docx');
+    out('  npm run profiles from-resume   build one from the active profile\'s master resume');
     return { command: 'profiles', ok: true, profiles: [] };
   }
   out(`${profiles.length} search profile(s):`);
@@ -163,12 +165,12 @@ function activateAction(root, id, { dryRun }) {
 }
 
 async function fromResumeAction(root, parsed) {
-  const resume = join(root, MASTER_RESUME);
+  const resume = masterResume(root);
   const result = await proposeProfileFromResume(root, resume);
   if (!result.available) throw new Error(result.reason);
 
   const { comparison, proposal, preview, choices } = result;
-  out(`Read ${MASTER_RESUME}`);
+  out(`Read ${relative(root, resume)}`);
   out('');
   out(`  ${comparison.summary}`);
   for (const reason of comparison.reasons) out(`    - ${reason}`);
@@ -201,7 +203,7 @@ async function fromResumeAction(root, parsed) {
 }
 
 async function refreshBackgroundAction(root) {
-  const result = await refreshBackgroundFromResume(root, join(root, MASTER_RESUME));
+  const result = await refreshBackgroundFromResume(root, masterResume(root));
   if (!result.ok) {
     out(`Not changed — ${result.reason}.`);
     return { command: 'profiles', ...result };
@@ -239,5 +241,5 @@ function deleteAction(root, id) {
 
 /** True when a master resume exists — used by the first-run checklist. */
 export function hasMasterResume(root = PROJECT_ROOT) {
-  return existsSync(join(root, MASTER_RESUME));
+  return existsSync(masterResume(root));
 }

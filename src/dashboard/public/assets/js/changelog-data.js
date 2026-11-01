@@ -30,6 +30,7 @@ export const CHANGELOG = Object.freeze([
         'Switch between people from the Profile menu in the top-right corner. Its button shows the initials of whoever you are searching as, and every switch offers "Switch back".',
         'Add profile: add another person in one short form, from their resume or by typing their details. Each person gets their own jobs, resume and applications, and the Jobs, Today and Applications tabs always show the person you are searching as.',
         'Edit a profile\'s name, email, job titles, location and level at any time, without uploading a resume.',
+        'A new profile can start with matching jobs already found in another person\'s list, so their Jobs tab is not empty while their first search runs. Only the postings are copied, never scores, notes or applications.',
         'This changelog, linked from the bottom of every page.',
       ],
       improved: [
@@ -53,6 +54,7 @@ export const CHANGELOG = Object.freeze([
         'Buttons in notifications, such as Undo and Switch back, now work while a window is open.',
         'Switching people no longer re-scores the other person\'s jobs, so their scores, shortlists and applications stay exactly as they left them.',
         'Uploading someone else\'s resume as your master resume now asks first, and offers to add them as a new profile instead.',
+        'Adding a profile for someone who already has one (for example "Amulya Kodukula" and "Amulya R Kodukula") now offers their existing profile instead of creating a second one.',
       ],
     },
   },

@@ -230,3 +230,96 @@ describe('the Add / Edit profile form', () => {
     expect(master).toMatch(/altLabel: `Replace \$\{person\.split\(' '\)\[0\]\}'s resume`, onAlt: \(\) => installMasterResume\(file, bytes\)/);
   });
 });
+
+describe('starting a new person with jobs already found', () => {
+  let root; let db; let dash;
+  const call = async (method, path, body) => {
+    const r = await fetch(`${dash.url}${path}`, { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+    return { status: r.status, body: await r.json() };
+  };
+  const recent = new Date(Date.now() - 3 * 864e5).toISOString();
+  const old = new Date(Date.now() - 120 * 864e5).toISOString();
+
+  beforeEach(async () => {
+    root = makeRoot();
+    saveProfile(root, DANA);
+    writeFileSync(join(root, 'config', 'profiles', '_active.json'), JSON.stringify({ id: DANA.id }));
+    writeFileSync(join(root, 'resumes', 'base', 'MASTER_RESUME.docx'), makeDocx(['Dana Okafor', 'Senior Data Engineer']));
+    db = openDatabase({ path: ':memory:' });
+    const posting = (id, title, extra = {}) => db.upsertJob({
+      id, title, company: 'Contoso Pharma', status: 'scored', score: 30, tier: 'Discard', posted_at: recent,
+      jd_text: `${title}. FDA submissions, CMC change control, annual reports.`, discovery_mode: 'profile', ...extra,
+    });
+    posting('fit-1', 'Regulatory Specialist', { notes: 'Dana: not for me', user_decision: 'rejected', score: 12 });
+    posting('fit-2', 'Senior Regulatory Specialist');
+    posting('fit-old', 'Regulatory Specialist II', { posted_at: old });
+    posting('fit-closed', 'Regulatory Specialist III', { discard_reason: 'posting closed by the employer' });
+    posting('fit-search', 'Regulatory Specialist IV', { discovery_mode: 'role_search' });
+    posting('miss', 'Senior Data Engineer', { company: 'Northwind' });
+    const config = loadConfig({ root });
+    dash = await startDashboard({ config, db, logger: { info() {}, warn() {}, error() {}, debug() {} }, port: 0 });
+  });
+  afterEach(async () => { await dash?.close(); db?.close(); rmSync(root, { recursive: true, force: true }); });
+
+  it('copies recent, open, personalized postings that fit — posting facts only — and scores them as theirs', async () => {
+    const r = await call('POST', '/api/search-profiles', {
+      fields: { fullName: 'Morgan Ellison', email: 'morgan@example.com', targetRoles: ['Regulatory Specialist'], seniority: 'senior' },
+      activate: true, seed: true,
+    });
+    expect(r.status).toBe(200);
+    expect(r.body.seeded).toBe(2); // fit-1 and fit-2; not old, closed, role-search or the data job
+    await new Promise((res) => setTimeout(res, 400)); // the rescore runs just after activation
+    const herDb = openDatabase({ path: workspacePaths(root, r.body.workspace).db });
+    try {
+      const rows = herDb.db.prepare('SELECT id, notes, user_decision, scoring_fingerprint, score FROM jobs ORDER BY id').all();
+      expect(rows.map((x) => x.id)).toEqual(['fit-1', 'fit-2']);
+      for (const row of rows) {
+        expect(row.notes ?? null).toBeNull(); // Dana's note stays Dana's
+        expect(row.user_decision ?? null).toBeNull(); // so does her rejection
+        expect(row.scoring_fingerprint).not.toBe(''); // re-judged under Morgan's profile
+      }
+    } finally { herDb.close(); }
+    // Dana's own rows are untouched.
+    expect(db.getJob('fit-1')).toMatchObject({ notes: 'Dana: not for me', score: 12 });
+  });
+
+  it('copies nothing unless asked', async () => {
+    const r = await call('POST', '/api/search-profiles', {
+      fields: { fullName: 'Morgan Ellison', email: 'morgan@example.com', targetRoles: ['Regulatory Specialist'] }, activate: true,
+    });
+    expect(r.body.seeded).toBe(0);
+    expect((await call('GET', '/api/jobs?pageSize=50')).body.total).toBe(0);
+  });
+});
+
+describe('one person, one profile', () => {
+  let root;
+  beforeEach(() => { root = makeRoot(); saveProfile(root, DANA); });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  it('recognises the same person despite case and a middle initial, and asks', async () => {
+    const { findSamePerson, createPersonProfile } = await import('../../src/profile/store.js');
+    expect(findSamePerson(root, 'DANA K OKAFOR')).toEqual({ id: 'dana-okafor', name: 'Dana Okafor' });
+    expect(findSamePerson(root, 'Dana Smith')).toBeNull();
+    const fields = { fullName: 'Dana K Okafor', email: 'dana2@example.com', targetRoles: ['Analytics Engineer'] };
+    expect(() => createPersonProfile(root, fields)).toThrow(/already has a profile/);
+    try { createPersonProfile(root, fields); } catch (err) { expect(err.statusCode).toBe(409); expect(err.existing.id).toBe('dana-okafor'); }
+    // "Add anyway" is a deliberate second profile.
+    expect(createPersonProfile(root, { ...fields, allowDuplicate: true }).id).toBe('dana-k-okafor');
+  });
+});
+
+describe('editing keeps what the form does not show', () => {
+  it('leaves a remote + hybrid preference alone unless "Remote only" is changed', async () => {
+    const root = makeRoot();
+    try {
+      const { updatePersonProfile, readProfile } = await import('../../src/profile/store.js');
+      saveProfile(root, normalizeProfile({ ...DANA, searchIntent: { ...DANA.searchIntent, workModes: ['remote', 'hybrid'] } }));
+      const fields = { fullName: 'Dana Okafor', email: 'dana@example.com', targetRoles: ['Analytics Engineer'] };
+      updatePersonProfile(root, DANA.id, fields);
+      expect(readProfile(root, DANA.id).searchIntent.workModes).toEqual(['remote', 'hybrid']);
+      updatePersonProfile(root, DANA.id, { ...fields, remoteOnly: true });
+      expect(readProfile(root, DANA.id).searchIntent.workModes).toEqual(['remote']);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});

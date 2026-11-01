@@ -314,6 +314,12 @@ export function createPersonProfile(root, fields, { resume = null } = {}) {
   if (Object.keys(errors).length) {
     throw Object.assign(new Error(Object.values(errors)[0]), { statusCode: 400, fields: errors });
   }
+  // The same person again? Ask, rather than quietly splitting their jobs
+  // across two workspaces. `allowDuplicate` is the explicit "add anyway".
+  const same = fields.allowDuplicate === true ? null : findSamePerson(root, fields.fullName);
+  if (same) {
+    throw Object.assign(new Error(`${same.name} already has a profile.`), { statusCode: 409, existing: same });
+  }
   const existingIds = listProfiles(root).profiles.map((p) => p.id);
   const id = uniqueId(slugify(fields.fullName), existingIds);
   const base = normalizeProfile({ id, background: { ...(resume?.background ?? {}), source: resume ? 'resume' : 'manual' } });
@@ -344,6 +350,28 @@ export function updatePersonProfile(root, id, fields) {
   }
   saveProfile(root, normalizeProfile({ ...applyFields(existing, fields), id: safe, workspace: existing.workspace, createdAt: existing.createdAt }));
   return { id: safe, active: readActiveId(root) === safe };
+}
+
+/**
+ * A saved profile for the SAME person, by first and last name — ignoring case,
+ * spacing and middle names or initials ("Amulya Kodukula" is "AMULYA R
+ * KODUKULA"). Exact-id reuse missed exactly that pair, so one person ended up
+ * with two profiles and two separate job lists.
+ *
+ * @returns {{ id: string, name: string } | null}
+ */
+export function findSamePerson(root, fullName) {
+  const key = (name) => {
+    const words = normalizeText(name ?? '').split(' ').filter((w) => w.length > 1);
+    return words.length >= 2 ? `${words[0]}|${words.at(-1)}` : '';
+  };
+  const wanted = key(fullName);
+  if (!wanted) return null;
+  for (const { id } of listProfiles(root).profiles) {
+    const p = readProfile(root, id);
+    if (p && key(p.identity?.fullName) === wanted) return { id, name: p.identity.fullName };
+  }
+  return null;
 }
 
 /** "jane-doe", "jane-doe-2", ... — an id no saved profile already has. */
