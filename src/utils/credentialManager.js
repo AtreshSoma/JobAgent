@@ -164,7 +164,9 @@ export function getRuntimeSettings(env = process.env) {
     resumeExportPdf: String(env.RESUME_EXPORT_PDF ?? 'true').trim().toLowerCase() !== 'false',
     // ── Freshness (prioritize recent postings) ──────────────────────────────
     // Primary recency window for discovered jobs. One of:
-    //   LAST_24_HOURS | LAST_3_DAYS | LAST_7_DAYS | ALL
+    //   LAST_24_HOURS | LAST_3_DAYS | LAST_7_DAYS | LAST_14_DAYS | LAST_30_DAYS | ALL
+    // The dashboard's "Discovery & data quality" setting (data/settings.json)
+    // overrides this; see src/config/userSettings.js.
     jobFreshnessMode: normalizeFreshnessMode(env.JOB_FRESHNESS_MODE),
     // When the strict window yields too few results, widen to a 3-day window.
     includeLast3DaysFallback:
@@ -189,13 +191,19 @@ export function getRuntimeSettings(env = process.env) {
 export const VALID_RUN_MODES = Object.freeze(new Set(['DRY_RUN', 'PREPARE', 'LIVE_ASSIST']));
 
 /** Valid freshness window modes. */
-export const FRESHNESS_MODES = Object.freeze(['LAST_24_HOURS', 'LAST_3_DAYS', 'LAST_7_DAYS', 'ALL']);
+export const FRESHNESS_MODES = Object.freeze([
+  'LAST_24_HOURS', 'LAST_3_DAYS', 'LAST_7_DAYS', 'LAST_14_DAYS', 'LAST_30_DAYS', 'ALL',
+]);
 
 /** Map a freshness mode to its window length in days (ALL => Infinity). */
 export const FRESHNESS_WINDOW_DAYS = Object.freeze({
   LAST_24_HOURS: 1,
   LAST_3_DAYS: 3,
   LAST_7_DAYS: 7,
+  // Roles outside fast-moving tech hiring (public sector, healthcare,
+  // education, senior and executive searches) routinely stay open for weeks.
+  LAST_14_DAYS: 14,
+  LAST_30_DAYS: 30,
   ALL: Infinity,
 });
 

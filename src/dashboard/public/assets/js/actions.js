@@ -12,6 +12,7 @@ import { autofillOne, checkLink, sweepClosedPostings, fillProfileFromResume, dec
 import { setView, todayAct } from './today.js';
 import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection, reasonHandlers, showCompare, toggleSelect } from './selection.js';
 import { openDocuments, openReports } from './reports.js';
+import { openDataQuality, saveFreshness, startEnrichment, stopEnrichment, toggleEnrichment } from './dataQuality.js';
 import { adoptResumeSelection, chooseResumeProfile, openMasterResume, openMergePicker, reconsiderResumeChoice, renderMasterResume, restoreMasterVersion, selectedAdoptTitles, submitMergeSelection } from './master.js';
 import { download, openHealth, openProfile, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
 import { applyRunGate, openRuns, pollRun, setRunDetails } from './runs.js';
@@ -78,6 +79,11 @@ export const ACTIONS = {
   },
   'open-learn': () => window.open('/learn/', '_blank', 'noopener'),
   'open-reports': openReports,
+  'open-data-quality': openDataQuality,
+  'save-freshness': saveFreshness,
+  'toggle-enrichment': toggleEnrichment,
+  'enrichment-start': startEnrichment,
+  'enrichment-stop': stopEnrichment,
   'open-runs': () => { setRunDetails(false); return openRuns(); },
   'open-documents': openDocuments,
   'open-master': (target) => {

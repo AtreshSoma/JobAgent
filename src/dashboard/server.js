@@ -97,6 +97,9 @@ import { sweepPostings } from '../search/postingLiveness.js';
 import { reconcileStalePackets } from '../apply/packetHygiene.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
+import { writeUserSettings } from '../config/userSettings.js';
+import { runEnrichment } from '../search/enrich.js';
+import { dataQualitySummary, freshnessSummary } from './dataQuality.js';
 import {
   PROFILE_FIELDS, readProfile, writeProfile, readScreeningAnswers,
   writeScreeningAnswers, upsertScreeningAnswer, adoptResumeEvidence,
@@ -526,6 +529,75 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     first.unref?.();
     every.unref?.();
     server.on('close', () => { clearTimeout(first); clearInterval(every); });
+  }
+
+  /**
+   * Description enrichment (src/search/enrich.js), run off the request path.
+   *
+   * OFF until the user enables it (data/settings.json, from the "Discovery &
+   * data quality" dialog); "Fetch now" is always available as an explicit
+   * action. It never runs during a search, and a search starting mid-pass stops
+   * it between rows — every row already read is kept, and the next pass
+   * resumes with what is left.
+   */
+  const enrichment = {
+    running: false, controller: null, trigger: null, startedAt: null, finishedAt: null, progress: null, last: null,
+  };
+  function enrichmentStatus() {
+    const { running, trigger, startedAt, finishedAt, progress, last } = enrichment;
+    return {
+      running, trigger, startedAt, finishedAt, progress, last,
+      enabled: config?.runtime?.enrichment?.enabled === true,
+      stopping: running && enrichment.controller?.signal.aborted === true,
+    };
+  }
+  /** @returns {{started: boolean, reason?: string}} */
+  function startEnrichmentPass(trigger) {
+    if (enrichment.running) return { started: false, reason: 'description fetching is already running' };
+    if (runState.running) return { started: false, reason: `a ${runState.phase} run is in progress — try again when it finishes` };
+    if (!config?.scoring) return { started: false, reason: 'configuration is not loaded' };
+    const controller = new AbortController();
+    Object.assign(enrichment, {
+      running: true, controller, trigger, startedAt: new Date().toISOString(), finishedAt: null, progress: null,
+    });
+    const impl = deps.runEnrichmentImpl ?? runEnrichment;
+    const pass = (async () => {
+      try {
+        const stats = await impl({
+          db, config,
+          shouldCancel: () => controller.signal.aborted || runState.running,
+          onProgress: (p) => { enrichment.progress = p; },
+        });
+        enrichment.last = { ...stats, finishedAt: new Date().toISOString(), trigger };
+        if (stats?.fetched || stats?.failed) noteUserMutation();
+        logger?.info?.(`description fetch: ${stats?.fetched ?? 0} read, ${stats?.failed ?? 0} failed, ${stats?.nowActionable ?? 0} now worth a look`);
+      } catch (err) {
+        enrichment.last = { error: sanitizeErrorMessage(err?.message ?? String(err)), finishedAt: new Date().toISOString(), trigger };
+      } finally {
+        enrichment.running = false;
+        enrichment.controller = null;
+        enrichment.finishedAt = new Date().toISOString();
+      }
+    })();
+    track(pass);
+    return { started: true };
+  }
+  function scheduleEnrichment() {
+    if (process.env.JOB_AGENT_ENRICHMENT === 'off' || !config?.root) return;
+    // A tick, not a fixed timer, so turning the setting on (or changing the
+    // interval) takes effect without a restart.
+    const tick = () => {
+      const settings = config?.runtime?.enrichment;
+      if (settings?.enabled !== true || enrichment.running || runState.running) return;
+      const last = enrichment.finishedAt ? Date.parse(enrichment.finishedAt) : 0;
+      if (Date.now() - last < (Number(settings.intervalHours) || 6) * 3600_000) return;
+      startEnrichmentPass('scheduled');
+    };
+    const first = setTimeout(tick, deps.enrichmentDelayMs ?? 120_000);
+    const every = setInterval(tick, deps.enrichmentTickMs ?? 15 * 60_000);
+    first.unref?.();
+    every.unref?.();
+    server.on('close', () => { clearTimeout(first); clearInterval(every); enrichment.controller?.abort(); });
   }
 
   /**
@@ -2292,6 +2364,41 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         return sendJson(res, 200, profileState());
       });
     }
+    if (req.method === 'GET' && path === '/api/data-quality') {
+      return sendJson(res, 200, dataQualitySummary(db, config, { now: nowDate(), enrichmentState: enrichmentStatus() }));
+    }
+    if (req.method === 'GET' && path === '/api/enrichment') {
+      return sendJson(res, 200, enrichmentStatus());
+    }
+    if (req.method === 'POST' && path === '/api/enrichment/start') {
+      await readBody(req);
+      const out = startEnrichmentPass('manual');
+      return sendJson(res, out.started ? 202 : 409, out.started ? enrichmentStatus() : { error: out.reason });
+    }
+    if (req.method === 'POST' && path === '/api/enrichment/stop') {
+      await readBody(req);
+      enrichment.controller?.abort();
+      return sendJson(res, 200, enrichmentStatus());
+    }
+    if (req.method === 'POST' && path === '/api/settings') {
+      const body = await readBody(req);
+      if (!config?.root) return sendJson(res, 400, { error: 'settings need a project root' });
+      const before = freshnessSummary(config);
+      let settings;
+      try {
+        settings = writeUserSettings(config.root, body);
+      } catch (err) {
+        return sendJson(res, err.statusCode ?? 500, { error: sanitizeErrorMessage(err.message) });
+      }
+      const warning = reloadConfig();
+      const after = freshnessSummary(config);
+      // A new window or retention changes verdicts already on the board; the
+      // same deferred re-judge a profile switch uses applies them.
+      if (before.discoveryWindow !== after.discoveryWindow || before.retentionDays !== after.retentionDays) {
+        scheduleRescore();
+      }
+      return sendJson(res, 200, { settings, warning, freshness: after, enrichment: enrichmentStatus() });
+    }
     if (path === '/api/postings/sweep' && req.method === 'GET') {
       const { running, last, startedAt, finishedAt } = postingSweep;
       return sendJson(res, 200, { running, last, startedAt, finishedAt });
@@ -2603,6 +2710,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
 
   schedulePostingSweeps();
   scheduleRetentionSweeps();
+  scheduleEnrichment();
   reconcilePackets();
 
   return {

@@ -250,6 +250,9 @@ const JOB_COLUMNS = [
   // Is the posting still open at its source (schema v3)? Written by
   // recordPostingCheck from an ATS-specific liveness check.
   'link_state', 'link_checked_at',
+  // Description enrichment bookkeeping (schema v4), written by
+  // src/search/enrich.js.
+  'enrich_attempts', 'enrich_attempted_at', 'enrich_error',
 ];
 
 /**
@@ -481,6 +484,19 @@ export const MIGRATIONS = Object.freeze([
       // 200 for that page, so the old HTTP link check could never tell.
       addColumnIfMissing(db, 'jobs', 'link_state', 'TEXT');
       addColumnIfMissing(db, 'jobs', 'link_checked_at', 'TEXT');
+    },
+  },
+  {
+    version: 4,
+    name: 'description enrichment attempts (resumable, bounded retries)',
+    up(db) {
+      // Half the store was summary-only and the only fix was a manual script
+      // that retried the same dead postings on every pass. Recording each
+      // attempt lets enrichment resume where it stopped, back off from a row
+      // that failed, and give up on one whose posting is gone.
+      addColumnIfMissing(db, 'jobs', 'enrich_attempts', 'INTEGER');
+      addColumnIfMissing(db, 'jobs', 'enrich_attempted_at', 'TEXT');
+      addColumnIfMissing(db, 'jobs', 'enrich_error', 'TEXT');
     },
   },
 ]);

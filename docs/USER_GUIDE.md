@@ -691,10 +691,14 @@ Board enumeration is free and unmetered forever after, so **each harvested coord
 
 | Control | What it does |
 | --- | --- |
-| `JOB_FRESHNESS_MODE` (default `LAST_7_DAYS`) | Gates **new** postings only. A job already on your board is not thrown away just because it turned 8 days old. |
-| `exclusions.staleness.skipOlderThanDays` (45) | How long a stored job is kept. Past it, the row retires as `stale_posting`. |
+| `JOB_FRESHNESS_MODE` (default `LAST_7_DAYS`; also `LAST_14_DAYS`, `LAST_30_DAYS`) | Gates **new** postings only. A job already on your board is not thrown away just because it turned 8 days old. |
+| `exclusions.staleness.skipOlderThanDays` (45) | How long a stored job is kept. Past it, the row retires as `stale_posting` — on the next search, or by the dashboard's re-check at startup and every 6 hours, whichever comes first. Jobs you shortlisted, prepared or applied to are never retired this way. |
 | Freshness points | Graded against the discovery window: full at day 0, half at its edge, zero at the retention limit. |
 | Per-source `maxAgeDays` | A fetch-side optimisation only. |
+
+**Set both from the dashboard.** *More actions → Discovery and data quality* shows the two settings in plain words and saves your choice to `data/settings.json` (local, gitignored), which overrides `.env` and `exclusions.json`. Delete that file to go back to the file-based values. The same dialog groups every filtered job by the rule that removed it — "older than the discovery window", "location outside your search", "states it will not sponsor" and so on — and lists the sources that failed in the last search.
+
+**Reading missing descriptions.** Some boards (Workday, SmartRecruiters, Oracle, iCIMS) list jobs without their description, so fit cannot be judged and the job waits as *waiting for a description*. The same dialog reads them from the same public endpoints: *Read descriptions now* runs one pass, and the background switch (off by default) repeats it every 6 hours. A pass reads at most 100 jobs (40 per source), two requests per host at a time, one second apart; only active jobs whose title your profile does not reject, inside retention, are read. Each job is written as soon as it is read, so stopping or closing the dashboard loses nothing. A failed read is retried after 24 hours, three times at most; a posting that answers 404/410 is not retried. Jobs you shortlisted, prepared or applied to are never changed. `npm run enrich` (dry run) and `npm run enrich -- --apply` do the same from the command line.
 
 A job whose source completes a full listing in each of its last **three** runs without returning it is retired as `expired: not listed by source for 3 runs`; a past JSON-LD `validThrough` retires it too. Nothing expires when an aggregate source failed that run.
 

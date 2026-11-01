@@ -2282,3 +2282,16 @@ a.btn:hover { color: var(--text); }
 .frow-find .searchfield { min-width: 0; width: 100%; }
 .frow select { width: 100%; min-width: 0; padding-right: 26px; text-overflow: ellipsis; }
 .stages [hidden] { display: none !important; }
+
+/* Discovery and data quality dialog */
+.dq-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--s2); margin: var(--s2) 0 var(--s3); }
+.dq-stat { display: flex; flex-direction: column; gap: 2px; padding: var(--s3); background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); }
+.dq-stat b { font-size: var(--fs-xl); font-variant-numeric: tabular-nums; }
+.dq-stat span { font-size: var(--fs-sm); }
+.dq-rules { margin: 0 0 var(--s3); padding-left: 1.2em; color: var(--text-dim); font-size: var(--fs-md); }
+.dq-rules li + li { margin-top: 2px; }
+.dq-form { display: grid; grid-template-columns: max-content minmax(0, 220px) 1fr; gap: var(--s2) var(--s3); align-items: center; }
+.dq-form-actions { grid-column: 1 / -1; }
+.dq-progress { margin-top: var(--s2); font-size: var(--fs-md); }
+.dq-progress .bar { height: 6px; margin-top: var(--s2); }
+@media (max-width: 560px) { .dq-form { grid-template-columns: minmax(0, 1fr); } }

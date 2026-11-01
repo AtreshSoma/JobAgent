@@ -82,6 +82,8 @@
         <button id="btnRoleSearch" role="menuitem" data-action="open-job-search">Search by job role</button>
         <button role="menuitem" data-action="sweep-postings">Remove closed postings</button>
         <button role="menuitem" data-action="open-runs">Run history</button>
+        <button role="menuitem" data-action="open-data-quality"
+          title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Discovery and data quality</button>
         <div class="menu-label">Your materials</div>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>
@@ -730,6 +732,14 @@
     <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
   </div>
   <div class="dlg-body" id="compareBody"></div>
+</dialog>
+
+<dialog id="dlgDataQuality" class="sheet" aria-labelledby="dlgDataQualityTitle">
+  <div class="dlg-head">
+    <h2 id="dlgDataQualityTitle">Discovery and data quality</h2>
+    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+  </div>
+  <div class="dlg-body" id="dataQualityBody"></div>
 </dialog>
 
 <dialog id="dlgHealth" class="sheet" aria-labelledby="dlgHealthTitle">

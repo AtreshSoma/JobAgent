@@ -94,6 +94,9 @@ export default function setup() {
   // retiring them by wall-clock age would make board assertions date-dependent.
   // retentionSweep.test.js turns it back on.
   process.env.JOB_AGENT_RETENTION_SWEEP = 'off';
+  // No background description fetching: it would call real ATS APIs, and it is
+  // off by default anyway. dataQualityDashboard.test.js drives it with stubs.
+  process.env.JOB_AGENT_ENRICHMENT = 'off';
   const root = buildTestRoot();
   process.env.JOB_AGENT_ROOT = root;
   return () => {

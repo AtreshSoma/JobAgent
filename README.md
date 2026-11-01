@@ -320,7 +320,7 @@ A local web workbench at `http://127.0.0.1:4646`. It has no extra dependencies a
 | **✅ Today** | Up to ten next actions, most urgent first: confirm a submit, answer a blocking question, approve a packet, retry a fill. Setup problems appear once, as a notice with the fix. |
 | **📋 All jobs** | Search, fit and status filters with clearable chips, sorting, side-by-side comparison of up to three jobs, and tiles whose counts always match the rows they open. |
 | **🔍 Job inspector** | Score explanation, skills you have, skills you're missing, sponsorship verdict, audit trail, notes that autosave, and the actions *Fill in browser* and *I submitted it myself*. |
-| **▶ Find jobs ▾** | Runs discovery in the background with a live progress pill. The **More actions** menu adds *Search by job role*, *Remove closed postings*, *Run history*, *Master resume*, *Application profile*, reports, CSV exports, *System health*, and *Interview Prep*. |
+| **▶ Find jobs ▾** | Runs discovery in the background with a live progress pill. The **More actions** menu adds *Search by job role*, *Remove closed postings*, *Run history*, *Discovery and data quality* (freshness and retention, reading missing descriptions, why jobs were filtered), *Master resume*, *Application profile*, reports, CSV exports, *System health*, and *Interview Prep*. |
 
 **Answer a question once.** When a form asks something the agent can't answer, the run stops and the question joins a queue. Your answer is validated, saved to `config/screening_answers.json`, and reused on every later application that asks the same thing.
 

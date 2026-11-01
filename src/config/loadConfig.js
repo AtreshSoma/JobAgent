@@ -15,6 +15,7 @@ import dotenv from 'dotenv';
 
 import { SCHEMA_FILES, createValidator, assertValidConfig } from './validateConfig.js';
 import { getRuntimeSettings } from '../utils/credentialManager.js';
+import { readUserSettings, applyUserSettings } from './userSettings.js';
 import { configureGateThreshold } from '../scoring/explainScore.js';
 import { normalizeProfile } from '../profile/model.js';
 
@@ -195,6 +196,17 @@ export function loadConfig({ root = PROJECT_ROOT, loadEnv = true, env = process.
 
   bundle.runtime = getRuntimeSettings(env);
   bundle.root = root;
+
+  // Dashboard-chosen freshness/retention and enrichment settings
+  // (data/settings.json) override `.env` and exclusions.json when present.
+  {
+    const { settings, error } = readUserSettings(root);
+    const applied = applyUserSettings({ runtime: bundle.runtime, exclusions: bundle.exclusions }, settings);
+    bundle.runtime = applied.runtime;
+    bundle.exclusions = applied.exclusions;
+    bundle.settingSources = applied.sources;
+    bundle.settingsError = error;
+  }
 
   // The ACTIVE SEARCH PROFILE, when one has been activated.
   //
