@@ -268,3 +268,20 @@ describe('one form-control language', () => {
     expect(css).toMatch(/button\.primary:disabled, button\.primary:disabled:hover \{\s*opacity: 1;/);
   });
 });
+
+describe('Find jobs: one aligned control, in ink', () => {
+  it('lays the halves out as one flex unit on the icon buttons\' height', () => {
+    // `.split` is also `.menu`, whose later `display: inline-block` used to win
+    // and leave the chevron half 21px tall, 7px low and 4px apart.
+    expect(css).toMatch(/\.split\.menu \{ display: inline-flex; align-items: stretch; height: var\(--h-md\);/);
+    expect(css).toMatch(/\.split\.menu > \.split-main, \.split\.menu > \.split-toggle \{[^}]*background: var\(--text\); color: var\(--surface\);/);
+    expect(html).not.toMatch(/class="[^"]*primary[^"]*split-(main|toggle)/);
+    expect(html).toContain('class="ic split-chev"');
+  });
+
+  it('does not print the empty-field count twice', () => {
+    const profile = js('profile.js');
+    expect(profile).not.toContain("el('b', { text: String(open + missing) })");
+    expect(profile).toContain("el('b', { text: String(n) }), el('span', { class: 'l', text: words })");
+  });
+});

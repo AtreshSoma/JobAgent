@@ -359,13 +359,17 @@ export function renderHealthProfileFlag() {
   const open = data.questions?.openCount ?? 0;
   const missing = data.profile?.missing?.length ?? 0;
   if (!open && !missing) return;
+  // Each count bold inside its own words ("1 empty field"). A separate bold
+  // total in front read as "1 1 empty field" — the number twice.
   const parts = [];
-  if (open) parts.push(`${open} question${open === 1 ? '' : 's'}`);
-  if (missing) parts.push(`${missing} empty field${missing === 1 ? '' : 's'}`);
+  if (open) parts.push([open, ` question${open === 1 ? '' : 's'}`]);
+  if (missing) parts.push([missing, ` empty field${missing === 1 ? '' : 's'}`]);
+  const nodes = parts.flatMap(([n, words], i) => [...(i ? [el('span', { class: 'l', text: ' · ' })] : []),
+    el('b', { text: String(n) }), el('span', { class: 'l', text: words })]);
   host.append(el('button', {
     type: 'button', class: 'stat clickable attn pf-flag', 'data-action': 'open-profile',
-    title: 'Open the application profile to resolve these.',
-  }, el('b', { text: String(open + missing) }), el('span', { class: 'l', text: parts.join(' · ') })));
+    title: 'Open the application profile to fill these in.',
+  }, ...nodes));
 }
 
 export async function loadProfileFlag() {

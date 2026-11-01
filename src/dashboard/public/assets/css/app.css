@@ -540,24 +540,57 @@ button.icon { padding: 4px 7px; }
 /* Menu items that only exist where their header twin has been hidden. */
 .only-narrow { display: none !important; }
 
-/* The split button: the everyday action on the face, its siblings in the menu.
-   Both halves share one shape so it reads as a single control. */
-.split { display: inline-flex; align-items: stretch; }
-.split .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; padding: 6px 14px; }
-.split .split-toggle {
-  border-top-left-radius: 0; border-bottom-left-radius: 0;
-  border-left: 1px solid color-mix(in srgb, var(--accent-ink) 22%, transparent);
-  padding: 6px 9px;
+/* ── Find jobs: the one primary action, in INK, not blue ──
+   The header already carries colour where it means something (the active
+   person's avatar, the selected view, the run row). Three solid-blue blocks
+   side by side — avatar, button, chevron — read as noise, and the chevron
+   half sat 7px low and 4px apart: the wrapper is also `.menu`, whose later
+   `display: inline-block` overrode `inline-flex`, so the halves never
+   stretched to one height. Now one 32px unit on the icon buttons' baseline:
+   ink fill (near-black in light, near-white in dark), a hairline between the
+   halves, a drawn search icon and chevron in the house stroke. Prominence
+   comes from contrast and weight; blue is left for state. */
+.split.menu { display: inline-flex; align-items: stretch; height: var(--h-md); border-radius: var(--r-sm); }
+.split.menu > .split-main, .split.menu > .split-toggle {
+  height: 100%; padding: 0; margin: 0; border: 0;
+  background: var(--text); color: var(--surface);
+  font-size: var(--fs-md); font-weight: 600; letter-spacing: -.005em;
+  box-shadow: 0 1px 2px rgba(2, 5, 12, .18);
+  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
 }
-.chev {
-  width: 7px; height: 7px; display: inline-block;
-  border-right: 1.6px solid currentColor; border-bottom: 1.6px solid currentColor;
-  transform: translateY(-2px) rotate(45deg);
-  transition: transform .18s cubic-bezier(.2, .8, .2, 1);
+.split.menu > .split-main {
+  gap: 7px; padding: 0 13px 0 11px;
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
 }
-.split-toggle[aria-expanded="true"] .chev { transform: translateY(1px) rotate(225deg); }
-/* Press feedback on pointer-down, not on release. */
-.split button:active { transform: scale(.98); }
+.split.menu > .split-toggle {
+  width: 30px; justify-content: center;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  /* The seam: a hairline of the button's own ink colour, inset, so the two
+     halves read as one control with two targets — never as two buttons. */
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--surface) 24%, transparent), 0 1px 2px rgba(2, 5, 12, .18);
+}
+.split.menu > .split-main .ic { width: 15px; height: 15px; stroke-width: 2; opacity: .9; }
+.split-chev { width: 14px; height: 14px; stroke-width: 2.1; transition: transform var(--dur) var(--ease-out); }
+.split-toggle[aria-expanded="true"] .split-chev { transform: rotate(180deg); }
+@media (hover: hover) and (pointer: fine) {
+  .split.menu > .split-main:hover:not(:disabled), .split.menu > .split-toggle:hover {
+    background: color-mix(in srgb, var(--text) 86%, var(--surface));
+    border: 0;
+  }
+}
+/* Press: a deeper fill, not a scale — scaling each half on its own would
+   pull the two apart for a frame. */
+.split.menu > .split-main:active:not(:disabled), .split.menu > .split-toggle:active,
+.split.menu > .split-toggle[aria-expanded="true"] {
+  transform: none; background: color-mix(in srgb, var(--text) 76%, var(--surface));
+}
+.split.menu > .split-main:focus-visible, .split.menu > .split-toggle:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; position: relative; z-index: 1;
+}
+/* A run is in progress: the face says so in its own ink, half strength. */
+.split.menu > .split-main:disabled { opacity: 1; cursor: progress; background: color-mix(in srgb, var(--text) 55%, var(--surface)); box-shadow: none; }
+.split.menu:has(.split-main:disabled) > .split-toggle { background: color-mix(in srgb, var(--text) 55%, var(--surface)); }
+@media (prefers-reduced-motion: reduce) { .split-chev { transition: none; } }
 
 /* Menu items with a second line explaining what the action costs. */
 .menu-pop .mi-title { display: block; font-weight: 600; }
@@ -1616,7 +1649,8 @@ td.check { width: 34px; }
   .topbar { position: static; }
   /* Four actions and More on two rows instead of three. */
   .actions-group { gap: 6px; }
-  .actions-group > button, .actions-group > .menu > button { padding: 5px 10px; font-size: var(--fs-md); }
+  .actions-group > button, .actions-group > .menu:not(.split) > button { padding: 5px 10px; font-size: var(--fs-md); }
+  .split.menu > .split-main { padding: 0 11px 0 9px; }
   .boardwrap { scroll-margin-top: var(--s2); }
   .pagerbar { position: static; flex-wrap: nowrap; gap: var(--s2); }
   .pager { flex-wrap: nowrap; gap: 6px; padding: var(--s2) 0; min-width: 0; }

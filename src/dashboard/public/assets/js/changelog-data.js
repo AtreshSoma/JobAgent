@@ -40,6 +40,7 @@ export const CHANGELOG = Object.freeze([
         'Search profiles are now a short list of people with a Switch button each. Uploading someone else\'s resume shows one line and one clear next step, with the details tucked away.',
         'Job details: one clean panel instead of boxes inside boxes, with nothing shown twice.',
         'Menus, dialogs, buttons and form fields now share one consistent style, with a soft frosted look that switches to solid if you prefer reduced transparency.',
+        'The Find jobs button is now one calm, aligned control in dark ink (light in dark mode) with a search icon, instead of two bright blue blocks.',
         'Search recognises more job titles, such as Pharmacovigilance Scientist, Cybersecurity Analyst, Java Developer and Medical Science Liaison.',
         'Search now follows your profile: a nurse looks at healthcare jobs and a security analyst at IT jobs, instead of the same tech categories for everyone.',
         'Wording that only suited software roles is now general. "Stack" is now "Skills", and the GitHub field says it is optional.',
@@ -47,6 +48,7 @@ export const CHANGELOG = Object.freeze([
       fixed: [
         'The tick mark in checkboxes sometimes drew as a broken symbol.',
         'The highlight on the job you have open was not showing on the table.',
+        'The status row printed the number of empty profile fields twice ("1 1 empty field").',
         'Date lines in the resume preview, such as "Aug 2018 - Present", were shown as section headings.',
         'One job site was only searched in categories that return nothing, so some searches quietly found less than they should.',
         'Resumes that put a job title and its dates on the same line now read correctly, so a profile made from them can search.',
