@@ -123,7 +123,7 @@ import {
   listProfiles as listSearchProfiles, readProfile as readSearchProfile,
   readActiveProfile, activateProfile, saveProfile as saveSearchProfile, acknowledgeResumeMismatch,
   deleteProfile as deleteSearchProfile, migrateLegacyCandidate,
-  proposeProfileFromResume, mergeIntoActiveProfile, refreshBackgroundFromResume,
+  proposeProfileFromResume, mergeIntoActiveProfile, refreshBackgroundFromResume, resumeProfileToReuse,
 } from '../profile/store.js';
 import { deriveFromProfile } from '../profile/derive.js';
 
@@ -2264,7 +2264,25 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         if (!proposed.available) throw new Error(proposed.reason);
 
         if (choice === 'create') {
-          const saved = saveSearchProfile(root, { ...proposed.proposal, label: body.label || proposed.proposal.label });
+          // REFUSE BEFORE SAVING. Activation rejects a profile with no target
+          // roles, but this route used to save first — so the refusal left an
+          // unusable profile on disk, and every retry added another copy.
+          if (!(proposed.proposal.searchIntent?.targetRoles ?? []).length) {
+            throw Object.assign(new Error(
+              'No job titles could be read from this resume, so a profile made from it would search for nothing. '
+              + 'Put each job title on its own line (or before its dates), then upload the resume again.',
+            ), { statusCode: 422 });
+          }
+          // Building again from the same resume — or for the same person whose
+          // saved profile cannot search — updates that profile instead of
+          // saving another copy beside it.
+          const reuseId = resumeProfileToReuse(root, proposed.proposal, proposed.resumeFingerprint);
+          const saved = saveSearchProfile(root, {
+            ...proposed.proposal,
+            ...(reuseId ? { id: reuseId } : {}),
+            label: body.label || proposed.proposal.label,
+            background: { ...proposed.proposal.background, resumeFingerprint: proposed.resumeFingerprint ?? '' },
+          });
           // Saving is not activating: a new profile never takes over the search
           // without a second, deliberate action.
           if (body.activate === true) {

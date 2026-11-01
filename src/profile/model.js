@@ -165,6 +165,9 @@ export function normalizeProfile(input = {}) {
       source: str(background.source) || 'manual',
       sourceFile: str(background.sourceFile),
       extractedAt: str(background.extractedAt),
+      // Which resume this profile was built from, so building again from the
+      // same file updates it instead of saving a copy.
+      resumeFingerprint: str(background.resumeFingerprint, 64),
       currentRoles: distinct(background.currentRoles, LIMITS.roles),
       earlierRoles: distinct(background.earlierRoles, LIMITS.roles),
       // Zero is never a STATEMENT of experience, only the residue of a bug:

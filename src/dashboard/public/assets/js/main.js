@@ -38,6 +38,7 @@ import { pollRun, scheduleBackgroundRefresh, setRunDetails } from './runs.js';
 import { syncBoardSearchAction } from './actions.js';
 import { closeMainMenu } from './menus.js';
 import { installWorkspaceDrag } from './workspace.js';
+import { loadProfiles } from './profiles.js';
 
 /* ────────────────────── keyboard support ────────────────────── */
 
@@ -378,6 +379,9 @@ export function syncThemeControl() {
   }
 }
 syncThemeControl();
+// Who the dashboard is searching as: the header's initials and the Profile
+// menu's switcher. Not awaited — the board must never wait on it.
+loadProfiles();
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', syncThemeControl);
 
 export function jobIdFromHash() {

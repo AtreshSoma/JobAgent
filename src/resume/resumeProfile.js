@@ -41,9 +41,14 @@ const SECTION_PATTERNS = [
   { kind: 'experience', re: /^((professional|work|relevant|earlier|additional|previous)\s+)?experience$/i },
   { kind: 'experience', re: /^(employment|work)\s+history$/i },
   { kind: 'summary', re: /^(professional\s+)?(summary|profile|objective|about)$/i },
-  { kind: 'education', re: /^education$/i },
-  { kind: 'certifications', re: /^(certifications?|licenses?|credentials)$/i },
-  { kind: 'projects', re: /^projects?$/i },
+  // "Education and Professional Development", "Education & Training".
+  { kind: 'education', re: /^(education|academic\s+background)(\s*(and|&)\s*[a-z ]+)?$/i },
+  { kind: 'certifications', re: /^(certifications?|licenses?|credentials)(\s*(and|&)\s*(certifications?|licenses?|credentials|training))?$/i },
+  { kind: 'projects', re: /^((key|selected)\s+)?projects?$/i },
+  // Sections nothing extracts from. They still have to be RECOGNISED, or the
+  // section above swallows them: an unrecognised "Honors and Awards" made the
+  // last job's experience run on through every award line beneath it.
+  { kind: 'other', re: /^(honou?rs|awards|achievements|publications|presentations|patents|volunteer(ing)?(\s+experience)?|languages|interests|hobbies|references|affiliations|memberships|activities|leadership|professional\s+(development|affiliations|memberships)|training|courses)(\s*(and|&)\s*[a-z ]+)?$/i },
 ];
 
 /** A heading is short; a paragraph of prose that happens to start with "Experience" is not. */
@@ -117,6 +122,24 @@ const PLACE_RE = /^[A-Z][a-zA-Z.\- ]+,\s*[A-Z]{2}\b/;
 
 /** A date range anywhere on the line marks it as the employment-dates line. */
 const DATE_LINE_RE = /\b(19|20)\d{2}\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(19|20)?\d{2}\b|\bpresent\b/i;
+
+/**
+ * A date range at the END of a line: "April 2026 - Present", "2019 – 2021",
+ * "Aug. 2022 to Aug 2023", "08/2022 - Present".
+ */
+const TRAILING_DATE_RANGE_RE = new RegExp(
+  '[\\s,|–—-]*\\(?\\s*'
+  + '(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s+)?(?:\\d{1,2}/)?(?:19|20)\\d{2}'
+  + '\\s*(?:[-–—]|to)\\s*'
+  + '(?:(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\\.?\\s+)?(?:\\d{1,2}/)?(?:19|20)\\d{2}|present|current|now|date)'
+  + '\\s*\\)?\\s*$',
+  'i',
+);
+
+/** The line with any trailing date range removed. */
+export function withoutTrailingDateRange(line) {
+  return String(line ?? '').replace(TRAILING_DATE_RANGE_RE, '').trim();
+}
 
 /** Achievement bullets start with a past-tense verb, not a role. */
 const ACHIEVEMENT_RE = /^(architected|engineered|built|led|orchestrated|designed|developed|implemented|delivered|managed|created|drove|reduced|improved|optimiz|streamlin|deployed|migrated|automated|owned|partnered|collaborated)/i;
@@ -204,7 +227,15 @@ function titlesFromExperience(sections) {
   const found = [];
   for (const section of sections) {
     if (section.kind !== 'experience') continue;
-    for (const line of section.lines) {
+    for (const raw of section.lines) {
+      // "Senior Regulatory CMC Specialist   April 2026 - Present" puts the title
+      // and its dates on ONE line. The date guard in looksLikeTitle (which keeps
+      // "Raleigh, NC | 2022 - Present" from reading as a title) rejected every
+      // such line, so a resume written this way yielded no roles at all and a
+      // profile built from it searched for nothing. Strip a trailing range
+      // first; a line that was ONLY a place and a date is still caught, because
+      // what remains is a place.
+      const line = withoutTrailingDateRange(raw);
       const beforeEmployer = line.split(/\s*[|·]\s*|\s+[—–]\s+/)[0];
       const title = beforeEmployer.split(',')[0].trim();
       // Order is preserved. Resumes are reverse-chronological by convention, so
@@ -292,12 +323,19 @@ const TITLE_ACRONYMS = new Set([
 ]);
 
 function tidyTitleCase(title) {
-  return String(title ?? '')
+  const text = String(title ?? '');
+  // In a title that is NOT shouted in capitals throughout, a short all-caps
+  // word is an abbreviation the writer meant ("Regulatory CMC Specialist",
+  // "QA Lead"), whatever the profession — the fixed list below cannot know
+  // them all. A title in capitals throughout carries no such signal.
+  const mixedCase = /[a-z]/.test(text);
+  return text
     .split(/(\s+|\/)/)
     .map((token) => {
       if (!/[a-zA-Z]/.test(token)) return token;
       const bare = token.replace(/[^A-Za-z0-9&/+.-]/g, '');
       if (TITLE_ACRONYMS.has(bare.toUpperCase()) && bare === bare.toUpperCase()) return token;
+      if (mixedCase && /^[A-Z][A-Z0-9&]{1,4}$/.test(bare)) return token;
       // Leave deliberate mixed case alone ("PySpark", "iOS", "McDonald").
       if (/[a-z]/.test(token) && /[A-Z]/.test(token.slice(1))) return token;
       return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();

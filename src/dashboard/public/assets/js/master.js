@@ -3,7 +3,9 @@
 import { $, el, fmt, shortStamp, slowProgress, toast } from './dom.js';
 import { api, postJson } from './api.js';
 import { openDialog } from './dialogs.js';
-import { classifyResumeLine, looksLikeHeading } from './format.js';
+import { classifyResumeLine, displayName, initials, looksLikeHeading } from './format.js';
+import { activeProfileId, announceSwitch, describeProfiles, loadProfiles, profileSubline } from './profiles.js';
+import { scheduleRefresh } from './mutations.js';
 
 export { classifyResumeLine, looksLikeHeading };
 
@@ -122,6 +124,18 @@ export async function renderResumeSuggestions(body) {
     inner.append(group);
   }
 
+  // When nothing is wrong, these are optional suggestions: one line, opened on
+  // request. When the resume and the search disagree, the amber box stays open.
+  if (!diff.drifted) {
+    const counts = [diff.newTitles.length ? `${diff.newTitles.length} role${diff.newTitles.length === 1 ? '' : 's'}` : '',
+      diff.newSkills.length ? `${diff.newSkills.length} skill${diff.newSkills.length === 1 ? '' : 's'}` : ''].filter(Boolean);
+    if (!counts.length) return;
+    const fold = el('details', { class: 'mr-block mr-suggest', 'data-key': 'mr-suggest' },
+      el('summary', {}, el('b', { text: 'Suggestions from your resume' }), el('span', { class: 'faint', text: ` · ${counts.join(' and ')} you could add` })));
+    fold.append(inner);
+    body.append(fold);
+    return;
+  }
   box.append(inner);
   body.append(box);
 }
@@ -158,145 +172,177 @@ export async function adoptResumeSelection({ titles = [], skills = [] } = {}) {
 /**
  * "Whose search is this, and does this resume belong to them?"
  *
- * The single most expensive silent failure this tool had was a run that kept
- * using one person's target titles after another person's resume was uploaded,
- * with nothing anywhere saying so. This panel is the answer: it names the
- * active search profile, says plainly what that profile makes the agent look
- * for, and — when the resume does not match — offers the three things a person
- * may actually want to do about it.
+ * Shown as a list of PEOPLE — one row each, with a Switch button — and, only
+ * when the uploaded resume belongs to someone else, a two-line notice with
+ * one clear next step. Everything diagnostic (the reasons behind the verdict,
+ * what a profile would search for, merging) sits behind "Details": it is
+ * evidence for the rare doubt, not reading for every visit. The previous
+ * version printed all of it, every time, as ~25 lines of small text.
  *
- * It never decides. A resume says what someone has DONE; a search profile says
- * what they WANT, and those diverge exactly when somebody is changing
- * direction. So the choice is always theirs.
+ * It never decides. A resume says what someone has DONE; a profile says what
+ * they WANT, and those diverge exactly when somebody is changing direction.
  */
 export async function renderSearchProfiles(body) {
   let listing;
-  try { listing = await api('/api/search-profiles'); }
-  catch { return null; } // never let this panel break the drawer it sits in
-
-  const wrap = el('div', { class: 'mr-block' });
+  try { listing = await loadProfiles(); } catch { listing = null; }
+  if (!listing) return null; // never let this panel break the drawer it sits in
 
   if (!listing.profiles?.length) {
-    wrap.append(el('p', { class: 'mr-lead' }, el('b', { text: 'No saved search profile. ' }),
-      'Your search runs on your current settings exactly as written, so uploading a '
-      + 'different resume will not change what is searched for.'));
-    wrap.append(el('div', { class: 'row-gap' },
-      el('button', {
+    body.append(el('div', { class: 'mr-block' },
+      el('p', { class: 'mr-lead' }, el('b', { text: 'No saved search profile yet.' }),
+        ' Save your current settings as one, so you can switch between people or search directions later.'),
+      el('div', { class: 'row-gap' }, el('button', {
         class: 'small primary', 'data-action': 'migrate-search-profile',
-        text: 'Import my current setup as a profile',
-        title: 'Reads config/candidate.json and saves it as your first search profile. Nothing about your search changes.',
-      })));
-    body.append(wrap);
+        text: 'Save my current setup as a profile',
+        title: 'Saves your current search settings as your first profile. Nothing about your search changes.',
+      }))));
     return null;
   }
 
-  // WHAT THE ACTIVE PROFILE MAKES THE AGENT DO. Stated as consequences, because
-  // a list of stored fields does not tell anyone what will actually happen.
-  const active = listing.active;
-  if (active) {
-    const e = active.effect;
-    wrap.append(el('p', { class: 'mr-lead' }, el('b', { text: 'Searching as: ' }), active.profile.label));
-    wrap.append(el('div', { class: 'muted small' },
-      `Asks the boards for ${e.searchPhrases.map((q) => `"${q}"`).join(', ') || '(nothing)'} · `
-      + `recognizes ${e.targetTitles.length} title(s) · `
-      + `role famil${e.families.length === 1 ? 'y' : 'ies'}: ${e.families.map((f) => f.label).join(', ') || 'none inferred'}`));
-    if (e.expandedRoles.length) {
-      wrap.append(el('div', { class: 'muted small' },
-        `You stated ${e.statedRoles.length} role(s); role-family expansion also looks for `
-        + `${e.expandedRoles.slice(0, 6).join(' · ')}${e.expandedRoles.length > 6 ? ` +${e.expandedRoles.length - 6} more` : ''}.`));
-    }
-  }
-
-  // The switcher. Every other profile is one click away.
-  const others = listing.profiles.filter((p) => !p.active);
-  if (others.length) {
-    const row = el('div', { class: 'row-gap' });
-    for (const p of others) {
-      row.append(el('button', {
-        class: 'small ghost', 'data-action': 'activate-search-profile', 'data-profile-id': p.id,
-        text: `Switch to ${p.label}`,
-        title: `Regenerates candidate.json, scoring.json and exclusions.json from "${p.id}". `
-          + 'Every previous version is kept as .bak.',
-      }));
-    }
-    wrap.append(el('div', { class: 'muted small', text: `${others.length} other saved profile(s):` }));
-    wrap.append(row);
-  }
-  body.append(wrap);
-
-  // ── does the uploaded resume belong to this profile? ────────────────────
-  let proposal;
+  // ── does the uploaded resume belong to the active profile? ──────────────
+  let proposal = null;
   try { proposal = await api('/api/search-profiles/from-resume/preview'); }
   catch (err) {
-    // SAY SO. This swallowed every failure and returned null, so a broken
-    // comparison was indistinguishable from a resume that matches perfectly —
-    // the panel simply showed nothing, and the user had no way to know the
-    // check had not run. It still must not break the drawer it sits in, so the
-    // error is rendered in place rather than thrown.
-    body.append(el('div', { class: 'evidence-note st-blocked small' },
-      el('b', { text: 'Could not compare your resume to this profile. ' }), err.message));
-    return null;
+    // Said, not swallowed: a comparison that did not run must not look like a
+    // resume that matches.
+    body.append(el('p', { class: 'mr-note st-blocked' }, `Could not compare this resume with your profile: ${err.message}`));
   }
-  if (!proposal?.available) return null;
+  const relation = proposal?.available ? proposal.comparison.relation : null;
+  const rows = describeProfiles(listing);
+  if (proposal?.available) {
+    const notice = resumeNotice(proposal, rows);
+    if (notice) body.append(notice);
+  }
 
+  // ── the people ──────────────────────────────────────────────────────────
+  body.append(profileList(rows));
+  const active = listing.active;
+  if (active?.effect) body.append(searchDetails(active.effect));
+  return relation;
+}
+
+/** One row per saved profile: avatar, name, one line, Active or Switch, Delete. */
+function profileList(rows) {
+  const list = el('ul', { class: 'pf-list', 'aria-label': 'Saved search profiles' });
+  for (const p of rows) {
+    const row = el('li', { class: `pf-row${p.active ? ' is-active' : ''}${p.ready ? '' : ' is-empty'}`, ...(p.active ? { 'aria-current': 'true' } : {}) },
+      el('span', { class: 'pf-avatar', 'aria-hidden': 'true', text: initials(p.display) || '?' }),
+      el('span', { class: 'pf-who' },
+        el('span', { class: 'pf-name' }, p.display, p.active ? el('span', { class: 'pf-badge', text: 'Active' }) : ''),
+        el('span', { class: 'pf-sub', text: profileSubline(p) })));
+    const actions = el('span', { class: 'pf-actions' });
+    if (!p.active) {
+      actions.append(el('button', {
+        type: 'button', class: 'small', 'data-action': 'activate-search-profile', 'data-profile-id': p.id,
+        disabled: !p.ready, 'aria-label': `Switch to ${p.display}`,
+        title: p.ready ? `Search as ${p.display}` : 'This profile has no job titles yet, so it cannot search',
+        text: 'Switch',
+      }));
+      actions.append(el('button', {
+        type: 'button', class: 'small ghost iconbtn pf-delete', 'data-action': 'delete-search-profile', 'data-profile-id': p.id,
+        'aria-label': `Delete ${p.display}${p.duplicate ? ' (duplicate)' : ''}`, title: 'Delete this saved profile',
+      }, trashIcon()));
+    }
+    row.append(actions);
+    list.append(row);
+  }
+  return list;
+}
+
+function trashIcon() {
+  const svg = el('svg', { class: 'ic', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' });
+  svg.append(el('path', { d: 'M4 7h16M9 7V4.5h6V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5' }));
+  return svg;
+}
+
+/** What the active profile searches for, for the curious — collapsed. */
+function searchDetails(effect) {
+  const box = el('details', { class: 'pf-details', 'data-key': 'pf-details' });
+  box.append(el('summary', { text: 'What the active profile searches for' }));
+  const phrases = el('div', { class: 'kwlist' });
+  for (const q of effect.searchPhrases ?? []) phrases.append(el('span', { class: 'chip', text: q }));
+  box.append(el('p', { class: 'mr-note' },
+    `Searches job boards for these phrases and recognises ${fmt(effect.targetTitles?.length ?? 0)} job titles`
+    + `${effect.families?.length ? ` in ${effect.families.map((f) => f.label).join(', ')}` : ''}.`));
+  box.append(phrases);
+  return box;
+}
+
+/**
+ * The resume does not match the active profile: say whose it is, and offer the
+ * ONE action that fits — switch to their saved profile, or create one — with
+ * "keep searching as me" beside it. Reasons and merging go behind Details.
+ */
+function resumeNotice(proposal, rows) {
   const { comparison, preview, choices } = proposal;
-  if (comparison.relation === 'same') {
-    body.append(el('div', { class: 'evidence-note muted small', text: comparison.summary }));
-    return comparison.relation;
-  }
-  // Already answered for this exact resume — "Keep my current goals" is a
-  // decision, and re-asking it every render is not respecting it.
+  if (comparison.relation === 'same') return null;
   if (proposal.acknowledged) {
-    body.append(el('div', { class: 'evidence-note muted small' },
-      'You chose to keep your current search goals for this resume. ',
-      el('button', {
-        class: 'small ghost', 'data-action': 'profile-from-resume-reconsider',
-        text: 'Reconsider',
-      })));
-    return comparison.relation;
+    return el('p', { class: 'mr-note' }, 'You chose to keep your current search for this resume. ',
+      el('button', { class: 'small ghost', 'data-action': 'profile-from-resume-reconsider', text: 'Reconsider' }));
   }
+  const resumeName = displayName(proposal.proposal?.identity?.fullName) || 'someone else';
+  const activeName = rows.find((p) => p.active)?.display || 'your active profile';
+  const different = comparison.relation === 'different';
+  const canSearch = (preview?.targetTitles?.length ?? 0) > 0;
+  const firstName = resumeName.split(' ')[0];
+  // Their profile may already be saved (and able to search): switch, do not copy.
+  const saved = different
+    ? rows.find((p) => !p.active && p.ready && p.display.toLowerCase() === resumeName.toLowerCase())
+    : null;
 
-  const box = el('div', { class: comparison.relation === 'different' ? 'attention' : 'evidence-note' });
-  if (comparison.relation === 'different') box.append(el('span', { class: 'mark', text: '!' }));
-  const inner = el('div');
-  inner.append(el('div', {}, el('b', {
-    text: comparison.relation === 'different'
-      ? 'This looks like a different candidate. ' : 'This resume has moved on. ',
-  }), comparison.summary));
-  for (const reason of comparison.reasons.slice(0, 3)) {
-    inner.append(el('div', { class: 'muted small', text: `· ${reason}` }));
-  }
-  inner.append(el('div', { class: 'muted small' },
-    `A profile built from this resume would ask the boards for `
-    + `${preview.searchPhrases.map((q) => `"${q}"`).join(', ') || '(nothing)'} and recognize `
-    + `${preview.targetTitles.length} title(s) across `
-    + `${preview.families.map((f) => f.label).join(', ') || 'no recognized family'}.`));
+  const box = el('div', { class: 'attention mr-notice', role: 'group', 'aria-labelledby': 'mrNoticeHead' });
+  box.append(el('span', { class: 'mark', 'aria-hidden': 'true', text: '!' }));
+  const inner = el('div', { class: 'mr-block-body' });
+  inner.append(el('p', { class: 'mr-lead', id: 'mrNoticeHead' },
+    el('b', { text: different ? `This resume belongs to ${resumeName}.` : 'This resume has moved on from your search.' }),
+    ` You are searching as ${activeName}.`));
 
-  // THE THREE CHOICES, named by the server so the CLI and the board agree.
   const actions = el('div', { class: 'row-gap' });
-  const buttonFor = {
-    create: { class: 'small primary', action: 'profile-from-resume-create' },
-    keep: { class: 'small ghost', action: 'profile-from-resume-keep' },
-    merge: { class: 'small ghost', action: 'profile-from-resume-merge' },
-  };
-  for (const choice of choices) {
-    const spec = buttonFor[choice.id];
-    if (!spec) continue;
+  const keep = el('button', {
+    class: 'small ghost', 'data-action': 'profile-from-resume-keep',
+    text: different ? `Keep searching as ${activeName.split(' ')[0]}` : 'Keep my current search',
+  });
+  if (saved) {
     actions.append(el('button', {
-      class: spec.class, 'data-action': spec.action, text: choice.label, title: choice.detail,
-    }));
+      class: 'small primary', 'data-action': 'activate-search-profile', 'data-profile-id': saved.id,
+      text: `Switch to ${firstName}'s profile`,
+    }), keep);
+  } else if (canSearch) {
+    const create = choices?.find((c) => c.id === 'create');
+    actions.append(el('button', {
+      class: 'small primary', 'data-action': 'profile-from-resume-create',
+      title: create?.detail ?? '',
+      text: different ? `Create ${firstName}'s profile and switch` : 'Create a new profile from it',
+    }), keep);
+  } else {
+    inner.append(el('p', { class: 'mr-note' },
+      'No job titles could be read from this resume, so a profile made from it would search for nothing. '
+      + 'Put each job title on its own line (or before its dates), then upload it again.'));
+    actions.append(keep);
   }
   inner.append(actions);
-  // SAY WHAT THE BUTTON ACTUALLY DOES. This line used to read "it only takes
-  // over the search when you activate it", while the button passed
-  // `activate: true` — so the copy told the user the opposite of what would
-  // happen the moment they pressed it.
-  inner.append(el('div', { class: 'muted small' },
-    'Nothing has changed yet. Creating a profile from this resume also makes it the active search — '
-    + 'your current profile is saved and you can switch back at any time.'));
+
+  // The evidence, for when the verdict is in doubt — collapsed.
+  const more = el('details', { class: 'mr-more', 'data-key': 'mr-notice-details' });
+  more.append(el('summary', { text: 'Details' }));
+  const why = el('ul', { class: 'mr-reasons' });
+  for (const reason of comparison.reasons.slice(0, 3)) why.append(el('li', { text: reason }));
+  more.append(why);
+  if (canSearch) {
+    more.append(el('p', { class: 'mr-note' },
+      `A profile from this resume would search for ${preview.searchPhrases.map((q) => `"${q}"`).join(', ')} `
+      + `and recognise ${fmt(preview.targetTitles.length)} job titles. Switching never deletes your current profile.`));
+  }
+  if (choices?.some((c) => c.id === 'merge')) {
+    more.append(el('div', { class: 'row-gap' }, el('button', {
+      class: 'small ghost', 'data-action': 'profile-from-resume-merge',
+      text: 'Merge into my current profile instead',
+      title: 'Only if this resume is yours: adds the roles and skills you pick to your current search.',
+    })));
+  }
+  inner.append(more);
   box.append(inner);
-  body.append(box);
-  return comparison.relation;
+  return box;
 }
 
 /**
@@ -376,12 +422,15 @@ export async function reconsiderResumeChoice() {
 
 /** POST one of the three resume choices, then re-render the drawer. */
 export async function chooseResumeProfile(choice, extra = {}) {
+  const previous = activeProfileId();
   try {
     const result = await postJson('/api/search-profiles/from-resume', { choice, ...extra });
     if (!result.changed) { toast(result.message ?? 'Nothing changed.', ''); return; }
-    toast(result.activated
-      ? `Now searching as "${result.activated.label}".`
-      : `Saved profile "${result.id}". Activate it to start searching with it.`, 'ok');
+    if (result.activated) announceSwitch(result.activated.label, previous !== result.id ? previous : null);
+    else toast(`Saved profile "${result.id}". Switch to it to start searching with it.`, 'good');
+    // The header's initials, the switcher and the board all depend on who is active.
+    if (result.activated) scheduleRefresh(0);
+    await loadProfiles();
     await renderMasterResume();
   } catch (err) {
     toast(err.message, 'bad');
@@ -468,7 +517,7 @@ export async function renderMasterResume() {
   // Whose search is running, and does this resume belong to them? This comes
   // FIRST among the sections: it decides whether anything below it matters.
   const search = el('section', { class: 'mr-section', 'aria-labelledby': 'mrSearchHead' },
-    el('h3', { id: 'mrSearchHead', text: 'Your job search' }));
+    el('h3', { id: 'mrSearchHead', tabindex: '-1', text: 'Search profiles' }));
   body.append(search);
   const relation = await renderSearchProfiles(search);
 

@@ -16,6 +16,24 @@ import { menuTrigger } from './menus.js';
  */
 export const lastFocused = new WeakMap();
 
+/**
+ * Keep the toast area inside whichever modal dialog is on top.
+ *
+ * A modal <dialog> sits in the browser's top layer and makes the rest of the
+ * page inert. Toasts live outside it, so while any dialog was open they drew
+ * UNDER it, and their buttons ("Undo", "Switch back") could not be clicked,
+ * tabbed to, or read by a screen reader — exactly when they mattered, right
+ * after an action taken inside the dialog. The host is position: fixed, so
+ * moving it does not move it on screen.
+ */
+export function placeToasts() {
+  const host = $('toasts');
+  if (!host) return;
+  const top = [...document.querySelectorAll('dialog[open]')].at(-1);
+  const parent = top ?? document.body;
+  if (host.parentElement !== parent) parent.append(host);
+}
+
 export function openDialog(dialog) {
   // Opened from a menu item: that item is about to be hidden with its menu, so
   // the menu's trigger is where focus should come back to.
@@ -23,6 +41,7 @@ export function openDialog(dialog) {
   const menu = from?.closest?.('.menu-pop');
   if (!dialog.open) lastFocused.set(dialog, menu ? menuTrigger(menu) ?? from : from);
   if (!dialog.open) dialog.showModal();
+  placeToasts();
   // <dialog> gives us Escape, backdrop semantics, and a focus trap natively —
   // the previous hand-rolled overlays had none of those.
   // :not([hidden]) matters: focusing a hidden file input is a silent no-op that
@@ -37,6 +56,7 @@ export function closeDialog(dialog) {
 document.addEventListener('close', (event) => {
   const dialog = event.target;
   if (dialog.tagName !== 'DIALOG') return;
+  placeToasts();
   if (dialog.id === 'dlgDetail') {
     // Back to the job the sheet showed, wherever it is on screen now (the row
     // may have been re-rendered while the sheet was open).

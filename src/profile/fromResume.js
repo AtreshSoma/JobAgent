@@ -94,6 +94,7 @@ export function buildBackground(paragraphs = [], { sourceFile = '', now = new Da
     // Not part of the stored background — returned so the caller can ask
     // "is this the same person?" before overwriting anything.
     _name: nameFrom(sections),
+    _contact: contactFrom(sections),
     _headline: (evidence.headlineTitles ?? [])[0] ?? '',
   };
 }
@@ -274,6 +275,37 @@ export function workHistoryIn(sections) {
     if (section.kind !== 'experience') continue;
     const lines = section.lines.map(clean).filter(Boolean);
     for (let i = 0; i < lines.length - 1; i += 1) {
+      // Layout B — "Senior Regulatory CMC Specialist   April 2026 - Present"
+      // then "US Antibiotics | Bristol, TN": title and dates share a line and
+      // the employer and place follow on the next. Read before layout A, which
+      // skips any header line that itself carries a date.
+      const inline = DATE_RANGE_RE.exec(lines[i]);
+      if (inline && lines[i].length <= 160) {
+        const title = clean(lines[i].replace(inline[0], '').replace(/[\s|,–—-]+$/, '').split(',')[0]);
+        const next = lines[i + 1];
+        if (title && !ACHIEVEMENT_RE.test(title) && next && !DATE_RANGE_RE.test(next)
+            && !ACHIEVEMENT_RE.test(next) && next.length <= 120) {
+          const [employerPart, ...placeParts] = next.split('|').map(clean);
+          const end = inline[2];
+          const current = /present|current|now/i.test(end);
+          const highlights = [];
+          for (let j = i + 2; j < lines.length && highlights.length < 3; j += 1) {
+            if (DATE_RANGE_RE.test(lines[j])) break; // next role's title line
+            if (ACHIEVEMENT_RE.test(lines[j]) && lines[j].length >= 40) highlights.push(lines[j].replace(/^[•▪◦·*-]\s*/, ''));
+          }
+          roles.push({
+            employer: clean(String(employerPart ?? '').replace(/\([^)]*\)/g, '')),
+            title,
+            location: placeParts.join(', '),
+            startDate: clean(inline[1]),
+            endDate: current ? '' : clean(end),
+            current,
+            highlights,
+          });
+          i += 1;
+          continue;
+        }
+      }
       const dates = DATE_RANGE_RE.exec(lines[i + 1]);
       if (!dates || DATE_RANGE_RE.test(lines[i]) || lines[i].length > 160) continue;
       // Header: "Title, Team | Employer (note)" — the employer is the side
@@ -319,6 +351,24 @@ export function leadershipIn(text) {
     if (evidence.length >= 10) break;
   }
   return { hasManaged: evidence.length > 0, evidence };
+}
+
+/**
+ * The email, phone and LinkedIn the resume's own header states.
+ *
+ * Only the HEADER block is read (the lines above the first section heading),
+ * so a reference's or a former manager's details further down can never be
+ * taken for the candidate's own.
+ *
+ * @param {Array<{kind: string, lines: string[]}>} sections
+ * @returns {{email: string, phone: string, linkedin: string}}
+ */
+export function contactFrom(sections) {
+  const header = (sections.find((s) => s.kind === 'header')?.lines ?? []).join(' | ');
+  const email = (header.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) ?? [''])[0];
+  const phone = (header.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/) ?? [''])[0].trim();
+  const handle = (header.match(/linkedin\.com\/in\/[A-Za-z0-9_-]+/i) ?? [''])[0];
+  return { email, phone, linkedin: handle ? `https://www.${handle.replace(/^www\./i, '')}` : '' };
 }
 
 /** The name at the top of the resume, if the header states one. */
@@ -549,6 +599,10 @@ export function profileFromResume(paragraphs, {
   const stored = { ...background };
   delete stored._name;
   delete stored._headline;
+  delete stored._contact;
+  // A different person's details come from THEIR OWN resume header — never
+  // from the profile being replaced (see `contact` below).
+  const own = background._contact ?? {};
 
   return normalizeProfile({
     // A resume-derived id used to be the candidate's NAME alone, so the same
@@ -564,14 +618,14 @@ export function profileFromResume(paragraphs, {
       headline,
       // Somebody else's LinkedIn and portfolio are as personal as their phone
       // number, and these are carried onto applications. Same rule as contact.
-      links: samePerson ? (currentProfile?.identity?.links ?? {}) : {},
+      links: samePerson ? (currentProfile?.identity?.links ?? {}) : { linkedin: own.linkedin ?? '' },
     },
     // Contact details and address are personal facts a resume DOES state, but
     // carrying them from the previous profile would attach one person's phone
     // number to another person's application. They start empty unless the
     // resume is the same person's — in which case re-typing details the tool
     // already holds about them is pure friction.
-    contact: samePerson ? (currentProfile?.contact ?? {}) : {},
+    contact: samePerson ? (currentProfile?.contact ?? {}) : { email: own.email ?? '', phone: own.phone ?? '' },
     location: samePerson ? (currentProfile?.location ?? {}) : {},
     background: stored,
     searchIntent: intent,

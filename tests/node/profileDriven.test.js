@@ -658,8 +658,10 @@ describe('a new resume is analysed, compared and OFFERED — never applied silen
     // The proposal is the nurse's...
     expect(proposal.searchIntent.targetRoles.join(' ')).toMatch(/Nurse/i);
     expect(proposal.identity.fullName).toBe('Priya Raman');
-    // ...and it carries NONE of the previous person's identity or contact.
-    expect(proposal.contact.email).toBe('');
+    // ...and it carries NONE of the previous person's identity or contact:
+    // the email is the nurse's own, read from her resume header.
+    expect(proposal.contact.email).not.toBe(PEOPLE.dataEngineer.contact.email);
+    expect(proposal.contact.email).toBe(NURSE_RESUME.join(' ').match(/[\w.+-]+@[\w.-]+/)?.[0] ?? '');
     expect(JSON.stringify(proposal).toLowerCase()).not.toContain('databricks');
     // The active profile is untouched — proposing is not adopting.
     expect(PEOPLE.dataEngineer.searchIntent.targetRoles).toEqual(['Senior Data Engineer', 'Analytics Engineer']);

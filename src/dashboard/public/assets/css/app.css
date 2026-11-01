@@ -2392,6 +2392,77 @@ kbd {
 .mr-choice { padding-top: var(--s2); border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; gap: var(--s2); }
 .mr-choice-label { font-size: var(--fs-sm); color: var(--text-dim); }
 
+/* ── search profiles: one row per person ──
+   Name and one line, Active or Switch, Delete. Who is active is said in words
+   ("Active") and by aria-current, never by colour alone. */
+.pf-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line-soft); border-radius: var(--r-md); overflow: hidden; }
+.pf-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--s3);
+  padding: 10px var(--s3); min-height: 56px;
+}
+.pf-row + .pf-row { border-top: 1px solid var(--line-soft); }
+.pf-row.is-active { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.pf-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex: none; display: grid; place-items: center;
+  font-size: var(--fs-sm); font-weight: 700; letter-spacing: .02em;
+  background: color-mix(in srgb, var(--text) 10%, transparent); color: var(--text);
+}
+.pf-row.is-active .pf-avatar { background: var(--accent); color: var(--accent-ink); }
+.pf-who { display: flex; flex-direction: column; min-width: 0; }
+.pf-name { display: flex; align-items: center; gap: var(--s2); font-weight: 650; font-size: var(--fs-md); min-width: 0; }
+.pf-name { overflow-wrap: anywhere; }
+.pf-badge {
+  flex: none; font-size: var(--fs-xs); font-weight: 650; padding: 0 7px; line-height: 18px;
+  border-radius: var(--r-full); background: var(--accent); color: var(--accent-ink);
+}
+.pf-sub { font-size: var(--fs-sm); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-row.is-empty .pf-sub { color: var(--warn-text); }
+.pf-actions { display: flex; align-items: center; gap: 4px; }
+.pf-delete { width: var(--h-sm); height: var(--h-sm); }
+.pf-delete:hover { color: var(--bad); background: var(--bad-soft); }
+.pf-details, .mr-more { margin-top: var(--s2); }
+.pf-details > summary, .mr-more > summary, .mr-suggest > summary {
+  cursor: pointer; width: max-content; max-width: 100%; font-size: var(--fs-sm); color: var(--text-dim);
+}
+.pf-details > summary:hover, .mr-more > summary:hover { color: var(--text); }
+.pf-details > .mr-note { margin: var(--s2) 0 var(--s1); }
+.mr-notice { margin-bottom: var(--s3); }
+.mr-notice .mr-lead { font-size: var(--fs-md); }
+.mr-reasons { margin: var(--s1) 0 var(--s2); padding-left: 18px; font-size: var(--fs-sm); color: var(--text-dim); }
+.mr-reasons li { margin: 2px 0; }
+.mr-suggest > summary { width: auto; color: var(--text); }
+.mr-suggest[open] > summary { margin-bottom: var(--s2); }
+@media (max-width: 480px) {
+  /* Switch and Delete drop under the name rather than squeezing it. */
+  .pf-row { grid-template-columns: auto minmax(0, 1fr); }
+  .pf-actions { grid-column: 2; }
+  .pf-sub { white-space: normal; }
+}
+
+/* The header's Profile button: the active person's initials, in place of the icon. */
+.iconbtn .avatar {
+  width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;
+  font-size: var(--fs-xs); font-weight: 700; letter-spacing: .02em;
+  background: var(--accent); color: var(--accent-ink);
+}
+.iconbtn.has-avatar svg { display: none; }
+/* Profile items in the menu: avatar, name, one line. No ●/○ prefix — the
+   avatar and "Active" carry the state, and aria-checked tells assistive tech. */
+.menu-pop .pf-menuitem { display: flex; align-items: center; gap: var(--s2); padding: 6px 8px; }
+.menu-pop .pf-menuitem::before { content: none !important; }
+.menu-pop .pf-menuitem .pf-avatar { width: 26px; height: 26px; font-size: var(--fs-xs); }
+.menu-pop .pf-menuitem[aria-checked="true"] { color: var(--text); }
+.menu-pop .pf-menuitem[aria-checked="true"] .pf-avatar { background: var(--accent); color: var(--accent-ink); }
+#accountMenu { width: 300px; max-width: calc(100vw - 24px); }
+#profileMenuItems { display: flex; flex-direction: column; gap: 1px; }
+#profileMenuItems:empty { display: none; }
+.menu-pop .pf-menuitem { width: 100%; }
+.pf-mi-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; text-align: left; }
+.pf-mi-name, .pf-mi-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-mi-name { font-weight: 600; }
+.pf-mi-sub { font-size: var(--fs-xs); color: var(--text-faint); font-weight: 500; }
+.menu-pop .pf-menuitem[aria-checked="true"] .pf-mi-sub { color: var(--accent); }
+
 /* The preview: collapsible, and shaped like the document it reads. */
 .mr-contents > summary {
   list-style: none; cursor: pointer; display: flex; align-items: baseline; gap: var(--s2); margin-bottom: var(--s3);

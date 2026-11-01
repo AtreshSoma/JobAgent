@@ -23,6 +23,7 @@ import {
 } from './workspace.js';
 import { localDay } from './detail.js';
 import { openChangelog } from './changelog.js';
+import { deleteProfileAsk, switchProfile } from './profiles.js';
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -130,15 +131,14 @@ export const ACTIONS = {
       await renderMasterResume();
     } catch (err) { toast(err.message, 'bad'); }
   },
+  // One switch path for the header menu, the profile list and the resume
+  // notice: it says who you now search as and offers "Switch back".
   'activate-search-profile': async (target) => {
     const id = target?.dataset?.profileId;
-    if (!id) return;
-    try {
-      const r = await postJson('/api/search-profiles/activate', { id });
-      toast(`Now searching as "${r.label}" — asks for ${r.searchPhrases.map((q) => `"${q}"`).join(', ')}.`, 'ok');
-      await renderMasterResume();
-    } catch (err) { toast(err.message, 'bad'); }
+    if (!id || target.getAttribute('aria-checked') === 'true') return;
+    try { await switchProfile(id); } catch (err) { toast(err.message, 'bad'); }
   },
+  'delete-search-profile': (target) => deleteProfileAsk(target?.dataset?.profileId),
   // Creating and activating in one step is deliberate here: the user has just
   // been shown exactly what this profile will search for and pressed the button
   // that says so. The API keeps them separable for every other caller.

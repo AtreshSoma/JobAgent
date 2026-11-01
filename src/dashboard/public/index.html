@@ -100,8 +100,16 @@
         aria-expanded="false" aria-controls="accountMenu"
         aria-label="Profile, resume and preferences" title="Profile, resume and preferences">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
+        <!-- The active person's initials, once known (profiles.js): who the
+             dashboard is searching as, visible from every screen. -->
+        <span class="avatar" id="profileAvatar" aria-hidden="true" hidden></span>
       </button>
       <div class="menu-pop" id="accountMenu" role="menu" aria-label="Profile, resume and preferences">
+        <!-- Switching people, one click from anywhere. Filled by profiles.js
+             and shown only when more than one profile is saved. -->
+        <div class="menu-label" role="presentation" id="profileMenuLabel" hidden>Searching as</div>
+        <div id="profileMenuItems" role="group" aria-labelledby="profileMenuLabel"></div>
+        <hr role="separator" id="profileMenuSep" hidden>
         <div class="menu-label" role="presentation">Your materials</div>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>

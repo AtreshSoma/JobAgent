@@ -5,7 +5,7 @@ import { $, el, esc, relTime, safeHref, shortStamp, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
-import { openDialog } from './dialogs.js';
+import { openDialog, placeToasts } from './dialogs.js';
 import { autofillBlockedReason, BROWSER_MISSING } from './today.js';
 
 /* ──────────────────────── detail rail ──────────────────────── */
@@ -117,6 +117,7 @@ export function openDetailSheet(id) {
   sheetReturnId = id;
   placeDetail();
   if (!sheet.open) sheet.showModal();
+  placeToasts();
   // Focus goes to the sheet's heading, not its first button: landing on
   // "Open posting" or "Reject" is one Enter away from an action nobody chose.
   $('dlgDetailTitle').focus();

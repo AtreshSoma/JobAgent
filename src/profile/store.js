@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
+import { normalizeText } from '../utils/textNormalize.js';
 import { readJson, CONFIG_FILES, loadConfig } from '../config/loadConfig.js';
 import { rescoreStale } from '../pipeline/index.js';
 import { SCHEMA_FILES, createValidator, validateConfig } from '../config/validateConfig.js';
@@ -107,6 +108,14 @@ export function listProfiles(root) {
       profiles.push({
         id: profile.id,
         label: profile.label,
+        // The person and their headline, so a switcher can show "Amulya R
+        // Kodukula · Senior Regulatory CMC Specialist" instead of three
+        // identical internal labels.
+        name: profile.identity.fullName,
+        // `updatedAt` is restamped every time a profile is normalised, so it
+        // cannot tell two copies apart; when each was created can.
+        createdAt: profile.createdAt,
+        headline: profile.identity.headline || profile.searchIntent.targetRoles[0] || '',
         active: profile.id === activeId,
         updatedAt: profile.updatedAt,
         targetRoles: profile.searchIntent.targetRoles,
@@ -171,6 +180,38 @@ export function saveProfile(root, profile) {
   const backup = keepPreviousVersion(path);
   writeFileAtomic(path, `${JSON.stringify({ ...normalized, id }, null, 2)}\n`);
   return { id, path, backup, created: !existing };
+}
+
+/**
+ * The saved profile a new one built from this resume should REPLACE, or null.
+ *
+ * "Create a profile from this resume" saved a new file on every click, and when
+ * activation then refused (a profile with no roles cannot search), the error
+ * showed but the file stayed — so each retry left another identical, unusable
+ * profile in the switcher. A profile is reused when it was built from the very
+ * same resume file, or when it is the same person's and cannot search anyway
+ * (no target roles). A working profile for the same person built from a
+ * DIFFERENT resume is a deliberate second search direction and is left alone.
+ *
+ * @param {string} root
+ * @param {object} proposal the profile about to be saved
+ * @param {string} fingerprint the master resume's fingerprint
+ * @returns {string|null} id to overwrite
+ */
+export function resumeProfileToReuse(root, proposal, fingerprint = '') {
+  const name = normalizeText(proposal?.identity?.fullName ?? '');
+  const sameName = [];
+  for (const { id } of listProfiles(root).profiles) {
+    const existing = readProfile(root, id);
+    if (!existing) continue;
+    if (fingerprint && existing.background?.resumeFingerprint === fingerprint) return id;
+    const empty = !(existing.searchIntent?.targetRoles ?? []).length;
+    if (empty && name && normalizeText(existing.identity?.fullName ?? '') === name) sameName.push(existing);
+  }
+  // The ORIGINAL (oldest) copy, so the id the person first got stays theirs and
+  // the later accidental copies are the ones left to delete.
+  sameName.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
+  return sameName[0]?.id ?? null;
 }
 
 /** Delete a saved profile. The ACTIVE profile cannot be deleted. */

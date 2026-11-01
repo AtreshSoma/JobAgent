@@ -276,7 +276,8 @@ describe('a profile never answers a question it cannot answer', () => {
     expect(built.searchIntent.workAuthorization.requiresSponsorship).toBe(null);
     expect(built.searchIntent.compensation.minAnnual).toBe(null);
     expect(built.searchIntent.startDate).toBe('');
-    expect(built.contact.email).toBe('');
+    // Contact comes from Priya's OWN resume header — never from Dana's profile.
+    expect(built.contact.email).toBe('priya@example.com');
     // A SEARCH preference is not a personal fact, so it still carries over.
     expect(built.searchIntent.locations).toEqual(['Remote']);
   });
