@@ -82,6 +82,12 @@ resumes/base/MASTER_RESUME.docx
 resumes/base/MASTER_RESUME.pdf
 applications/output/*
 !applications/output/.gitkeep
+
+# Each person's own workspace (src/profile/workspace.js): their master resume
+# and history, tailored outputs and application packets. Personal, like the
+# originals above. Their job databases live under data/ (already ignored).
+resumes/profiles/
+applications/profiles/
 logs/*
 !logs/.gitkeep
 !logs/README.md

@@ -323,3 +323,10 @@ describe('editing keeps what the form does not show', () => {
     } finally { rmSync(root, { recursive: true, force: true }); }
   });
 });
+
+describe('personal workspace files stay out of git', () => {
+  it('ignores every per-person folder', () => {
+    const ignore = readFileSync(new URL('../../.gitignore', import.meta.url), 'utf8');
+    for (const entry of ['resumes/profiles/', 'applications/profiles/', 'data/*', 'config/profiles/']) expect(ignore, entry).toContain(entry);
+  });
+});
