@@ -198,6 +198,13 @@ to prevent:
 | **`background`** | *Evidence.* Roles held, years, skills, industries, seniority, education, certifications, leadership. | Parsed from your resume. |
 | **`searchIntent`** | *Preference.* Target roles, desired level, locations, work mode, employment type, industries, pay, work authorization, skills to keep or grow into. | Stated by you. |
 
+**Checked across professions and career stages.** A regression suite activates eight profiles end to end (an ICU nurse, a senior accountant, a construction project manager, a backend engineer, a VP of operations, an entry-level marketer, a teacher moving into instructional design, and a journeyman electrician) and requires each to rank its own role as a fit and the traps as not: a nurse recruiter is not a nurse, an executive assistant is not an executive, data entry is not data engineering. A few behaviours follow from that work:
+
+- **Executive and department titles stay whole.** "VP of Operations" is searched and scored as itself and as "Head of / Director of / VP Operations", never as a bare "Operations" that would credit an operations coordinator.
+- **Gaps are true statements.** A credential you hold ("RN" against "RN license required") or a degree on your profile ("BSN preferred") is not reported as missing; a skill you only list as one to grow into is.
+- **Employment type in any spelling** ("Full-time", "permanent", "contract-to-hire") is accepted when a profile is activated.
+- **Pay is compared only in US dollars.** Postings state pay in dollars, so a pay floor or target in another currency neither excludes nor penalizes anything; it is not converted at a rate that would be stale.
+
 A resume says what you have **done**; your search says what you **want**. Those
 diverge exactly when someone is changing direction — a career-changer's resume
 is still full of the field they are leaving. So **uploading a resume never
@@ -388,7 +395,10 @@ A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies,
 - **Each card says where it stands in words**: the status, posting or sponsorship caveats, *Applied Oct 11*, *No reply · 21d* after two weeks of silence, the outcome and its date, a follow-up and whether it is due, and *+1* when you have another application at the same employer (each keeps its own outcome).
 - **Moving a card is a request, never an authorization.** Drag an application to *Interviewing* or *Offer* to record that outcome, or to *Closed* to choose hired, rejected or withdrawn. The server checks every move: outcomes only move forward, an outcome needs a recorded submission, and a mistake is fixed with **Undo**, which keeps the original in the audit log. Dropping an unsubmitted card on *Applied* opens the usual *I submitted it myself* dialog; nothing on this board approves, fills or submits an application. Every drag also has a keyboard and touch path: the card's **Move** menu.
 - **The job's Application section** records an outcome with the date it happened and an optional note, sets a follow-up (*In 1 week*, *In 2 weeks* or a date), marks it done or dismisses it, and lists the history.
-- **Numbers from what you recorded, nothing projected**: submitted, awaiting reply, interviews and offers reached, follow-ups due, and interview and offer rates shown with their counts ("44% (4 of 9)"), or a dash when there is nothing to divide by.
+- **Numbers from what you recorded, nothing projected**: submitted, awaiting reply, interviews and offers reached, follow-ups due, and interview and offer rates shown with their counts ("44% (4 of 9)"), or a dash when there is nothing to divide by. Before your first submission it says what will appear instead of showing zeros.
+- **The week in one line**: "This week: 2 submitted · 1 interview · 1 follow-up done. Coming up: 1 follow-up due in the next 7 days." It covers your own last seven calendar days and names only what happened.
+- **Every search, everywhere in Applications.** The board, the list, its tab badges, the header count and the *Approve prepared packets* / *Unblock applications* actions all count applications however you found the job, so an application prepared from a role search no longer drops out of the list when you leave that search. The Jobs board stays scoped to your active search.
+- **Outcomes in your spreadsheets.** The application tracker CSV gains *Outcome*, *Outcome Date*, *Outcome History* and *Follow-up Due* columns (appended after the existing ones, so formulas that read columns by position keep working), and the jobs export gains the same four.
 - Outcomes and follow-ups are stored as events beside the job. They never change its status, submission record or your triage decision, and needed no database migration.
 
 </details>

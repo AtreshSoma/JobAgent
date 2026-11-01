@@ -14,7 +14,7 @@
 import { normalizeText, matchedPhrases } from '../utils/textNormalize.js';
 import { ageInDays } from '../utils/dates.js';
 import { candidateNeedsSponsorship } from './exclusionFilter.js';
-import { excludedLocationMatch, postedPay } from './searchConstraints.js';
+import { excludedLocationMatch, postedPay, usdPayPreference } from './searchConstraints.js';
 import { seniorityRank } from '../profile/roleFamilies.js';
 import { matchedTitlePhrases } from './titleMatch.js';
 import { assessEligibility, eligibilityPenalty } from './eligibility.js';
@@ -513,8 +513,9 @@ const DEFAULT_PAY_PENALTY = 6;
  * @returns {{points: number, weight: 0, matched: string[]}|null} null when either side is unstated
  */
 function scorePay(job, candidate, weight) {
-  const target = Number(candidate?.salaryPreference?.targetAnnualUSD)
-    || Number(candidate?.salaryPreference?.minAnnualUSD) || 0;
+  // Only a USD preference is comparable with posted "$" pay; see usdPayPreference.
+  const pref = usdPayPreference(candidate);
+  const target = pref.target || pref.floor;
   if (!(target > 0)) return null;
   const pay = postedPay(job);
   if (!pay) return null;
@@ -620,6 +621,9 @@ const GROWTH_BUCKET = 'growth';
  * @param {boolean} [options.includeGrowth=false]
  * @returns {string[]}
  */
+/** Paperwork words around a credential ("license", "certified"), dropped when checking evidence. */
+const CREDENTIAL_WORDS = /\b(license|licence|licensure|licensed|certification|certificate|certified|credential|registration|active|current|valid)\b/g;
+
 export function candidateStackTerms(candidate = {}, { includeGrowth = false } = {}) {
   const stack = candidate.technicalStack ?? {};
   return Object.entries(stack)
@@ -684,15 +688,26 @@ export function computeMissing(text, candidate, kw, evidenceAliases = {}, catego
     ...candidateStackTerms(candidate),
     ...(candidate.certifications ?? []),
     ...(candidate.domainExperience ?? []),
-  ].join(' '));
+    // A degree is evidence too: "BSN preferred" against a nurse who holds a
+    // BSN was reported as a gap, because only skills and certifications were
+    // consulted.
+    ...(Array.isArray(candidate.education) ? candidate.education.flatMap((e) => [e?.degree, e?.field]) : []),
+  ].filter((t) => typeof t === 'string').join(' '));
+  const words = ` ${profileText} `;
   const aliases = new Map(
     Object.entries(evidenceAliases ?? {}).map(([term, list]) => [
       normalizeText(term),
       (Array.isArray(list) ? list : []).map((a) => normalizeText(a)),
     ]),
   );
-  const evidenced = (term) =>
-    profileText.includes(term) || (aliases.get(term) ?? []).some((a) => a && profileText.includes(a));
+  const evidenced = (term) => {
+    if (profileText.includes(term) || (aliases.get(term) ?? []).some((a) => a && profileText.includes(a))) return true;
+    // "RN license", "CPA certification", "active teaching license": the
+    // credential is the evidence, not the paperwork word around it. Matched
+    // on whole words, because a two-letter core like "rn" is inside "learning".
+    const core = term.replace(CREDENTIAL_WORDS, ' ').replace(/\s+/g, ' ').trim();
+    return Boolean(core) && core !== term && words.includes(` ${core} `);
+  };
   const missing = [];
   for (const term of inJd) {
     if (!evidenced(term)) missing.push(term);

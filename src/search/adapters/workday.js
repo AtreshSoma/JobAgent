@@ -107,9 +107,6 @@ function overlaps(a, b) {
   return false;
 }
 
-/** Role-shaped titles worth a full description even when off the exact list. */
-const ROLE_SHAPED_RE = /\b(data|analytics|bi|business intelligence|etl|elt|warehouse|lakehouse|platform)\b[\w\s/&-]*\b(engineer|developer|architect|analyst)\b/i;
-
 /**
  * How much a job deserves one of the tenant's few full-description fetches.
  *
@@ -117,8 +114,7 @@ const ROLE_SHAPED_RE = /\b(data|analytics|bi|business intelligence|etl|elt|wareh
  * WHICH ones get enriched decides whether the budget is useful at all. Ranking:
  *
  *   2  the title contains one of the candidate's own target titles
- *   1  the title is role-shaped ("Senior Data Platform Engineer") but not an
- *      exact target-title match
+ *   1  (profile vocabulary only) the title fits the candidate's field
  *   0  everything else
  *
  * Ties keep the tenant's original list order (Array#sort is stable), so the
@@ -143,7 +139,10 @@ function detailPriority(job, targetTitles = [], vocab = null) {
     const w = String(want ?? '').trim().toLowerCase();
     if (w && lower.includes(w)) return 2;
   }
-  return ROLE_SHAPED_RE.test(title) ? 1 : 0;
+  // No "role-shaped" middle tier without a profile. It used to be a fixed
+  // data-engineering pattern (data|analytics|etl … engineer|analyst), which
+  // spent a nurse's or an accountant's description budget on data jobs.
+  return 0;
 }
 
 /**

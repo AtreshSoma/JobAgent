@@ -81,6 +81,27 @@ export function acceptedEmploymentCategories(types) {
   return out.size ? out : null;
 }
 
+/**
+ * The candidate's pay floor and target in US dollars — or zeros when they are
+ * stated in another currency.
+ *
+ * Posted pay is only ever read from "$" figures (parsePayRange), while the
+ * profile stores whatever number the person typed, in their own currency, in
+ * fields historically named `…USD`. A floor of 1,500,000 INR was therefore
+ * compared as dollars and EXCLUDED every US posting as "below salary floor";
+ * a GBP floor was off by the exchange rate. Comparing nothing is honest;
+ * converting at a rate that is stale the moment it is written is not.
+ *
+ * @param {object} candidate
+ * @returns {{floor: number, target: number, currency: string}}
+ */
+export function usdPayPreference(candidate = {}) {
+  const pref = candidate?.salaryPreference ?? {};
+  const currency = String(pref.currency ?? '').trim().toUpperCase() || 'USD';
+  if (currency !== 'USD') return { floor: 0, target: 0, currency };
+  return { floor: Number(pref.minAnnualUSD) || 0, target: Number(pref.targetAnnualUSD) || 0, currency };
+}
+
 /** "Remote" postings are not a presence in the excluded place. */
 const REMOTE_RE = /\b(remote|work from home|wfh|anywhere|distributed)\b/;
 
@@ -374,7 +395,7 @@ export function checkSearchConstraints(job = {}, candidate = {}, { employmentCat
   // 6. Minimum salary. Only when the posting PUBLISHES pay and its top of range
   //    is below the floor — a range that reaches the floor is negotiable, and an
   //    unpublished one is unknown.
-  const floor = Number(candidate.salaryPreference?.minAnnualUSD) || 0;
+  const floor = usdPayPreference(candidate).floor;
   if (floor > 0) {
     const stated = postedPay(job);
     if (stated && stated.max < floor) {

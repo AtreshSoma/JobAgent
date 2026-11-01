@@ -2402,6 +2402,8 @@ tr.job { transition: background-color .12s ease; }
 :root { --ws-ease: cubic-bezier(.23, 1, .32, 1); --ws-col-min: 196px; }
 
 .view-head .layoutswitch { flex: none; }
+/* Applications read every search, so the role-search banner is not theirs. */
+#boardView[data-view="applications"] .mode-banner { display: none; }
 /* The Board layout replaces the stage tabs, filters, table and pager. */
 #boardView[data-layout="kanban"] > :not(.view-head):not(#workspace):not(#boardAnnounce) { display: none; }
 
@@ -2418,6 +2420,10 @@ tr.job { transition: background-color .12s ease; }
 .ws-metric.warn b { color: var(--warn-text); }
 .ws-metric.good b { color: var(--good); }
 .ws-metric.accent b { color: var(--accent); }
+.ws-week {
+  flex-basis: 100%; margin: 0 0 2px; font-size: var(--fs-md); color: var(--text);
+}
+.ws-hint { margin: 0; font-size: var(--fs-md); }
 .ws-rates { flex-basis: 100%; margin: 0; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
 .ws-rates-note { color: var(--text-faint); }
 

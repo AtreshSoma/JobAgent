@@ -55,6 +55,8 @@ export function applyAppsLayout({ load = true } = {}) {
   const inApps = state.view === 'applications';
   const kanban = inApps && appsLayout() === 'kanban';
   $('boardView').dataset.layout = kanban ? 'kanban' : 'list';
+  // Applications read every search, so the role-search banner does not apply.
+  $('boardView').dataset.view = inApps ? 'applications' : 'board';
   $('workspace').hidden = !kanban;
   $('appsLayout').hidden = !inApps;
   for (const button of $('appsLayout').querySelectorAll('[data-layout]')) {
@@ -112,7 +114,7 @@ function renderWorkspaceSkeleton() {
 export function renderWorkspace() {
   const data = state.workspace;
   if (!data) return;
-  renderMetrics(data.metrics);
+  renderMetrics(data.metrics, data.weekly);
   const board = $('wsBoard');
   const focusedId = document.activeElement?.closest?.('.ws-card')?.dataset.id;
   board.textContent = '';
@@ -168,10 +170,44 @@ function rateText({ n, of, pct }, of_) {
   return pct == null ? `— (no ${of_} yet)` : `${pct}% (${n} of ${of})`;
 }
 
-export function renderMetrics(m) {
+const plural = (n, one, many = `${one}s`) => `${fmt(n)} ${n === 1 ? one : many}`;
+
+/** Response words for the weekly line, in process order. */
+const RESPONSE_WORDS = [
+  ['interviewing', 'interview'], ['offer', 'offer'], ['hired', 'hire'],
+  ['rejected', 'rejection'], ['withdrawn', 'withdrawal'],
+];
+
+/**
+ * The week in one sentence: "This week: 2 submitted · 1 interview · 1 follow-up
+ * done. Next 7 days: 2 follow-ups due." Only what happened is named; a week
+ * with nothing recorded says so instead of listing zeros.
+ */
+export function weeklyText(w) {
+  if (!w) return '';
+  const done = [];
+  if (w.submitted) done.push(`${fmt(w.submitted)} submitted`);
+  for (const [key, word] of RESPONSE_WORDS) if (w.responses?.[key]) done.push(plural(w.responses[key], word));
+  if (w.followUpsDone) done.push(`${plural(w.followUpsDone, 'follow-up')} done`);
+  const ahead = [];
+  if (w.followUpsOverdue) ahead.push(`${plural(w.followUpsOverdue, 'follow-up')} overdue`);
+  if (w.followUpsDueSoon) ahead.push(`${plural(w.followUpsDueSoon, 'follow-up')} due in the next 7 days`);
+  const first = done.length ? `This week: ${done.join(' · ')}.` : 'Nothing recorded this week yet.';
+  return ahead.length ? `${first} Coming up: ${ahead.join(' · ')}.` : first;
+}
+
+export function renderMetrics(m, weekly = null) {
   const host = $('wsMetrics');
   host.textContent = '';
   if (!m) return;
+  // Before any submission the tiles are five zeros and the rates are dashes:
+  // say what fills them instead.
+  if (!m.submitted) {
+    host.append(el('p', { class: 'ws-hint muted', text: 'Your numbers appear here once you record a submission: '
+      + 'interviews, offers and response rates, from what you record.' }));
+    return;
+  }
+  if (weekly) host.append(el('p', { class: 'ws-week', text: weeklyText(weekly) }));
   host.append(
     metric(m.submitted, 'Submitted', { title: 'Applications recorded as submitted' }),
     metric(m.awaiting, 'Awaiting reply', { tone: m.awaiting ? 'warn' : '', title: 'Submitted 14 or more days ago with no response recorded' }),
@@ -277,7 +313,9 @@ export function workspaceCard(item) {
   if (item.appStatus === 'submitted' && (item.allowedOutcomes?.length || item.canUndoOutcome)) {
     foot.append(el('button', {
       type: 'button', class: 'small ghost ws-move', 'data-action': 'ws-move-menu', 'data-id': item.id,
-      'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': `Update status of ${item.title}`, text: 'Move',
+      // A closed card can only be corrected (Undo), not moved on.
+      'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': `Update status of ${item.title}`,
+      text: item.allowedOutcomes?.length ? 'Move' : 'Change',
     }));
   }
   if (foot.children.length) card.append(foot);

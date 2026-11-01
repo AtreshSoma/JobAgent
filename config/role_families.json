@@ -404,7 +404,12 @@
         "monday.com",
         "gantt",
         "raid log",
-        "kanban"
+        "kanban",
+        "risk management",
+        "stakeholder management",
+        "primavera p6",
+        "procore",
+        "earned value management"
       ]
     },
     "design-ux": {
@@ -714,7 +719,10 @@
         "contract lifecycle management",
         "ironclad",
         "docusign",
-        "cipp"
+        "cipp",
+        "e-discovery",
+        "relativity",
+        "legal research"
       ]
     },
     "regulatory-quality": {
@@ -859,7 +867,11 @@
         "vital signs",
         "hipaa",
         "cna",
-        "npi"
+        "npi",
+        "ccrn",
+        "medication administration",
+        "patient assessment",
+        "triage"
       ]
     },
     "human-resources": {
@@ -1019,7 +1031,9 @@
         "intercom",
         "jira service management",
         "itil",
-        "salesforce service cloud"
+        "salesforce service cloud",
+        "call center",
+        "de-escalation"
       ]
     },
     "education-training": {
@@ -1075,7 +1089,14 @@
         "adult learning",
         "bloom's taxonomy",
         "iep",
-        "esl"
+        "esl",
+        "addie",
+        "elearning",
+        "scorm",
+        "curriculum development",
+        "instructional design",
+        "lesson planning",
+        "classroom management"
       ]
     },
     "science-research": {
@@ -1252,7 +1273,12 @@
         "blueprint reading",
         "hand tools",
         "power tools",
-        "forklift certification"
+        "forklift certification",
+        "conduit bending",
+        "plc programming",
+        "mig welding",
+        "tig welding",
+        "lockout tagout"
       ]
     },
     "transportation-logistics": {
@@ -1300,7 +1326,9 @@
         "hazmat endorsement",
         "eld",
         "forklift license",
-        "clean driving record"
+        "clean driving record",
+        "transportation management system",
+        "route planning"
       ]
     },
     "hospitality-retail-food": {
@@ -1360,7 +1388,9 @@
         "menu planning",
         "tips certification",
         "opentable",
-        "inventory counts"
+        "inventory counts",
+        "cash handling",
+        "food safety"
       ]
     },
     "public-safety-government": {
@@ -1505,7 +1535,10 @@
         "ms excel",
         "typing",
         "multi-line phone",
-        "notary"
+        "notary",
+        "calendar management",
+        "expense reports",
+        "travel arrangements"
       ]
     },
     "personal-care-fitness": {

@@ -35,7 +35,7 @@ export const VIEWS = ['today', 'board', 'applications'];
 /** What each list view is for, in one line under its heading. */
 const VIEW_COPY = {
   board: ['Jobs', 'Every open job that matches your search, best fit first.'],
-  applications: ['Applications', 'Every application from tailored resume to offer. Move a card when you hear back.'],
+  applications: ['Applications', 'Every application from tailored resume to offer, whichever search found it.'],
 };
 
 /**

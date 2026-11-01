@@ -18,6 +18,7 @@ import { formatPostedRelative } from '../utils/dates.js';
 import { deriveAppStatus, APP_STATUS } from '../domain/appStatus.js';
 import { jsonList } from '../utils/json.js';
 import { latestApprovalsByJob as approvalsByJob } from '../apply/approvalQueue.js';
+import { NO_OUTCOME_EXPORT, outcomeEventsByJob, outcomeExport } from '../domain/applicationOutcome.js';
 
 /** Tracker columns, in spreadsheet order. */
 const COLUMNS = [
@@ -25,6 +26,9 @@ const COLUMNS = [
   'Score', 'Tier', 'Sponsorship Confidence', 'Submit Status',
   'Resume Generated', 'Fields Filled', 'Blockers', 'Notes/Comments',
   'Location', 'ATS', 'Resume Used', 'Cover Letter', 'Found Via', 'Job ID',
+  // Appended, never inserted: a spreadsheet that reads columns by position
+  // keeps working. Filled only for submitted applications.
+  'Outcome', 'Outcome Date', 'Outcome History', 'Follow-up Due',
 ];
 
 /** Spreadsheet label for every derived board status. */
@@ -95,6 +99,8 @@ export function writeJobTracker(db, root) {
     ? db.listJobsSummary({ mode: 'all' })
     : db.listJobs({ mode: 'all' });
   const approvals = approvalsByJob(db);
+  // Recorded outcomes (application_events), read by index for submitted rows only.
+  const outcomeEvents = outcomeEventsByJob(db, jobs.filter((j) => Number(j.applied) === 1).map((j) => j.id));
 
   let prepared = 0;
   let submitted = 0;
@@ -127,6 +133,10 @@ export function writeJobTracker(db, root) {
         ? `Role search: ${job.search_query ?? 'unnamed'}`
         : 'My profile',
       job.id,
+      ...(() => {
+        const o = Number(job.applied) === 1 ? outcomeExport(outcomeEvents.get(job.id) ?? []) : NO_OUTCOME_EXPORT;
+        return [o.outcome, o.outcomeDate, o.outcomeHistory, o.followUpDue];
+      })(),
     ].map(csvField).join(',');
   });
 

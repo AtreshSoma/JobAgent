@@ -236,3 +236,84 @@ export function applicationMetrics(items = []) {
     rates: { interview: rate(interviews, submitted), offer: rate(offers, interviews) },
   };
 }
+
+/** Empty export cells, for a job that was never submitted. */
+export const NO_OUTCOME_EXPORT = Object.freeze({ outcome: '', outcomeDate: '', outcomeHistory: '', followUpDue: '' });
+
+/**
+ * Spreadsheet cells for one SUBMITTED application's recorded outcome, shared
+ * by the tracker CSV and the jobs export so the two never word it apart.
+ * The history lists every outcome still in effect, oldest first; an undone
+ * one is not history, it was a mistake.
+ *
+ * @param {object[]} events this job's OUTCOME_EVENT and FOLLOWUP_EVENT rows, oldest first
+ * @returns {{outcome: string, outcomeDate: string, outcomeHistory: string, followUpDue: string}}
+ */
+export function outcomeExport(events = []) {
+  const { current, history } = replayOutcomes(events.filter((e) => e.event_type === OUTCOME_EVENT));
+  const { open } = replayFollowUps(events.filter((e) => e.event_type === FOLLOWUP_EVENT));
+  return {
+    outcome: current?.label ?? OUTCOME_LABELS[OUTCOME.APPLIED],
+    outcomeDate: current?.on ?? '',
+    outcomeHistory: history.map((h) => (h.on ? `${h.label} ${h.on}` : h.label)).join('; '),
+    // A closed application has nothing left to chase (as on the board).
+    followUpDue: current && TERMINAL_OUTCOMES.has(current.outcome) ? '' : open?.dueOn ?? '',
+  };
+}
+
+/** Events for the given jobs grouped by job id, from any db exposing listEventsForJobs. */
+export function outcomeEventsByJob(db, jobIds = []) {
+  const out = new Map();
+  if (!jobIds.length || typeof db?.listEventsForJobs !== 'function') return out;
+  for (const event of db.listEventsForJobs(jobIds, [OUTCOME_EVENT, FOLLOWUP_EVENT])) {
+    if (!out.has(event.job_id)) out.set(event.job_id, []);
+    out.get(event.job_id).push(event);
+  }
+  return out;
+}
+
+/** The calendar day `n` days after `day` (YYYY-MM-DD; negative goes back). */
+export function shiftDay(day, n) {
+  if (!isIsoDay(day)) return null;
+  const at = new Date(`${day}T00:00:00Z`);
+  at.setUTCDate(at.getUTCDate() + n);
+  return at.toISOString().slice(0, 10);
+}
+
+/**
+ * The week in one glance: what was submitted, what came back, what was chased
+ * — over the user's last seven calendar days — and what is due in the next
+ * seven. Counts only what was recorded; an undone outcome does not count.
+ *
+ * @param {object} args
+ * @param {Array<{id: string, appStatus: string, appliedOn?: string|null, followUp?: object|null, stage: string}>} args.items
+ * @param {Map<string, object[]>} args.eventsByJob outcome + follow-up events, oldest first
+ * @param {string} args.today YYYY-MM-DD in the user's timezone
+ * @param {(iso: string) => string} [args.dayOf] instant -> the user's calendar day
+ */
+export function weeklySummary({ items = [], eventsByJob = new Map(), today, dayOf = (iso) => String(iso ?? '').slice(0, 10) }) {
+  const from = shiftDay(today, -6);
+  const until = shiftDay(today, 7);
+  const inWeek = (day) => Boolean(day) && day >= from && day <= today;
+  const responses = { interviewing: 0, offer: 0, hired: 0, rejected: 0, withdrawn: 0 };
+  let submitted = 0; let followUpsDone = 0; let followUpsDueSoon = 0; let followUpsOverdue = 0;
+  for (const item of items) {
+    if (item.appStatus !== 'submitted') continue;
+    if (inWeek(item.appliedOn)) submitted += 1;
+    const events = eventsByJob.get(item.id) ?? [];
+    for (const step of replayOutcomes(events.filter((e) => e.event_type === OUTCOME_EVENT)).history) {
+      if (inWeek(step.on) && step.outcome in responses) responses[step.outcome] += 1;
+    }
+    for (const e of events) {
+      if (e.event_type !== FOLLOWUP_EVENT) continue;
+      const meta = metaOf(e);
+      if (meta?.action === 'done' && inWeek(dayOf(e.created_at))) followUpsDone += 1;
+    }
+    if (item.followUp) {
+      if (item.followUp.due) followUpsOverdue += 1;
+      else if (item.followUp.dueOn <= until) followUpsDueSoon += 1;
+    }
+  }
+  const responsesTotal = Object.values(responses).reduce((a, b) => a + b, 0);
+  return { from, to: today, submitted, responses, responsesTotal, followUpsDone, followUpsDueSoon, followUpsOverdue };
+}

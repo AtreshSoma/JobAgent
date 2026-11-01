@@ -115,6 +115,12 @@ export const SENIORITY_LEVELS = Object.freeze([
   { key: 'executive', rank: 8, labels: ['VP', 'Vice President of'] },
 ]);
 
+/** Level words that make a title an executive one ("VP of", "Chief … Officer"). */
+const EXECUTIVE_WORDS = new Set(['director', 'head', 'chief', 'vp', 'vice', 'president', 'svp', 'evp']);
+
+/** Lowest rank whose labels read as a leadership title over a department. */
+const LEADERSHIP_RANK = 7;
+
 /** Words that state a LEVEL rather than a role, stripped before comparison. */
 const SENIORITY_WORDS = new Set([
   'intern', 'junior', 'jr', 'entry', 'level', 'associate', 'mid', 'senior', 'sr',
@@ -654,10 +660,28 @@ export function expandRoleTitles({
   targetRoles = [], families = [], taxonomy = { families: {} },
   seniority = '', maxVariations = 40, profile = {},
 } = {}) {
-  const wanted = [...new Set(targetRoles.map((r) => stripSeniority(r)).filter(Boolean))];
+  const idx = headIndex(taxonomy);
+  /*
+   * A TARGET ROLE KEEPS ITS HEAD NOUN, as a sibling already must (below).
+   *
+   * Stripping level words from "VP of Operations" left "operations", and from
+   * "Chief Operating Officer" "operating officer" — a department, not a job.
+   * As a target title it matched every posting the department ever files: an
+   * executive was credited full title fit for "Operations Coordinator" and
+   * "Operations Analyst". A role whose core has no head noun, or whose level is
+   * executive (VP, chief, head, director), is therefore kept as written; a
+   * headless department may only recombine with director/executive labels
+   * ("Head of Operations"), never stand alone or take "Senior".
+   */
+  const shapes = targetRoles.map((r) => {
+    const core = stripSeniority(r);
+    const headless = !significantTokens(core).some((tok) => idx.generic.has(tok) || idx.specific.has(tok));
+    const executive = roleTokens(r).some((tok) => EXECUTIVE_WORDS.has(tok));
+    return { role: headless || executive ? normalizeText(r) : core, department: headless ? core : null, executive };
+  }).filter((s) => s.role);
+  const wanted = [...new Set(shapes.map((s) => s.role))];
   const wantedKeys = new Set(wanted);
 
-  const idx = headIndex(taxonomy);
   const acronyms = domainAcronyms(families, taxonomy);
   const evidence = profileEvidence(profile, families, taxonomy);
 
@@ -774,8 +798,14 @@ export function expandRoleTitles({
   const rank = seniorityRank(seniority);
   if (rank !== null) {
     const band = SENIORITY_LEVELS.filter((l) => Math.abs(l.rank - rank) <= 1);
-    for (const core of wanted) {
-      for (const level of band) {
+    const leadership = band.filter((l) => l.rank >= LEADERSHIP_RANK);
+    const cores = [];
+    for (const s of shapes) {
+      if (s.department) cores.push([s.department, leadership]);
+      else if (!s.executive) cores.push([s.role, band]);
+    }
+    for (const [core, levels] of cores) {
+      for (const level of levels) {
         for (const label of level.labels) {
           const variant = label ? `${normalizeText(label)} ${core}` : core;
           if (seen.has(variant)) continue;

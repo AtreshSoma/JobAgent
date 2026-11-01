@@ -38,6 +38,7 @@ import { candidateTimeZone, dayOf } from '../domain/time.js';
 import {
   FOLLOWUP_EVENT, OUTCOME, OUTCOME_EVENT, OUTCOME_LABELS, OUTCOME_VALUES, TERMINAL_OUTCOMES, WORKSPACE_STAGES,
   allowedOutcomes, applicationMetrics, canRecordOutcome, daysBetween, isIsoDay, replayFollowUps, replayOutcomes, stageOf,
+  NO_OUTCOME_EXPORT, outcomeEventsByJob, outcomeExport, weeklySummary,
 } from '../domain/applicationOutcome.js';
 import { findPlaceholders } from '../config/placeholders.js';
 import { csvCell } from '../reports/csv.js';
@@ -1038,6 +1039,7 @@ function computeDashboardStats(db, now, timeZone = null) {
   // Of the blocked total, how many are the SAME setup problem (no browser).
   // They are counted apart so the action plan says "install the browser"
   // once instead of "N applications need a login or CAPTCHA".
+  applyApplicationScope(stats, db, now);
   try {
     stats.totals.blockedSetup = (db.listAttentionBlockers?.() ?? [])
       .filter((row) => isEnvironmentFailure(row)).length;
@@ -1951,6 +1953,30 @@ export function setJobNote(db, jobId, note) {
   return { id: jobId, notes: value };
 }
 
+/** Board views that describe application work, and so count every search. */
+const APPLICATION_VIEW_KEYS = Object.freeze(['needs_review', 'ready_apply', 'needs_you', 'blocked', 'submitted']);
+
+/**
+ * APPLICATIONS ARE A RECORD, so their counts cover every search.
+ *
+ * The rest of the stats describe the personalized board, and so did these —
+ * while the Applications board showed every application, however it was
+ * found. A job prepared from a role search was on the board but missing from
+ * the "Needs review" badge, the header count and "Approve prepared packets".
+ * The Applications list reads the same all-searches scope, so each of these
+ * numbers still equals the rows it opens. Index-backed; no extra table scan.
+ */
+function applyApplicationScope(stats, db, now) {
+  if (typeof db.listApplicationJobsSummary !== 'function') return; // test stubs keep the scoped counts
+  const rows = applicationRows(db, now);
+  for (const key of APPLICATION_VIEW_KEYS) stats.views[key] = rows.filter(BOARD_VIEWS[key]).length;
+  const count = (test) => rows.filter((r) => test(r.appStatus)).length;
+  stats.totals.pendingReview = count((s) => s === APP_STATUS.NEEDS_REVIEW);
+  stats.totals.readyForSubmit = count((s) => s === APP_STATUS.READY_FOR_SUBMIT);
+  stats.totals.submitUnverified = count((s) => s === APP_STATUS.SUBMIT_UNVERIFIED);
+  stats.totals.blocked = count((s) => VIEW_BLOCKED.has(s));
+}
+
 /* ─────────────────────── applications workspace ───────────────────────
  * Every application as one card in a column, with its recorded outcome, any
  * follow-up reminder, and the next step. Outcomes and follow-ups are events
@@ -1973,15 +1999,10 @@ function applicationRows(db, now) {
 
 /** Outcome and follow-up events per job id, oldest first. */
 function workspaceEvents(db, ids) {
-  const out = new Map(ids.map((id) => [id, []]));
+  if (typeof db.listEventsForJobs === 'function') return outcomeEventsByJob(db, ids);
+  // Test stubs without the indexed read.
   const types = [OUTCOME_EVENT, FOLLOWUP_EVENT];
-  let events = [];
-  if (typeof db.listEventsForJobs === 'function') events = db.listEventsForJobs(ids, types);
-  else if (typeof db.listEvents === 'function') {
-    events = ids.flatMap((id) => db.listEvents(id) ?? []).filter((e) => types.includes(e.event_type));
-  }
-  for (const event of events) out.get(event.job_id)?.push(event);
-  return out;
+  return new Map(ids.map((id) => [id, (db.listEvents?.(id) ?? []).filter((e) => types.includes(e.event_type))]));
 }
 
 /** The next step on a card, worded to fit one. Never an approval or a submit. */
@@ -2064,8 +2085,12 @@ function workspaceOrder(a, b) {
  * @returns {{ generatedAt: string, today: string, stages: object[], items: object[], metrics: object }}
  */
 export function applicationsWorkspace(db, { now = new Date(), config = null } = {}) {
-  const { today, items } = workspaceParts(db, now, config);
-  return { generatedAt: now.toISOString(), today, stages: WORKSPACE_STAGES, items, metrics: applicationMetrics(items) };
+  const { today, items, events } = workspaceParts(db, now, config);
+  const timeZone = candidateTimeZone(config);
+  return {
+    generatedAt: now.toISOString(), today, stages: WORKSPACE_STAGES, items, metrics: applicationMetrics(items),
+    weekly: weeklySummary({ items, eventsByJob: events, today, dayOf: (iso) => dayOf(iso, timeZone) }),
+  };
 }
 
 /** The decorated rows and the cards built from them (shared with Today). */
@@ -2088,7 +2113,7 @@ function workspaceParts(db, now, config) {
   }
   for (const item of items) item.sameCompany = Math.max(0, (perCompany.get(companyKey(item.company)) ?? 1) - 1);
   items.sort(workspaceOrder);
-  return { rows, items, today };
+  return { rows, items, today, events };
 }
 
 /**
@@ -2689,6 +2714,8 @@ export const EXPORT_COLUMNS = Object.freeze([
   ['blockers', 'Blockers'], ['notes', 'Notes'], ['url', 'URL'],
   ['appliedAt', 'Submitted at'], ['createdAt', 'Discovered at'], ['updatedAt', 'Last updated'],
   ['foundVia', 'Found via'],
+  ['outcome', 'Outcome'], ['outcomeDate', 'Outcome date'], ['outcomeHistory', 'Outcome history'],
+  ['followUpDue', 'Follow-up due'],
 ]);
 
 /**
@@ -2711,6 +2738,7 @@ export function buildExportRows(db, { now = new Date(), includeClosed = true } =
   }
   // Same shared-cached-array hazard as boardPage's sort — copy before sorting.
   rows = rows.slice().sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+  const outcomeEvents = outcomeEventsByJob(db, rows.filter((r) => r.appStatus === APP_STATUS.SUBMITTED).map((r) => r.id));
   return rows.map((r) => ({
     company: r.company ?? '',
     title: r.title ?? '',
@@ -2739,6 +2767,7 @@ export function buildExportRows(db, { now = new Date(), includeClosed = true } =
     foundVia: r.discoveryMode === 'role_search'
       ? `Role search: ${r.searchQuery ?? 'unnamed'}`
       : 'My profile',
+    ...(r.appStatus === APP_STATUS.SUBMITTED ? outcomeExport(outcomeEvents.get(r.id) ?? []) : NO_OUTCOME_EXPORT),
   }));
 }
 

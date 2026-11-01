@@ -89,7 +89,13 @@ export function filterParams({ forCount = false } = {}) {
   // Scope every board read to the active mode. Omitted for 'profile' because
   // that is the server's default too, so an older client and a newer server
   // agree on what an unscoped request means.
-  if (state.discoveryMode === 'role_search') {
+  // Applications are a RECORD of your own work, so that view reads every
+  // search, as the Applications board, the exports and the stats' application
+  // counts do. A job prepared from a role search no longer vanishes from the
+  // list the moment you leave that search.
+  const applications = state.view === 'applications';
+  if (applications) p.set('discoveryMode', 'all');
+  else if (state.discoveryMode === 'role_search') {
     p.set('discoveryMode', 'role_search');
     if (state.roleQuery) p.set('searchQuery', state.roleQuery);
   }
@@ -106,7 +112,7 @@ export function filterParams({ forCount = false } = {}) {
     // different set of rows than the tabs would open — the same
     // "count doesn't match what clicking it opens" fault the board's own
     // filters were built to prevent.
-    if (hasActiveFilters() || state.discoveryMode === 'role_search') {
+    if (hasActiveFilters() || (!applications && state.discoveryMode === 'role_search')) {
       p.set('withViewCounts', 'true');
     }
   }

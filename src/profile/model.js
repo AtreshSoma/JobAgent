@@ -249,6 +249,32 @@ export function normalizeProfile(input = {}) {
   };
 }
 
+/**
+ * Employment-type spellings -> the tokens candidate.schema.json accepts.
+ *
+ * The profile takes free text ("Full-time", "full_time", "permanent"), and the
+ * board's own filter speaks `full_time`; the schema accepts only seven tokens.
+ * A profile saying "Full-time" therefore could not be activated at all — the
+ * whole profile was refused as "would write an invalid candidate.json".
+ */
+const EMPLOYMENT_TOKENS = Object.freeze({
+  'full time': 'fulltime', fulltime: 'fulltime', permanent: 'fulltime', 'direct hire': 'fulltime',
+  'part time': 'parttime', parttime: 'parttime',
+  contract: 'contract', contractor: 'contract', freelance: 'contract', temporary: 'contract', temp: 'contract',
+  'contract to hire': 'contract-to-hire', c2h: 'contract-to-hire', 'temp to perm': 'contract-to-hire',
+  w2: 'W2', c2c: 'c2c', 'corp to corp': 'c2c', 1099: '1099',
+});
+
+/** Schema tokens for a list of employment-type spellings; unknown ones are dropped. */
+export function canonicalEmploymentTypes(types = []) {
+  const out = [];
+  for (const raw of Array.isArray(types) ? types : []) {
+    const token = EMPLOYMENT_TOKENS[normalizeText(String(raw).replace(/[_-]+/g, ' '))];
+    if (token && !out.includes(token)) out.push(token);
+  }
+  return out;
+}
+
 /** A stable, filename-safe id. */
 export function slugify(value) {
   const slug = normalizeText(value).replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
@@ -380,7 +406,7 @@ export function toCandidateConfig(profile, { expandedRoles = [], anchorRoles, ad
     adjacentTitles,
     seniority: intent.seniority || background.seniority || 'mid',
     employmentPreferences: {
-      types: intent.employmentTypes,
+      types: canonicalEmploymentTypes(intent.employmentTypes),
       minContractMonths: intent.minContractMonths ?? 0,
       requiresW2: intent.employmentTypes.some((t) => normalizeText(t) === 'w2'),
     },
