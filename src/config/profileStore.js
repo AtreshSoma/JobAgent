@@ -60,7 +60,7 @@ export const PROFILE_FIELDS = Object.freeze([
   { field: 'zip', path: 'location.zip', label: 'ZIP / postal code' },
   { field: 'country', path: 'location.country', label: 'Country', required: true },
   { field: 'linkedin', path: 'identity.links.linkedin', label: 'LinkedIn URL', type: 'url' },
-  { field: 'github', path: 'identity.links.github', label: 'GitHub URL', type: 'url' },
+  { field: 'github', path: 'identity.links.github', label: 'GitHub URL', type: 'url', hint: 'Optional. Mostly asked by software and data roles; leave blank if it does not apply.' },
   { field: 'portfolio', path: 'identity.links.portfolio', label: 'Portfolio / website', type: 'url' },
 ]);
 

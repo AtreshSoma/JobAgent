@@ -217,10 +217,13 @@ export function detailSections(job) {
   }));
   const headMain = el('div', { class: 'grow-1' });
   headMain.append(el('h2', { class: 'detail-title', text: `${job.company || 'Company on posting'} — ${job.title}` }));
-  const fullMeta = [job.location, job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
-    job.atsPlatform ? `ATS ${job.atsPlatform}` : null].filter(Boolean).join(' · ');
-  const meta = [compactLocation(job.location), job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`,
-    job.atsPlatform ? `ATS ${job.atsPlatform}` : null].filter(Boolean).join(' · ');
+  // "via greenhouse · ATS greenhouse" said one fact twice: when a job was
+  // found on the employer's own application system, name it once.
+  const ats = job.atsPlatform && job.atsPlatform !== job.source ? `applies on ${job.atsPlatform}` : null;
+  const fullMeta = [job.location, job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`, ats]
+    .filter(Boolean).join(' · ');
+  const meta = [compactLocation(job.location), job.remote ? 'remote' : null, job.postedLabel, `via ${job.source}`, ats]
+    .filter(Boolean).join(' · ');
   headMain.append(el('div', { class: 'muted detail-meta', title: fullMeta, text: meta }));
 
   const chips = el('div', { class: 'chiprow' });
@@ -232,7 +235,7 @@ export function detailSections(job) {
   chips.append(el('span', {
     class: `chip ${esc(job.sponsorship ?? '')}`,
     title: sponsorshipTitle(job),
-    text: `sponsorship: ${job.sponsorship ?? 'unknown'}`,
+    text: `Sponsorship: ${job.sponsorship ?? 'unknown'}`,
   }));
   if (job.employmentLabel) chips.append(el('span', { class: 'chip', text: job.employmentLabel }));
   chips.append(el('span', { class: `chip st-${job.appStatus}`, text: statusLabel(job) }));
@@ -288,7 +291,8 @@ export function detailSections(job) {
   }
 
   // next best action
-  out.push(railSection('next', el('h3', { text: 'Do this next' }), nextBestAction(job)));
+  const next = nextBestAction(job);
+  out.push(railSection('next', el('h3', { text: 'Do this next' }), next));
 
   // After a submission, what the employer did and when to chase it. Right
   // under the next step, because once applied this IS the next step.
@@ -319,9 +323,13 @@ export function detailSections(job) {
     actions.append(el('span', { class: 'chip bad', title: 'This job has no application URL stored', text: 'no posting URL' }));
   }
   more.append(el('button', { class: 'small', 'data-action': 'open-link-dialog', 'data-id': job.id, text: 'Replace URL' }));
+  // A decision "Do this next" already offers is not offered again one row
+  // down — Shortlist sat in both. It moves into "More actions", so it is
+  // still reachable from the same place as every other decision.
+  const offered = new Set([...next.querySelectorAll('[data-action="decide"]')].map((b) => b.dataset.decision));
   for (const [decision, label, visible] of [['shortlisted', '★ Shortlist', true], ['rejected', '✕ Reject', true],
     ['archived', 'Archive', false], ['clear', 'Clear', false]]) {
-    (visible ? actions : more).append(el('button', {
+    (visible && !offered.has(decision) ? actions : more).append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
     }));
   }
@@ -516,7 +524,9 @@ const ATS_BANDS = Object.freeze({
 /** Why a job was closed. Order is the order the chips are offered in. */
 export const DECISION_REASONS = [
   ['salary', 'Salary'], ['location', 'Location'], ['seniority', 'Seniority'],
-  ['sponsorship', 'Sponsorship'], ['stack', 'Stack'], ['company', 'Company'],
+  // Key `stack` is stored data and stays; its LABEL is the profession-neutral
+  // word — "Stack" only meant something to software roles.
+  ['sponsorship', 'Sponsorship'], ['stack', 'Skills'], ['company', 'Company'],
   ['stale', 'Stale'], ['other', 'Other'],
 ];
 export const reasonLabel = (key) => DECISION_REASONS.find(([k]) => k === key)?.[1] ?? String(key ?? '');
@@ -719,7 +729,7 @@ export function nextBestAction(job) {
   return box;
 }
 
-export const autofillButton = (id, label = '⚡ Auto-fill application') => {
+export const autofillButton = (id, label = 'Auto-fill application') => {
   const blocked = autofillBlockedReason();
   return el('button', {
     class: 'small primary', 'data-action': 'autofill-one', 'data-id': id,
@@ -731,8 +741,8 @@ export const autofillButton = (id, label = '⚡ Auto-fill application') => {
 
 /** Where the filler's inputs live — offered wherever an auto-fill can stall. */
 export const setupLinks = () => [
-  el('button', { class: 'small ghost', 'data-action': 'open-profile', title: 'What the filler types, and how it answers form questions', text: '👤 Application profile' }),
-  el('button', { class: 'small ghost', 'data-action': 'open-master', title: 'The resume every tailored version is built from', text: '🧾 Master resume' }),
+  el('button', { class: 'small ghost', 'data-action': 'open-profile', title: 'What the filler types, and how it answers form questions', text: 'Application profile' }),
+  el('button', { class: 'small ghost', 'data-action': 'open-master', title: 'The resume every tailored version is built from', text: 'Master resume' }),
 ];
 
 export function actionPlan(job) {
@@ -767,7 +777,7 @@ export function actionPlan(job) {
     return {
       text: 'Packet is prepared. Review the tailored resume, then auto-fill opens the application and stops for your review.',
       buttons: [
-        el('button', { class: 'small primary', 'data-action': 'preview-resume', 'data-id': job.id, text: '👁 Review resume' }),
+        el('button', { class: 'small primary', 'data-action': 'preview-resume', 'data-id': job.id, text: 'Review resume' }),
         autofillButton(job.id),
         el('button', { class: 'small', 'data-action': 'approve', 'data-id': job.id, text: '✓ Approve only' }),
       ],
@@ -779,7 +789,7 @@ export function actionPlan(job) {
       buttons: [el('button', {
         class: 'small primary', 'data-action': 'assist', 'data-id': job.id, text: '▶ Fill in browser',
         disabled: Boolean(autofillBlockedReason()), title: autofillBlockedReason(),
-      }), el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': job.id, text: '👁 Resume' })],
+      }), el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': job.id, text: 'View resume' })],
     };
   }
   if (job.appStatus === 'ready_for_submit') {
@@ -840,7 +850,7 @@ export function actionPlan(job) {
     return {
       text: 'Shortlisted — auto-fill prepares the tailored packet and fills the application in one pass.',
       buttons: [autofillButton(job.id), el('button', {
-        class: 'small', 'data-action': 'prepare-one', 'data-id': job.id, text: '📄 Prepare only',
+        class: 'small', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare only',
       })],
     };
   }
@@ -897,16 +907,16 @@ export function resumeCard(job) {
     card.append(head);
     card.append(el('div', { class: 'muted', text: 'No tailored resume yet. Prepare this job to generate one from your master resume.' }));
     card.append(el('div', { class: 'actions' },
-      el('button', { class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: '📄 Prepare resume' }),
+      el('button', { class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare resume' }),
       el('button', {
         class: 'small ghost', 'data-action': 'open-master',
         title: 'View, edit, or replace the master resume every tailored version is built from.',
-        text: '🧾 Master resume',
+        text: 'Master resume',
       }),
       el('button', {
         class: 'small ghost', 'data-action': 'open-profile',
         title: 'The details and answers the form filler uses on every application.',
-        text: '👤 Application profile',
+        text: 'Application profile',
       })));
     return card;
   }
@@ -945,7 +955,7 @@ export function resumeCard(job) {
     }));
   }
   links.append(el('a', {
-    class: 'btn small', href: `/api/jobs/${encodeURIComponent(job.id)}/resume?format=docx`, text: '⬇ DOCX',
+    class: 'btn small', href: `/api/jobs/${encodeURIComponent(job.id)}/resume?format=docx`, text: 'Download DOCX',
   }));
   links.append(el('button', {
     class: 'small', 'data-action': 'prepare-one', 'data-id': job.id,
@@ -1106,7 +1116,7 @@ export async function openResumePreview(id) {
     links.append(el('a', {
       class: 'btn small', href: ready.url, target: '_blank', rel: 'noopener', text: 'Full size ↗',
     }), el('a', {
-      class: 'btn small', href: `/api/jobs/${encodeURIComponent(id)}/resume?format=docx`, text: '⬇ DOCX',
+      class: 'btn small', href: `/api/jobs/${encodeURIComponent(id)}/resume?format=docx`, text: 'Download DOCX',
     }));
   } catch (err) {
     status.className = 'preview-status bad';

@@ -17,7 +17,7 @@ import { adoptResumeSelection, chooseResumeProfile, openMasterResume, openMergeP
 import { download, openHealth, openProfile, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
 import { applyRunGate, openRuns, pollRun, setRunDetails } from './runs.js';
 import { closeMainMenu, toggleMenu } from './menus.js';
-import { applyViewPrefs, hiddenColumns, onFilterChange, savePreference, setFilterSheet } from './main.js';
+import { applyViewPrefs, hiddenColumns, onFilterChange, savePreference, setFilterSheet, syncThemeControl } from './main.js';
 import {
   closeMoveMenu, followUp, openApplicationDetail, openMoveMenu, recordOutcome, setAppsLayout, undoLastOutcome, workspaceAct,
 } from './workspace.js';
@@ -61,6 +61,9 @@ export const ACTIONS = {
     applyRunGate(state.lastRunStatus);
   },
   'toggle-menu': () => toggleMenu($('mainMenu')),
+  'toggle-activity-menu': () => toggleMenu($('activityMenu')),
+  'toggle-account-menu': () => toggleMenu($('accountMenu')),
+  'toggle-bulk-menu': () => toggleMenu($('bulkMenu')),
   'toggle-theme': () => {
     // The attribute is ABSENT until a theme is chosen, so it cannot be read as
     // "the current theme" — doing so made the first click compute
@@ -73,6 +76,7 @@ export const ACTIONS = {
     const next = current === 'light' ? 'dark' : 'light';
     document.documentElement.dataset.theme = next;
     savePreference('theme', next);
+    syncThemeControl();
   },
   'open-keys': () => openDialog($('dlgKeys')),
   'toggle-analytics': (target) => {
@@ -551,7 +555,10 @@ document.addEventListener('click', (event) => {
   // on a View-menu item — ticking two columns should not cost two round trips
   // back to the button. Choosing a header-menu item used to LEAVE it open,
   // hanging over the page behind it.
-  const KEEP_MENU_OPEN = ['toggle-menu', 'toggle-view-menu', 'set-density', 'toggle-column'];
+  const KEEP_MENU_OPEN = [
+    'toggle-menu', 'toggle-activity-menu', 'toggle-account-menu', 'toggle-bulk-menu',
+    'toggle-view-menu', 'set-density', 'toggle-column',
+  ];
   if (!KEEP_MENU_OPEN.includes(target?.dataset.action)) closeMainMenu({ returnFocus: true });
   if (!$('runDetails').hidden && !$('runbox').contains(event.target)) setRunDetails(false);
   if (!target) return;

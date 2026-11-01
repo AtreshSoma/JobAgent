@@ -109,6 +109,6 @@ export async function openDocuments() {
       d.atsScore != null ? `${d.atsScore}%` : '—',
       d.tailoring?.changeCount ?? '—',
       d.tailoring?.gapCount ?? '—',
-      el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': d.jobId, text: '👁 View' }),
+      el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': d.jobId, text: 'View' }),
     ])));
 }

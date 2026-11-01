@@ -9,6 +9,8 @@ import { confirmAction, openDialog } from './dialogs.js';
 import { scheduleRefresh } from './mutations.js';
 import { autofillBlockedReason } from './today.js';
 import { pollRun } from './runs.js';
+import { closeMenu } from './menus.js';
+import { bulkStepReasons, primaryBulkStep } from './bulk.js';
 
 /* ───────────────────────── selection ───────────────────────── */
 
@@ -26,17 +28,47 @@ export function syncSelectAll() {
   box.indeterminate = !all && some;
 }
 
+/** What each bulk step does, shown when it is available. */
+const STEP_TITLES = {
+  prepare: 'Tailor a resume and build an application packet for each selected job.',
+  approve: 'Approve the prepared packets of the selected jobs.',
+  autofill: 'Prepare if needed, approve, open each posting, and fill it — always stopping before Submit.',
+  compare: 'Compare the selected jobs side by side (up to 4).',
+};
+const STEP_ACTIONS = {
+  prepare: 'batch-prepare', approve: 'batch-approve', autofill: 'batch-autofill', compare: 'compare',
+};
+
+let lastAnnounced = 0;
+
 export function syncSelectionBar() {
   const n = state.selected.size;
+  const bar = $('selbar');
   $('selCount').textContent = `${n} selected`;
-  $('selbar').dataset.open = String(n > 0);
-  $('cmpBtn').disabled = n < 2;
-  const autofill = $('autoApplyBtn');
-  const blocked = autofillBlockedReason();
-  autofill.disabled = n === 0 || state.running || Boolean(blocked);
-  autofill.title = blocked ?? (state.running
-    ? 'A run is in progress — wait for it to finish'
-    : 'Prepare if needed, approve, open each posting, and fill it — always stopping before Submit.');
+  bar.dataset.open = String(n > 0);
+  if (n === 0) closeMenu($('bulkMenu'));
+
+  const jobs = [...state.selected].map((id) => state.known.get(id)).filter(Boolean);
+  const reasons = bulkStepReasons(n, jobs, { running: state.running, blocked: autofillBlockedReason() });
+  const primary = primaryBulkStep(jobs, reasons);
+  bar.dataset.primary = primary;
+  for (const [step, action] of Object.entries(STEP_ACTIONS)) {
+    // The bar's button AND its overflow-menu twin, kept in step.
+    for (const button of bar.querySelectorAll(`[data-action="${action}"]`)) {
+      button.disabled = n === 0 || Boolean(reasons[step]);
+      button.title = reasons[step] ?? STEP_TITLES[step];
+      if (button.closest('.selbar-pipeline')) button.classList.toggle('primary', step === primary);
+    }
+  }
+  // Disabled buttons cannot be focused, so their reasons are also written
+  // where a screen reader reads the toolbar's description.
+  const unavailable = Object.values(reasons).filter(Boolean);
+  $('selHint').textContent = unavailable.length ? `Unavailable: ${[...new Set(unavailable)].join('. ')}.` : '';
+
+  if (n !== lastAnnounced) {
+    $('selAnnounce').textContent = n ? `${n} job${n === 1 ? '' : 's'} selected` : 'Selection cleared';
+    lastAnnounced = n;
+  }
 }
 
 export function clearSelection() {
@@ -45,6 +77,31 @@ export function clearSelection() {
   for (const box of $('rows').querySelectorAll('input[type=checkbox]')) box.checked = false;
   syncSelectAll();
 }
+
+/*
+ * Toolbar keys. ←/→ (and Home/End) move between the bar's buttons, as the
+ * toolbar role promises; Tab still moves through them too. Escape clears the
+ * selection — unless a menu is open, which takes Escape first — and returns
+ * focus to select-all, the control that begins a selection.
+ */
+$('selbar').addEventListener('keydown', (event) => {
+  if (event.target.closest('[role="menu"]')) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    event.stopPropagation();
+    clearSelection();
+    $('selAll').focus();
+    return;
+  }
+  const buttons = [...$('selbar').querySelectorAll('.selbar-inner > button, .selbar-inner > .selbar-group > button, .selbar-inner > .menu > button')]
+    .filter((b) => !b.disabled && b.offsetParent !== null);
+  const at = buttons.indexOf(document.activeElement);
+  if (at === -1) return;
+  const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: buttons.length - 1 }[event.key];
+  if (next === undefined) return;
+  event.preventDefault();
+  buttons[(next + buttons.length) % buttons.length].focus();
+});
 
 /**
  * Resolve every selected id to a row. Selections survive page/tab changes, so

@@ -59,16 +59,76 @@
     </div>
   </nav>
 
+  <!-- Utilities, then the one primary action at the far right.
+       The header menu used to be ONE list of twenty items: run actions,
+       résumé files, reports, exports and settings in a single column, so
+       finding "Run history" meant reading past "Master resume". It is now
+       three menus, each answering one question:
+         Find jobs ▾   what can I START
+         Activity      what HAPPENED (runs, data quality, health, reports)
+         Profile       what the agent knows about ME (résumé, answers, prefs)
+       and the theme is a one-click toggle instead of the twentieth item. -->
   <div class="actions-group">
-    <!-- A split button: the everyday action on the face, the rest one click
-         away. It replaced four same-weight buttons that made every visit
-         start with "which one do I press?". -->
+    <button type="button" class="iconbtn theme-toggle" data-action="toggle-theme"
+      aria-label="Switch to light theme" title="Switch to light theme">
+      <svg class="ic-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>
+      <svg class="ic-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+    </button>
+
+    <span class="menu utilmenu">
+      <button type="button" class="iconbtn" data-action="toggle-activity-menu" aria-haspopup="true"
+        aria-expanded="false" aria-controls="activityMenu"
+        aria-label="Activity, data quality and reports" title="Activity, data quality and reports">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></svg>
+      </button>
+      <div class="menu-pop" id="activityMenu" role="menu" aria-label="Activity, data quality and reports">
+        <div class="menu-label" role="presentation">Activity</div>
+        <button role="menuitem" data-action="open-runs">Run history</button>
+        <button role="menuitem" data-action="open-data-quality"
+          title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Discovery and data quality</button>
+        <button role="menuitem" data-action="open-health">System health</button>
+        <hr role="separator">
+        <div class="menu-label" role="presentation">Reports and exports</div>
+        <button role="menuitem" data-action="open-reports">View reports</button>
+        <button role="menuitem" data-action="export-jobs">Export all jobs and scores (CSV)</button>
+        <button role="menuitem" data-action="export-tracker">Export application tracker (CSV)</button>
+      </div>
+    </span>
+
+    <span class="menu utilmenu">
+      <button type="button" class="iconbtn" data-action="toggle-account-menu" aria-haspopup="true"
+        aria-expanded="false" aria-controls="accountMenu"
+        aria-label="Profile, resume and preferences" title="Profile, resume and preferences">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
+      </button>
+      <div class="menu-pop" id="accountMenu" role="menu" aria-label="Profile, resume and preferences">
+        <div class="menu-label" role="presentation">Your materials</div>
+        <button role="menuitem" data-action="open-master"
+          title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>
+        <button role="menuitem" data-action="open-profile"
+          title="The name, contact details and links the form filler types on every application, plus how it answers the questions forms ask.">Application profile</button>
+        <button role="menuitem" data-action="open-documents">Resume library</button>
+        <hr role="separator">
+        <div class="menu-label" role="presentation">Preferences</div>
+        <!-- The header's theme button gives way on a phone; this keeps the
+             choice one tap away there. Hidden items are skipped by the
+             menu's arrow keys (menus.js filters on offsetParent). -->
+        <button role="menuitem" class="only-narrow" data-action="toggle-theme">Switch light or dark</button>
+        <button role="menuitem" data-action="open-keys">Keyboard shortcuts</button>
+        <a role="menuitem" class="btn" href="/learn/" target="_blank" rel="noopener">Interview Prep</a>
+      </div>
+    </span>
+
+    <span class="actions-sep" aria-hidden="true"></span>
+
+    <!-- A split button: the everyday action on the face, its siblings — the
+         other ways to START work — one click away. -->
     <div class="split menu">
       <button id="btnDiscover" class="runBtn primary split-main" data-action="run" data-phase="discover"
         title="Search every configured job board, score each match against your profile, and update the board.">Find jobs</button>
       <button type="button" class="primary split-toggle" data-action="toggle-menu" aria-haspopup="true"
-        aria-expanded="false" aria-controls="mainMenu" aria-label="More actions"><span class="chev" aria-hidden="true"></span></button>
-      <div class="menu-pop" id="mainMenu" role="menu" aria-label="Actions">
+        aria-expanded="false" aria-controls="mainMenu" aria-label="More ways to find jobs"><span class="chev" aria-hidden="true"></span></button>
+      <div class="menu-pop" id="mainMenu" role="menu" aria-label="Find jobs">
         <button id="btnPrepare" class="runBtn" role="menuitem" data-action="run" data-phase="prepare"
           title="Full pass: find new jobs, score them, and tailor a resume packet for every strong match.">
           <span class="mi-title">Find jobs and prepare packets</span>
@@ -87,25 +147,6 @@
         <hr role="separator">
         <button id="btnRoleSearch" role="menuitem" data-action="open-job-search">Search by job role</button>
         <button role="menuitem" data-action="sweep-postings">Remove closed postings</button>
-        <button role="menuitem" data-action="open-runs">Run history</button>
-        <button role="menuitem" data-action="open-data-quality"
-          title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Discovery and data quality</button>
-        <div class="menu-label">Your materials</div>
-        <button role="menuitem" data-action="open-master"
-          title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>
-        <button role="menuitem" data-action="open-profile"
-          title="The name, contact details and links the form filler types on every application, plus how it answers the questions forms ask.">Application profile</button>
-        <button role="menuitem" data-action="open-documents">Resume library</button>
-        <hr role="separator">
-        <div class="menu-label">Reports and exports</div>
-        <button role="menuitem" data-action="open-reports">View reports</button>
-        <button role="menuitem" data-action="export-jobs">Export all jobs and scores (CSV)</button>
-        <button role="menuitem" data-action="export-tracker">Export application tracker (CSV)</button>
-        <hr role="separator">
-        <button role="menuitem" data-action="open-health">System health</button>
-        <a role="menuitem" class="btn" href="/learn/" target="_blank" rel="noopener">Interview Prep</a>
-        <button role="menuitem" data-action="open-keys">Keyboard shortcuts</button>
-        <button role="menuitem" data-action="toggle-theme">Switch light or dark</button>
       </div>
     </div>
   </div>
@@ -376,6 +417,83 @@
          elements, which strips their implicit table semantics in every engine.
          Stating them keeps the board a table on a phone. -->
     <div class="boardwrap" id="boardwrap" role="tabpanel" tabindex="-1">
+      <!-- THE BULK-ACTION BAR, DOCKED ON THE TABLE'S OWN HEADER ROW.
+           It used to float at the bottom of the window, over whichever rows
+           happened to be there, and wrap into a three-line block on a phone.
+           Now, when rows are ticked, it slides over the column headers it
+           replaces (select-all stays visible beside it), sticks with them as
+           the board scrolls, and costs no layout shift: the wrapper is 0px
+           tall, so ticking the first box never moves the row under the
+           pointer. On a phone it becomes a floating bar above the thumb.
+
+           SAFETY: this is presentation only. Every button dispatches the same
+           action as before (batch-autofill, batch-prepare, batch-approve,
+           batch-decide, compare). Auto-fill still confirms first and still
+           stops before Submit; nothing here can submit an application. -->
+      <div id="selbar" role="toolbar" aria-label="Bulk actions for selected jobs"
+        aria-describedby="selHint" aria-orientation="horizontal" data-open="false">
+        <div class="selbar-inner">
+          <span class="selbar-count"><b id="selCount">0 selected</b></span>
+          <button type="button" class="small ghost selbar-clear" data-action="clear-selection"
+            aria-label="Clear selection" title="Clear selection (Esc)">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            <span class="lbl">Clear</span>
+          </button>
+          <span class="selbar-sep" aria-hidden="true"></span>
+          <div class="selbar-group selbar-decide" role="group" aria-label="Decide">
+            <button type="button" class="small ghost" data-action="batch-decide" data-decision="shortlisted"
+              title="Shortlist the selected jobs. Undo is offered.">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>
+              <span class="lbl">Shortlist</span>
+            </button>
+            <button type="button" class="small ghost selbar-wide" data-action="batch-decide" data-decision="rejected"
+              title="Mark the selected jobs as not for you. Undo is offered, and you can say why.">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+              <span class="lbl">Reject</span>
+            </button>
+            <button type="button" class="small ghost selbar-wide" data-action="batch-decide" data-decision="archived"
+              title="Archive the selected jobs. Undo is offered.">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5M10 12.5h4"/></svg>
+              <span class="lbl">Archive</span>
+            </button>
+          </div>
+          <button type="button" class="small ghost selbar-wide" id="cmpBtn" data-action="compare" disabled
+            title="Select 2 to 4 jobs to compare">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="4.5" width="7" height="15" rx="1.5"/><rect x="13.5" y="4.5" width="7" height="15" rx="1.5"/></svg>
+            <span class="lbl">Compare</span>
+          </button>
+          <span class="spacer"></span>
+          <!-- The pipeline steps. Exactly one carries `primary`, chosen from
+               where the selected jobs actually are (selection.js): Approve
+               when packets are waiting, Auto-fill when they are approved,
+               otherwise Prepare. -->
+          <div class="selbar-group selbar-pipeline" role="group" aria-label="Apply">
+            <button type="button" class="small" data-action="batch-prepare" data-step="prepare"
+              title="Tailor a resume and build an application packet for each selected job.">Prepare</button>
+            <button type="button" class="small" data-action="batch-approve" data-step="approve"
+              title="Approve prepared packets.">Approve</button>
+            <button type="button" id="autoApplyBtn" class="small" data-action="batch-autofill" data-step="autofill"
+              title="Prepare a packet if needed, approve it, open each posting in a browser, and fill it, always stopping before Submit.">Auto-fill</button>
+          </div>
+          <span class="menu selbar-more">
+            <button type="button" class="small ghost iconbtn" data-action="toggle-bulk-menu" aria-haspopup="true"
+              aria-expanded="false" aria-controls="bulkMenu" aria-label="More bulk actions" title="More bulk actions">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/></svg>
+            </button>
+            <div class="menu-pop" id="bulkMenu" role="menu" aria-label="More bulk actions">
+              <button role="menuitem" data-action="batch-prepare" data-step="prepare">Prepare packets</button>
+              <button role="menuitem" data-action="batch-approve" data-step="approve">Approve packets</button>
+              <button role="menuitem" data-action="batch-autofill" data-step="autofill">Auto-fill (stops before Submit)</button>
+              <button role="menuitem" data-action="compare" data-step="compare">Compare</button>
+              <hr role="separator">
+              <button role="menuitem" class="bulk-narrowest" data-action="batch-decide" data-decision="shortlisted">Shortlist</button>
+              <button role="menuitem" data-action="batch-decide" data-decision="rejected">Reject</button>
+              <button role="menuitem" data-action="batch-decide" data-decision="archived">Archive</button>
+            </div>
+          </span>
+        </div>
+      </div>
+      <p id="selHint" class="sr-only"></p>
       <table id="board" role="table">
         <caption class="sr-only">Discovered jobs with fit, sponsorship, resume, and application status</caption>
         <thead role="rowgroup">
@@ -547,18 +665,10 @@
 </main>
 
 
-<div id="selbar" role="region" aria-label="Bulk actions">
-  <span id="selCount">0 selected</span>
-  <button id="autoApplyBtn" class="small primary" data-action="batch-autofill"
-    title="Prepare a packet if needed, approve it, open each posting in a browser, and fill it, always stopping before Submit.">Auto-fill</button>
-  <button class="small" data-action="batch-prepare" title="Tailor a resume and build an application packet for each selected job.">Prepare</button>
-  <button class="small" data-action="batch-approve" title="Approve prepared packets.">Approve</button>
-  <button class="small" data-action="batch-decide" data-decision="shortlisted">Shortlist</button>
-  <button class="small" data-action="batch-decide" data-decision="rejected">Reject</button>
-  <button class="small" data-action="batch-decide" data-decision="archived">Archive</button>
-  <button class="small" id="cmpBtn" data-action="compare" disabled>Compare</button>
-  <button class="small ghost" data-action="clear-selection">Clear</button>
-</div>
+<!-- Selection changes, said once, politely. Outside the bar: a live region
+     inside an element that becomes visible at the same moment is announced
+     unreliably. -->
+<p id="selAnnounce" class="sr-only" role="status" aria-live="polite"></p>
 
 <!-- A colophon, not a byline. Attribution belongs at the END of the document,
      after the work it refers to — never floated over the board, where it would
@@ -598,7 +708,7 @@
 <dialog id="dlgAddUrl" class="narrow" aria-labelledby="dlgAddUrlTitle">
   <div class="dlg-head">
     <h2 id="dlgAddUrlTitle">Add a job by URL</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <form method="dialog" class="dlg-form" data-submit="submit-add-url">
   <div class="dlg-body">
@@ -618,7 +728,7 @@
 <dialog id="dlgJobSearch" class="narrow" aria-labelledby="dlgJobSearchTitle">
   <div class="dlg-head">
     <h2 id="dlgJobSearchTitle">Search job boards</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <form method="dialog" class="dlg-form" data-submit="submit-job-search">
   <div class="dlg-body">
@@ -645,7 +755,7 @@
 <dialog id="dlgSubmit" class="narrow" aria-labelledby="dlgSubmitTitle">
   <div class="dlg-head">
     <h2 id="dlgSubmitTitle">Record your submission</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <form method="dialog" class="dlg-form" data-submit="confirm-submitted">
   <div class="dlg-body">
@@ -667,7 +777,7 @@
 <dialog id="dlgLink" class="narrow" aria-labelledby="dlgLinkTitle">
   <div class="dlg-head">
     <h2 id="dlgLinkTitle">Replace the application URL</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <form method="dialog" class="dlg-form" data-submit="submit-link">
   <div class="dlg-body">
@@ -692,7 +802,7 @@
     </div>
     <div class="row-gap">
       <span id="dlgResumeLinks"></span>
-      <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+      <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
     </div>
   </div>
   <div class="dlg-body">
@@ -704,7 +814,7 @@
 <dialog id="dlgReports" class="sheet" aria-labelledby="dlgReportsTitle">
   <div class="dlg-head">
     <h2 id="dlgReportsTitle">Reports</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="reportsBody"></div>
 </dialog>
@@ -712,7 +822,7 @@
 <dialog id="dlgRuns" class="sheet" aria-labelledby="dlgRunsTitle">
   <div class="dlg-head">
     <h2 id="dlgRunsTitle">Run history</h2>
-    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="runsBody"></div>
 </dialog>
@@ -723,7 +833,7 @@
       <h2 id="dlgMasterTitle">Master resume</h2>
       <div class="muted subtle-sub">The one document every tailored resume is built from. Opened read-only, never edited in place.</div>
     </div>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="masterBody"></div>
   <div class="dlg-foot">
@@ -745,7 +855,7 @@
       <h2 id="dlgProfileTitle">Application profile</h2>
       <div class="muted subtle-sub">What the filler types on every application, and how it answers what forms ask.</div>
     </div>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="profileBody"></div>
   <div class="dlg-foot">
@@ -757,7 +867,7 @@
 <dialog id="dlgDocuments" class="sheet" aria-labelledby="dlgDocumentsTitle">
   <div class="dlg-head">
     <h2 id="dlgDocumentsTitle">Resume library</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="documentsBody"></div>
 </dialog>
@@ -765,7 +875,7 @@
 <dialog id="dlgCompare" class="sheet" aria-labelledby="dlgCompareTitle">
   <div class="dlg-head">
     <h2 id="dlgCompareTitle">Compare jobs</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="compareBody"></div>
 </dialog>
@@ -773,7 +883,7 @@
 <dialog id="dlgDataQuality" class="sheet" aria-labelledby="dlgDataQualityTitle">
   <div class="dlg-head">
     <h2 id="dlgDataQualityTitle">Discovery and data quality</h2>
-    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="dataQualityBody"></div>
 </dialog>
@@ -781,7 +891,7 @@
 <dialog id="dlgHealth" class="sheet" aria-labelledby="dlgHealthTitle">
   <div class="dlg-head">
     <h2 id="dlgHealthTitle">System health</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="healthBody"></div>
 </dialog>
@@ -792,7 +902,7 @@
 <dialog id="dlgDetail" class="detail-sheet" aria-labelledby="dlgDetailTitle">
   <div class="dlg-head">
     <h2 id="dlgDetailTitle" tabindex="-1">Job detail</h2>
-    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close job detail">✕</button>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close job detail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body" id="dlgDetailBody"></div>
 </dialog>
@@ -804,7 +914,7 @@
 <dialog id="dlgKeys" class="narrow" aria-labelledby="dlgKeysTitle">
   <div class="dlg-head">
     <h2 id="dlgKeysTitle">Keyboard shortcuts</h2>
-    <button type="button" class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <div class="dlg-body">
     <dl class="keys">
@@ -826,7 +936,7 @@
 <dialog id="dlgConfirm" class="narrow" aria-labelledby="dlgConfirmTitle">
   <div class="dlg-head">
     <h2 id="dlgConfirmTitle">Confirm</h2>
-    <button class="small ghost" data-action="close-dialog" aria-label="Close">✕</button>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
   <form method="dialog" class="dlg-form" data-submit="confirm-go">
   <div class="dlg-body"><div id="confirmBody"></div></div>

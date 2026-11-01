@@ -6,7 +6,7 @@ import { api } from './api.js';
 import { filterParams, renderActiveFilters, TABS } from './filters.js';
 import { renderTabs } from './analytics.js';
 import { cssEscape, isAggregatorUrl } from './detail.js';
-import { syncSelectAll } from './selection.js';
+import { syncSelectAll, syncSelectionBar } from './selection.js';
 import { hasActiveFilters } from './main.js';
 import { freshnessOf } from './format.js';
 
@@ -109,6 +109,9 @@ export async function loadBoard() {
   renderPager(page);
   renderTabs();
   syncSelectAll();
+  // Fresh rows can move a selected job along the pipeline (an approve just
+  // landed), which changes which bulk step deserves the primary button.
+  syncSelectionBar();
   renderActiveFilters();
 }
 

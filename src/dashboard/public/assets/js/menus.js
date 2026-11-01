@@ -17,7 +17,13 @@ import { $ } from './dom.js';
  * the trigger, Tab closes and lets focus move on, and focus leaving the menu
  * by any other route closes it.
  */
-export const MENU_TRIGGERS = { mainMenu: 'toggle-menu', viewMenu: 'toggle-view-menu' };
+export const MENU_TRIGGERS = {
+  mainMenu: 'toggle-menu',
+  activityMenu: 'toggle-activity-menu',
+  accountMenu: 'toggle-account-menu',
+  viewMenu: 'toggle-view-menu',
+  bulkMenu: 'toggle-bulk-menu',
+};
 
 export const menuTrigger = (pop) => document.querySelector(`[data-action="${MENU_TRIGGERS[pop.id]}"]`);
 

@@ -286,11 +286,20 @@ describe('one design system (U12)', () => {
     expect(raw).toEqual([]);
   });
 
-  it('does not frost the sticky bars', () => {
+  it('frosts only the header, on a sibling layer, and never the filter or pager bars', () => {
+    // The filter bar and pager stay solid: they sit over the board itself and
+    // a blur there costs a recomposite on every scroll for no legibility gain.
+    // The header was solid for the same reason until the glass refinement
+    // (2026-11) gave floating layers one material. Its frost lives on
+    // `.topbar::before`, never on `.topbar`: an element with backdrop-filter
+    // is a backdrop root, which would stop the menus inside the header from
+    // blurring the page they open over.
     for (const selector of ['.topbar {', '.filterbar {', '.pagerbar {']) {
       const rule = css.slice(css.indexOf(selector), css.indexOf('}', css.indexOf(selector)));
       expect(rule, selector).not.toContain('backdrop-filter');
     }
+    expect(css).toMatch(/\.topbar::before \{[^}]*backdrop-filter: var\(--blur\)/);
+    expect(css).not.toMatch(/\.(filterbar|pagerbar)[^{]*\{[^}]*backdrop-filter/);
   });
 
   it('says what slow dialogs are doing, with elapsed time', () => {

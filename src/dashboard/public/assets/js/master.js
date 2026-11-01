@@ -3,21 +3,14 @@
 import { $, el, fmt, shortStamp, slowProgress, toast } from './dom.js';
 import { api, postJson } from './api.js';
 import { openDialog } from './dialogs.js';
+import { classifyResumeLine, looksLikeHeading } from './format.js';
+
+export { classifyResumeLine, looksLikeHeading };
 
 /* ───────────────────────── master resume ───────────────────────── */
 
 export const MASTER_MAX_BYTES = 8 * 1024 * 1024;
 export const kb = (bytes) => `${Math.max(1, Math.round(Number(bytes ?? 0) / 1024))} KB`;
-
-/**
- * A resume line that is almost certainly a section heading, so the plain-text
- * preview keeps the document's shape instead of reading as one grey wall.
- */
-export function looksLikeHeading(line) {
-  const text = String(line).trim();
-  if (text.length > 48 || /[.;]$/.test(text)) return false;
-  return text === text.toUpperCase() ? /[A-Z]/.test(text) : /^[A-Z][\w/&' -]*$/.test(text);
-}
 
 export async function openMasterResume() {
   const body = $('masterBody');
@@ -46,29 +39,27 @@ export async function renderResumeSuggestions(body) {
   if (!data?.available) return;
 
   const { diff, evidence } = data;
-  const box = el('div', { class: diff.drifted ? 'attention' : 'evidence-note' });
+  // Neutral unless the resume and the search genuinely disagree: a panel that
+  // is blue when all is well trains the eye to skip the one that is amber.
+  const box = el('div', { class: diff.drifted ? 'attention' : 'mr-block' });
   if (diff.drifted) box.append(el('span', { class: 'mark', text: '!' }));
 
-  const inner = el('div');
-  inner.append(el('div', {},
+  const inner = el('div', { class: 'mr-block-body' });
+  inner.append(el('p', { class: 'mr-lead' },
     el('b', {
       // A label, not a restatement — the summary already names the role.
       text: diff.drifted
         ? 'This resume and your job search describe different jobs. '
-        : 'Resume vs. your job search. ',
+        : 'Resume and job search. ',
     }),
     diff.summary));
 
-  // What the resume says you are NOW, separately from what you used to be.
-  // Collapsing the two made an aligned resume look mismatched, because a career
-  // history is mostly roles you have moved past.
+  // What the resume says you are NOW. Earlier roles are listed only where
+  // there is something to do about them (the tick-chips below): naming them
+  // twice — once as a sentence, once as chips — was the same list read twice.
   if (evidence.currentTitles?.length) {
-    inner.append(el('div', { class: 'muted small' },
-      `Current role in this resume: ${evidence.currentTitles.join(' · ')}`));
-  }
-  if (evidence.earlierTitles?.length) {
-    inner.append(el('div', { class: 'muted small' },
-      `Earlier roles: ${evidence.earlierTitles.join(' · ')}`));
+    inner.append(el('dl', { class: 'mr-facts-list' },
+      el('dt', { text: 'Current role' }), el('dd', { text: evidence.currentTitles.join(' · ') })));
   }
 
   // Titles the resume shows that nothing is being searched for. These are the
@@ -88,39 +79,47 @@ export async function renderResumeSuggestions(body) {
       return pick;
     };
 
+    const group = el('div', { class: 'mr-choice', role: 'group', 'aria-label': 'Roles from this resume' });
     if (currentUnmatched.length) {
-      inner.append(el('div', { class: 'muted small', text: 'Your CURRENT role is not being searched for:' }));
-      inner.append(chips(currentUnmatched));
+      group.append(el('div', { class: 'mr-choice-label', text: 'Your current role is not being searched for:' }));
+      group.append(chips(currentUnmatched));
     }
     if (earlierUnmatched.length) {
-      inner.append(el('div', { class: 'muted small' },
-        'Earlier roles, not searched for — tick one only if you would still take that job:'));
-      inner.append(chips(earlierUnmatched));
+      group.append(el('div', { class: 'mr-choice-label' },
+        'Earlier roles you are not searching for — tick any you would still take:'));
+      group.append(chips(earlierUnmatched));
     }
-
-    const actions = el('div', { class: 'row-gap' });
-    actions.append(el('button', {
-      class: 'small primary', 'data-action': 'adopt-resume-titles',
-      text: 'Add selected to my job search',
-      title: 'Writes the selected titles into candidate.targetTitles. Nothing else changes.',
-    }));
-    actions.append(el('button', {
-      class: 'small ghost', 'data-action': 'preview-resume-title',
-      text: 'Preview one first',
-      title: 'Search the job boards for the first selected title without changing your profile.',
-    }));
-    inner.append(actions);
+    group.append(el('div', { class: 'row-gap' },
+      el('button', {
+        class: 'small primary', 'data-action': 'adopt-resume-titles',
+        text: 'Add selected to my job search',
+        title: 'Writes the selected titles into candidate.targetTitles. Nothing else changes.',
+      }),
+      el('button', {
+        class: 'small ghost', 'data-action': 'preview-resume-title',
+        text: 'Preview one first',
+        title: 'Search the job boards for the first selected title without changing your profile.',
+      })));
+    inner.append(group);
   }
 
   if (diff.newSkills.length) {
-    inner.append(el('div', { class: 'muted small' },
-      `${fmt(diff.newSkills.length)} skill term(s) in this resume are not in your profile stack `
-      + `(${diff.newSkills.slice(0, 8).join(', ')}${diff.newSkills.length > 8 ? '…' : ''}). `
-      + 'These affect how relevant a posting is judged to be.'));
-    inner.append(el('button', {
-      class: 'small ghost', 'data-action': 'adopt-resume-skills',
-      text: 'Add these skills to my profile',
-    }));
+    const shown = diff.newSkills.slice(0, 8);
+    const group = el('div', { class: 'mr-choice', role: 'group', 'aria-label': 'Skills from this resume' });
+    group.append(el('div', { class: 'mr-choice-label' },
+      `${fmt(diff.newSkills.length)} skill${diff.newSkills.length === 1 ? '' : 's'} in this resume `
+      + 'are not in your profile yet. Skills decide how well a posting is judged to fit you.'));
+    const list = el('div', { class: 'kwlist' });
+    for (const skill of shown) list.append(el('span', { class: 'chip', text: skill }));
+    if (diff.newSkills.length > shown.length) {
+      list.append(el('span', { class: 'chip unscored', text: `+${fmt(diff.newSkills.length - shown.length)} more` }));
+    }
+    group.append(list);
+    group.append(el('div', { class: 'row-gap' }, el('button', {
+      class: 'small', 'data-action': 'adopt-resume-skills',
+      text: `Add ${diff.newSkills.length === 1 ? 'this skill' : `all ${fmt(diff.newSkills.length)} skills`} to my profile`,
+    })));
+    inner.append(group);
   }
 
   box.append(inner);
@@ -175,11 +174,11 @@ export async function renderSearchProfiles(body) {
   try { listing = await api('/api/search-profiles'); }
   catch { return null; } // never let this panel break the drawer it sits in
 
-  const wrap = el('div', { class: 'evidence-note' });
+  const wrap = el('div', { class: 'mr-block' });
 
   if (!listing.profiles?.length) {
-    wrap.append(el('div', {}, el('b', { text: 'No saved search profile. ' }),
-      'Discovery is running on config/candidate.json exactly as written, so uploading a '
+    wrap.append(el('p', { class: 'mr-lead' }, el('b', { text: 'No saved search profile. ' }),
+      'Your search runs on your current settings exactly as written, so uploading a '
       + 'different resume will not change what is searched for.'));
     wrap.append(el('div', { class: 'row-gap' },
       el('button', {
@@ -196,7 +195,7 @@ export async function renderSearchProfiles(body) {
   const active = listing.active;
   if (active) {
     const e = active.effect;
-    wrap.append(el('div', {}, el('b', { text: 'Searching as: ' }), active.profile.label));
+    wrap.append(el('p', { class: 'mr-lead' }, el('b', { text: 'Searching as: ' }), active.profile.label));
     wrap.append(el('div', { class: 'muted small' },
       `Asks the boards for ${e.searchPhrases.map((q) => `"${q}"`).join(', ') || '(nothing)'} · `
       + `recognizes ${e.targetTitles.length} title(s) · `
@@ -407,7 +406,9 @@ export async function renderMasterResume() {
   }
 
   // ── the file itself ────────────────────────────────────────────────────
-  const card = el('div', { class: 'mr-file' });
+  // A flat header row, not a gradient card: the file is the subject of the
+  // dialog, and its name, facts and two actions say so without a frame.
+  const head = el('div', { class: 'mr-head' });
   const meta = el('div', { class: 'mr-meta' });
   meta.append(el('div', { class: 'mr-name', text: 'MASTER_RESUME.docx' }));
   meta.append(el('div', {
@@ -417,22 +418,34 @@ export async function renderMasterResume() {
         `updated ${shortStamp(master.modifiedAt)}`].filter(Boolean).join(' · ')
       : 'Not found yet',
   }));
-  meta.append(el('div', { class: 'mr-path', text: master.path }));
-  card.append(meta);
+  head.append(meta);
 
   const buttons = el('div', { class: 'row-gap' });
   if (master.exists) {
     buttons.append(el('a', {
-      class: 'btn small', href: '/api/master-resume/file', text: '⬇ Download to edit',
+      class: 'btn small', href: '/api/master-resume/file', text: 'Download to edit',
       title: 'Download, edit in Word or Google Docs, then upload it back here.',
     }));
   }
   buttons.append(el('button', {
     class: 'small primary', 'data-action': 'pick-master-file',
-    text: master.exists ? '⬆ Upload new version' : '⬆ Upload your resume',
+    text: master.exists ? 'Upload new version' : 'Upload your resume',
   }));
-  card.append(buttons);
-  body.append(card);
+  head.append(buttons);
+  body.append(head);
+
+  // The full path is for the rare person placing the file by hand. It was the
+  // second-most prominent line in the dialog; it is now one click away — and
+  // shown outright when the file is missing, because that copy points at it.
+  const where = el('code', { class: 'mr-path', text: master.path });
+  if (master.exists) {
+    body.append(el('details', { class: 'mr-loc' }, el('summary', { text: 'File location' }), where));
+  } else {
+    body.append(where);
+  }
+  body.append(el('p', { class: 'mr-note' },
+    'Tailoring reads this file and writes a separate resume for each job — the master itself is never '
+    + 'edited. Uploading a new version keeps the old one, so you can roll back in one click.'));
 
   if (!master.exists) {
     body.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }),
@@ -445,10 +458,19 @@ export async function renderMasterResume() {
       el('div', {}, el('b', { text: 'This file is present but unreadable: ' }), master.textError,
         el('br'), 'Tailoring would copy it through verbatim. Re-save it from Word as .docx and upload it again.')));
   }
+  if (master.stalePackets > 0) {
+    body.append(el('p', { class: 'mr-note' },
+      `${fmt(master.stalePackets)} tailored resume(s) were generated before this version. `
+      + 'Use “↻ Re-tailor” on a job to rebuild its resume from the current master.'));
+  }
 
+  // ── your job search ────────────────────────────────────────────────────
   // Whose search is running, and does this resume belong to them? This comes
-  // FIRST: it is the question that decides whether anything below it matters.
-  const relation = await renderSearchProfiles(body);
+  // FIRST among the sections: it decides whether anything below it matters.
+  const search = el('section', { class: 'mr-section', 'aria-labelledby': 'mrSearchHead' },
+    el('h3', { id: 'mrSearchHead', text: 'Your job search' }));
+  body.append(search);
+  const relation = await renderSearchProfiles(search);
 
   // The role-level diff below compares TITLES; the panel above compares WHOSE
   // RESUME THIS IS. When the two disagree the screen contradicted itself —
@@ -456,36 +478,27 @@ export async function renderMasterResume() {
   // role is already being searched for". The identity question is the bigger
   // one and it already offers the right actions, so the title diff is left out
   // until the resume and the profile are agreed to be the same person.
-  if (master.exists && relation !== 'different') await renderResumeSuggestions(body);
-
-  body.append(el('div', { class: 'evidence-note' },
-    'Tailoring opens this document read-only and writes a separate resume per job — '
-    + 'the master is never edited in place. Uploading a new version keeps the previous one, '
-    + 'so you can roll back in one click.'));
-
-  if (master.stalePackets > 0) {
-    body.append(el('div', { class: 'muted' },
-      `${fmt(master.stalePackets)} tailored resume(s) were generated before this version. `
-      + 'Use “↻ Re-tailor” on a job to rebuild its resume from the current master.'));
-  }
+  if (master.exists && relation !== 'different') await renderResumeSuggestions(search);
 
   // ── what is actually in it ─────────────────────────────────────────────
   if (master.paragraphs.length) {
-    body.append(el('h3', { text: 'Contents' }));
-    const preview = el('div', { class: 'mr-preview' });
-    for (const line of master.paragraphs) {
-      preview.append(el('p', { class: looksLikeHeading(line) ? 'h' : '', text: line }));
+    const preview = el('details', { class: 'mr-section mr-contents', open: true, 'data-key': 'mr-contents' });
+    preview.append(el('summary', {},
+      el('span', { class: 'mr-sum-title', text: 'Preview' }),
+      el('span', { class: 'mr-sum-meta', text: 'Plain text, as tailoring reads it' })));
+    preview.append(resumePreview(master.paragraphs));
+    if (master.truncated) {
+      preview.append(el('div', { class: 'faint fineprint', text: 'Preview truncated — download the file to read it all.' }));
     }
     body.append(preview);
-    if (master.truncated) {
-      body.append(el('div', { class: 'faint fineprint', text: 'Preview truncated — download the file to read it all.' }));
-    }
   }
 
   // ── rollback ───────────────────────────────────────────────────────────
-  body.append(el('h3', { text: `Previous versions (${master.backups.length})` }));
+  const versions = el('section', { class: 'mr-section', 'aria-labelledby': 'mrVersionsHead' },
+    el('h3', { id: 'mrVersionsHead', text: `Previous versions (${master.backups.length})` }));
+  body.append(versions);
   if (!master.backups.length) {
-    body.append(el('div', { class: 'muted', text: 'None yet — a copy is kept automatically whenever you upload a new version.' }));
+    versions.append(el('p', { class: 'mr-note', text: 'None yet — a copy is kept automatically whenever you upload a new version.' }));
     return;
   }
   const list = el('ul', { class: 'mr-versions' });
@@ -495,10 +508,30 @@ export async function renderMasterResume() {
       el('button', {
         class: 'small', 'data-action': 'restore-master', 'data-name': backup.name,
         title: 'Make this the master resume again (the current one is kept too).',
-        text: '↺ Restore',
+        text: 'Restore',
       })));
   }
-  body.append(list);
+  versions.append(list);
+}
+
+/** The structured, read-only preview of the master resume. */
+export function resumePreview(paragraphs) {
+  const doc = el('div', { class: 'mr-preview' });
+  // Lines above the first heading are the name and contact block.
+  let beforeFirstHeading = paragraphs.some((p) => looksLikeHeading(p));
+  let list = null;
+  paragraphs.forEach((line, index) => {
+    const kind = classifyResumeLine(line, { beforeFirstHeading, index });
+    if (kind === 'heading') beforeFirstHeading = false;
+    if (kind === 'item') {
+      if (!list) { list = el('ul', { class: 'mr-items' }); doc.append(list); }
+      list.append(el('li', { text: line }));
+      return;
+    }
+    list = null;
+    doc.append(el(kind === 'heading' ? 'h4' : 'p', { class: `mr-${kind}`, text: line }));
+  });
+  return doc;
 }
 
 /** Base64-encode in chunks: one apply() over a multi-MB array overflows the stack. */

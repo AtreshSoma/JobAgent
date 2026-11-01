@@ -47,3 +47,46 @@ export function withoutTitleTerms(terms = [], title = '') {
   const t = ` ${norm(title)} `;
   return terms.filter((term) => !t.includes(` ${norm(term)} `));
 }
+
+/**
+ * A resume line that is almost certainly a section heading, so the plain-text
+ * preview keeps the document's shape instead of reading as one grey wall.
+ */
+export function looksLikeHeading(line) {
+  const text = String(line).trim();
+  if (text.length > 48 || /[.;]$/.test(text)) return false;
+  return text === text.toUpperCase() ? /[A-Z]/.test(text) : /^[A-Z][\w/&' -]*$/.test(text);
+}
+
+/** A month name or "Present" next to a year: the date line of a role, in any field. */
+const DATE_LINE = /\b(19|20)\d{2}\b/;
+const DATE_WORD = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b|\bpresent\b|\bcurrent\b|\d{1,2}\/\d{2,4}/i;
+
+/**
+ * Classify one plain-text resume line, so the preview keeps the document's
+ * shape instead of reading as one flat wall where a job title and a bullet
+ * weigh the same.
+ *
+ * Deliberately profession-neutral: it reads STRUCTURE (headings, short lines
+ * joined by "|" or "—", lines that carry a date range) rather than any
+ * field's vocabulary, so a nurse's or an accountant's resume shapes the same
+ * way an engineer's does. When unsure, a line is plain text.
+ *
+ * @param {string} line
+ * @param {{ beforeFirstHeading: boolean, index: number }} at  index = line number in the document
+ * @returns {'name'|'contact'|'heading'|'when'|'role'|'item'}
+ */
+export function classifyResumeLine(line, { beforeFirstHeading, index }) {
+  const text = String(line).trim();
+  // The name-and-contact block: the top lines above the first heading, and
+  // never more than four — some resumes carry no heading until page two.
+  if (beforeFirstHeading && index === 0) return 'name';
+  const short = text.length <= 90 && !/[.;:]$/.test(text);
+  // Dates before headings: "Aug 2018 - Present" is title-case and short, so
+  // the heading test alone styled every date line as a section heading.
+  if (short && DATE_LINE.test(text) && DATE_WORD.test(text)) return 'when';
+  if (looksLikeHeading(text)) return 'heading';
+  if (beforeFirstHeading && index < 4 && text.length <= 140) return 'contact';
+  if (short && /\s[|—–]\s/.test(text)) return 'role';
+  return 'item';
+}

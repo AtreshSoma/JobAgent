@@ -363,6 +363,23 @@ if (savedTheme === 'light' || savedTheme === 'dark') {
   document.documentElement.dataset.theme = savedTheme;
 }
 
+/**
+ * Name the theme toggle by where it GOES ("Switch to dark theme"), from the
+ * theme actually showing — which, until the user picks one, is the OS's. The
+ * icon follows in CSS; only the words need script.
+ */
+export function syncThemeControl() {
+  const current = document.documentElement.dataset.theme
+    || (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+  const label = `Switch to ${current === 'light' ? 'dark' : 'light'} theme`;
+  for (const button of document.querySelectorAll('.theme-toggle')) {
+    button.setAttribute('aria-label', label);
+    button.title = label;
+  }
+}
+syncThemeControl();
+matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', syncThemeControl);
+
 export function jobIdFromHash() {
   const match = location.hash.match(/^#job=(.+)$/);
   if (!match) return null;
