@@ -696,6 +696,14 @@
     <span class="sig-dot" aria-hidden="true"></span>
     <span class="sig-fact">nothing is submitted without you</span>
   </p>
+
+  <!-- The one control in the colophon: it opens the changelog dialog. It is a
+       real button (it does not navigate), styled as a link, and it is the last
+       stop in the tab order, so it still costs nothing on the way to a job. -->
+  <p class="sig-links">
+    <button type="button" class="sig-link" data-action="open-changelog"
+      aria-haspopup="dialog" aria-controls="dlgChangelog">Changelog</button>
+  </p>
 </footer>
 
 <div id="toasts" aria-live="polite" aria-atomic="false"></div>
@@ -930,6 +938,20 @@
       <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Move between stages (wraps around)</dd>
       <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>First or last stage</dd>
     </dl>
+  </div>
+</dialog>
+
+<dialog id="dlgChangelog" aria-labelledby="dlgChangelogTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgChangelogTitle">Changelog</h2>
+      <div class="muted subtle-sub">What changed in JobAgent, newest first.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="changelogBody" tabindex="-1"></div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Close</button>
   </div>
 </dialog>
 

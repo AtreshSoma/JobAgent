@@ -2313,6 +2313,33 @@ dialog.sheet { width: min(1200px, 96vw); max-height: 92vh; overflow: auto; }
 .preview-status { min-height: 18px; color: var(--text-dim); font-size: var(--fs-sm); }
 .preview-status.bad { color: var(--bad); }
 
+/* ─────────────────── changelog ───────────────────
+   Hallmark component · dialog · tokens only. Release date as the heading, then
+   three plain groups. Group names are words, never colour alone; the small dot
+   is decoration on top of them. */
+#dlgChangelog { width: min(600px, 94vw); max-height: 86vh; flex-direction: column; }
+#dlgChangelog[open] { display: flex; }
+#dlgChangelog .dlg-body { overflow: auto; min-height: 0; overscroll-behavior: contain; outline: none; }
+.cl-release + .cl-release { margin-top: var(--s5); padding-top: var(--s5); border-top: 1px solid var(--line-soft); }
+.cl-release > h3 { margin: 0; font-size: var(--fs-xl); font-weight: 700; letter-spacing: -.01em; }
+.cl-summary { margin: 4px 0 0; color: var(--text-dim); font-size: var(--fs-md); text-wrap: pretty; max-width: 62ch; }
+.cl-group { margin-top: var(--s4); }
+.cl-group h4 {
+  display: flex; align-items: center; gap: var(--s2); margin: 0 0 var(--s2);
+  font-size: var(--fs-md); font-weight: 650; color: var(--text);
+}
+.cl-group h4::before { content: ''; width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--accent); }
+.cl-improved h4::before { background: var(--good); }
+.cl-fixed h4::before { background: var(--warn); }
+.cl-group ul { margin: 0; padding-left: 20px; }
+.cl-group li { margin: 6px 0; font-size: var(--fs-md); line-height: 1.5; color: var(--text); text-wrap: pretty; max-width: 66ch; }
+.cl-group li::marker { color: var(--text-faint); }
+.cl-safety {
+  margin: var(--s4) 0 0; padding: var(--s2) var(--s3); border-radius: var(--r-sm);
+  background: color-mix(in srgb, var(--text) 3.5%, transparent); border: 1px solid var(--line-soft);
+  font-size: var(--fs-sm); color: var(--text-dim);
+}
+
 /* ─────────────────── keyboard shortcut sheet ─────────────────── */
 .keys { display: grid; grid-template-columns: auto 1fr; gap: 7px var(--s3); margin: 0; align-items: baseline; }
 .keys dt { text-align: right; white-space: nowrap; }
@@ -2524,8 +2551,19 @@ kbd {
 }
 @media print {
   .signature { padding: var(--s3) 0 0; margin-top: var(--s3); }
-  .sig-rule { display: none; }
+  .sig-rule, .sig-links { display: none; }
 }
+
+/* Changelog link: the colophon's one control, drawn as a quiet link. */
+.sig-links { margin: var(--s2) 0 0; }
+.sig-link {
+  background: none; border: 0; border-radius: var(--r-xs);
+  padding: 4px 6px; min-height: var(--h-sm);
+  font-size: var(--fs-sm); font-weight: 550; color: var(--text-dim);
+  text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
+}
+.sig-link:hover { background: none; color: var(--accent); text-decoration-color: currentColor; }
+.sig-link:active:not(:disabled) { transform: none; }
 
 /* ─────────────────── toasts + selection bar ─────────────────── */
 #toasts {
@@ -2573,6 +2611,10 @@ kbd {
    the rows they act on through a 7,000px board. */
 #selbar {
   position: sticky; top: var(--topbar-h, 51px); z-index: 4; height: 0;
+  /* The wrapper never takes the pointer, only the bar inside it when open. On
+     phones the wrapper is a fixed, 52px-tall box: closed, it sat invisibly over
+     the bottom of the screen and swallowed taps meant for the pager and footer. */
+  pointer-events: none;
 }
 #selbar .selbar-inner {
   position: absolute; top: 0; left: 44px; right: 0; height: 40px;

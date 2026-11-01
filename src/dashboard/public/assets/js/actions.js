@@ -22,6 +22,7 @@ import {
   closeMoveMenu, followUp, openApplicationDetail, openMoveMenu, recordOutcome, setAppsLayout, undoLastOutcome, workspaceAct,
 } from './workspace.js';
 import { localDay } from './detail.js';
+import { openChangelog } from './changelog.js';
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -79,6 +80,7 @@ export const ACTIONS = {
     syncThemeControl();
   },
   'open-keys': () => openDialog($('dlgKeys')),
+  'open-changelog': openChangelog,
   'toggle-analytics': (target) => {
     const open = $('analytics').hidden;
     $('analytics').hidden = !open;

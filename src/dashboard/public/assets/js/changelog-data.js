@@ -1,0 +1,50 @@
+/**
+ * The changelog, newest release first. Plain data with no DOM access, so it can
+ * be tested directly and a new release is one entry at the top.
+ *
+ * Written for the person using the app, not the person building it: say what
+ * they can now DO or SEE, in the words the screen uses. Keep each line short.
+ *
+ * Groups, in the order they are shown:
+ *   new       something that did not exist before
+ *   improved  something that existed and is now clearer, faster or calmer
+ *   fixed     something that was wrong and no longer is
+ */
+
+export const CHANGELOG_GROUPS = Object.freeze([
+  ['new', 'New'],
+  ['improved', 'Improvements'],
+  ['fixed', 'Fixes'],
+]);
+
+export const CHANGELOG = Object.freeze([
+  {
+    date: '2026-11-01',
+    summary: 'A cleaner look, smarter job actions, and job search for more careers.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      new: [
+        'Light and dark theme switch in the top-right corner. It remembers your choice.',
+        'Two new menus in the header: Activity (run history, data quality, system health, reports and exports) and Profile (master resume, application profile, resume library, keyboard shortcuts).',
+        'Job search now reaches pharma, life sciences, cybersecurity, Java and full-stack roles, with 45 more employers added, including Johnson & Johnson, Merck, AstraZeneca, Novartis, Amgen, IQVIA, Northrop Grumman, Leidos, Cloudflare and Zscaler.',
+        'This changelog, linked from the bottom of every page.',
+      ],
+      improved: [
+        'Selecting jobs: the action bar now sits on the table header and never covers a job. It highlights the one next step that fits your selection (Prepare, Approve or Auto-fill), and a greyed-out action tells you why.',
+        'Checkboxes are easier to click and easier to read. Ticked rows are tinted, and "select all" shows a dash when only some rows are ticked.',
+        'Master resume: a calmer layout with a short summary, your roles and skills to add as simple choices, and a preview that looks like a resume.',
+        'Job details: one clean panel instead of boxes inside boxes, with nothing shown twice.',
+        'Menus, dialogs, buttons and form fields now share one consistent style, with a soft frosted look that switches to solid if you prefer reduced transparency.',
+        'Search recognises more job titles, such as Pharmacovigilance Scientist, Cybersecurity Analyst, Java Developer and Medical Science Liaison.',
+        'Search now follows your profile: a nurse looks at healthcare jobs and a security analyst at IT jobs, instead of the same tech categories for everyone.',
+        'Wording that only suited software roles is now general. "Stack" is now "Skills", and the GitHub field says it is optional.',
+      ],
+      fixed: [
+        'The tick mark in checkboxes sometimes drew as a broken symbol.',
+        'The highlight on the job you have open was not showing on the table.',
+        'Date lines in the resume preview, such as "Aug 2018 - Present", were shown as section headings.',
+        'One job site was only searched in categories that return nothing, so some searches quietly found less than they should.',
+      ],
+    },
+  },
+]);

@@ -84,6 +84,12 @@ describe('the bulk-action bar keeps every safeguard', () => {
     expect(css).toContain('body:has(#selbar[data-open="true"]) .layout { padding-bottom: 84px; }');
   });
 
+  it('never lets its closed wrapper intercept taps meant for the page beneath', () => {
+    const wrapper = css.slice(css.indexOf('#selbar {\n  position: sticky'), css.indexOf('}', css.indexOf('#selbar {\n  position: sticky')));
+    expect(wrapper).toContain('pointer-events: none;');
+    expect(css).toMatch(/#selbar\[data-open="true"\] \.selbar-inner \{[^}]*pointer-events: auto;/);
+  });
+
   it('folds secondary actions into an overflow menu when the bar is narrow', () => {
     expect(css).toContain('container: selbar / inline-size;');
     expect(css).toMatch(/@container selbar \(max-width: 760px\) \{[\s\S]*?\.selbar-more \{ display: inline-block; \}/);
