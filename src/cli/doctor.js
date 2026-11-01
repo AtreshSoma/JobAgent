@@ -41,6 +41,7 @@ import { ui } from './ui.js';
 import { findPlaceholders } from '../config/placeholders.js';
 import { MIN_NODE_VERSION, nodeVersionSupported, installedVersionDrift } from './dependencyCheck.js';
 import { pythonCandidates, checkPythonVersion, MIN_PYTHON } from '../resume/pythonEnv.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
 export const SEVERITY = Object.freeze({ PASS: 'pass', WARN: 'warn', FAIL: 'fail' });
 
@@ -403,7 +404,7 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
   }
 
   /* ── Master resume (read-only source material) ───────────────────────── */
-  const master = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+  const master = masterResumeFile(root);
   if (existsSync(master) && statSync(master).size > 0) {
     checks.push(makeCheck('resume', 'Master resume', SEVERITY.PASS,
       `resumes/base/MASTER_RESUME.docx (${statSync(master).size} bytes; opened read-only, never modified)`));

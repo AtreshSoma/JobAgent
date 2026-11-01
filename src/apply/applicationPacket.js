@@ -24,6 +24,7 @@ import { buildUploadPlan } from './fileUpload.js';
 import { nowIso } from '../utils/dates.js';
 import { assertNoTemplateTokens, findTemplateTokens, isPlaceholderValue } from '../config/placeholders.js';
 import { candidatePrefix } from '../utils/outputPaths.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
 /**
  * Who a packet belongs to.
@@ -68,7 +69,7 @@ const sameText = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? 
 export function masterResumeFingerprint(root) {
   try {
     if (!root) return null;
-    const master = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+    const master = masterResumeFile(root);
     if (!existsSync(master)) return null;
     return createHash('sha1').update(readFileSync(master)).digest('hex').slice(0, 16);
   } catch {

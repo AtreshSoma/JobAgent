@@ -83,7 +83,7 @@ import {
   dashboardStats, boardPage, jobDetail, applyDecision,
   approveJobPacket, rejectJobPacket, markSubmittedByHuman,
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
-  buildDocuments, buildMasterResume, MASTER_RESUME_RELATIVE, MASTER_HISTORY_RELATIVE,
+  buildDocuments, buildMasterResume,
   setDuringBulkRun, todayQueue, undoDecision, noteUserMutation, setBrowserAvailability,
   applicationsWorkspace, recordOutcome, undoOutcome, updateFollowUp,
 } from './data.js';
@@ -124,7 +124,11 @@ import {
   readActiveProfile, activateProfile, saveProfile as saveSearchProfile, acknowledgeResumeMismatch,
   deleteProfile as deleteSearchProfile, migrateLegacyCandidate,
   proposeProfileFromResume, mergeIntoActiveProfile, refreshBackgroundFromResume, resumeProfileToReuse,
+  createPersonProfile, updatePersonProfile,
 } from '../profile/store.js';
+import { profileFromResume, buildBackground } from '../profile/fromResume.js';
+import { workspacePaths, masterResumeFile } from '../profile/workspace.js';
+import { openDatabase } from '../logging/db.js';
 import { deriveFromProfile } from '../profile/derive.js';
 
 const PUBLIC_DIR = join(dirname(fileURLToPath(import.meta.url)), 'public');
@@ -265,6 +269,42 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   // save — otherwise the next auto-apply run would keep filling the old values
   // and the page would look like it had saved nothing.
   let config = bootConfig;
+
+  /*
+   * ONE DATABASE PER PERSON. Each search profile has a workspace (see
+   * src/profile/workspace.js); switching profile switches which database every
+   * route below reads. `db` is this function's own binding, and every route
+   * reads it at call time, so rebinding it here is the whole switch. Handles
+   * are kept open per workspace for the life of the process: a background
+   * sweep that started on the previous person's database must be able to
+   * finish on it, and switching back is then instant. The boot handle belongs
+   * to the caller, which closes it; the ones opened here are closed on
+   * shutdown (`closeWorkspaceDbs`).
+   */
+  const bootDb = db;
+  let dbPath = bootConfig?.root ? workspacePaths(bootConfig.root).db : null;
+  const workspaceDbs = new Map(dbPath ? [[dbPath, bootDb]] : []);
+  function useActiveWorkspace() {
+    const root = config?.root;
+    if (!root || !dbPath) return false; // unit-test servers boot without a root
+    const next = workspacePaths(root).db;
+    if (next === dbPath) return false;
+    let handle = workspaceDbs.get(next);
+    if (!handle) {
+      handle = (deps.openDatabaseImpl ?? openDatabase)({ path: next });
+      workspaceDbs.set(next, handle);
+    }
+    db = handle;
+    dbPath = next;
+    // The session logger records against the database it was given.
+    if (logger && typeof logger === 'object' && 'db' in logger) logger.db = handle;
+    return true;
+  }
+  function closeWorkspaceDbs() {
+    for (const handle of workspaceDbs.values()) {
+      if (handle !== bootDb) { try { handle.close(); } catch { /* best effort on shutdown */ } }
+    }
+  }
   const extensionKey = deps.extensionKey ?? process.env.JOB_AGENT_EXTENSION_KEY ?? '';
   // Each run gets its OWN JobLogger (`runDeps.logger`, see startRun). Passing
   // the dashboard SESSION's logger made the pipeline's endRun() write every
@@ -682,7 +722,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
    * present the user's own typo as "the dashboard is broken".
    */
   function saving(res, work) {
-    const fail = (err) => sendJson(res, err?.statusCode ?? 400, { error: sanitizeErrorMessage(err?.message ?? String(err)) });
+    // `fields` (when a validator set it) maps each form field to its message.
+    const fail = (err) => sendJson(res, err?.statusCode ?? 400, {
+      error: sanitizeErrorMessage(err?.message ?? String(err)),
+      ...(err?.fields && typeof err.fields === 'object' ? { fields: err.fields } : {}),
+    });
     try {
       const out = work();
       // An ASYNC handler's throw is a rejected promise, which a plain
@@ -923,7 +967,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (!root) {
       return { available: false, reason: 'no workspace root is configured' };
     }
-    const file = join(root, MASTER_RESUME_RELATIVE);
+    const file = masterResumeFile(root);
     if (!existsSync(file)) {
       return { available: false, reason: 'no master resume has been uploaded yet' };
     }
@@ -1019,8 +1063,10 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       );
     }
     const workspace = resolve(root);
-    const file = join(workspace, MASTER_RESUME_RELATIVE);
-    const historyDir = join(workspace, MASTER_HISTORY_RELATIVE);
+    // The ACTIVE person's resume and its history (src/profile/workspace.js).
+    const paths = workspacePaths(workspace);
+    const file = paths.resume;
+    const historyDir = paths.history;
     assertInsideDirectory(workspace, file, 'master resume path escapes the Job Agent workspace');
     assertInsideDirectory(workspace, historyDir, 'master resume history escapes the Job Agent workspace');
     return { workspace, file, historyDir };
@@ -2125,7 +2171,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — try again when it finishes` });
       }
       const root = requireConfigRoot();
-      const result = await refreshBackgroundFromResume(root, join(root, MASTER_RESUME_RELATIVE), { db });
+      const result = await refreshBackgroundFromResume(root, masterResumeFile(root), { db });
       if (!result.ok) return sendJson(res, 409, { error: result.reason });
       let warning = null;
       if (result.changed.length) {
@@ -2148,7 +2194,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     // — see src/profile/fromResume.js for why adopting stays an explicit act.
     if (req.method === 'GET' && path === '/api/search-profiles/from-resume/preview') {
       const root = requireConfigRoot();
-      const result = await proposeProfileFromResume(root, join(root, MASTER_RESUME_RELATIVE));
+      const result = await proposeProfileFromResume(root, masterResumeFile(root));
       return sendJson(res, 200, result);
     }
     // Catch-all by id. MUST stay after every literal sub-path above: it treats
@@ -2187,8 +2233,10 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         // The in-memory config MUST be reloaded or the board keeps serving the
         // previous candidate's search until the process restarts.
         const warning = summary.dryRun ? null : reloadConfig();
+        // A different person: every route now reads THEIR database.
+        const workspaceChanged = summary.dryRun ? false : useActiveWorkspace();
         if (!summary.dryRun && !warning) scheduleRescore();
-        return sendJson(res, 200, { ...summary, warning });
+        return sendJson(res, 200, { ...summary, warning, workspaceChanged });
       });
     }
     // Re-open a resume question the user had settled with "Keep my current
@@ -2216,6 +2264,75 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       const id = decodeURIComponent(path.slice('/api/search-profiles/'.length));
       return saving(res, () => sendJson(res, 200, deleteSearchProfile(requireConfigRoot(), id)));
     }
+    /* ── adding and editing a person ──────────────────────────────────────
+     * "Add profile" never replaces anyone's resume: a resume given here is read
+     * for the form and saved into the NEW person's own workspace only. */
+    if (req.method === 'POST' && path === '/api/search-profiles/read-resume') {
+      const body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+      return saving(res, () => {
+        const bytes = decodeResumeUpload(body);
+        const { paragraphs } = extractDocxText(bytes);
+        const draft = profileFromResume(paragraphs, {});
+        return sendJson(res, 200, {
+          fields: {
+            fullName: draft.identity.fullName,
+            email: draft.contact.email,
+            phone: draft.contact.phone,
+            targetRoles: draft.searchIntent.targetRoles,
+            seniority: draft.searchIntent.seniority || '',
+          },
+          found: {
+            roles: draft.searchIntent.targetRoles.length,
+            jobs: draft.background.workHistory.length,
+            skills: draft.background.skills.length,
+          },
+        });
+      });
+    }
+    if (req.method === 'POST' && path === '/api/search-profiles') {
+      const body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
+      if (runState.running && body.activate === true) {
+        return sendJson(res, 409, { error: `a ${runState.phase} run is in progress — add the profile after it finishes` });
+      }
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        let resume = null;
+        if (body.resume?.contentBase64) {
+          const bytes = decodeResumeUpload(body.resume);
+          resume = { bytes, background: buildBackground(extractDocxText(bytes).paragraphs, { sourceFile: '' }) };
+          delete resume.background._name; delete resume.background._headline; delete resume.background._contact;
+        }
+        const created = createPersonProfile(root, body.fields ?? {}, { resume });
+        let activated = null; let warning = null; let workspaceChanged = false;
+        if (body.activate === true) {
+          try { activated = activateProfile(root, created.id); }
+          catch (err) { deleteSearchProfile(root, created.id); throw err; }
+          warning = reloadConfig();
+          workspaceChanged = useActiveWorkspace();
+          if (!warning) scheduleRescore();
+        }
+        return sendJson(res, 200, { ...created, activated, warning, workspaceChanged });
+      });
+    }
+    if (req.method === 'PATCH' && path.startsWith('/api/search-profiles/')) {
+      const id = decodeURIComponent(path.slice('/api/search-profiles/'.length));
+      const body = await readBody(req);
+      return saving(res, () => {
+        const root = requireConfigRoot();
+        const updated = updatePersonProfile(root, id, body.fields ?? {});
+        let warning = null;
+        // Editing the ACTIVE person changes what is searched for right now.
+        if (updated.active) {
+          if (runState.running) {
+            throw Object.assign(new Error(`saved — the change applies after the ${runState.phase} run finishes`), { statusCode: 409 });
+          }
+          activateProfile(root, id);
+          warning = reloadConfig();
+          if (!warning) scheduleRescore();
+        }
+        return sendJson(res, 200, { ...updated, warning });
+      });
+    }
     if (req.method === 'POST' && path === '/api/search-profiles/from-resume') {
       const body = await readBody(req);
       /**
@@ -2238,7 +2355,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return saving(res, async () => {
         const root = requireConfigRoot();
         const choice = String(body.choice ?? '');
-        const proposed = await proposeProfileFromResume(root, join(root, MASTER_RESUME_RELATIVE));
+        const proposed = await proposeProfileFromResume(root, masterResumeFile(root));
 
         if (choice === 'keep') {
           // DURABLY recorded, not merely acknowledged in the response. This
@@ -2277,19 +2394,31 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           // saved profile cannot search — updates that profile instead of
           // saving another copy beside it.
           const reuseId = resumeProfileToReuse(root, proposed.proposal, proposed.resumeFingerprint);
+          // The new person gets their OWN workspace (their own jobs, resume and
+          // outputs), and the resume they were built from is copied into it, so
+          // switching back to the previous person never tailors from theirs.
+          const id = reuseId ?? proposed.proposal.id;
+          const workspace = (reuseId ? readSearchProfile(root, reuseId)?.workspace : '') || id;
+          const ownResume = workspacePaths(root, workspace).resume;
+          if (ownResume !== masterResumeFile(root)) {
+            mkdirSync(dirname(ownResume), { recursive: true });
+            copyFileSync(masterResumeFile(root), ownResume);
+          }
           const saved = saveSearchProfile(root, {
             ...proposed.proposal,
-            ...(reuseId ? { id: reuseId } : {}),
+            id,
+            workspace,
             label: body.label || proposed.proposal.label,
-            background: { ...proposed.proposal.background, resumeFingerprint: proposed.resumeFingerprint ?? '' },
+            background: { ...proposed.proposal.background, sourceFile: ownResume, resumeFingerprint: proposed.resumeFingerprint ?? '' },
           });
           // Saving is not activating: a new profile never takes over the search
           // without a second, deliberate action.
           if (body.activate === true) {
             const summary = activateProfile(root, saved.id);
             const warning = reloadConfig();
+            const workspaceChanged = useActiveWorkspace();
             if (!warning) scheduleRescore();
-            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning });
+            return sendJson(res, 200, { choice, changed: true, ...saved, activated: summary, warning, workspaceChanged });
           }
           return sendJson(res, 200, { choice, changed: true, ...saved, activated: null });
         }
@@ -2757,7 +2886,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   reconcilePackets();
 
   return {
-    server, runState, inFlight, flushTracker, browserAvailableCached,
+    server, runState, inFlight, flushTracker, browserAvailableCached, closeWorkspaceDbs,
     // The LIVE bundle, not the one booted with: routes that rewrite config
     // files reload it into this closure, and `startDashboard` cannot see that
     // from its own immutable parameter.
@@ -2773,7 +2902,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
  */
 export function startDashboard({ config, db, logger, port = 4646, deps = {} } = {}) {
   const {
-    server, runState, inFlight, flushTracker, currentConfig, browserAvailableCached,
+    server, runState, inFlight, flushTracker, currentConfig, browserAvailableCached, closeWorkspaceDbs,
   } = createDashboardServer({ config, db, logger, deps });
   return new Promise((resolve, reject) => {
     server.once('error', (err) => {
@@ -2820,6 +2949,7 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
           // Write out any tracker refresh still sitting in the debounce window
           // so shutting down never loses the last action's CSV update.
           try { flushTracker(); } catch { /* best effort on shutdown */ }
+          closeWorkspaceDbs();
         },
       });
     });
@@ -3129,6 +3259,22 @@ function cachedAsset(abs) {
  *   upload raises it; every other endpoint keeps the small default so a stray
  *   local request cannot make the dashboard buffer megabytes.
  */
+/**
+ * A resume sent as base64 JSON ({ contentBase64 }) -> its bytes, or a 400.
+ * Same checks as the master-resume upload: strict base64 (Buffer.from would
+ * silently drop bad characters), the size cap, and a real .docx.
+ */
+function decodeResumeUpload(body = {}) {
+  const encoded = String(body.contentBase64 ?? '');
+  const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
+  if (!encoded) fail('no file contents were received');
+  if (!/^[A-Za-z0-9+/\r\n]*={0,2}$/.test(encoded)) fail('the file contents were not transferred correctly, try again');
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.length > MAX_MASTER_RESUME_BYTES) fail(`that file is over ${Math.round(MAX_MASTER_RESUME_BYTES / 1024 / 1024)} MB`, 413);
+  if (!isDocxBuffer(bytes)) fail('that is not a Word (.docx) file — save it as .docx and try again');
+  return bytes;
+}
+
 function readBody(req, maxBytes = 1_000_000) {
   return new Promise((resolve, reject) => {
     /** @type {Buffer[]} */

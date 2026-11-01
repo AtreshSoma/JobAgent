@@ -260,7 +260,13 @@ export function renderToday() {
 
   if (!items.length) {
     list.append(el('li', { class: 'today-empty' },
-      el('div', { class: 'big', text: state.today ? 'Nothing needs you right now' : 'Loading…' }),
+      el('div', {
+        class: 'big',
+        text: state.today
+          ? (Number(document.body.dataset.people) > 1 && document.body.dataset.person
+            ? `Nothing needs ${document.body.dataset.person.split(' ')[0]} right now` : 'Nothing needs you right now')
+          : 'Loading…',
+      }),
       state.today ? el('p', { class: 'muted' },
         'New strong matches, packets to review and applications waiting on you land here. '
         + 'Run discovery to look for new postings — or, if runs keep finding nothing, widen what your search profile asks for.') : null,

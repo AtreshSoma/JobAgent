@@ -2439,6 +2439,56 @@ kbd {
   .pf-sub { white-space: normal; }
 }
 
+/* "Add profile" under the list and in the Profile menu. */
+.pf-wrap { display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; }
+.pf-wrap .pf-list { align-self: stretch; }
+.menu-pop .pf-add-item { gap: var(--s2); color: var(--accent); font-weight: 600; }
+.menu-pop .pf-add-item .ic { width: 14px; height: 14px; }
+
+/* ── Add / Edit profile ──
+   One column of labelled fields, the job titles as removable chips. Errors sit
+   under their field in words (and colour), linked by aria-describedby. */
+.person-dialog { width: min(520px, 94vw); max-height: 92vh; flex-direction: column; }
+.person-dialog[open] { display: flex; }
+.person-dialog .dlg-body { overflow: auto; min-height: 0; }
+.person-dialog label { margin-top: var(--s3); }
+.person-dialog .dlg-body > label:first-of-type { margin-top: var(--s2); }
+.person-dialog input[type=text], .person-dialog input[type=email] { margin-bottom: 0; width: 100%; }
+.person-dialog select { width: 100%; }
+.person-dialog .req { color: var(--bad); }
+.person-resume {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  padding: var(--s3); border: 1px dashed var(--line); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.person-resume-status { font-size: var(--fs-sm); color: var(--text-dim); flex: 1 1 200px; min-width: 0; }
+.person-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 var(--s3); }
+.person-toggle { margin-top: var(--s3); width: max-content; max-width: 100%; }
+.field-error { margin: 4px 0 0; font-size: var(--fs-sm); color: var(--bad); }
+.person-form-error { margin-top: var(--s3); }
+[aria-invalid="true"] { border-color: var(--bad) !important; }
+.chips-input {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--h-md);
+  padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--r-sm);
+  background-color: var(--surface-2); cursor: text;
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+.chips-input:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.chips-input:has([aria-invalid="true"]) { border-color: var(--bad); }
+.chips-list { display: contents; list-style: none; margin: 0; padding: 0; }
+.role-chip { gap: 2px; padding: 0 2px 0 9px; background: var(--accent-soft); color: var(--text); }
+.role-chip-x {
+  all: unset; display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+  cursor: pointer; color: var(--text-dim); font-size: var(--fs-md); line-height: 1;
+}
+.role-chip-x:hover { background: color-mix(in srgb, var(--text) 12%, transparent); color: var(--text); }
+.role-chip-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chips-input input[type=text] {
+  flex: 1 1 140px; min-width: 120px; min-height: 26px; border: 0 !important; padding: 2px 4px;
+  background: transparent; box-shadow: none !important;
+}
+@media (max-width: 480px) { .person-row { grid-template-columns: minmax(0, 1fr); } }
+
 /* The header's Profile button: the active person's initials, in place of the icon. */
 .iconbtn .avatar {
   width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center;

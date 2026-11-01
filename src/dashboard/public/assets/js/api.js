@@ -40,7 +40,8 @@ export async function api(path, options = {}) {
       throw Object.assign(new Error('This feature is newer than the dashboard process that is running. '
         + 'Stop it and run "npm run dashboard" again, then reload this page.'), { status: 404, noRoute: true });
     }
-    throw Object.assign(new Error(body.error || res.statusText), { status: res.status });
+    // `body` rides along so a form can place per-field messages (`body.fields`).
+    throw Object.assign(new Error(body.error || res.statusText), { status: res.status, body });
   }
   return body;
 }

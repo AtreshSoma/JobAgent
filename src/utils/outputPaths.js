@@ -20,6 +20,7 @@
 
 import { createHash } from 'node:crypto';
 import { join, relative } from 'node:path';
+import { activeWorkspaceId } from '../profile/workspace.js';
 
 /** Candidate name fallback if config is unavailable. */
 /**
@@ -226,7 +227,13 @@ export function buildJobPaths({
     ? `${titleFolder}_${folderDateOrId(dateOrId)}_${discriminator}`
     : `${titleFolder}_${folderDateOrId(dateOrId)}`;
 
-  const relFolder = join('applications', 'output', companyFolder, jobFolder);
+  // A person with their own workspace gets their own output folder: the
+  // packet file name carries no candidate name, so two people preparing the
+  // same job would otherwise overwrite each other's packet.
+  const workspace = activeWorkspaceId(root);
+  const relFolder = workspace
+    ? join('applications', 'profiles', workspace, companyFolder, jobFolder)
+    : join('applications', 'output', companyFolder, jobFolder);
   const folder = join(root, relFolder);
 
   const candidate = candidatePrefix(candidateName);

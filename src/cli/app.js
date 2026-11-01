@@ -31,6 +31,7 @@ import { spawn } from 'node:child_process';
 
 import { ui } from './ui.js';
 import { quickPreflight } from './preflight.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
 /** Parse and validate a user-facing dashboard port. */
 export function parseDashboardPort(value, fallback = 4646) {
@@ -243,7 +244,7 @@ export async function runApp({ parsed, env, deps = {} }) {
     for (const p of gate.problems) ui.note(`  • ${p}`);
     ui.blank();
   }
-  const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
+  const master = masterResumeFile(config.root);
   const firstRun = !existsSync(master);
 
   let requestedPort;

@@ -4,7 +4,8 @@ import { $, el, fmt, shortStamp, slowProgress, toast } from './dom.js';
 import { api, postJson } from './api.js';
 import { openDialog } from './dialogs.js';
 import { classifyResumeLine, displayName, initials, looksLikeHeading } from './format.js';
-import { activeProfileId, announceSwitch, describeProfiles, loadProfiles, profileSubline } from './profiles.js';
+import { activeProfileId, announceSwitch, describeProfiles, loadProfiles, openAddProfile, profileSubline, reloadAsNewPerson } from './profiles.js';
+import { confirmAction } from './dialogs.js';
 import { scheduleRefresh } from './mutations.js';
 
 export { classifyResumeLine, looksLikeHeading };
@@ -231,6 +232,10 @@ function profileList(rows) {
         el('span', { class: 'pf-name' }, p.display, p.active ? el('span', { class: 'pf-badge', text: 'Active' }) : ''),
         el('span', { class: 'pf-sub', text: profileSubline(p) })));
     const actions = el('span', { class: 'pf-actions' });
+    actions.append(el('button', {
+      type: 'button', class: 'small ghost', 'data-action': 'open-edit-profile', 'data-profile-id': p.id,
+      'aria-label': `Edit ${p.display}`, title: 'Edit name, email, job titles, location or level', text: 'Edit',
+    }));
     if (!p.active) {
       actions.append(el('button', {
         type: 'button', class: 'small', 'data-action': 'activate-search-profile', 'data-profile-id': p.id,
@@ -246,7 +251,18 @@ function profileList(rows) {
     row.append(actions);
     list.append(row);
   }
-  return list;
+  const wrap = el('div', { class: 'pf-wrap' }, list,
+    el('button', {
+      type: 'button', class: 'small pf-add', 'data-action': 'open-add-profile',
+      title: 'Add another person. They get their own jobs, resume and applications.',
+    }, plusIcon(), 'Add profile'));
+  return wrap;
+}
+
+function plusIcon() {
+  const svg = el('svg', { class: 'ic', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' });
+  svg.append(el('path', { d: 'M12 5v14M5 12h14' }));
+  return svg;
 }
 
 function trashIcon() {
@@ -276,6 +292,9 @@ function searchDetails(effect) {
 function resumeNotice(proposal, rows) {
   const { comparison, preview, choices } = proposal;
   if (comparison.relation === 'same') return null;
+  // A settled question about the person's OWN resume is not worth a line on
+  // every visit; only a settled "this is someone else's" keeps its reminder.
+  if (proposal.acknowledged && comparison.relation !== 'different') return null;
   if (proposal.acknowledged) {
     return el('p', { class: 'mr-note' }, 'You chose to keep your current search for this resume. ',
       el('button', { class: 'small ghost', 'data-action': 'profile-from-resume-reconsider', text: 'Reconsider' }));
@@ -426,6 +445,7 @@ export async function chooseResumeProfile(choice, extra = {}) {
   try {
     const result = await postJson('/api/search-profiles/from-resume', { choice, ...extra });
     if (!result.changed) { toast(result.message ?? 'Nothing changed.', ''); return; }
+    if (result.workspaceChanged) { reloadAsNewPerson(result.activated.label, previous); return; }
     if (result.activated) announceSwitch(result.activated.label, previous !== result.id ? previous : null);
     else toast(`Saved profile "${result.id}". Switch to it to start searching with it.`, 'good');
     // The header's initials, the switcher and the board all depend on who is active.
@@ -447,6 +467,10 @@ export async function renderMasterResume() {
     return;
   }
   body.textContent = '';
+  // With more than one person, say whose resume this is.
+  const person = document.body.dataset.person ?? '';
+  $('dlgMasterTitle').textContent = person && Number(document.body.dataset.people) > 1
+    ? `${person.split(' ')[0]}'s master resume` : 'Master resume';
 
   if (!master.available) {
     body.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }),
@@ -604,9 +628,45 @@ export async function uploadMasterResume(file) {
     show(`That file is ${kb(file.size)} — the limit is 8 MB.`, 'st-blocked');
     return;
   }
+  // SOMEONE ELSE'S RESUME? Ask before it replaces this person's. Uploading
+  // another person's resume here is how a second person used to be "added" —
+  // by overwriting the first person's master resume.
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const person = document.body.dataset.person ?? '';
+  if (person) {
+    let theirs;
+    try { theirs = displayName((await postJson('/api/search-profiles/read-resume', { contentBase64: bytesToBase64(bytes) })).fields.fullName); }
+    catch { theirs = ''; } // unreadable here: the upload's own checks will say so
+    if (theirs && !sameName(theirs, person)) {
+      show('');
+      confirmAction(
+        `This looks like ${theirs}'s resume, not ${person}'s.\n`
+        + `  Add ${theirs.split(' ')[0]} as a new profile with their own jobs and resume? ${person.split(' ')[0]}'s resume stays as it is.`,
+        () => openAddProfile({ file }),
+        {
+          title: 'Whose resume is this?', confirmLabel: `Add ${theirs.split(' ')[0]} as a new profile`,
+          altLabel: `Replace ${person.split(' ')[0]}'s resume`, onAlt: () => installMasterResume(file, bytes),
+        },
+      );
+      return;
+    }
+  }
+  await installMasterResume(file, bytes);
+}
+
+/** Two display names for the same person (case, spacing and middle initials aside). */
+function sameName(a, b) {
+  const key = (n) => displayName(n).toLowerCase().split(' ').filter((w) => w.length > 1);
+  const [x, y] = [key(a), key(b)];
+  return x.length > 0 && x[0] === y[0] && x.at(-1) === y.at(-1);
+}
+
+/** Replace the active person's master resume with this file (the old one is kept). */
+async function installMasterResume(file, bytes) {
+  const msg = $('masterMsg');
+  const show = (text, tone = 'muted') => { msg.className = tone; msg.textContent = text; };
   show(`Checking and installing ${file.name}…`);
   try {
-    const bytes = new Uint8Array(await file.arrayBuffer());
     const result = await postJson('/api/master-resume', {
       filename: file.name,
       contentBase64: bytesToBase64(bytes),

@@ -109,7 +109,12 @@
              and shown only when more than one profile is saved. -->
         <div class="menu-label" role="presentation" id="profileMenuLabel" hidden>Searching as</div>
         <div id="profileMenuItems" role="group" aria-labelledby="profileMenuLabel"></div>
-        <hr role="separator" id="profileMenuSep" hidden>
+        <button role="menuitem" class="pf-add-item" data-action="open-add-profile"
+          title="Add another person's job search. Each person gets their own jobs, resume and applications.">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>
+          Add profile…
+        </button>
+        <hr role="separator" id="profileMenuSep">
         <div class="menu-label" role="presentation">Your materials</div>
         <button role="menuitem" data-action="open-master"
           title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>
@@ -947,6 +952,82 @@
       <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>First or last stage</dd>
     </dl>
   </div>
+</dialog>
+
+<!-- Add or edit a person. One short form; "Fill in from their resume" reads a
+     .docx into it, and that file is saved into the NEW person's workspace only
+     — it never replaces anyone's master resume. Every field has a visible
+     label; errors are written next to their field and linked to it. -->
+<dialog id="dlgPerson" class="narrow person-dialog" aria-labelledby="dlgPersonTitle" aria-describedby="dlgPersonSub">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgPersonTitle">Add a profile</h2>
+      <div class="muted subtle-sub" id="dlgPersonSub">Each person gets their own jobs, resume and applications.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="save-person" novalidate>
+  <div class="dlg-body">
+    <div class="person-resume" id="personResumeRow">
+      <input type="file" id="personResumeFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+      <button type="button" class="small" data-action="person-pick-resume">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v4h14v-4"/></svg>
+        Fill in from their resume
+      </button>
+      <span class="person-resume-status" id="personResumeStatus" role="status" aria-live="polite">Optional. A .docx file; it becomes their own master resume.</span>
+    </div>
+
+    <label for="personName">Full name <span class="req" aria-hidden="true">*</span></label>
+    <input id="personName" type="text" autocomplete="name" required aria-describedby="personNameError">
+    <p class="field-error" id="personNameError" hidden></p>
+
+    <label for="personEmail">Email <span class="req" aria-hidden="true">*</span></label>
+    <input id="personEmail" type="email" autocomplete="email" required aria-describedby="personEmailError">
+    <p class="field-error" id="personEmailError" hidden></p>
+
+    <label for="personRoleInput" id="personRolesLabel">Job titles to search for <span class="req" aria-hidden="true">*</span></label>
+    <div class="chips-input" id="personRoles" data-action="focus-role-input">
+      <ul class="chips-list" id="personRoleList" aria-label="Job titles added"></ul>
+      <input id="personRoleInput" type="text" autocomplete="off" placeholder="Type a title, press Enter"
+        aria-describedby="personRolesHint personRolesError">
+    </div>
+    <p class="fineprint muted" id="personRolesHint">Up to 15. Close variations are searched too, so "Regulatory Specialist" also finds "Senior Regulatory Specialist".</p>
+    <p class="field-error" id="personRolesError" hidden></p>
+
+    <div class="person-row">
+      <div>
+        <label for="personCity">City</label>
+        <input id="personCity" type="text" autocomplete="address-level2">
+      </div>
+      <div>
+        <label for="personState">State</label>
+        <input id="personState" type="text" autocomplete="address-level1">
+      </div>
+    </div>
+
+    <label for="personSeniority">Level</label>
+    <select id="personSeniority">
+      <option value="">Not set</option>
+      <option value="intern">Intern</option>
+      <option value="entry">Entry level</option>
+      <option value="associate">Associate</option>
+      <option value="mid">Mid level</option>
+      <option value="senior">Senior</option>
+      <option value="lead">Lead</option>
+      <option value="principal">Principal</option>
+      <option value="director">Director</option>
+      <option value="executive">Executive</option>
+    </select>
+
+    <label class="toggle person-toggle"><input type="checkbox" id="personRemote"> Remote jobs only</label>
+    <label class="toggle person-toggle" id="personActivateRow"><input type="checkbox" id="personActivate"> Switch to this profile now</label>
+    <p class="field-error person-form-error" id="personFormError" role="alert" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="personSave">Add profile</button>
+  </div>
+  </form>
 </dialog>
 
 <dialog id="dlgChangelog" aria-labelledby="dlgChangelogTitle">

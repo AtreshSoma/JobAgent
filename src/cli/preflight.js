@@ -6,11 +6,11 @@
  */
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { requiredProfileGaps } from './doctor.js';
 import { findPlaceholders } from '../config/placeholders.js';
 import { resumeProfileMismatch } from '../profile/resumeIdentity.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
 /**
  * Re-exported so existing callers and tests keep importing it from here. The
@@ -39,7 +39,7 @@ export function quickPreflight(config) {
   // status literally read "US Citizen | Green Card | H-1B | OPT | ...". Presence
   // is not plausibility — see src/config/placeholders.js.
   problems.push(...findPlaceholders(config).problems);
-  const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
+  const master = masterResumeFile(config.root);
   if (!existsSync(master)) {
     problems.push('Master resume not found at resumes/base/MASTER_RESUME.docx — it is the read-only source for tailoring.');
   } else {

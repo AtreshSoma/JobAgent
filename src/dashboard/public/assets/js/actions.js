@@ -7,7 +7,7 @@ import { applyFilterObject, clearFilter, filterValue, resetFilters, setFilterVal
 import { loadSections, renderTabs } from './analytics.js';
 import { loadBoard } from './board.js';
 import { cssEscape, loadDetail, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
-import { closeDialog, openDialog, runPendingConfirm } from './dialogs.js';
+import { closeDialog, openDialog, runPendingAlt, runPendingConfirm } from './dialogs.js';
 import { autofillOne, checkLink, sweepClosedPostings, fillProfileFromResume, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
 import { setView, todayAct } from './today.js';
 import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection, reasonHandlers, showCompare, toggleSelect } from './selection.js';
@@ -23,7 +23,7 @@ import {
 } from './workspace.js';
 import { localDay } from './detail.js';
 import { openChangelog } from './changelog.js';
-import { deleteProfileAsk, switchProfile } from './profiles.js';
+import { deleteProfileAsk, openAddProfile, openEditProfile, removeRole, savePerson, switchProfile } from './profiles.js';
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -139,6 +139,13 @@ export const ACTIONS = {
     try { await switchProfile(id); } catch (err) { toast(err.message, 'bad'); }
   },
   'delete-search-profile': (target) => deleteProfileAsk(target?.dataset?.profileId),
+  'open-add-profile': () => openAddProfile(),
+  'open-edit-profile': (target) => openEditProfile(target?.dataset?.profileId).catch((err) => toast(err.message, 'bad')),
+  'save-person': () => savePerson(),
+  'person-pick-resume': () => { $('personResumeFile').value = ''; $('personResumeFile').click(); },
+  'remove-role': (target) => removeRole(target.dataset.index),
+  'focus-role-input': (target, event) => { if (event?.target === target) $('personRoleInput').focus(); },
+  'confirm-alt': runPendingAlt,
   // Creating and activating in one step is deliberate here: the user has just
   // been shown exactly what this profile will search for and pressed the button
   // that says so. The API keeps them separable for every other caller.
@@ -319,6 +326,7 @@ export const BUSY_ACTIONS = new Set([
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
   'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',
+  'save-person', 'confirm-alt',
 ]);
 
 /** Run one ACTIONS entry, busy-guarded when it mutates. */

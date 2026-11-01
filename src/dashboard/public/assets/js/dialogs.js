@@ -77,7 +77,20 @@ for (const dialog of document.querySelectorAll('dialog')) {
 /** What "Continue" in the confirm dialog will do; consumed exactly once. */
 export let pendingConfirm = null;
 
-export function confirmAction(message, onConfirm) {
+/**
+ * Ask before doing something. Optional: a title, the confirm button's words
+ * ("Delete" says what it does; "Continue" does not), and a second choice
+ * beside it (`altLabel` / `onAlt`) for questions with two real answers.
+ */
+export function confirmAction(message, onConfirm, { title = 'Confirm', confirmLabel = 'Continue', altLabel = '', onAlt = null } = {}) {
+  $('dlgConfirmTitle').textContent = title;
+  $('confirmGo').textContent = confirmLabel;
+  $('confirmAlt')?.remove();
+  pendingAlt = null;
+  if (altLabel && onAlt) {
+    pendingAlt = onAlt;
+    $('confirmGo').before(el('button', { type: 'button', class: 'small', id: 'confirmAlt', 'data-action': 'confirm-alt', text: altLabel }));
+  }
   $('confirmBody').textContent = '';
   for (const line of String(message).split('\n')) {
     $('confirmBody').append(el('p', { class: line.startsWith('  ') ? 'muted' : '', text: line.trim() }));
@@ -87,6 +100,17 @@ export function confirmAction(message, onConfirm) {
   // double submit finds nothing left to run.
   pendingConfirm = onConfirm;
   openDialog($('dlgConfirm'));
+}
+
+/** The confirm dialog's second choice; consumed exactly once. */
+let pendingAlt = null;
+
+export async function runPendingAlt() {
+  const fn = pendingAlt;
+  pendingAlt = null;
+  pendingConfirm = null;
+  closeDialog($('dlgConfirm'));
+  if (fn) await fn();
 }
 
 export async function runPendingConfirm() {

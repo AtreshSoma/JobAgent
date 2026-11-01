@@ -30,7 +30,7 @@
  *     lists) are the deliberate exception and are always preserved.
  */
 
-import { existsSync, mkdirSync, readdirSync, copyFileSync, unlinkSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, copyFileSync, unlinkSync, readFileSync, renameSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -39,10 +39,11 @@ import { normalizeText } from '../utils/textNormalize.js';
 import { readJson, CONFIG_FILES, loadConfig } from '../config/loadConfig.js';
 import { rescoreStale } from '../pipeline/index.js';
 import { SCHEMA_FILES, createValidator, validateConfig } from '../config/validateConfig.js';
-import { normalizeProfile, fromCandidateConfig, slugify } from './model.js';
+import { normalizeProfile, fromCandidateConfig, slugify, SENIORITY_KEYS } from './model.js';
 import { validateAnswerEntry } from '../config/screeningAnswerRules.js';
 import { deriveFromProfile, applyScoring, applyExclusions, applyScreeningAnswers } from './derive.js';
 import { loadRoleFamilies } from './roleFamilies.js';
+import { workspacePaths } from './workspace.js';
 
 /** Directory holding saved profiles, relative to the project root. */
 export const PROFILES_DIR = join('config', 'profiles');
@@ -214,7 +215,14 @@ export function resumeProfileToReuse(root, proposal, fingerprint = '') {
   return sameName[0]?.id ?? null;
 }
 
-/** Delete a saved profile. The ACTIVE profile cannot be deleted. */
+/**
+ * Delete a saved profile. The ACTIVE profile cannot be deleted.
+ *
+ * A profile with its OWN workspace takes it along — but into
+ * data/profiles/.deleted/ and resumes/profiles/.deleted/, never unlinked: a
+ * person's jobs, applications and resume are not something one click should
+ * be able to destroy. The original workspace is never moved by this.
+ */
 export function deleteProfile(root, id) {
   const safe = safeId(id);
   if (readActiveId(root) === safe) {
@@ -222,8 +230,128 @@ export function deleteProfile(root, id) {
   }
   const path = profilePath(root, safe);
   if (!existsSync(path)) throw new Error(`no profile named "${safe}"`);
+  const profile = readProfile(root, safe);
   unlinkSync(path);
-  return { id: safe, deleted: true };
+  const archived = [];
+  const ws = profile?.workspace ?? '';
+  if (ws) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const paths = workspacePaths(root, ws);
+    for (const dir of [paths.dataDir, paths.resumeDir, paths.applicationsDir]) {
+      if (!existsSync(dir)) continue;
+      const parent = join(dir, '..', '.deleted');
+      mkdirSync(parent, { recursive: true });
+      const dest = join(parent, `${ws}-${stamp}`);
+      renameSync(dir, dest);
+      archived.push(dest);
+    }
+  }
+  return { id: safe, deleted: true, archived };
+}
+
+/* ─────────────────────── adding and editing a person ─────────────────────── */
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+/**
+ * Check what a person typed into the Add / Edit profile form. Field-keyed, so
+ * the form can put each message next to the field it is about.
+ *
+ * @param {object} fields
+ * @returns {Record<string, string>} empty when valid
+ */
+export function profileFieldErrors(fields = {}) {
+  const errors = {};
+  const name = String(fields.fullName ?? '').trim();
+  const email = String(fields.email ?? '').trim();
+  const roles = (Array.isArray(fields.targetRoles) ? fields.targetRoles : []).map((r) => String(r ?? '').trim()).filter(Boolean);
+  if (name.split(/\s+/).filter(Boolean).length < 2) errors.fullName = 'Enter a first and last name.';
+  if (!EMAIL_RE.test(email)) errors.email = 'Enter an email address like name@example.com.';
+  if (!roles.length) errors.targetRoles = 'Add at least one job title to search for.';
+  if (roles.some((r) => r.length > 80)) errors.targetRoles = 'Keep each job title under 80 characters.';
+  if (roles.length > 15) errors.targetRoles = 'Keep it to 15 job titles or fewer.';
+  if (fields.seniority && !SENIORITY_KEYS.includes(String(fields.seniority))) errors.seniority = 'Choose a level from the list.';
+  return errors;
+}
+
+/** The form's fields, tidied, merged over an existing (or blank) profile. */
+function applyFields(base, fields) {
+  const roles = [...new Set((fields.targetRoles ?? []).map((r) => String(r ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean))];
+  const fullName = String(fields.fullName ?? '').replace(/\s+/g, ' ').trim();
+  const remoteOnly = fields.remoteOnly === true;
+  return {
+    ...base,
+    label: `${fullName} — ${roles[0]}`,
+    identity: { ...base.identity, fullName, preferredName: fullName.split(' ')[0], headline: base.identity?.headline || roles[0] },
+    contact: { ...base.contact, email: String(fields.email ?? '').trim(), phone: String(fields.phone ?? base.contact?.phone ?? '').trim() },
+    location: {
+      ...base.location,
+      city: String(fields.city ?? base.location?.city ?? '').trim(),
+      state: String(fields.state ?? base.location?.state ?? '').trim(),
+      country: base.location?.country || 'United States',
+    },
+    searchIntent: {
+      ...base.searchIntent,
+      targetRoles: roles,
+      seniority: fields.seniority != null ? String(fields.seniority) : base.searchIntent?.seniority ?? '',
+      ...(fields.remoteOnly != null ? { workModes: remoteOnly ? ['remote'] : ['remote', 'hybrid', 'onsite'] } : {}),
+    },
+  };
+}
+
+/**
+ * Add a person: a new profile with its OWN workspace (empty job database, its
+ * own master resume when one is given). Never touches another profile, the
+ * active profile's resume or the original workspace.
+ *
+ * @param {string} root
+ * @param {object} fields from the Add profile form
+ * @param {{ resume?: { bytes: Buffer, background?: object } }} [options]
+ * @returns {{ id: string, workspace: string }}
+ */
+export function createPersonProfile(root, fields, { resume = null } = {}) {
+  const errors = profileFieldErrors(fields);
+  if (Object.keys(errors).length) {
+    throw Object.assign(new Error(Object.values(errors)[0]), { statusCode: 400, fields: errors });
+  }
+  const existingIds = listProfiles(root).profiles.map((p) => p.id);
+  const id = uniqueId(slugify(fields.fullName), existingIds);
+  const base = normalizeProfile({ id, background: { ...(resume?.background ?? {}), source: resume ? 'resume' : 'manual' } });
+  const profile = normalizeProfile({ ...applyFields(base, fields), id, workspace: id, createdAt: new Date().toISOString() });
+  const paths = workspacePaths(root, id);
+  if (resume?.bytes) {
+    mkdirSync(paths.resumeDir, { recursive: true });
+    writeFileAtomic(paths.resume, resume.bytes);
+    profile.background.sourceFile = paths.resume;
+  }
+  saveProfile(root, profile);
+  return { id, workspace: id };
+}
+
+/**
+ * Edit a person's name, contact, job titles, location or level. Their
+ * background (what the resume says they have done) is left as it is.
+ *
+ * @returns {{ id: string, active: boolean }}
+ */
+export function updatePersonProfile(root, id, fields) {
+  const safe = safeId(id);
+  const existing = readProfile(root, safe);
+  if (!existing) throw Object.assign(new Error(`no profile named "${safe}"`), { statusCode: 404 });
+  const errors = profileFieldErrors(fields);
+  if (Object.keys(errors).length) {
+    throw Object.assign(new Error(Object.values(errors)[0]), { statusCode: 400, fields: errors });
+  }
+  saveProfile(root, normalizeProfile({ ...applyFields(existing, fields), id: safe, workspace: existing.workspace, createdAt: existing.createdAt }));
+  return { id: safe, active: readActiveId(root) === safe };
+}
+
+/** "jane-doe", "jane-doe-2", ... — an id no saved profile already has. */
+function uniqueId(base, taken) {
+  const root = base || 'profile';
+  if (!taken.includes(root)) return root;
+  for (let n = 2; n < 100; n += 1) if (!taken.includes(`${root}-${n}`)) return `${root}-${n}`;
+  throw new Error('too many profiles with that name');
 }
 
 /**

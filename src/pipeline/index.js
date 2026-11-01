@@ -52,6 +52,7 @@ import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '..
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
 import { findPlaceholders } from '../config/placeholders.js';
 import { resumeProfileMismatch } from '../profile/resumeIdentity.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
 /**
  * Tiers that warrant AUTO-building an application packet in PREPARE/LIVE_ASSIST.
@@ -729,7 +730,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   // resume on disk.
   if (deps.skipResumeIdentityCheck !== true) {
     const identityProblems = resumeProfileMismatch(
-      config, join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx'),
+      config, masterResumeFile(config.root),
     );
     if (identityProblems.length) {
       logger?.warn?.({ job: job.id }, 'refusing to prepare a packet from a mismatched master resume');
@@ -757,7 +758,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   // Node->Python tailor. On any failure we fall back to the master resume and
   // record a warning so the packet is never silently broken. The master resume
   // is opened READ-ONLY by the tailor and is never overwritten.
-  const master = join(config.root, 'resumes', 'base', 'MASTER_RESUME.docx');
+  const master = masterResumeFile(config.root);
   let resumePath = master;
   let resumePdfPath = null;
   let resumePreviewWarning = null;
@@ -904,7 +905,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
  */
 function masterResumeFingerprint(root) {
   try {
-    const master = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+    const master = masterResumeFile(root);
     if (!existsSync(master)) return null;
     return createHash('sha1').update(readFileSync(master)).digest('hex').slice(0, 16);
   } catch {

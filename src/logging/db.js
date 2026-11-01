@@ -18,14 +18,23 @@ import { PROJECT_ROOT } from '../config/loadConfig.js';
 import { nowIso } from '../utils/dates.js';
 import { assertTransition } from '../lifecycle.js';
 import { localDayWindow } from '../domain/time.js';
+import { workspacePaths } from '../profile/workspace.js';
 
 // Load the built-in `node:sqlite` via createRequire so bundlers/test runners
 // (Vite/Vitest) do not statically analyze and try to transform this newer
 // built-in module. It is a standard Node module, not an npm dependency.
 const { DatabaseSync } = createRequire(import.meta.url)('node:sqlite');
 
-/** Default on-disk database path. */
+/** The ORIGINAL workspace's database (profiles saved before workspaces use it). */
 export const DEFAULT_DB_PATH = join(PROJECT_ROOT, 'data', 'applied_jobs.db');
+
+/**
+ * The active person's database: the original file for the original
+ * workspace, data/profiles/<id>/applied_jobs.db for a profile with its own
+ * (src/profile/workspace.js). Resolved at OPEN time, not import time, so a
+ * CLI run started after a switch reads the person now active.
+ */
+export const activeDbPath = (root = PROJECT_ROOT) => workspacePaths(root).db;
 
 /** Full schema, applied idempotently on open. */
 export const SCHEMA_SQL = `
@@ -259,10 +268,10 @@ const JOB_COLUMNS = [
  * Open (and initialize) the database.
  *
  * @param {object} [options]
- * @param {string} [options.path=DEFAULT_DB_PATH] file path, or ':memory:'
+ * @param {string} [options.path=activeDbPath()] file path, or ':memory:'
  * @returns {Database}
  */
-export function openDatabase({ path = DEFAULT_DB_PATH } = {}) {
+export function openDatabase({ path = activeDbPath() } = {}) {
   if (path !== ':memory:') {
     mkdirSync(dirname(path), { recursive: true });
   }

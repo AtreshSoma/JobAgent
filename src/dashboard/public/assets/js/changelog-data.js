@@ -28,6 +28,8 @@ export const CHANGELOG = Object.freeze([
         'Two new menus in the header: Activity (run history, data quality, system health, reports and exports) and Profile (master resume, application profile, resume library, keyboard shortcuts).',
         'Job search now reaches pharma, life sciences, cybersecurity, Java and full-stack roles, with 45 more employers added, including Johnson & Johnson, Merck, AstraZeneca, Novartis, Amgen, IQVIA, Northrop Grumman, Leidos, Cloudflare and Zscaler.',
         'Switch between people from the Profile menu in the top-right corner. Its button shows the initials of whoever you are searching as, and every switch offers "Switch back".',
+        'Add profile: add another person in one short form, from their resume or by typing their details. Each person gets their own jobs, resume and applications, and the Jobs, Today and Applications tabs always show the person you are searching as.',
+        'Edit a profile\'s name, email, job titles, location and level at any time, without uploading a resume.',
         'This changelog, linked from the bottom of every page.',
       ],
       improved: [
@@ -49,6 +51,8 @@ export const CHANGELOG = Object.freeze([
         'Resumes that put a job title and its dates on the same line now read correctly, so a profile made from them can search.',
         'Creating a profile from a resume no longer leaves empty copies behind when it cannot search, and unused profiles can now be deleted.',
         'Buttons in notifications, such as Undo and Switch back, now work while a window is open.',
+        'Switching people no longer re-scores the other person\'s jobs, so their scores, shortlists and applications stay exactly as they left them.',
+        'Uploading someone else\'s resume as your master resume now asks first, and offers to add them as a new profile instead.',
       ],
     },
   },

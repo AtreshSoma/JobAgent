@@ -19,6 +19,7 @@ import { deriveAppStatus, APP_STATUS } from '../domain/appStatus.js';
 import { jsonList } from '../utils/json.js';
 import { latestApprovalsByJob as approvalsByJob } from '../apply/approvalQueue.js';
 import { NO_OUTCOME_EXPORT, outcomeEventsByJob, outcomeExport } from '../domain/applicationOutcome.js';
+import { workspacePaths } from '../profile/workspace.js';
 
 /** Tracker columns, in spreadsheet order. */
 const COLUMNS = [
@@ -140,7 +141,8 @@ export function writeJobTracker(db, root) {
     ].map(csvField).join(',');
   });
 
-  const dir = join(root, 'data');
+  // The active person's spreadsheet: each workspace keeps its own.
+  const dir = workspacePaths(root).dataDir;
   mkdirSync(dir, { recursive: true });
   const path = join(dir, 'job_tracker.csv');
   // Atomic: the dashboard rewrites this after every action while the user may

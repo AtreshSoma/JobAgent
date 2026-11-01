@@ -22,10 +22,14 @@ import { extractJdRequirements } from '../llm/jdRequirements.js';
 import {
   pythonExe, pythonSpawnOptions, pythonTimeoutMs, killProcessTree,
 } from './pythonEnv.js';
+import { masterResumeFile } from '../profile/workspace.js';
 
-/** Default master resume location (never overwritten). */
+/**
+ * The active person's master resume (never overwritten by tailoring). Each
+ * workspace has its own — see src/profile/workspace.js.
+ */
 export function masterResumePath(root) {
-  return join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+  return masterResumeFile(root);
 }
 
 /** Default tailored-output directory. */

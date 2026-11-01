@@ -155,9 +155,14 @@ export function renderRows(jobs) {
     const tracked = state.stats?.totals?.jobsTracked ?? 0;
     const cell = el('td', { colspan: boardColSpan() });
     const box = el('div', { class: 'empty' });
-    box.append(el('div', { class: 'big', text: tracked === 0 ? 'No jobs yet' : 'Nothing matches these filters' }));
+    // With more than one person, say whose empty board this is: a newly added
+    // profile starts with its own, empty, job list.
+    const first = Number(document.body.dataset.people) > 1 ? (document.body.dataset.person ?? '').split(' ')[0] : '';
+    box.append(el('div', { class: 'big', text: tracked === 0 ? `No jobs yet${first ? ` for ${first}` : ''}` : 'Nothing matches these filters' }));
     if (tracked === 0) {
-      box.append('Run ', el('b', { text: 'Find new jobs' }), ' to discover and score postings.');
+      box.append(el('p', { class: 'muted', text: 'Find jobs searches every job board for the titles in this profile and scores each match.' }));
+      box.append(el('div', { class: 'row-gap empty-actions' },
+        el('button', { type: 'button', class: 'small primary', 'data-action': 'run', 'data-phase': 'discover', text: 'Find jobs' })));
     } else {
       const actions = el('div', { class: 'row-gap empty-actions' });
       actions.append(el('button', { class: 'small', 'data-action': 'reset-filters', text: 'Reset filters' }));

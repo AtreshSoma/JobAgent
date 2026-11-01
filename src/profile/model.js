@@ -136,6 +136,14 @@ export function normalizeProfile(input = {}) {
      */
     acknowledgedResume: str(input.acknowledgedResume, 64),
 
+    /**
+     * The workspace this profile's jobs, master resume and outputs live in
+     * (src/profile/workspace.js). Empty means the ORIGINAL workspace — every
+     * profile saved before workspaces existed keeps using the files it always
+     * used. Profiles created from now on get their own (their id).
+     */
+    workspace: /^[a-z0-9][a-z0-9-]{0,79}$/.test(String(input.workspace ?? '')) ? String(input.workspace) : '',
+
     identity: {
       fullName: str(input.identity?.fullName),
       preferredName: str(input.identity?.preferredName),

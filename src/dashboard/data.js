@@ -19,7 +19,7 @@
  */
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply/approvalQueue.js';
@@ -42,6 +42,7 @@ import {
 } from '../domain/applicationOutcome.js';
 import { findPlaceholders } from '../config/placeholders.js';
 import { csvCell } from '../reports/csv.js';
+import { masterResumeFile, workspacePaths } from '../profile/workspace.js';
 
 // The status vocabulary and the pure per-row rules moved to src/domain so the
 // tracker, reports and CLI can use them without importing this whole data
@@ -2897,7 +2898,7 @@ export function buildDocuments(db, {
 
   let master = null;
   if (root) {
-    const masterPath = join(root, 'resumes', 'base', 'MASTER_RESUME.docx');
+    const masterPath = masterResumeFile(root);
     master = { path: masterPath, ...stat(masterPath) };
   }
 
@@ -2964,6 +2965,7 @@ export function buildDocuments(db, {
 }
 
 /** Where the master resume lives, and where replaced copies are kept. */
+/** The ORIGINAL workspace's master resume and history; other workspaces resolve through workspacePaths(). */
 export const MASTER_RESUME_RELATIVE = join('resumes', 'base', 'MASTER_RESUME.docx');
 export const MASTER_HISTORY_RELATIVE = join('resumes', 'base', 'history');
 
@@ -3007,7 +3009,9 @@ export function buildMasterResume(db, {
     };
   }
 
-  const path = join(root, MASTER_RESUME_RELATIVE);
+  // The ACTIVE person's resume: each workspace keeps its own.
+  const paths = workspacePaths(root);
+  const path = paths.resume;
   const info = stat(path);
   let paragraphs = [];
   let wordCount = null;
@@ -3030,7 +3034,7 @@ export function buildMasterResume(db, {
   const listDir = listDirImpl ?? ((p) => {
     try { return readdirSync(p); } catch { return []; }
   });
-  const historyDir = join(root, MASTER_HISTORY_RELATIVE);
+  const historyDir = paths.history;
   const backups = listDir(historyDir)
     .filter((name) => /^MASTER_RESUME\..+\.docx$/i.test(name))
     .map((name) => ({ name, ...stat(join(historyDir, name)) }))
@@ -3051,7 +3055,7 @@ export function buildMasterResume(db, {
     available: true,
     reason: null,
     path,
-    relativePath: MASTER_RESUME_RELATIVE,
+    relativePath: relative(root, path),
     exists: info.exists,
     bytes: info.bytes,
     modifiedAt: info.modifiedAt,
