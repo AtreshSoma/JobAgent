@@ -4,13 +4,13 @@
  *
  * A profile switch rewrites the search configuration, so it is never silent:
  * every switch says who you are now searching as and offers "Switch back".
- * Deleting a profile always asks first and can never remove the active one
- * (the server refuses that too).
+ * Removing a profile always asks first, names the person on its button, and
+ * can never remove the active one (the server refuses that too).
  */
 
 import { $, el, toast } from './dom.js';
 import { api, postJson } from './api.js';
-import { confirmAction } from './dialogs.js';
+import { closeDialog, openDialog } from './dialogs.js';
 import { scheduleRefresh } from './mutations.js';
 import { displayName, initials } from './format.js';
 
@@ -98,6 +98,9 @@ export function renderProfileMenu(listing) {
         el('span', { class: 'pf-mi-sub', text: p.active ? 'Active' : profileSubline(p) }))));
     }
   }
+  // "Remove profile…" once there is someone besides the active person.
+  const remove = document.querySelector('.pf-remove-item');
+  if (remove) remove.hidden = rows.filter((p) => !p.active).length === 0;
   const active = rows.find((p) => p.active);
   // Who the empty states and titles speak to ("No jobs yet for Morgan").
   document.body.dataset.person = active?.display ?? '';
@@ -209,19 +212,74 @@ export function announceSwitch(label, previousId, note = '') {
   setTimeout(() => node.remove(), 10000);
 }
 
-/** Delete a saved (inactive) profile after asking. */
-export function deleteProfileAsk(id) {
-  const p = describeProfiles(listingCache).find((row) => row.id === id);
-  const name = p ? `${p.display}${p.duplicate && p.when ? ` (created ${p.when})` : ''}` : id;
-  confirmAction(
-    `Delete the saved profile "${name}"?\n`
-    + '  Its search goals are removed from this computer. The resume file, your jobs and your other profiles are not touched.',
-    async () => {
-      await api(`/api/search-profiles/${encodeURIComponent(id)}`, { method: 'DELETE' });
-      toast(`Deleted ${name}.`, 'good');
-      await afterChange();
-    },
-  );
+/* ─────────────────────── remove a person ─────────────────────── */
+
+/** The chosen radio in the Remove dialog, or null. */
+const chosenRemoval = () => document.querySelector('#removeList input[name="removeId"]:checked');
+
+function setRemoveError(message) {
+  $('removeError').textContent = message;
+  $('removeError').hidden = !message;
+}
+
+/** The button names who it removes, so the last click is never a guess. */
+function nameRemoveButton() {
+  const chosen = chosenRemoval();
+  const who = chosen ? describeProfiles(listingCache).find((p) => p.id === chosen.value)?.display : '';
+  $('removeGo').textContent = who ? `Remove ${who.split(' ')[0]}` : 'Remove profile';
+  if (chosen) setRemoveError('');
+}
+$('removeList')?.addEventListener('change', nameRemoveButton);
+
+/**
+ * "Remove profile…": pick who, read what happens to their files, remove.
+ * The person being searched as is never offered (the server refuses it too).
+ *
+ * @param {string} [preselect] a profile id to start with (the Master resume list's trash button)
+ */
+export async function openRemoveProfile(preselect) {
+  if (!listingCache) await loadProfiles();
+  const rows = describeProfiles(listingCache);
+  const active = rows.find((p) => p.active);
+  const others = rows.filter((p) => !p.active);
+  const pick = preselect ?? (others.length === 1 ? others[0].id : null);
+  $('removeList').replaceChildren(...others.map((p) => el('label', { class: 'pf-pick' },
+    el('input', { type: 'radio', name: 'removeId', value: p.id, checked: p.id === pick }),
+    el('span', { class: 'pf-avatar', 'aria-hidden': 'true', text: initials(p.display) || '?' }),
+    el('span', { class: 'pf-pick-text' },
+      el('span', { class: 'pf-pick-name', text: p.display }),
+      el('span', { class: 'pf-pick-sub', text: profileSubline(p) })))));
+  const note = $('removeActiveNote');
+  note.textContent = active
+    ? `${active.display} is not listed because you are searching as them. To remove that profile, switch to someone else first.`
+    : '';
+  note.hidden = !active;
+  setRemoveError(others.length ? '' : 'There is no other profile to remove.');
+  nameRemoveButton();
+  openDialog($('dlgRemovePerson'));
+  // Start on the chosen person, else the first; never on the Remove button.
+  (chosenRemoval() ?? $('removeList').querySelector('input'))?.focus();
+}
+
+/** Remove the chosen person: their profile and their own workspace are archived, never erased. */
+export async function removePerson() {
+  const chosen = chosenRemoval();
+  if (!chosen) {
+    setRemoveError('Choose the profile to remove.');
+    $('removeList').querySelector('input')?.focus();
+    return;
+  }
+  const p = describeProfiles(listingCache).find((row) => row.id === chosen.value);
+  const name = p ? `${p.display}${p.duplicate && p.when ? ` (created ${p.when})` : ''}` : chosen.value;
+  try {
+    await api(`/api/search-profiles/${encodeURIComponent(chosen.value)}`, { method: 'DELETE' });
+  } catch (err) {
+    setRemoveError(err.message);
+    return;
+  }
+  closeDialog($('dlgRemovePerson'));
+  toast(`Removed ${name}. Nothing was erased; their files are kept on this computer.`, 'good');
+  await afterChange();
 }
 
 /* ─────────────────────── add or edit a person ─────────────────────── */

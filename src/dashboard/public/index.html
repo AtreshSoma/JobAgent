@@ -114,6 +114,13 @@
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>
           Add profile…
         </button>
+        <!-- Its pair. Shown once there is someone besides the active person to
+             remove; the dialog it opens says what happens to their files. -->
+        <button role="menuitem" class="pf-remove-item" data-action="open-remove-profile" hidden
+          title="Remove a person's job search from this computer. Nothing is erased: their files are kept.">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg>
+          Remove profile…
+        </button>
         <hr role="separator" id="profileMenuSep">
         <div class="menu-label" role="presentation">Your materials</div>
         <button role="menuitem" data-action="open-master"
@@ -1033,6 +1040,36 @@
   <div class="dlg-foot">
     <button type="button" class="small" data-action="close-dialog">Cancel</button>
     <button type="submit" class="small primary" id="personSave">Add profile</button>
+  </div>
+  </form>
+</dialog>
+
+<!-- Remove a person. Choosing who is the confirmation: nothing is preselected
+     unless there is only one choice (or they came from that person's trash
+     button), and the button names the person. The person being searched as is
+     never offered (the server refuses it too); the note says how to remove
+     them. Nothing is erased: the profile and any workspace of its own are
+     archived, and a profile on the original files leaves those in place. -->
+<dialog id="dlgRemovePerson" class="narrow remove-dialog" aria-labelledby="dlgRemoveTitle" aria-describedby="dlgRemoveSub">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgRemoveTitle">Remove a profile</h2>
+      <div class="muted subtle-sub" id="dlgRemoveSub">Their profile is archived, and their jobs, resume and applications are kept on this computer. Nothing is erased.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="remove-person" novalidate>
+  <div class="dlg-body">
+    <fieldset class="pf-picks" aria-describedby="removeError">
+      <legend>Who should be removed?</legend>
+      <div id="removeList" class="pf-pick-list"></div>
+    </fieldset>
+    <p class="muted remove-note" id="removeActiveNote" hidden></p>
+    <p class="field-error" id="removeError" role="alert" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small danger" id="removeGo">Remove profile</button>
   </div>
   </form>
 </dialog>

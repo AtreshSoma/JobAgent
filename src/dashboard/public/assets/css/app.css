@@ -70,6 +70,17 @@
   --glass-strong: rgba(17, 22, 30, .9);
   --glass-line: rgba(160, 190, 230, .12);
   --glass-hi: rgba(255, 255, 255, .05);
+  /* Liquid Glass (Find jobs): fill, blue-to-cyan tint, edge, rim, inner
+     shade, the pointer's light, hover wash and drop. */
+  --lg-fill: rgba(255, 255, 255, .06);
+  --lg-tint-a: rgba(77, 159, 255, .24);
+  --lg-tint-b: rgba(92, 200, 232, .10);
+  --lg-edge: rgba(190, 215, 255, .16);
+  --lg-rim: rgba(255, 255, 255, .5);
+  --lg-shade: rgba(0, 0, 0, .22);
+  --lg-spec: rgba(255, 255, 255, .14);
+  --lg-hover: rgba(255, 255, 255, .07);
+  --lg-drop: 0 1px 2px rgba(2, 5, 12, .4), 0 6px 16px rgba(2, 5, 12, .35);
   /* A faint wash of the accent behind the whole page, so the glass has
      something to refract. At these opacities it reads as light, not colour. */
   --ambient-a: rgba(77, 159, 255, .07);
@@ -187,6 +198,15 @@
   --glass-strong: rgba(255, 255, 255, .9);
   --glass-line: rgba(16, 24, 40, .09);
   --glass-hi: rgba(255, 255, 255, .8);
+  --lg-fill: rgba(255, 255, 255, .6);
+  --lg-tint-a: rgba(22, 104, 214, .14);
+  --lg-tint-b: rgba(14, 134, 168, .06);
+  --lg-edge: rgba(16, 24, 40, .12);
+  --lg-rim: rgba(255, 255, 255, 1);
+  --lg-shade: rgba(16, 24, 40, .06);
+  --lg-spec: rgba(255, 255, 255, .85);
+  --lg-hover: rgba(22, 104, 214, .07);
+  --lg-drop: 0 1px 2px rgba(16, 24, 40, .08), 0 6px 16px rgba(16, 24, 40, .1);
   --ambient-a: rgba(22, 104, 214, .06);
   --ambient-b: rgba(14, 134, 168, .04);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
@@ -237,6 +257,15 @@
     --glass-strong: rgba(255, 255, 255, .9);
     --glass-line: rgba(16, 24, 40, .09);
     --glass-hi: rgba(255, 255, 255, .8);
+    --lg-fill: rgba(255, 255, 255, .6);
+    --lg-tint-a: rgba(22, 104, 214, .14);
+    --lg-tint-b: rgba(14, 134, 168, .06);
+    --lg-edge: rgba(16, 24, 40, .12);
+    --lg-rim: rgba(255, 255, 255, 1);
+    --lg-shade: rgba(16, 24, 40, .06);
+    --lg-spec: rgba(255, 255, 255, .85);
+    --lg-hover: rgba(22, 104, 214, .07);
+    --lg-drop: 0 1px 2px rgba(16, 24, 40, .08), 0 6px 16px rgba(16, 24, 40, .1);
     --ambient-a: rgba(22, 104, 214, .06);
     --ambient-b: rgba(14, 134, 168, .04);
     --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
@@ -540,57 +569,101 @@ button.icon { padding: 4px 7px; }
 /* Menu items that only exist where their header twin has been hidden. */
 .only-narrow { display: none !important; }
 
-/* ── Find jobs: the one primary action, in INK, not blue ──
-   The header already carries colour where it means something (the active
-   person's avatar, the selected view, the run row). Three solid-blue blocks
-   side by side — avatar, button, chevron — read as noise, and the chevron
-   half sat 7px low and 4px apart: the wrapper is also `.menu`, whose later
-   `display: inline-block` overrode `inline-flex`, so the halves never
-   stretched to one height. Now one 32px unit on the icon buttons' baseline:
-   ink fill (near-black in light, near-white in dark), a hairline between the
-   halves, a drawn search icon and chevron in the house stroke. Prominence
-   comes from contrast and weight; blue is left for state. */
-.split.menu { display: inline-flex; align-items: stretch; height: var(--h-md); border-radius: var(--r-sm); }
+/* ── Find jobs: the one primary action, in LIQUID GLASS ──
+   A web approximation of Apple's Liquid Glass (there is no official web
+   material): a capsule of glass that blurs and saturates what passes under
+   the header, lit by a specular rim along its top edge, with a faint
+   blue-to-cyan tint that marks it as the primary action without a solid
+   block of blue. The pointer lights the glass where it is (Apple's
+   "interactive" glass), and a press squeezes the whole capsule, never one
+   half.
+
+   The glass is a ::before LAYER of the wrapper, not the wrapper itself: the
+   wrapper also holds the Find jobs menu, and an ancestor with backdrop-filter
+   is a "backdrop root", which would stop that menu's own frost from reaching
+   the page (the same reason the header frosts on .topbar::before).
+
+   `.split` is also `.menu`, whose later `display: inline-block` once won and
+   left the chevron half 21px tall, 7px low and 4px apart; `.split.menu`
+   outranks it, so both halves stretch to the icon buttons' 32px. */
+@property --gx { syntax: '<percentage>'; inherits: false; initial-value: 32%; }
+.split.menu {
+  display: inline-flex; align-items: stretch; height: var(--h-md);
+  border-radius: var(--r-full);
+  box-shadow: var(--lg-drop);
+  transition: transform 160ms var(--ease-out), --gx 220ms var(--ease-out);
+}
+.split.menu::before, .split.menu::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+}
+/* The body of the glass: fill, tint, and the light the pointer casts. */
+.split.menu::before {
+  background:
+    radial-gradient(70% 130% at var(--gx) -10%, var(--lg-spec), transparent 70%),
+    linear-gradient(100deg, var(--lg-tint-a), var(--lg-tint-b)),
+    var(--lg-fill);
+  box-shadow: inset 0 0 0 1px var(--lg-edge), inset 0 -1px 0 var(--lg-shade);
+}
+/* The rim: a 1px edge that catches light top-left and bottom-right, the way
+   a thick pane does, and fades along the sides. */
+.split.menu::after {
+  padding: 1px;
+  background: linear-gradient(160deg, var(--lg-rim), transparent 38%, transparent 62%, color-mix(in srgb, var(--lg-rim) 45%, transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+}
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .split.menu::before { -webkit-backdrop-filter: blur(10px) saturate(190%); backdrop-filter: blur(10px) saturate(190%); }
+}
 .split.menu > .split-main, .split.menu > .split-toggle {
+  position: relative; z-index: 1;
   height: 100%; padding: 0; margin: 0; border: 0;
-  background: var(--text); color: var(--surface);
+  background: transparent; color: var(--text);
   font-size: var(--fs-md); font-weight: 600; letter-spacing: -.005em;
-  box-shadow: 0 1px 2px rgba(2, 5, 12, .18);
-  transition: background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+  transition: background-color var(--dur-fast) ease;
 }
-.split.menu > .split-main {
-  gap: 7px; padding: 0 13px 0 11px;
-  border-radius: var(--r-sm) 0 0 var(--r-sm);
+.split.menu > .split-main { gap: 7px; padding: 0 12px 0 13px; border-radius: var(--r-full) 0 0 var(--r-full); }
+.split.menu > .split-toggle { width: 30px; padding-right: 3px; justify-content: center; border-radius: 0 var(--r-full) var(--r-full) 0; }
+/* The seam: a short hairline, so the capsule reads as one control with two
+   targets, never as two buttons. */
+.split.menu > .split-toggle::before {
+  content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 1px;
+  background: var(--lg-edge);
 }
-.split.menu > .split-toggle {
-  width: 30px; justify-content: center;
-  border-radius: 0 var(--r-sm) var(--r-sm) 0;
-  /* The seam: a hairline of the button's own ink colour, inset, so the two
-     halves read as one control with two targets — never as two buttons. */
-  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--surface) 24%, transparent), 0 1px 2px rgba(2, 5, 12, .18);
-}
-.split.menu > .split-main .ic { width: 15px; height: 15px; stroke-width: 2; opacity: .9; }
-.split-chev { width: 14px; height: 14px; stroke-width: 2.1; transition: transform var(--dur) var(--ease-out); }
-.split-toggle[aria-expanded="true"] .split-chev { transform: rotate(180deg); }
+.split.menu > .split-main .ic { width: 15px; height: 15px; stroke-width: 2.1; color: var(--accent); }
+.split-chev { width: 14px; height: 14px; stroke-width: 2.1; color: var(--text-dim); transition: transform var(--dur) var(--ease-out); }
+.split-toggle[aria-expanded="true"] .split-chev { transform: rotate(180deg); color: var(--text); }
 @media (hover: hover) and (pointer: fine) {
   .split.menu > .split-main:hover:not(:disabled), .split.menu > .split-toggle:hover {
-    background: color-mix(in srgb, var(--text) 86%, var(--surface));
-    border: 0;
+    background: var(--lg-hover); border: 0;
   }
 }
-/* Press: a deeper fill, not a scale — scaling each half on its own would
-   pull the two apart for a frame. */
-.split.menu > .split-main:active:not(:disabled), .split.menu > .split-toggle:active,
-.split.menu > .split-toggle[aria-expanded="true"] {
-  transform: none; background: color-mix(in srgb, var(--text) 76%, var(--surface));
+/* Press: the whole capsule gives a little. Scaling each half on its own
+   would pull the two apart for a frame. */
+.split.menu > .split-main:active, .split.menu > .split-toggle:active { transform: none; }
+.split.menu:has(> .split-main:active:not(:disabled)), .split.menu:has(> .split-toggle:active) { transform: scale(.97); }
+.split.menu > .split-toggle[aria-expanded="true"] { background: var(--lg-hover); }
+/* Focus: the ring follows the capsule, and the focused half takes the hover
+   wash. A ring per half drew a hard straight edge across the seam. */
+.split.menu > .split-main:focus-visible, .split.menu > .split-toggle:focus-visible { outline: none; background: var(--lg-hover); }
+.split.menu:has(> :focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* A run is in progress: the glass stays, the label steps back. */
+/* Not --text-dim: on dark glass that measured 3.8:1, and the label still
+   says something while a run is on. This mix measures 4.5:1+ on both. */
+.split.menu > .split-main:disabled { opacity: 1; cursor: progress; color: color-mix(in srgb, var(--text-dim) 50%, var(--text)); }
+.split.menu > .split-main:disabled .ic { color: var(--text-dim); }
+/* Reduced transparency: solid, tinted, no blur and no moving light. */
+@media (prefers-reduced-transparency: reduce) {
+  .split.menu::before {
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    -webkit-backdrop-filter: none; backdrop-filter: none;
+  }
+  .split.menu::after { display: none; }
 }
-.split.menu > .split-main:focus-visible, .split.menu > .split-toggle:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 2px; position: relative; z-index: 1;
+@media (prefers-reduced-motion: reduce) {
+  .split-chev, .split.menu { transition: none; }
+  .split.menu:has(> .split-main:active:not(:disabled)), .split.menu:has(> .split-toggle:active) { transform: none; }
 }
-/* A run is in progress: the face says so in its own ink, half strength. */
-.split.menu > .split-main:disabled { opacity: 1; cursor: progress; background: color-mix(in srgb, var(--text) 55%, var(--surface)); box-shadow: none; }
-.split.menu:has(.split-main:disabled) > .split-toggle { background: color-mix(in srgb, var(--text) 55%, var(--surface)); }
-@media (prefers-reduced-motion: reduce) { .split-chev { transition: none; } }
 
 /* Menu items with a second line explaining what the action costs. */
 .menu-pop .mi-title { display: block; font-weight: 600; }
@@ -2478,6 +2551,32 @@ kbd {
 .pf-wrap .pf-list { align-self: stretch; }
 .menu-pop .pf-add-item { gap: var(--s2); color: var(--accent); font-weight: 600; }
 .menu-pop .pf-add-item .ic { width: 14px; height: 14px; }
+/* Its pair is quieter: removing is the rarer, heavier act, and the dialog it
+   opens is where the red lives. */
+.menu-pop .pf-remove-item { gap: var(--s2); color: var(--text-dim); }
+.menu-pop .pf-remove-item .ic { width: 14px; height: 14px; }
+
+/* ── Remove a profile ──
+   The people as one bordered list, like the Master resume list: a whole row
+   is the target (44px+), the radio is real (arrow keys move between people),
+   and the chosen row is tinted in the danger colour it is about to meet. */
+.pf-picks { border: 0; margin: 0; padding: 0; min-width: 0; }
+.pf-picks legend { padding: 0; margin-bottom: var(--s2); font-size: var(--fs-md); font-weight: 600; color: var(--text); }
+.pf-pick-list { border: 1px solid var(--line-soft); border-radius: var(--r-md); overflow: hidden; }
+.pf-pick {
+  display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: var(--s3);
+  padding: 10px var(--s3); min-height: 56px; cursor: pointer;
+  transition: background-color var(--dur-fast) ease;
+}
+.pf-pick + .pf-pick { border-top: 1px solid var(--line-soft); }
+.pf-pick:hover { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.pf-pick:has(input:checked) { background: var(--bad-soft); }
+.pf-pick input { margin: 0; width: 16px; height: 16px; accent-color: var(--bad); }
+.pf-pick input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pf-pick-text { display: flex; flex-direction: column; min-width: 0; }
+.pf-pick-name { font-weight: 650; font-size: var(--fs-md); overflow-wrap: anywhere; }
+.pf-pick-sub { font-size: var(--fs-sm); color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remove-note { margin: var(--s3) 0 0; font-size: var(--fs-sm); max-width: 60ch; }
 
 /* ── Add / Edit profile ──
    One column of labelled fields, the job titles as removable chips. Errors sit

@@ -23,7 +23,7 @@ import {
 } from './workspace.js';
 import { localDay } from './detail.js';
 import { openChangelog } from './changelog.js';
-import { activeProfileId, addAnyway, deleteProfileAsk, loadProfiles, openAddProfile, openEditProfile, removeRole, savePerson, switchProfile } from './profiles.js';
+import { activeProfileId, addAnyway, loadProfiles, openAddProfile, openEditProfile, openRemoveProfile, removePerson, removeRole, savePerson, switchProfile } from './profiles.js';
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -142,8 +142,10 @@ export const ACTIONS = {
     if (!id || target.getAttribute('aria-checked') === 'true') return;
     try { await switchProfile(id); } catch (err) { toast(err.message, 'bad'); }
   },
-  'delete-search-profile': (target) => deleteProfileAsk(target?.dataset?.profileId),
+  'delete-search-profile': (target) => openRemoveProfile(target?.dataset?.profileId),
   'open-add-profile': () => openAddProfile(),
+  'open-remove-profile': () => openRemoveProfile(),
+  'remove-person': () => removePerson(),
   'open-edit-profile': (target) => openEditProfile(target?.dataset?.profileId).catch((err) => toast(err.message, 'bad')),
   'save-person': () => savePerson(),
   'person-add-anyway': () => addAnyway(),
@@ -335,7 +337,7 @@ export const BUSY_ACTIONS = new Set([
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
   'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',
-  'save-person', 'confirm-alt', 'person-add-anyway',
+  'save-person', 'confirm-alt', 'person-add-anyway', 'remove-person',
 ]);
 
 /** Run one ACTIONS entry, busy-guarded when it mutates. */

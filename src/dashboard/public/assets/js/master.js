@@ -245,7 +245,7 @@ function profileList(rows) {
       }));
       actions.append(el('button', {
         type: 'button', class: 'small ghost iconbtn pf-delete', 'data-action': 'delete-search-profile', 'data-profile-id': p.id,
-        'aria-label': `Delete ${p.display}${p.duplicate ? ' (duplicate)' : ''}`, title: 'Delete this saved profile',
+        'aria-label': `Remove ${p.display}${p.duplicate ? ' (duplicate)' : ''}`, title: 'Remove this profile',
       }, trashIcon()));
     }
     row.append(actions);

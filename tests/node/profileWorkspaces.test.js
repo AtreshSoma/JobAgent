@@ -160,6 +160,9 @@ describe('a workspace per person', () => {
     expect(body.archived.length).toBeGreaterThan(0);
     expect(existsSync(workspacePaths(root, added.body.workspace).resumeDir)).toBe(false);
     expect(existsSync(join(root, 'resumes', 'profiles', '.deleted'))).toBe(true);
+    // Their settings are archived too, and the listing no longer shows them.
+    expect(readdirSync(join(root, 'config', 'profiles', '.deleted')).some((f) => f.startsWith(`${added.body.id}-`))).toBe(true);
+    expect((await call('GET', '/api/search-profiles')).body.profiles.some((p) => p.id === added.body.id)).toBe(false);
   });
 
   it('gives a person created from the current resume their own workspace and a copy of it', async () => {

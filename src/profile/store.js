@@ -231,11 +231,17 @@ export function deleteProfile(root, id) {
   const path = profilePath(root, safe);
   if (!existsSync(path)) throw new Error(`no profile named "${safe}"`);
   const profile = readProfile(root, safe);
-  unlinkSync(path);
-  const archived = [];
+  // Archived like the workspace, never unlinked: removing a person is
+  // reversible by moving the files back. `.deleted` is a folder, so
+  // listProfiles (which reads *.json at the top level) never sees it.
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const settingsArchive = join(profilesDir(root), '.deleted');
+  mkdirSync(settingsArchive, { recursive: true });
+  const settingsDest = join(settingsArchive, `${safe}-${stamp}.json`);
+  renameSync(path, settingsDest);
+  const archived = [settingsDest];
   const ws = profile?.workspace ?? '';
   if (ws) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     const paths = workspacePaths(root, ws);
     for (const dir of [paths.dataDir, paths.resumeDir, paths.applicationsDir]) {
       if (!existsSync(dir)) continue;

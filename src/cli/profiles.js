@@ -235,7 +235,7 @@ function migrateAction(root) {
 function deleteAction(root, id) {
   if (!id) throw new Error('usage: npm run profiles delete <id>');
   const result = deleteProfile(root, id);
-  out(`Deleted profile "${result.id}".`);
+  out(`Removed profile "${result.id}". Nothing was erased; archived to:\n  ${result.archived.join('\n  ')}`);
   return { command: 'profiles', ok: true, ...result };
 }
 

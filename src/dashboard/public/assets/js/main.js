@@ -422,6 +422,22 @@ if (readPreference('analyticsOpen') === '1') {
   $('btnAnalytics').querySelector('.caret').textContent = '▾';
 }
 SHEET_QUERY.addEventListener('change', placeDetail);
+
+// Find jobs' glass catches the light where the pointer is. Only with a mouse
+// and only for people who have not asked for less motion; the CSS keeps a
+// fixed highlight otherwise. `--gx` is registered as non-inheriting, so
+// moving it restyles the capsule, not the menu inside it.
+{
+  const glass = document.querySelector('.split.menu');
+  const fine = matchMedia('(hover: hover) and (pointer: fine)');
+  const still = matchMedia('(prefers-reduced-motion: reduce)');
+  glass?.addEventListener('pointermove', (event) => {
+    if (!fine.matches || still.matches || event.target.closest('.menu-pop')) return;
+    const r = glass.getBoundingClientRect();
+    glass.style.setProperty('--gx', `${Math.round(((event.clientX - r.left) / r.width) * 100)}%`);
+  });
+  glass?.addEventListener('pointerleave', () => glass.style.removeProperty('--gx'));
+}
 placeDetail();
 // Today is the landing view unless the user last chose the board.
 state.appsLayout = readPreference('appsLayout') === 'list' ? 'list' : 'kanban';

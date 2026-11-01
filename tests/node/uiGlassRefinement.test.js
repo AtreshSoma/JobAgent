@@ -269,14 +269,36 @@ describe('one form-control language', () => {
   });
 });
 
-describe('Find jobs: one aligned control, in ink', () => {
+describe('Find jobs: one aligned control, in Liquid Glass', () => {
   it('lays the halves out as one flex unit on the icon buttons\' height', () => {
     // `.split` is also `.menu`, whose later `display: inline-block` used to win
     // and leave the chevron half 21px tall, 7px low and 4px apart.
-    expect(css).toMatch(/\.split\.menu \{ display: inline-flex; align-items: stretch; height: var\(--h-md\);/);
-    expect(css).toMatch(/\.split\.menu > \.split-main, \.split\.menu > \.split-toggle \{[^}]*background: var\(--text\); color: var\(--surface\);/);
+    expect(css).toMatch(/\.split\.menu \{\s*display: inline-flex; align-items: stretch; height: var\(--h-md\);/);
     expect(html).not.toMatch(/class="[^"]*primary[^"]*split-(main|toggle)/);
     expect(html).toContain('class="ic split-chev"');
+  });
+
+  it('draws the glass on a layer, so the Find jobs menu keeps its own frost', () => {
+    // An ancestor with backdrop-filter is a backdrop root: the menu inside
+    // would blur only the button. The wrapper itself must never carry it.
+    expect(css).toMatch(/\.split\.menu::before \{ -webkit-backdrop-filter: blur\(10px\) saturate\(190%\); backdrop-filter: blur\(10px\) saturate\(190%\); \}/);
+    expect(css).not.toMatch(/\.split\.menu \{[^}]*backdrop-filter/);
+    expect(css).toMatch(/\.split\.menu > \.split-main, \.split\.menu > \.split-toggle \{[^}]*background: transparent; color: var\(--text\);/);
+  });
+
+  it('has a solid fallback, a capsule focus ring and one press for the whole control', () => {
+    expect(css).toMatch(/@media \(prefers-reduced-transparency: reduce\) \{\s*\.split\.menu::before \{[^}]*backdrop-filter: none;/);
+    expect(css).toContain('.split.menu:has(> :focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }');
+    expect(css).toMatch(/\.split\.menu:has\(> \.split-main:active:not\(:disabled\)\), \.split\.menu:has\(> \.split-toggle:active\) \{ transform: scale\(\.97\); \}/);
+    // The pointer's light: non-inheriting, so moving it never restyles the menu.
+    expect(css).toContain("@property --gx { syntax: '<percentage>'; inherits: false;");
+    expect(js('main.js')).toMatch(/still\.matches[\s\S]*glass\.style\.setProperty\('--gx'/);
+  });
+
+  it('defines the glass in every theme block', () => {
+    for (const token of ['--lg-fill', '--lg-tint-a', '--lg-tint-b', '--lg-edge', '--lg-rim', '--lg-shade', '--lg-spec', '--lg-hover', '--lg-drop']) {
+      expect(css.match(new RegExp(`${token}:`, 'g'))?.length, token).toBe(3);
+    }
   });
 
   it('does not print the empty-field count twice', () => {

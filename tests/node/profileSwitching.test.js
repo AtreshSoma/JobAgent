@@ -212,11 +212,31 @@ describe('the switcher in the interface', () => {
     expect(css).toContain('.pf-row.is-empty .pf-sub { color: var(--warn-text); }');
   });
 
-  it('offers "Switch back" after every switch, and asks before deleting', () => {
+  it('offers "Switch back" after every switch, and asks before removing', () => {
     const profiles = read('assets/js/profiles.js');
     expect(profiles).toContain("text: 'Switch back'");
-    expect(profiles).toMatch(/export function deleteProfileAsk[\s\S]*confirmAction\(/);
+    expect(profiles).toMatch(/export async function removePerson[\s\S]*method: 'DELETE'/);
     expect(read('assets/js/master.js')).toContain('announceSwitch(result.activated.label');
+  });
+
+  it('puts "Remove profile…" beside "Add profile…", shown only when someone can be removed', () => {
+    const html = read('index.html');
+    const profiles = read('assets/js/profiles.js');
+    expect(html).toMatch(/class="pf-add-item"[\s\S]*?class="pf-remove-item" data-action="open-remove-profile" hidden/);
+    expect(profiles).toContain("remove.hidden = rows.filter((p) => !p.active).length === 0;");
+    // The Master resume list's trash button opens the same dialog.
+    expect(read('assets/js/actions.js')).toContain("'delete-search-profile': (target) => openRemoveProfile(target?.dataset?.profileId)");
+  });
+
+  it('removes through one dialog: a labelled choice of person, never the active one, the button naming them', () => {
+    const html = read('index.html');
+    const profiles = read('assets/js/profiles.js');
+    expect(html).toMatch(/<dialog id="dlgRemovePerson"[\s\S]*<legend>Who should be removed\?<\/legend>[\s\S]*id="removeGo">Remove profile<\/button>/);
+    expect(html).toContain('Nothing is erased.');
+    expect(profiles).toContain('const others = rows.filter((p) => !p.active);');
+    expect(profiles).toContain("type: 'radio', name: 'removeId'");
+    expect(profiles).toContain("`Remove ${who.split(' ')[0]}`");
+    expect(profiles).toContain("setRemoveError('Choose the profile to remove.')");
   });
 
   it('keeps toasts inside the open dialog, so their buttons are reachable', () => {
