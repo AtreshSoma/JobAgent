@@ -140,7 +140,17 @@
         "backend developer",
         "full stack developer",
         "qa engineer",
-        "test engineer"
+        "test engineer",
+        "java developer",
+        "java engineer",
+        "java software engineer",
+        "python developer",
+        ".net developer",
+        "react developer",
+        "node.js developer",
+        "full stack java developer",
+        "mern stack developer",
+        "sdet"
       ],
       "heads": [
         "engineer",
@@ -195,7 +205,16 @@
         "laravel",
         "graphql",
         "rest",
-        "git"
+        "git",
+        "spring boot",
+        "hibernate",
+        "microservices",
+        "maven",
+        "junit",
+        "express",
+        "next.js",
+        "html",
+        "css"
       ]
     },
     "infrastructure-devops": {
@@ -269,7 +288,19 @@
         "soc analyst",
         "incident responder",
         "grc analyst",
-        "ciso"
+        "ciso",
+        "cybersecurity analyst",
+        "cybersecurity engineer",
+        "cyber security analyst",
+        "security operations analyst",
+        "threat intelligence analyst",
+        "vulnerability analyst",
+        "cloud security engineer",
+        "application security engineer",
+        "appsec engineer",
+        "iam engineer",
+        "detection engineer",
+        "security consultant"
       ],
       "heads": [
         "engineer",
@@ -292,7 +323,11 @@
         "grc",
         "identity",
         "access management",
-        "zero trust"
+        "zero trust",
+        "appsec",
+        "devsecops",
+        "threat intelligence",
+        "security operations"
       ],
       "skills": [
         "siem",
@@ -306,7 +341,15 @@
         "cissp",
         "ceh",
         "okta",
-        "sailpoint"
+        "sailpoint",
+        "wireshark",
+        "metasploit",
+        "qradar",
+        "microsoft sentinel",
+        "edr",
+        "oscp",
+        "security+",
+        "cism"
       ]
     },
     "product-management": {
@@ -738,7 +781,16 @@
         "validation engineer",
         "regulatory submissions manager",
         "quality systems manager",
-        "pharmacovigilance specialist"
+        "pharmacovigilance specialist",
+        "pharmacovigilance scientist",
+        "pharmacovigilance associate",
+        "drug safety specialist",
+        "drug safety associate",
+        "clinical trial associate",
+        "quality control analyst",
+        "qa associate",
+        "computer system validation engineer",
+        "regulatory affairs director"
       ],
       "heads": [
         "specialist",
@@ -767,7 +819,10 @@
         "biologics",
         "gmp",
         "gcp",
-        "glp"
+        "glp",
+        "drug safety",
+        "gxp",
+        "clinical trials"
       ],
       "skills": [
         "510(k)",
@@ -789,7 +844,14 @@
         "trackwise",
         "design control",
         "risk management",
-        "iso 14971"
+        "iso 14971",
+        "gcp",
+        "glp",
+        "ich",
+        "argus",
+        "meddra",
+        "e2b",
+        "csv"
       ]
     },
     "healthcare-clinical": {
@@ -1111,7 +1173,15 @@
         "clinical scientist",
         "bioinformatician",
         "epidemiologist",
-        "principal investigator"
+        "principal investigator",
+        "medical science liaison",
+        "medical affairs specialist",
+        "medical information specialist",
+        "scientific affairs manager",
+        "process development scientist",
+        "formulation scientist",
+        "analytical chemist",
+        "biostatistician"
       ],
       "heads": [
         "scientist",
@@ -1140,7 +1210,12 @@
         "in vitro",
         "in vivo",
         "peer review",
-        "publication"
+        "publication",
+        "medical affairs",
+        "biologics",
+        "drug development",
+        "pharmaceutical",
+        "biotech"
       ],
       "skills": [
         "pcr",

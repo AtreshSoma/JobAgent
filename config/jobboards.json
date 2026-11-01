@@ -367,14 +367,9 @@
         "strictTitleMatch": true,
         "queryConcurrency": 4,
         "usOnly": true,
-        "museCategories": [
-          "Data and Analytics",
-          "Data Science",
-          "Software Engineering",
-          "IT"
-        ],
         "museMaxPages": 3,
-        "detailBudgetNote": "Left at 25 DELIBERATELY. The audit listed raising this as a quick win, but measured against the live store atsSearch has 0 of 331 rows under 200 characters \u2014 Workable returns the full JD inline, so the detail budget is not this source's constraint and raising it would buy nothing. The description gap is Workday (69%) and SmartRecruiters (70%); those budgets were raised instead. atsSearch's real limitation is VOLUME (0.3% of the corpus), which is a query/coverage problem, not a detail-fetch one."
+        "detailBudgetNote": "Left at 25 DELIBERATELY. The audit listed raising this as a quick win, but measured against the live store atsSearch has 0 of 331 rows under 200 characters \u2014 Workable returns the full JD inline, so the detail budget is not this source's constraint and raising it would buy nothing. The description gap is Workday (69%) and SmartRecruiters (70%); those budgets were raised instead. atsSearch's real limitation is VOLUME (0.3% of the corpus), which is a query/coverage problem, not a detail-fetch one.",
+        "museCategoriesNote": "museCategories is deliberately NOT set: The Muse's categories now follow the active profile's role families (MUSE_CATEGORIES_BY_FAMILY in src/search/adapters/atsSearch.js). Set an explicit array here only to override that. The old fixed list was ['Data and Analytics','Data Science','Software Engineering','IT'], and two of those names return nothing from the live API ('Data Science': 2 jobs, 'IT': 0)."
       }
     },
     {
@@ -471,10 +466,29 @@
         "karat",
         "datavations",
         "point72",
-        "cortex"
+        "cortex",
+        "cloudflare",
+        "sentinellabs",
+        "wizinc",
+        "abnormalsecurity",
+        "huntress",
+        "netskope",
+        "zscaler",
+        "axonius",
+        "expel",
+        "chainguard",
+        "sumologic",
+        "recordedfuture",
+        "onetrust",
+        "veracode",
+        "beyondtrust",
+        "recursionpharmaceuticals",
+        "twistbioscience",
+        "flatironhealth"
       ],
       "options": {
-        "note": "DISCOVERY. Greenhouse board tokens (the company slug in boards.greenhouse.io/<token>). These are verified-live H-1B-friendly tech companies that currently list Data/BI/Analytics-Engineer roles. A dead/empty board is logged and skipped, never crashes the run."
+        "note": "DISCOVERY. Greenhouse board tokens (the company slug in boards.greenhouse.io/<token>). These are verified-live H-1B-friendly tech companies that currently list Data/BI/Analytics-Engineer roles. A dead/empty board is logged and skipped, never crashes the run.",
+        "crossIndustryNote": "Boards from cloudflare to flatironhealth were added 2026-11-01 for security and biotech profiles, each verified live against boards-api.greenhouse.io with jobs listed. Tried and not found (404): sentinelone (the board is sentinellabs), snyk, arcticwolf, rapid7, lacework, redcanary, drata, vanta, imprivata, modernatx, insitro, benchling, tempus, grail, guardanthealth, 10xgenomics, exactsciences, veeva, medidata."
       }
     },
     {
@@ -2151,6 +2165,195 @@
           "site": "ApexTechnologyManagement",
           "company": "Apex Technology Management, Inc.",
           "pageSize": 20
+        },
+        {
+          "host": "jj.wd5.myworkdayjobs.com",
+          "tenant": "jj",
+          "site": "JJ",
+          "company": "Johnson & Johnson",
+          "pageSize": 20
+        },
+        {
+          "host": "msd.wd5.myworkdayjobs.com",
+          "tenant": "msd",
+          "site": "SearchJobs",
+          "company": "Merck",
+          "pageSize": 20
+        },
+        {
+          "host": "bristolmyerssquibb.wd5.myworkdayjobs.com",
+          "tenant": "bristolmyerssquibb",
+          "site": "BMS",
+          "company": "Bristol Myers Squibb",
+          "pageSize": 20
+        },
+        {
+          "host": "astrazeneca.wd3.myworkdayjobs.com",
+          "tenant": "astrazeneca",
+          "site": "Careers",
+          "company": "AstraZeneca",
+          "pageSize": 20
+        },
+        {
+          "host": "novartis.wd3.myworkdayjobs.com",
+          "tenant": "novartis",
+          "site": "Novartis_Careers",
+          "company": "Novartis",
+          "pageSize": 20
+        },
+        {
+          "host": "gilead.wd1.myworkdayjobs.com",
+          "tenant": "gilead",
+          "site": "gileadcareers",
+          "company": "Gilead Sciences",
+          "pageSize": 20
+        },
+        {
+          "host": "amgen.wd1.myworkdayjobs.com",
+          "tenant": "amgen",
+          "site": "Careers",
+          "company": "Amgen",
+          "pageSize": 20
+        },
+        {
+          "host": "regeneron.wd1.myworkdayjobs.com",
+          "tenant": "regeneron",
+          "site": "Careers",
+          "company": "Regeneron",
+          "pageSize": 20
+        },
+        {
+          "host": "vrtx.wd501.myworkdayjobs.com",
+          "tenant": "vrtx",
+          "site": "vertex_careers",
+          "company": "Vertex Pharmaceuticals",
+          "pageSize": 20
+        },
+        {
+          "host": "gsk.wd5.myworkdayjobs.com",
+          "tenant": "gsk",
+          "site": "GSKCareers",
+          "company": "GSK",
+          "pageSize": 20
+        },
+        {
+          "host": "sanofi.wd3.myworkdayjobs.com",
+          "tenant": "sanofi",
+          "site": "SanofiCareers",
+          "company": "Sanofi",
+          "pageSize": 20
+        },
+        {
+          "host": "thermofisher.wd5.myworkdayjobs.com",
+          "tenant": "thermofisher",
+          "site": "ThermoFisherCareers",
+          "company": "Thermo Fisher Scientific",
+          "pageSize": 20
+        },
+        {
+          "host": "danaher.wd1.myworkdayjobs.com",
+          "tenant": "danaher",
+          "site": "DanaherJobs",
+          "company": "Danaher",
+          "pageSize": 20
+        },
+        {
+          "host": "abbott.wd5.myworkdayjobs.com",
+          "tenant": "abbott",
+          "site": "abbottcareers",
+          "company": "Abbott",
+          "pageSize": 20
+        },
+        {
+          "host": "stryker.wd1.myworkdayjobs.com",
+          "tenant": "stryker",
+          "site": "StrykerCareers",
+          "company": "Stryker",
+          "pageSize": 20
+        },
+        {
+          "host": "iqvia.wd1.myworkdayjobs.com",
+          "tenant": "iqvia",
+          "site": "IQVIA",
+          "company": "IQVIA",
+          "pageSize": 20
+        },
+        {
+          "host": "labcorp.wd1.myworkdayjobs.com",
+          "tenant": "labcorp",
+          "site": "External",
+          "company": "Labcorp",
+          "pageSize": 20
+        },
+        {
+          "host": "baxter.wd1.myworkdayjobs.com",
+          "tenant": "baxter",
+          "site": "baxter",
+          "company": "Baxter",
+          "pageSize": 20
+        },
+        {
+          "host": "bdx.wd1.myworkdayjobs.com",
+          "tenant": "bdx",
+          "site": "EXTERNAL_CAREER_SITE_USA",
+          "company": "BD",
+          "pageSize": 20
+        },
+        {
+          "host": "illumina.wd1.myworkdayjobs.com",
+          "tenant": "illumina",
+          "site": "illumina-careers",
+          "company": "Illumina",
+          "pageSize": 20
+        },
+        {
+          "host": "icon.wd3.myworkdayjobs.com",
+          "tenant": "icon",
+          "site": "broadbean_external",
+          "company": "ICON plc",
+          "pageSize": 20
+        },
+        {
+          "host": "parexel.wd1.myworkdayjobs.com",
+          "tenant": "parexel",
+          "site": "Parexel_External_Careers",
+          "company": "Parexel",
+          "pageSize": 20
+        },
+        {
+          "host": "leidos.wd5.myworkdayjobs.com",
+          "tenant": "leidos",
+          "site": "External",
+          "company": "Leidos",
+          "pageSize": 20
+        },
+        {
+          "host": "ngc.wd1.myworkdayjobs.com",
+          "tenant": "ngc",
+          "site": "Northrop_Grumman_External_Site",
+          "company": "Northrop Grumman",
+          "pageSize": 20
+        },
+        {
+          "host": "globalhr.wd5.myworkdayjobs.com",
+          "tenant": "globalhr",
+          "site": "REC_RTX_Ext_Gateway",
+          "company": "RTX",
+          "pageSize": 20
+        },
+        {
+          "host": "caci.wd1.myworkdayjobs.com",
+          "tenant": "caci",
+          "site": "External",
+          "company": "CACI",
+          "pageSize": 20
+        },
+        {
+          "host": "trellix.wd1.myworkdayjobs.com",
+          "tenant": "trellix",
+          "site": "EnterpriseCareers",
+          "company": "Trellix",
+          "pageSize": 20
         }
       ],
       "rateLimitMs": 4000,
@@ -2158,7 +2361,8 @@
       "maxDetailFetches": 40,
       "options": {
         "detailBudgetNote": "20 per tenant, raised from 8. Measured on 3 tenants: 8 -> 24 descriptions in 19.7s, 20 -> 60 in 29.7s, so across 214 tenants at boardConcurrency 24 this costs roughly +30-50s per run. It is a mitigation, not a fix: even 20 reads about 2% of what a large tenant returns. Descriptions are cached per requisition and reused on later runs, and `npm run enrich` is what actually clears the summary-only backlog. AUDIT 2026-09-14 follow-up: measured against the live store, 27,254 of 39,599 Workday rows (69%) still carry under 200 characters of JD \u2014 by far the largest share of the ~51,000 unreadable rows in the corpus, and every one of them is a guaranteed Discard because the reachable score without a description (~44) sits below the 50 floor. Raised 20 -> 40 on that basis; by the measurement above that is roughly another +30-50s per run. This is still a mitigation: `npm run enrich` remains the thing that actually clears the backlog, and nothing yet schedules it.",
-        "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) \u2014 adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant."
+        "note": "Search phrases are DERIVED from candidate.targetTitles (see deriveSearchTerms in src/search/adapters/workday.js) \u2014 adding a target title changes what every tenant is searched for, with no per-tenant edit. Workday's CXS search is fuzzy-AND: it NARROWS as tokens are added, so phrases are kept to two tokens and the set is a minimal cover of the title list. Pin 'searchTexts' here to override globally, or 'searchText'/'searchTexts' on a single tenant.",
+        "crossIndustryNote": "Tenants from Johnson & Johnson to Trellix (the last 27) were added 2026-11-01 so pharma, life-sciences, CRO, medtech and defence/cyber profiles have employers to search; the list was almost all tech and financial. Each was verified live with this adapter's own CXS request and User-Agent and returned postings. Tried and NOT added (HTTP 404/422 or 0 postings on the guessed site): Eli Lilly, Takeda, Bayer, Novo Nordisk, Boston Scientific, Organon, Alnylam, Charles River, Syneos, Teva, Palo Alto Networks, Fortinet, SAIC, Tenable, Akamai, Gen Digital, ManTech. Search phrases still come from the active profile, so a tenant only returns matching jobs; the cost is ~12% more tenant requests per run."
       },
       "maxSearchTerms": 2,
       "boardConcurrency": 24,

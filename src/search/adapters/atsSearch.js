@@ -780,8 +780,10 @@ export function makeUsLocationGate(enabled = true) {
  *
  * The API has no free-text search parameter — it filters by `category` and
  * `location` and returns newest-first pages. The title gate is therefore doing
- * the relevance work here, which is why `category` defaults to the data/analytics
- * families rather than being left open.
+ * the relevance work here, and the categories decide which pages it ever sees.
+ * They follow the active profile's role families (MUSE_CATEGORIES_BY_FAMILY),
+ * so a nurse's search reads Healthcare and a security analyst's reads
+ * Computer and IT — it used to read four fixed tech categories for everyone.
  *
  * Like Himalayas, `refs.landing_page` is a themuse.com URL, so rows are tagged
  * `aggregator: true`. Note the API exposes no direct employer link at all: the
@@ -793,10 +795,79 @@ export function makeUsLocationGate(enabled = true) {
  */
 const THEMUSE_HOST = 'www.themuse.com';
 
-/** Muse categories that map to this candidate's field. */
+/**
+ * Muse categories per role family (config/role_families.json ids).
+ *
+ * EVERY NAME HERE WAS CHECKED AGAINST THE LIVE ENDPOINT (2026-11-01). The API
+ * answers an unknown category with `total: 0` and no error, so a wrong name
+ * fails silently forever — which is what happened to two of the four names
+ * this adapter shipped with: "Data Science" returns 2 jobs and "IT" returns 0
+ * (the real category is "Computer and IT", ~1,100). Names that do NOT exist,
+ * so do not "fix" a gap with them: Cybersecurity, Security, Pharmacy, Nurses,
+ * Mental Health, HR, Law, Marketing, Accounting, Product, UX. Security work is
+ * listed under Computer and IT; pharma and clinical science under Science and
+ * Engineering and Healthcare.
+ */
+export const MUSE_CATEGORIES_BY_FAMILY = Object.freeze({
+  'data-analytics': ['Data and Analytics', 'Computer and IT'],
+  'software-engineering': ['Software Engineering', 'Computer and IT'],
+  'infrastructure-devops': ['Computer and IT', 'Software Engineering'],
+  security: ['Computer and IT', 'Software Engineering'],
+  'product-management': ['Product Management'],
+  'project-program-management': ['Project Management'],
+  'design-ux': ['Design and UX'],
+  'marketing-growth': ['Advertising and Marketing'],
+  'sales-business-development': ['Sales', 'Account Management'],
+  'finance-accounting': ['Accounting and Finance'],
+  'legal-compliance': ['Legal Services'],
+  'regulatory-quality': ['Science and Engineering', 'Healthcare'],
+  'healthcare-clinical': ['Healthcare'],
+  'human-resources': ['Human Resources and Recruitment'],
+  'operations-supply-chain': ['Business Operations', 'Transportation and Logistics'],
+  'customer-support': ['Customer Service'],
+  'education-training': ['Education'],
+  'science-research': ['Science and Engineering', 'Healthcare'],
+  'manufacturing-hard-engineering': ['Science and Engineering', 'Manufacturing and Warehouse'],
+  'skilled-trades': ['Installation, Maintenance, and Repairs', 'Construction'],
+  'transportation-logistics': ['Transportation and Logistics'],
+  'hospitality-retail-food': ['Food and Hospitality Services', 'Retail'],
+  'public-safety-government': ['Protective Services'],
+  'media-content': ['Media, PR, and Communications', 'Writing and Editing'],
+  'administrative-office': ['Administration and Office'],
+  'personal-care-fitness': ['Personal Care and Services', 'Sports, Fitness, and Recreation'],
+});
+
+/** Used only when there is no profile to infer from (all verified names). */
 const DEFAULT_THEMUSE_CATEGORIES = Object.freeze([
-  'Data and Analytics', 'Data Science', 'Software Engineering', 'IT',
+  'Data and Analytics', 'Software Engineering', 'Computer and IT',
 ]);
+
+/** Each category costs `museMaxPages` requests; a broad profile is capped here. */
+const MAX_THEMUSE_CATEGORIES = 6;
+
+/**
+ * The Muse categories to read for this search.
+ *
+ * An explicit `options.museCategories` array is an override and wins as
+ * written. Otherwise the categories come from the profile's role families,
+ * strongest family first, deduplicated and capped. No profile, or a profile
+ * whose families map to nothing, falls back to the defaults above.
+ *
+ * @param {object} [candidate]
+ * @param {{ museCategories?: string[]|string }} [options]
+ * @returns {string[]}
+ */
+export function museCategoriesFor(candidate, options = {}) {
+  if (Array.isArray(options.museCategories) && options.museCategories.length) return options.museCategories;
+  const families = profileVocabularyFor(candidate)?.families ?? [];
+  const out = [];
+  for (const family of families) {
+    for (const category of MUSE_CATEGORIES_BY_FAMILY[family.id] ?? []) {
+      if (!out.includes(category)) out.push(category);
+    }
+  }
+  return out.length ? out.slice(0, MAX_THEMUSE_CATEGORIES) : [...DEFAULT_THEMUSE_CATEGORIES];
+}
 
 /** Muse pages to walk per category. 20 rows/page, newest first. */
 const DEFAULT_THEMUSE_MAX_PAGES = 3;
@@ -813,9 +884,8 @@ async function runTheMuse({ query, source, options, ctx, titleGate }) {
   const { fetchImpl = fetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const ageGate = makeAgeGate(options.maxAgeDays);
   const locationGate = makeUsLocationGate(options.usOnly);
-  const categories = Array.isArray(options.museCategories) && options.museCategories.length
-    ? options.museCategories
-    : DEFAULT_THEMUSE_CATEGORIES;
+  const categories = museCategoriesFor(ctx.candidate, options);
+  const keepTitle = museTitleGate(ctx, options, titleGate);
   const maxPages = Number.isFinite(options.museMaxPages)
     ? Math.max(1, options.museMaxPages)
     : DEFAULT_THEMUSE_MAX_PAGES;
@@ -838,7 +908,7 @@ async function runTheMuse({ query, source, options, ctx, titleGate }) {
       const rows = Array.isArray(data?.results) ? data.results : [];
       if (rows.length === 0) break;
       for (const row of rows) {
-        if (!titleGate(row?.name)) continue;
+        if (!keepTitle(row?.name)) continue;
         if (!ageGate(row?.publication_date ?? null)) continue;
         const locations = museLocations(row);
         if (!locationGate(locations)) continue;
@@ -851,6 +921,32 @@ async function runTheMuse({ query, source, options, ctx, titleGate }) {
     }
   }
   return jobs;
+}
+
+/**
+ * The Muse's title gate: a POSITIVE match, not merely "not another family".
+ *
+ * Every other provider is searched WITH the candidate's titles, so the shared
+ * gate can afford to keep unfamiliar titles ("defer") for scoring to judge —
+ * the query already did the relevance work. The Muse has no search text at
+ * all: a category page is simply the newest 20 jobs in, say, Healthcare. Run
+ * live for a pharmacovigilance scientist, the shared gate kept piping and cost
+ * engineers; for a cybersecurity analyst, IT help-desk technicians and a
+ * veterinarian — every one a "defer", while every real match was "accept".
+ * So here only "accept" passes (a verbatim target title always does).
+ * `options.museRequireTitleMatch: false` restores the shared gate.
+ *
+ * @param {object} ctx adapter context (reads ctx.candidate)
+ * @param {object} options source options
+ * @param {(title: string) => boolean} sharedGate the provider-wide gate
+ * @returns {(title: string) => boolean}
+ */
+export function museTitleGate(ctx = {}, options = {}, sharedGate = () => true) {
+  const vocab = options.strictTitleMatch !== false && options.museRequireTitleMatch !== false
+    ? profileVocabularyFor(ctx.candidate)
+    : null;
+  if (!vocab) return sharedGate;
+  return (title) => classifyTitleFit(title, vocab).verdict === 'accept';
 }
 
 /**

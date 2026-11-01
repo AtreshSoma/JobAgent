@@ -105,6 +105,40 @@ const RAW_PERSONAS = [
     searchIntent: intent({ targetRoles: ['Journeyman Electrician', 'Commercial Electrician'], seniority: 'mid' }),
     fits: ['electrician'], notFits: ['construction-pm', 'software-engineer'],
   },
+  // Life sciences: the trap is the same INDUSTRY in a different function.
+  {
+    id: 'pv', label: 'Pharmacovigilance Scientist',
+    background: {
+      currentRoles: ['Pharmacovigilance Scientist'], earlierRoles: ['Drug Safety Associate'], yearsExperience: 6, seniority: 'senior',
+      skills: ['Pharmacovigilance', 'Signal Detection', 'Argus Safety', 'MedDRA Coding', 'ICSR Processing', 'Aggregate Reports', 'GVP', 'ICH E2E'],
+      industries: ['Pharmaceuticals'], certifications: [],
+      education: [{ degree: 'PharmD', field: 'Pharmacy' }],
+    },
+    searchIntent: intent({ targetRoles: ['Pharmacovigilance Scientist', 'Drug Safety Scientist'], seniority: 'senior' }),
+    fits: ['pv-scientist'], notFits: ['pharma-sales-rep', 'data-engineer', 'accountant-senior'],
+  },
+  // Cybersecurity: the trap is the same WORD in a different occupation.
+  {
+    id: 'cyber', label: 'Cybersecurity Analyst',
+    background: {
+      currentRoles: ['Cybersecurity Analyst'], earlierRoles: ['SOC Analyst'], yearsExperience: 4, seniority: 'mid',
+      skills: ['SIEM', 'Splunk', 'Incident Response', 'Threat Hunting', 'Vulnerability Management', 'CrowdStrike', 'Wireshark', 'NIST'],
+      industries: ['Technology'], certifications: ['Security+', 'CySA+'],
+    },
+    searchIntent: intent({ targetRoles: ['Cybersecurity Analyst', 'Security Operations Analyst'], seniority: 'mid' }),
+    fits: ['cyber-analyst'], notFits: ['security-guard', 'it-helpdesk', 'nurse-recruiter'],
+  },
+  // Full stack Java: the trap is adjacent IT work that shares no engineering.
+  {
+    id: 'javafs', label: 'Full Stack Java Developer',
+    background: {
+      currentRoles: ['Full Stack Developer'], earlierRoles: ['Java Developer'], yearsExperience: 6, seniority: 'senior',
+      skills: ['Java', 'Spring Boot', 'Microservices', 'React', 'TypeScript', 'Hibernate', 'PostgreSQL', 'REST APIs'],
+      industries: ['Technology'],
+    },
+    searchIntent: intent({ targetRoles: ['Full Stack Java Developer', 'Senior Java Developer'], seniority: 'senior' }),
+    fits: ['java-fullstack'], notFits: ['it-helpdesk', 'data-entry', 'marketing-coordinator'],
+  },
 ];
 
 /** Fictional contact details: activation requires a name and email. */
@@ -155,6 +189,22 @@ export const POSTINGS = [
   post('instructional-designer', 'Instructional Designer', 'Woodgrove Learning',
     'Design eLearning with Articulate Storyline using ADDIE. Curriculum development, assessment design, adult learning principles, '
     + 'LMS administration. Teaching background welcome.', { location: 'Remote, US' }),
+  post('pv-scientist', 'Pharmacovigilance Scientist', 'Contoso Pharma',
+    'Lead signal detection and safety evaluation for marketed products. Review ICSRs, MedDRA coding, aggregate reports (PSUR, DSUR) '
+    + 'under GVP and ICH E2E. Argus Safety experience required. PharmD, PhD or RN with 5+ years in drug safety.'),
+  post('pharma-sales-rep', 'Pharmaceutical Sales Representative', 'Contoso Pharma',
+    'Promote our cardiovascular portfolio to physicians in your territory. Meet sales quotas, build HCP relationships, '
+    + 'run lunch-and-learns, manage CRM records. 2+ years of B2B sales; pharmaceutical industry knowledge a plus.'),
+  post('cyber-analyst', 'Cybersecurity Analyst', 'Woodgrove Bank',
+    'Monitor and triage alerts in our SIEM (Splunk), lead incident response, threat hunting and vulnerability management. '
+    + 'CrowdStrike EDR, Wireshark, NIST CSF. Security+ or CySA+ required. 3+ years in a SOC.'),
+  post('security-guard', 'Security Officer', 'Fabrikam Facilities',
+    'Patrol the building, monitor CCTV, control visitor access and write incident reports. Guard card required. Night shifts.'),
+  post('it-helpdesk', 'IT Help Desk Technician', 'Litware Manufacturing',
+    'Answer support tickets, reset passwords, image laptops and set up printers. CompTIA A+ preferred. Entry level.'),
+  post('java-fullstack', 'Senior Full Stack Java Developer', 'Northwind Systems',
+    'Build microservices in Java with Spring Boot and Hibernate, and React/TypeScript front ends. PostgreSQL, REST APIs, CI/CD. '
+    + '5+ years of full stack development.', { location: 'Remote, US' }),
   post('data-engineer', 'Senior Data Engineer', 'Adatum Analytics',
     'Build ETL pipelines with Databricks, PySpark, Snowflake and dbt. SQL, Python, Airflow, data modeling. 5+ years.',
     { location: 'Remote, US' }),
