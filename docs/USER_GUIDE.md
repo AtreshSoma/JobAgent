@@ -377,6 +377,19 @@ A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies,
 - **One card per job, one primary button.** Confirm an unverified submit, review a filled form, answer the question that stopped auto-fill, approve a packet, start or retry auto-fill, or prepare an application — most urgent first, then by score. On a quiet day it tops up with your **best undecided strong and possible fits**, so the landing page is never empty beside good matches.
 - **Setup problems appear once, as notices, not as ten broken jobs.** A missing Playwright browser shows a single banner with the exact command and a Copy button, and Auto-fill buttons are disabled until it is installed. The check is live: once the browser exists, jobs that failed only because it was missing are relabelled *Retry: browser now installed*. Template values still in your profile get their own notice with a button to the profile editor.
 - A **setup checklist** lists any failing health checks (browser, Python, master resume, profile) with a link to the dialog that fixes each.
+- **Follow-ups you set come due here**, in their own *Follow up* group after *Finish applications*: "Applied 14 days ago · reminder due today", with your note. *Follow up* opens the application; *Done* records it without leaving Today.
+
+</details>
+
+<details open>
+<summary><b>📨 Applications: a board from tailored resume to offer</b></summary>
+
+- **Seven columns in two bands.** *Before you apply*: To review, Ready to apply, Needs you. *After you apply*: Applied, Interviewing, Offer, Closed (hired, rejected by the employer, or withdrawn). Both bands fit a laptop screen; a wide screen shows one row, and a phone swipes one column at a time. *List* switches back to the stage tabs and table, for bulk approve and auto-fill.
+- **Each card says where it stands in words**: the status, posting or sponsorship caveats, *Applied Oct 11*, *No reply · 21d* after two weeks of silence, the outcome and its date, a follow-up and whether it is due, and *+1* when you have another application at the same employer (each keeps its own outcome).
+- **Moving a card is a request, never an authorization.** Drag an application to *Interviewing* or *Offer* to record that outcome, or to *Closed* to choose hired, rejected or withdrawn. The server checks every move: outcomes only move forward, an outcome needs a recorded submission, and a mistake is fixed with **Undo**, which keeps the original in the audit log. Dropping an unsubmitted card on *Applied* opens the usual *I submitted it myself* dialog; nothing on this board approves, fills or submits an application. Every drag also has a keyboard and touch path: the card's **Move** menu.
+- **The job's Application section** records an outcome with the date it happened and an optional note, sets a follow-up (*In 1 week*, *In 2 weeks* or a date), marks it done or dismisses it, and lists the history.
+- **Numbers from what you recorded, nothing projected**: submitted, awaiting reply, interviews and offers reached, follow-ups due, and interview and offer rates shown with their counts ("44% (4 of 9)"), or a dash when there is nothing to divide by.
+- Outcomes and follow-ups are stored as events beside the job. They never change its status, submission record or your triage decision, and needed no database migration.
 
 </details>
 

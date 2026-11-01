@@ -14,6 +14,7 @@ import { APP_TABS, APP_TAB_KEYS } from './filters.js';
 import { renderTabs } from './analytics.js';
 import { freshnessOf } from './format.js';
 import { loadBoard } from './board.js';
+import { applyAppsLayout, openApplicationDetail } from './workspace.js';
 
 /* ─────────────────────────── Today ───────────────────────────
  * The landing view: at most ten jobs, each with the ONE next action that
@@ -34,7 +35,7 @@ export const VIEWS = ['today', 'board', 'applications'];
 /** What each list view is for, in one line under its heading. */
 const VIEW_COPY = {
   board: ['Jobs', 'Every open job that matches your search, best fit first.'],
-  applications: ['Applications', 'Jobs you are applying to, from tailored resume to submitted.'],
+  applications: ['Applications', 'Every application from tailored resume to offer. Move a card when you hear back.'],
 };
 
 /**
@@ -45,17 +46,25 @@ const VIEW_COPY = {
  * caller that opens the board on "Needs review" (a Today action, a metric, a
  * deep link) lands in Applications, and a Jobs stage opened from Applications
  * lands in Jobs. That keeps every existing `setView('board')` caller correct.
+ *
+ * `nav` marks a click on the view switch itself. Only that means "take me to
+ * the Jobs list"; a programmatic `setView('board')` made while Applications is
+ * open is a deep link onto its stage, and used to be reset to all jobs.
  */
-export function setView(view, { save = true } = {}) {
+export function setView(view, { save = true, nav = false } = {}) {
   if (!VIEWS.includes(view)) return;
   let tabChanged = false;
+  if (view === 'applications') state.appsDeepLink = false;
   if (view !== 'today') {
     const appTab = APP_TAB_KEYS.has(state.activeTab);
-    if (view === 'board' && appTab && state.view === 'applications') {
+    if (view === 'board' && appTab && nav) {
       // Jobs clicked from Applications: back to the discovery list.
       state.activeTab = 'all'; tabChanged = true;
     } else if (view === 'board' && appTab) {
+      // A deep link (a next action, a metric) onto an application stage: show
+      // the LIST, where the rows it counted are, not the workspace board.
       view = 'applications';
+      state.appsDeepLink = true;
     } else if (view === 'applications' && !appTab) {
       state.activeTab = APP_TABS[0][0]; tabChanged = true;
     }
@@ -77,6 +86,7 @@ export function setView(view, { save = true } = {}) {
       if (tabChanged) loadBoard();
     }
   }
+  applyAppsLayout({ load: view === 'applications' && changed });
   if (save) savePreference('view', view);
   if (changed && view === 'today') loadToday();
 }
@@ -283,6 +293,7 @@ export function renderToday() {
 /** Today's groups, in the order the work should be done. */
 export const TODAY_GROUPS = [
   { key: 'finish', title: 'Finish applications', hint: 'Work you started that is waiting on you', primary: true },
+  { key: 'followup', title: 'Follow up', hint: 'Reminders you set on applications you submitted', primary: true },
   { key: 'decide', title: 'Decide on matches', hint: 'Strong and possible fits nobody has decided on', primary: false },
   { key: 'tidy', title: 'Tidy up', hint: 'Closed postings and leftovers', primary: false },
 ];
@@ -291,6 +302,7 @@ export const TODAY_GROUPS = [
 export function groupOf(item) {
   const kind = item.nextAction?.kind;
   if (kind === 'archive') return 'tidy';
+  if (kind === 'followup') return 'followup';
   if (['submit', 'answer', 'approve', 'autofill'].includes(kind)) return 'finish';
   // "review" covers both an unverified submit and a match to decide on.
   if (kind === 'review' && ['submit_unverified', 'blocked', 'failed'].includes(item.appStatus)) return 'finish';
@@ -301,9 +313,11 @@ export function groupOf(item) {
 export function todaySummary(items) {
   if (!items.length) return 'Nothing is waiting on you.';
   const finish = items.filter((i) => groupOf(i) === 'finish').length;
+  const follow = items.filter((i) => groupOf(i) === 'followup').length;
   const decide = items.filter((i) => groupOf(i) === 'decide').length;
   const parts = [];
   if (finish) parts.push(`${finish} application${finish === 1 ? '' : 's'} waiting on you`);
+  if (follow) parts.push(`${follow} follow-up${follow === 1 ? '' : 's'} due`);
   if (decide) parts.push(`${decide} match${decide === 1 ? '' : 'es'} to decide on`);
   return parts.length ? `${parts.join(' · ')}.` : `${items.length} item${items.length === 1 ? '' : 's'} to tidy up.`;
 }
@@ -370,7 +384,12 @@ export function todayCard(item, group = TODAY_GROUPS[0]) {
   };
   const blocked = next.kind === 'autofill' ? autofillBlockedReason() : null;
   if (blocked) Object.assign(attrs, { disabled: true, title: blocked });
-  card.append(el('div', { class: 'tcard-act' }, el('button', attrs)));
+  const act = el('div', { class: 'tcard-act' }, el('button', attrs));
+  // A reminder is done by doing it; "Done" records that without opening the job.
+  if (next.kind === 'followup') {
+    act.append(el('button', { type: 'button', class: 'small ghost', 'data-action': 'ws-followup', 'data-op': 'done', 'data-id': item.id, text: 'Done' }));
+  }
+  card.append(act);
   return card;
 }
 
@@ -386,6 +405,7 @@ export async function todayAct(target) {
     case 'fix_setup': await openHealth(); break;
     // A closed posting: archiving is the whole next step (with the usual Undo).
     case 'archive': await decide(id, 'archived'); break;
+    case 'followup': await openApplicationDetail(id); break;
     default: await selectJob(id, { user: true });
   }
   scheduleTodayReload(600);

@@ -37,6 +37,7 @@ import { loadProfileFlag } from './profile.js';
 import { pollRun, scheduleBackgroundRefresh, setRunDetails } from './runs.js';
 import { syncBoardSearchAction } from './actions.js';
 import { closeMainMenu } from './menus.js';
+import { installWorkspaceDrag } from './workspace.js';
 
 /* ────────────────────── keyboard support ────────────────────── */
 
@@ -402,6 +403,8 @@ if (readPreference('analyticsOpen') === '1') {
 SHEET_QUERY.addEventListener('change', placeDetail);
 placeDetail();
 // Today is the landing view unless the user last chose the board.
+state.appsLayout = readPreference('appsLayout') === 'list' ? 'list' : 'kanban';
+installWorkspaceDrag();
 setView(['board', 'applications'].includes(readPreference('view')) ? readPreference('view') : 'today', { save: false });
 applyViewPrefs();
 renderTabs();

@@ -31,6 +31,7 @@ export function markCurrentRow(id) {
     if (tr.dataset.id === id) tr.setAttribute('aria-current', 'true');
     else tr.removeAttribute('aria-current');
   }
+  for (const card of document.querySelectorAll('.ws-card[data-id]')) card.classList.toggle('current', card.dataset.id === id);
   for (const card of document.querySelectorAll('.tcard[data-id]')) {
     card.classList.toggle('current', card.dataset.id === id);
   }
@@ -288,6 +289,12 @@ export function detailSections(job) {
 
   // next best action
   out.push(railSection('next', el('h3', { text: 'Do this next' }), nextBestAction(job)));
+
+  // After a submission, what the employer did and when to chase it. Right
+  // under the next step, because once applied this IS the next step.
+  if (job.application?.appStatus === 'submitted') {
+    out.push(railSection('application', el('h3', { text: 'Application' }), applicationCard(job.application)));
+  }
 
   // WHY THIS FIT, before the materials and buttons: the explanation is what
   // a decision is made on, and it sat below nine action buttons.
@@ -605,6 +612,92 @@ export function fitCard(job) {
   return card;
 }
 
+/** Local calendar day, `offset` days from today, as YYYY-MM-DD. */
+export function localDay(offset = 0) {
+  const at = new Date();
+  at.setDate(at.getDate() + offset);
+  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')}`;
+}
+
+const dayLabel = (day) => {
+  const at = new Date(`${day}T12:00:00Z`);
+  return Number.isNaN(at.getTime()) ? String(day ?? '')
+    : at.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+};
+
+const OUTCOME_CHOICES = {
+  interviewing: 'Interviewing', offer: 'Offer received', hired: 'Hired',
+  rejected: 'Rejected by employer', withdrawn: 'Withdrawn',
+};
+
+/**
+ * The Application card: where a submitted application stands with the
+ * employer, a form to record what happened next (validated server-side, and
+ * undoable), the follow-up reminder, and the history so far.
+ */
+export function applicationCard(app) {
+  const card = el('div', { class: 'appcard', 'data-id': app.id });
+  const current = app.outcome?.label ?? 'Awaiting response';
+  const tone = ['hired', 'offer'].includes(app.outcome?.outcome) ? 'good' : app.outcome?.outcome === 'rejected' ? 'bad' : '';
+  const since = app.outcome?.on ? ` since ${dayLabel(app.outcome.on)}` : app.appliedOn ? `, applied ${dayLabel(app.appliedOn)}` : '';
+  card.append(el('p', { class: 'appcard-status' },
+    el('span', { class: `chip signal ${tone}`.trim(), text: current }), el('span', { class: 'muted', text: since })));
+  if ((app.awaitingDays ?? 0) >= 14 && !app.followUp) {
+    card.append(el('p', { class: 'appcard-hint', text: `No response recorded in ${app.awaitingDays} days. A short follow-up is often worth sending.` }));
+  }
+
+  if (app.allowedOutcomes?.length) {
+    const form = el('div', { class: 'appcard-form', role: 'group', 'aria-label': 'Record what happened' });
+    const select = el('select', { class: 'ap-outcome', 'aria-label': 'What happened' });
+    for (const outcome of app.allowedOutcomes) select.append(el('option', { value: outcome, text: OUTCOME_CHOICES[outcome] ?? outcome }));
+    form.append(
+      el('div', { class: 'appcard-row' },
+        select,
+        el('input', { type: 'date', class: 'ap-on', 'aria-label': 'When it happened', value: localDay(), max: localDay() }),
+        el('button', { type: 'button', class: 'small', 'data-action': 'ws-record-form', 'data-id': app.id, text: 'Record' })),
+      el('input', { type: 'text', class: 'ap-note', maxlength: '500', 'aria-label': 'Note (optional)',
+        placeholder: 'Note (optional): who you spoke with, next round…' }));
+    card.append(form);
+  }
+  if (app.canUndoOutcome) {
+    card.append(el('button', { type: 'button', class: 'linklike small', 'data-action': 'ws-undo-outcome', 'data-id': app.id,
+      text: `Undo “${app.outcome.label}”` }));
+  }
+
+  // Follow-up: one open reminder at a time, or quick ways to set one.
+  const follow = el('div', { class: 'appcard-follow' });
+  follow.append(el('h4', { text: 'Follow-up' }));
+  if (app.followUp) {
+    const f = app.followUp;
+    follow.append(el('p', { class: f.due ? 'appcard-due' : '' },
+      el('b', { text: f.due ? (f.daysLate ? `Due ${f.daysLate} day${f.daysLate === 1 ? '' : 's'} ago` : 'Due today') : `By ${dayLabel(f.dueOn)}` }),
+      f.note ? el('span', { class: 'muted', text: ` · ${f.note}` }) : null));
+    follow.append(el('div', { class: 'appcard-row' },
+      el('button', { type: 'button', class: 'small primary', 'data-action': 'ws-followup', 'data-op': 'done', 'data-id': app.id, text: 'Done' }),
+      el('button', { type: 'button', class: 'small ghost', 'data-action': 'ws-followup', 'data-op': 'dismissed', 'data-id': app.id, text: 'Dismiss' })));
+  } else if (app.stage !== 'closed') {
+    follow.append(el('div', { class: 'appcard-row' },
+      el('button', { type: 'button', class: 'small', 'data-action': 'ws-followup-set', 'data-days': '7', 'data-id': app.id, text: 'In 1 week' }),
+      el('button', { type: 'button', class: 'small', 'data-action': 'ws-followup-set', 'data-days': '14', 'data-id': app.id, text: 'In 2 weeks' }),
+      el('input', { type: 'date', class: 'ap-due', 'aria-label': 'Follow-up date', min: localDay() }),
+      el('button', { type: 'button', class: 'small ghost', 'data-action': 'ws-followup-set', 'data-id': app.id, text: 'Set' })));
+  } else {
+    follow.append(el('p', { class: 'muted', text: 'Closed applications need no follow-up.' }));
+  }
+  card.append(follow);
+
+  // History, oldest first: the submission, then every outcome still in effect.
+  const steps = el('ol', { class: 'appcard-timeline', 'aria-label': 'Application history' });
+  if (app.appliedOn) steps.append(el('li', {}, el('b', { text: 'Submitted' }), el('span', { class: 'muted', text: ` · ${dayLabel(app.appliedOn)}` })));
+  for (const step of app.outcomeHistory ?? []) {
+    steps.append(el('li', {}, el('b', { text: step.label }),
+      el('span', { class: 'muted', text: step.on ? ` · ${dayLabel(step.on)}` : '' }),
+      step.note ? el('div', { class: 'muted', text: step.note }) : null));
+  }
+  if (steps.children.length) card.append(steps);
+  return card;
+}
+
 export function nextBestAction(job) {
   const box = el('div', { class: 'nba' });
   const { text, buttons } = actionPlan(job);
@@ -654,7 +747,12 @@ export function actionPlan(job) {
   });
 
   if (job.appStatus === 'submitted') {
-    return { text: 'Submitted — nothing further to do.', buttons: [] };
+    // The automation's part is done; the application is not. What the
+    // employer does next is recorded in the Application section below.
+    const app = job.application;
+    if (app?.followUp?.due) return { text: 'Submitted. Your follow-up is due — send it, then mark it done below.', buttons: [] };
+    if (app?.stage === 'closed') return { text: `Submitted and closed: ${app.outcome?.label ?? 'finished'}.`, buttons: [] };
+    return { text: 'Submitted. Record each response as it arrives, and set a follow-up if you want a reminder.', buttons: [] };
   }
   if (job.appStatus === 'submit_unverified') {
     return {

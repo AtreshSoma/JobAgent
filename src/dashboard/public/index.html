@@ -162,7 +162,23 @@
         <h2 id="boardHeading">Jobs</h2>
         <p class="view-sub muted" id="boardSub">Every open job that matches your search, best fit first.</p>
       </div>
+      <!-- Applications only: the workspace board, or the stage-tab list it
+           grew from (kept for bulk approve / auto-fill on many rows). -->
+      <div class="seg layoutswitch" id="appsLayout" role="group" aria-label="Layout" hidden>
+        <button type="button" data-action="set-apps-layout" data-layout="kanban" aria-pressed="true">Board</button>
+        <button type="button" data-action="set-apps-layout" data-layout="list" aria-pressed="false">List</button>
+      </div>
     </div>
+    <!-- THE APPLICATIONS WORKSPACE. One column per stage, before and after
+         you apply. Moving a card is a request the server validates: an
+         outcome can only follow a submission, a submission is only ever
+         recorded through the "I submitted it myself" dialog, and nothing here
+         approves, fills or submits. See assets/js/workspace.js. -->
+    <section class="workspace" id="workspace" aria-labelledby="boardHeading" hidden>
+      <div class="ws-metrics" id="wsMetrics" role="group" aria-label="Application numbers"></div>
+      <p id="wsAnnounce" class="sr-only" role="status" aria-live="polite"></p>
+      <div class="ws-board" id="wsBoard" tabindex="-1"></div>
+    </section>
     <div class="scopebar">
       <div class="tabs" id="tabs" role="tablist" aria-label="Stage"></div>
     </div>

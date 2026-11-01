@@ -35,6 +35,10 @@ import {
   gradeFromScore, FIT_LABELS, postedConfidence, resumeStatusOf,
 } from '../domain/appStatus.js';
 import { candidateTimeZone, dayOf } from '../domain/time.js';
+import {
+  FOLLOWUP_EVENT, OUTCOME, OUTCOME_EVENT, OUTCOME_LABELS, OUTCOME_VALUES, TERMINAL_OUTCOMES, WORKSPACE_STAGES,
+  allowedOutcomes, applicationMetrics, canRecordOutcome, daysBetween, isIsoDay, replayFollowUps, replayOutcomes, stageOf,
+} from '../domain/applicationOutcome.js';
 import { findPlaceholders } from '../config/placeholders.js';
 import { csvCell } from '../reports/csv.js';
 
@@ -622,6 +626,11 @@ export const BOARD_VIEWS = Object.freeze({
   // waiting for your manual submit. Both need a human action next.
   ready_apply: (r) => r.appStatus === APP_STATUS.APPROVED || r.appStatus === APP_STATUS.READY_FOR_SUBMIT,
   blocked: (r) => VIEW_BLOCKED.has(r.appStatus),
+  // The Applications "Needs you" tab: stopped fills AND a submission nobody
+  // confirmed. An unverified submit used to sit in no application tab at all,
+  // though only you can verify it — and the workspace's "Needs you" column
+  // holds both. `blocked` stays as it was: "Unblock applications" counts it.
+  needs_you: (r) => VIEW_BLOCKED.has(r.appStatus) || r.appStatus === APP_STATUS.SUBMIT_UNVERIFIED,
   submitted: (r) => r.appStatus === APP_STATUS.SUBMITTED,
 });
 
@@ -1698,6 +1707,11 @@ export function jobDetail(db, jobId, deps = {}) {
 
   return {
     ...row, decisionReasonNote, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError,
+    // The workspace card for this job (outcome, history, follow-up), or null
+    // when it is not an application yet.
+    application: (() => {
+      try { return applicationSummary(db, jobId, { now: deps.now ?? new Date(), config: deps.config ?? null }); } catch { return null; }
+    })(),
   };
 }
 
@@ -1935,6 +1949,314 @@ export function setJobNote(db, jobId, note) {
   db.upsertJob({ id: jobId, notes: value });
   noteUserMutation();
   return { id: jobId, notes: value };
+}
+
+/* ─────────────────────── applications workspace ───────────────────────
+ * Every application as one card in a column, with its recorded outcome, any
+ * follow-up reminder, and the next step. Outcomes and follow-ups are events
+ * (see src/domain/applicationOutcome.js): nothing here writes jobs.status,
+ * jobs.applied or a user decision, and nothing here submits or approves.
+ */
+
+/** Longest note kept on an outcome or a follow-up. */
+const MAX_OUTCOME_NOTE = 500;
+
+/** Furthest ahead a follow-up may be set. */
+const MAX_FOLLOWUP_DAYS = 365;
+
+/** Decorated rows for every application, whichever search found it. */
+function applicationRows(db, now) {
+  if (typeof db.listApplicationJobsSummary !== 'function') return allBoardRows(db, now, EVERY_MODE);
+  const approvals = approvalsByJob(db);
+  return db.listApplicationJobsSummary().map((job) => boardRow(job, approvals.get(job.id) ?? null, now));
+}
+
+/** Outcome and follow-up events per job id, oldest first. */
+function workspaceEvents(db, ids) {
+  const out = new Map(ids.map((id) => [id, []]));
+  const types = [OUTCOME_EVENT, FOLLOWUP_EVENT];
+  let events = [];
+  if (typeof db.listEventsForJobs === 'function') events = db.listEventsForJobs(ids, types);
+  else if (typeof db.listEvents === 'function') {
+    events = ids.flatMap((id) => db.listEvents(id) ?? []).filter((e) => types.includes(e.event_type));
+  }
+  for (const event of events) out.get(event.job_id)?.push(event);
+  return out;
+}
+
+/** The next step on a card, worded to fit one. Never an approval or a submit. */
+function workspaceNextAction(row, stage, followUp) {
+  switch (row.appStatus) {
+    // Approving starts from READING the resume, so the card opens the job.
+    case APP_STATUS.NEEDS_REVIEW: return { kind: 'review', label: 'Review resume' };
+    case APP_STATUS.APPROVED: return { kind: 'autofill', label: 'Start auto-fill' };
+    case APP_STATUS.CANCELLED: return { kind: 'autofill', label: 'Resume auto-fill' };
+    case APP_STATUS.READY_FOR_SUBMIT: return { kind: 'submit', label: 'Record submission' };
+    case APP_STATUS.SUBMIT_UNVERIFIED: return { kind: 'review', label: 'Confirm it went through' };
+    case APP_STATUS.BLOCKED: return { kind: 'review', label: 'See what stopped it' };
+    case APP_STATUS.FAILED: return { kind: 'review', label: 'Check the error' };
+    default: break;
+  }
+  if (followUp?.due) return { kind: 'followup', label: 'Follow up' };
+  if (stage === 'applied') return { kind: 'outcome', label: 'Record a response' };
+  if (stage === 'interviewing') return { kind: 'outcome', label: 'Record the result' };
+  if (stage === 'offer') return { kind: 'outcome', label: 'Record your decision' };
+  return null;
+}
+
+/** Company name as a grouping key ("Acme, Inc." and "acme inc" are one employer). */
+const companyKey = (name) => String(name ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')
+  .replace(/\b(inc|llc|ltd|corp|corporation|co|company)\b/g, '').trim();
+
+/** One workspace card, or null when the row is not an application. */
+function workspaceItem(row, events, { today, timeZone, history = false }) {
+  const submitted = row.appStatus === APP_STATUS.SUBMITTED;
+  const outcomes = submitted ? replayOutcomes(events.filter((e) => e.event_type === OUTCOME_EVENT)) : null;
+  const current = outcomes?.current ?? null;
+  const stage = stageOf(row.appStatus, current?.outcome ?? null);
+  if (!stage) return null;
+  const follow = replayFollowUps(events.filter((e) => e.event_type === FOLLOWUP_EVENT));
+  // A closed application has nothing left to chase; its reminder is hidden,
+  // not deleted, so undoing the outcome brings it back.
+  const followUp = submitted && follow.open && stage !== 'closed'
+    ? { ...follow.open, due: follow.open.dueOn <= today, daysLate: Math.max(0, daysBetween(follow.open.dueOn, today) ?? 0) }
+    : null;
+  const appliedDay = row.appliedAt ? dayOf(row.appliedAt, timeZone) : null;
+  const item = {
+    id: row.id, title: row.title, company: row.company ?? null, location: row.location ?? null, url: row.url ?? null,
+    score: row.score, grade: row.grade, fit: row.fit, sponsorship: row.sponsorship ?? null,
+    sponsorshipGated: row.sponsorshipGated === true, postedAt: row.postedAt ?? null, linkState: row.linkState ?? null,
+    atsPlatform: row.atsPlatform ?? null, discoveryMode: row.discoveryMode ?? null,
+    appStatus: row.appStatus, statusLabel: row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus,
+    statusReason: row.statusReason ? stripBannerChars(row.statusReason) : null,
+    appliedAt: row.appliedAt ?? null, appliedOn: appliedDay, updatedAt: row.updatedAt ?? null,
+    stage,
+    outcome: current,
+    reached: outcomes?.reached ?? null,
+    allowedOutcomes: submitted ? allowedOutcomes(current?.outcome ?? null) : [],
+    canUndoOutcome: Boolean(current),
+    followUp,
+    awaitingDays: stage === 'applied' && appliedDay ? daysBetween(appliedDay, today) : null,
+    sameCompany: 0,
+  };
+  item.nextAction = workspaceNextAction(row, stage, followUp);
+  if (history) {
+    item.outcomeHistory = outcomes?.history ?? [];
+    item.lastFollowUp = follow.last;
+  }
+  return item;
+}
+
+/** Most pressing first: a due follow-up, then the most recent activity. */
+function workspaceOrder(a, b) {
+  return Number(Boolean(b.followUp?.due)) - Number(Boolean(a.followUp?.due))
+    || String(b.outcome?.at ?? b.appliedAt ?? b.updatedAt ?? '').localeCompare(String(a.outcome?.at ?? a.appliedAt ?? a.updatedAt ?? ''))
+    || String(a.id).localeCompare(String(b.id));
+}
+
+/**
+ * Every application as a workspace card, plus the numbers they add up to.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {object} [options]
+ * @param {Date} [options.now]
+ * @param {object|null} [options.config] for the user's timezone ("due today")
+ * @returns {{ generatedAt: string, today: string, stages: object[], items: object[], metrics: object }}
+ */
+export function applicationsWorkspace(db, { now = new Date(), config = null } = {}) {
+  const { today, items } = workspaceParts(db, now, config);
+  return { generatedAt: now.toISOString(), today, stages: WORKSPACE_STAGES, items, metrics: applicationMetrics(items) };
+}
+
+/** The decorated rows and the cards built from them (shared with Today). */
+function workspaceParts(db, now, config) {
+  const timeZone = candidateTimeZone(config);
+  const today = dayOf(now, timeZone);
+  const rows = applicationRows(db, now);
+  const events = workspaceEvents(db, rows.map((r) => r.id));
+  const items = [];
+  for (const row of rows) {
+    const item = workspaceItem(row, events.get(row.id) ?? [], { today, timeZone });
+    if (item) items.push(item);
+  }
+  // Other applications at the same employer, so a second application to a
+  // company is visible as one — each keeps its own outcome and history.
+  const perCompany = new Map();
+  for (const item of items) {
+    const key = companyKey(item.company);
+    if (key) perCompany.set(key, (perCompany.get(key) ?? 0) + 1);
+  }
+  for (const item of items) item.sameCompany = Math.max(0, (perCompany.get(companyKey(item.company)) ?? 1) - 1);
+  items.sort(workspaceOrder);
+  return { rows, items, today };
+}
+
+/**
+ * One job's workspace card with its full outcome history, or null when the
+ * job is not an application. Used by the detail rail and every mutation reply.
+ */
+export function applicationSummary(db, jobId, { now = new Date(), config = null } = {}) {
+  const job = db.getJob(jobId);
+  if (!job) return null;
+  const timeZone = candidateTimeZone(config);
+  const approval = db.getApprovalByJob?.(jobId) ?? null;
+  const row = boardRow(job, approval, now);
+  const events = workspaceEvents(db, [jobId]).get(jobId) ?? [];
+  return workspaceItem(row, events, { today: dayOf(now, timeZone), timeZone, history: true });
+}
+
+/** A submitted job, or the 404/409 that explains why it is not one. */
+function submittedJobOr409(db, jobId, what) {
+  const job = db.getJob(jobId);
+  if (!job) throw httpError(404, `unknown job id: ${jobId}`);
+  if (Number(job.applied) !== 1) {
+    throw httpError(409, `${what} can only be recorded for an application you submitted. `
+      + 'Use "I submitted it myself" first if you applied outside JobAgent.');
+  }
+  return job;
+}
+
+/** A trimmed, length-capped optional note, or the 400 for a non-string. */
+function noteOr400(note) {
+  if (note == null || note === '') return null;
+  if (typeof note !== 'string') throw httpError(400, 'note must be text');
+  return note.trim().slice(0, MAX_OUTCOME_NOTE) || null;
+}
+
+/**
+ * Record what the employer (or the user) did with a submitted application:
+ * interviewing, offer, hired, rejected by the employer, or withdrawn.
+ *
+ * Validated against the outcome graph (canRecordOutcome) — a drag on the
+ * board is a REQUEST, and this is where it is accepted or refused. It never
+ * touches the job's status, submission or decision, and never overwrites an
+ * earlier outcome: each one is a new event, and undo appends its reversal.
+ *
+ * @param {import('../logging/db.js').Database} db
+ * @param {string} jobId
+ * @param {object} details
+ * @param {string} details.outcome an OUTCOME value
+ * @param {string} [details.on] YYYY-MM-DD it happened; defaults to today
+ * @param {string} [details.note]
+ * @throws 400 bad outcome/date/note, 404 unknown job, 409 not submitted or not an allowed move
+ */
+export function recordOutcome(db, jobId, { outcome, on = null, note = null, now = new Date(), config = null } = {}) {
+  if (!OUTCOME_VALUES.includes(outcome)) {
+    throw httpError(400, `invalid outcome "${outcome}" (use ${OUTCOME_VALUES.join('/')})`);
+  }
+  submittedJobOr409(db, jobId, 'An outcome');
+  const today = dayOf(now, candidateTimeZone(config));
+  const day = on == null || on === '' ? today : on;
+  if (!isIsoDay(day)) throw httpError(400, 'date must be a calendar day written YYYY-MM-DD');
+  if (day > today) throw httpError(400, 'an outcome cannot be dated in the future');
+  const text = noteOr400(note);
+  const events = workspaceEvents(db, [jobId]).get(jobId) ?? [];
+  const from = replayOutcomes(events.filter((e) => e.event_type === OUTCOME_EVENT)).current?.outcome ?? null;
+  if (!canRecordOutcome(from, outcome)) {
+    const fromLabel = OUTCOME_LABELS[from ?? OUTCOME.APPLIED];
+    throw httpError(409, from === outcome
+      ? `This application is already marked "${fromLabel}".`
+      : `An application marked "${fromLabel}" cannot move to "${OUTCOME_LABELS[outcome]}"`
+        + `${from && TERMINAL_OUTCOMES.has(from) ? '. Undo the last outcome to correct it.' : '.'}`);
+  }
+  recordEvent(db, {
+    job_id: jobId,
+    event_type: OUTCOME_EVENT,
+    message: `outcome: ${outcome}`,
+    metadata: { outcome, on: day, note: text, previous: from },
+  });
+  noteUserMutation();
+  return applicationSummary(db, jobId, { now, config });
+}
+
+/**
+ * Reverse the most recent recorded outcome on one job (appends an undo event;
+ * the original stays in the audit log).
+ * @throws 404 unknown job, 409 nothing to undo
+ */
+export function undoOutcome(db, jobId, { now = new Date(), config = null } = {}) {
+  if (!db.getJob(jobId)) throw httpError(404, `unknown job id: ${jobId}`);
+  const events = workspaceEvents(db, [jobId]).get(jobId) ?? [];
+  const { current, history } = replayOutcomes(events.filter((e) => e.event_type === OUTCOME_EVENT));
+  if (!current) throw httpError(409, 'there is no recorded outcome on this application to undo');
+  const back = history.length > 1 ? history[history.length - 2].outcome : OUTCOME.APPLIED;
+  recordEvent(db, {
+    job_id: jobId,
+    event_type: OUTCOME_EVENT,
+    message: `outcome undone (back to ${back})`,
+    metadata: { undo: true, undid: current.outcome },
+  });
+  noteUserMutation();
+  return applicationSummary(db, jobId, { now, config });
+}
+
+/** What a follow-up request may do. */
+export const FOLLOWUP_ACTIONS = Object.freeze(['set', 'done', 'dismissed']);
+
+/**
+ * Set, complete or dismiss the follow-up reminder on a submitted application.
+ * Reminders are read when a page asks for them — no timer, no notification,
+ * no background process.
+ *
+ * @param {object} details
+ * @param {'set'|'done'|'dismissed'} details.action
+ * @param {string} [details.dueOn] YYYY-MM-DD (required for `set`)
+ * @param {string} [details.note]
+ * @throws 400 bad action/date/note, 404 unknown job, 409 not submitted or nothing open
+ */
+export function updateFollowUp(db, jobId, { action, dueOn = null, note = null, now = new Date(), config = null } = {}) {
+  if (!FOLLOWUP_ACTIONS.includes(action)) {
+    throw httpError(400, `invalid follow-up action "${action}" (use ${FOLLOWUP_ACTIONS.join('/')})`);
+  }
+  submittedJobOr409(db, jobId, 'A follow-up');
+  const text = noteOr400(note);
+  const today = dayOf(now, candidateTimeZone(config));
+  const metadata = { action };
+  if (action === 'set') {
+    if (!isIsoDay(dueOn)) throw httpError(400, 'dueOn must be a calendar day written YYYY-MM-DD');
+    if ((daysBetween(today, dueOn) ?? 0) > MAX_FOLLOWUP_DAYS) {
+      throw httpError(400, `a follow-up can be set at most ${MAX_FOLLOWUP_DAYS} days ahead`);
+    }
+    Object.assign(metadata, { dueOn, note: text });
+  } else {
+    const events = workspaceEvents(db, [jobId]).get(jobId) ?? [];
+    if (!replayFollowUps(events.filter((e) => e.event_type === FOLLOWUP_EVENT)).open) {
+      throw httpError(409, 'there is no open follow-up on this application');
+    }
+  }
+  recordEvent(db, {
+    job_id: jobId,
+    event_type: FOLLOWUP_EVENT,
+    message: action === 'set' ? `follow-up set for ${dueOn}` : `follow-up ${action}`,
+    metadata,
+  });
+  noteUserMutation();
+  return applicationSummary(db, jobId, { now, config });
+}
+
+/**
+ * Due follow-ups as Today candidates. Read on request from the application
+ * rows (index-backed, well under a millisecond on the live store).
+ */
+function dueFollowUpCandidates(db, now, config) {
+  let parts;
+  try { parts = workspaceParts(db, now, config); } catch { return []; }
+  const rows = new Map(parts.rows.map((row) => [row.id, row]));
+  return parts.items.filter((item) => item.followUp?.due && rows.has(item.id)).map((item) => ({
+    row: rows.get(item.id),
+    action: { rank: 2.5, kind: 'followup', label: 'Follow up', followUp: item.followUp, appliedOn: item.appliedOn, today: parts.today },
+  }));
+}
+
+/** Why a follow-up is on Today, in one line. */
+function followUpReason(action) {
+  const { followUp, appliedOn, today } = action;
+  const since = appliedOn ? daysBetween(appliedOn, today) : null;
+  const parts = [];
+  if (since != null) parts.push(`Applied ${since === 0 ? 'today' : `${since} day${since === 1 ? '' : 's'} ago`}`);
+  parts.push(followUp.daysLate ? `reminder was due ${followUp.daysLate} day${followUp.daysLate === 1 ? '' : 's'} ago` : 'reminder due today');
+  const line = `${parts.join(' · ')}.`;
+  return followUp.note ? `${line} ${followUp.note}`.slice(0, TODAY_REASON_MAX) : line;
 }
 
 /** A lightweight board row for section lists (omits heavy keyword arrays). */
@@ -2319,6 +2641,9 @@ export function todayQueue(db, {
       if (extra) topUp.push({ row, action: extra });
     }
   }
+  // Follow-ups the user set that have come due. A submitted row has no other
+  // Today action, so a reminder never doubles up with one.
+  candidates.push(...dueFollowUpCandidates(db, now, config));
   if (candidates.length < TODAY_LIMIT) {
     topUp.sort((a, b) => a.action.rank - b.action.rank || (b.row.score ?? -1) - (a.row.score ?? -1));
     candidates.push(...topUp.slice(0, TODAY_LIMIT - candidates.length));
@@ -2337,8 +2662,11 @@ export function todayQueue(db, {
     tier: row.tier,
     appStatus: row.appStatus,
     statusLabel: row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus,
-    reason: action.closed ? todayReason(row, action) : withCaveat(todayReason(row, action), staleCaveat(row, now, config)),
+    // Posting age stops mattering once you have applied, so a follow-up gets no stale caveat.
+    reason: action.kind === 'followup' ? followUpReason(action)
+      : action.closed ? todayReason(row, action) : withCaveat(todayReason(row, action), staleCaveat(row, now, config)),
     nextAction: { kind: action.kind, label: action.label },
+    followUp: action.followUp ?? null,
     // Display-only signals, so a card can SAY whether a posting is aging,
     // held for a sponsorship check, unread, or closed instead of implying it.
     fit: row.fit ?? null,

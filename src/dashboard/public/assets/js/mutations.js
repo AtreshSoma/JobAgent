@@ -9,6 +9,7 @@ import { cssEscape, isAggregatorUrl, loadDetail, renderDetail, selectJob } from 
 import { autofillBlockedReason, loadToday, scheduleTodayReload } from './today.js';
 import { offerUndo } from './selection.js';
 import { pollRun } from './runs.js';
+import { loadWorkspace, scheduleWorkspaceReload } from './workspace.js';
 
 /* ───────────────────── mutations + refresh ───────────────────── */
 
@@ -27,6 +28,7 @@ export function scheduleRefresh(delay = 350) {
   scheduleBoardReload(delay);
   loadStats();
   if (state.view === 'today') scheduleTodayReload(delay);
+  scheduleWorkspaceReload(delay);
 }
 
 /**
@@ -35,7 +37,8 @@ export function scheduleRefresh(delay = 350) {
  */
 export async function refreshAll({ force = false } = {}) {
   clearTimeout(refreshTimer);
-  await Promise.allSettled([loadStats({ force }), loadBoard(), loadToday()]);
+  await Promise.allSettled([loadStats({ force }), loadBoard(), loadToday(),
+    state.view === 'applications' && !$('workspace').hidden ? loadWorkspace() : null]);
   loadSections();
   // A prepare/re-tailor run replaces the packet and its tailoring audit on
   // disk. Refresh the open detail rail too; otherwise it keeps displaying the

@@ -38,7 +38,7 @@ export const state = {
   roleQuery: null,
   /** Last link-check result per job id, so a re-render does not erase it. */
   linkHealth: new Map(),
-  /** 'today' (the action queue) or 'board'. */
+  /** 'today' (the action queue), 'board' (Jobs) or 'applications'. */
   view: 'today',
   /** Last /api/today payload (or its derived fallback). */
   today: null,
@@ -46,6 +46,12 @@ export const state = {
   systemNotices: [],
   /** True while the automation browser is missing: every Auto-fill waits. */
   browserUnavailable: false,
+  /** Applications view layout: 'kanban' (the workspace board) or 'list' (stage tabs). */
+  appsLayout: 'kanban',
+  /** True while the Applications view was reached by a deep link to one stage. */
+  appsDeepLink: false,
+  /** Last /api/applications payload. */
+  workspace: null,
   /** Last /api/health (doctor) payload, fetched once when idle. */
   health: null,
 };

@@ -2393,3 +2393,180 @@ tr.job { transition: background-color .12s ease; }
 @media (prefers-reduced-motion: reduce) {
   .filter-panel:not([hidden]), .tcard, tr.job { animation: none; transition: none; }
 }
+
+/* ═══════════════════════ P1B-2 · Applications workspace ═══════════════════════
+   Existing tokens only. Columns scroll sideways with snap; a column's colour
+   never carries meaning alone (every state is also written on the card).
+   Motion: transform/opacity only, short, ease-out; none on keyboard moves. */
+
+:root { --ws-ease: cubic-bezier(.23, 1, .32, 1); --ws-col-min: 196px; }
+
+.view-head .layoutswitch { flex: none; }
+/* The Board layout replaces the stage tabs, filters, table and pager. */
+#boardView[data-layout="kanban"] > :not(.view-head):not(#workspace):not(#boardAnnounce) { display: none; }
+
+.workspace { display: flex; flex-direction: column; gap: var(--s3); }
+
+/* Numbers: one quiet row, counts first, rates with their counts beside them. */
+.ws-metrics { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--s2); }
+.ws-metric {
+  display: flex; flex-direction: column; gap: 1px; min-width: 104px; padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--line-soft); border-radius: var(--r-md);
+}
+.ws-metric b { font-size: var(--fs-xl); font-weight: 700; letter-spacing: -.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.ws-metric span { font-size: var(--fs-sm); color: var(--text-dim); }
+.ws-metric.warn b { color: var(--warn-text); }
+.ws-metric.good b { color: var(--good); }
+.ws-metric.accent b { color: var(--accent); }
+.ws-rates { flex-basis: 100%; margin: 0; font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.ws-rates-note { color: var(--text-faint); }
+
+/* The board: two bands (before / after you apply), each sharing the full
+   width; one row when the container is wide enough for all seven. */
+.ws-board { container-type: inline-size; container-name: wsboard; display: flex; flex-direction: column; gap: var(--s4); }
+.ws-board:focus { outline: none; }
+.ws-band { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+.ws-phase {
+  margin: 0; padding-left: 4px; font-size: var(--fs-xs); font-weight: 650;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint);
+}
+.ws-cols {
+  display: grid; grid-template-columns: repeat(var(--ws-cols, 4), minmax(var(--ws-col-min), 1fr)); gap: var(--s3);
+  align-items: start; overflow-x: auto; padding: 2px 2px var(--s1);
+  scroll-snap-type: x proximity; overscroll-behavior-x: contain;
+}
+.band-prepare .ws-cols { --ws-cols: 3; }
+@container wsboard (min-width: 1560px) {
+  .ws-board { flex-direction: row; }
+  .band-prepare { flex: 3 1 0; }
+  .band-outcome { flex: 4 1 0; padding-left: var(--s4); border-left: 1px solid var(--line); }
+}
+.ws-col {
+  scroll-snap-align: start; display: flex; flex-direction: column; gap: var(--s2);
+  min-height: 120px; padding: var(--s2); border-radius: var(--r-lg);
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  transition: background-color .15s ease, border-color .15s ease, opacity .15s ease;
+}
+.ws-col-head { display: flex; align-items: center; gap: var(--s2); padding: 2px 4px 0; }
+.ws-col-head h4 { margin: 0; font-size: var(--fs-md); font-weight: 650; }
+.ws-count {
+  font-size: var(--fs-xs); font-weight: 650; color: var(--text-dim); background: var(--chip);
+  border-radius: var(--r-full); padding: 0 7px; line-height: 18px; font-variant-numeric: tabular-nums;
+}
+.ws-col[data-stage="attention"] .ws-count:not(:empty) { background: var(--warn-soft); color: var(--warn-text); }
+.ws-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.ws-col-empty {
+  padding: var(--s3); border: 1px dashed var(--line); border-radius: var(--r-md);
+  font-size: var(--fs-sm); color: var(--text-faint); text-align: center; line-height: 1.45;
+}
+
+/* Drag feedback: valid columns light up, refused ones step back. */
+.ws-col[data-drop="no"] { opacity: .55; }
+.ws-col[data-drop="ok"] { border-color: var(--accent); border-style: dashed; }
+.ws-col.drop-over { background: var(--accent-soft); border-style: solid; }
+
+/* Cards. */
+.ws-card {
+  position: relative; display: flex; flex-direction: column; gap: 6px; padding: 10px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm); cursor: pointer;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .16s var(--ws-ease), opacity .16s ease;
+}
+.ws-card[draggable="true"] { cursor: grab; }
+.ws-card.dragging { opacity: .45; transform: scale(.98); }
+.ws-card.current { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.ws-card.is-due { border-left: 3px solid var(--accent); padding-left: 10px; }
+@media (hover: hover) and (pointer: fine) {
+  .ws-card:hover { border-color: var(--text-faint); box-shadow: var(--shadow); }
+  .ws-card.current:hover { border-color: var(--accent); }
+}
+.ws-card:active:not(:has(button:active)) { transform: scale(.985); }
+.ws-card-top { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ws-company {
+  flex: 1 1 auto; min-width: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ws-same {
+  flex: none; font-size: var(--fs-xs); font-weight: 650; color: var(--text-dim);
+  background: var(--chip); border-radius: var(--r-full); padding: 0 6px; line-height: 17px;
+}
+.ws-card-top .grade { flex: none; width: 22px; height: 22px; border-radius: 6px; font-size: var(--fs-xs); }
+.ws-card-title {
+  all: unset; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+  font-size: var(--fs-md); font-weight: 600; line-height: 1.35; color: var(--text); cursor: inherit;
+  border-radius: var(--r-xs);
+}
+.ws-card-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ws-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.ws-chips:empty { display: none; }
+.ws-chips .chip { font-size: var(--fs-xs); }
+.chip.signal.accent { color: var(--accent); background: var(--accent-soft); }
+.ws-card-foot { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.ws-go { flex: 1 1 auto; justify-content: center; }
+.ws-move { flex: none; }
+.ws-card button:active:not(:disabled), .appcard button:active:not(:disabled) { transform: scale(.97); }
+.ws-card button, .appcard button { transition: transform .12s ease-out, background-color .15s ease, border-color .15s ease; }
+
+/* The Move menu, anchored under its card and growing from its trigger. */
+.ws-menu {
+  position: absolute; z-index: 30; right: 8px; top: calc(100% - 6px); min-width: 196px;
+  display: flex; flex-direction: column; gap: 2px; padding: 5px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg); transform-origin: top right; cursor: default;
+  animation: ws-menu-in .16s var(--ws-ease);
+}
+@keyframes ws-menu-in { from { opacity: 0; transform: translateY(-4px) scale(.97); } }
+.ws-menu .menu-label { padding: 4px 8px 2px; font-size: var(--fs-xs); color: var(--text-faint); font-weight: 600; }
+.ws-menu button { justify-content: flex-start; text-align: left; border-color: transparent; background: transparent; font-size: var(--fs-sm); }
+.ws-menu button:hover, .ws-menu button:focus-visible { background: var(--surface-2); }
+.ws-menu hr { border: 0; border-top: 1px solid var(--line-soft); margin: 3px 2px; }
+.ws-menu .o-hired, .ws-menu .o-offer { color: var(--good); }
+.ws-menu .o-rejected { color: var(--bad); }
+
+.ws-empty {
+  width: min(520px, 100%); padding: var(--s5) var(--s4); text-align: left;
+  background: var(--surface); border: 1px dashed var(--line); border-radius: var(--r-lg);
+}
+.ws-empty h3 { margin: 0 0 4px; font-size: var(--fs-lg); }
+.ws-empty p { margin: 0 0 var(--s3); line-height: 1.5; }
+.ws-col .skeleton { height: 64px; border-radius: var(--r-md); }
+
+/* Detail rail: the Application card. */
+.appcard { display: flex; flex-direction: column; gap: var(--s2); }
+.appcard-status { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 0; font-size: var(--fs-sm); }
+.appcard-hint { margin: 0; font-size: var(--fs-sm); color: var(--warn-text); }
+.appcard-form { display: flex; flex-direction: column; gap: 6px; }
+.appcard-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.appcard-row select { flex: 1 1 140px; min-width: 0; }
+.appcard-row input[type="date"] { flex: 0 1 150px; min-width: 0; }
+.appcard .ap-note { width: 100%; }
+.appcard-follow { border-top: 1px solid var(--line-soft); padding-top: var(--s2); display: flex; flex-direction: column; gap: 6px; }
+.appcard-follow h4 { margin: 0; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); }
+.appcard-follow p { margin: 0; font-size: var(--fs-sm); }
+.appcard-due b { color: var(--accent); }
+.appcard-timeline { list-style: none; margin: 0; padding: var(--s2) 0 0 14px; border-top: 1px solid var(--line-soft); font-size: var(--fs-sm); }
+.appcard-timeline li { position: relative; padding: 2px 0 6px; }
+.appcard-timeline li::before {
+  content: ""; position: absolute; left: -12px; top: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--text-faint);
+}
+.appcard-timeline li:last-child::before { background: var(--accent); }
+button.linklike {
+  align-self: flex-start; padding: 0; height: auto; border: 0; background: none; color: var(--accent); font-size: var(--fs-sm);
+}
+button.linklike:hover { background: none; text-decoration: underline; }
+
+/* Tablet: narrower columns. Phone: one column per screen, swiped. */
+@media (max-width: 640px) {
+  /* One column per screen width, swiped sideways within each band. */
+  :root { --ws-col-min: calc(100vw - 72px); }
+  .ws-cols { scroll-snap-type: x mandatory; }
+  .ws-metric { flex: 1 1 calc(33% - var(--s2)); min-width: 0; padding: 6px 10px; }
+  .ws-metric b { font-size: var(--fs-lg); }
+  .view-head { flex-wrap: wrap; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-card, .ws-col, .ws-card button, .appcard button { transition: none; }
+  .ws-menu { animation: none; }
+  .ws-card.dragging, .ws-card:active, .ws-card button:active { transform: none; }
+}

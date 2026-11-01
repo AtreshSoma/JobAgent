@@ -78,7 +78,7 @@ describe('navigation: three views, stages inside the view', () => {
     const today = js('today.js');
     expect(today).toContain("export const VIEWS = ['today', 'board', 'applications'];");
     expect(today).toContain("view = 'applications';");
-    expect(js('filters.js')).toMatch(/APP_TABS = TABS\.filter\(\(\[key\]\) => \['needs_review', 'ready_apply', 'blocked', 'submitted'\]/);
+    expect(js('filters.js')).toMatch(/APP_TABS = TABS\.filter\(\(\[key\]\) => \['needs_review', 'ready_apply', 'needs_you', 'submitted'\]/);
     expect(js('analytics.js')).toContain('if (APP_TAB_KEYS.has(key) !== inApps) continue;');
     expect(html).toContain('id="appsCount"');
   });

@@ -1122,6 +1122,40 @@ export class Database {
   }
 
   /**
+   * Every job that is, or has been, an APPLICATION: submitted, mid-fill,
+   * prepared, or holding an approval row — whichever search found it, because
+   * the Applications workspace is a record of the user's own work.
+   *
+   * Same two phases as listOpenJobsSummary: three index searches for ids
+   * (idx_jobs_applied, idx_jobs_status, idx_approval_job), then primary-key
+   * fetches. Measured on the live 125k-row store: well under 1 ms.
+   * @returns {object[]}
+   */
+  listApplicationJobsSummary() {
+    const ids = this.prepareCached(`SELECT id FROM jobs WHERE applied = 1
+      UNION SELECT id FROM jobs WHERE status IN ('prepared', 'assist_started', 'assist_blocked',
+        'ready_for_submit', 'submit_unverified', 'submitted', 'failed', 'cancelled')
+      UNION SELECT job_id FROM approval_queue WHERE job_id IS NOT NULL`).all().map((r) => r.id);
+    return this.rowsByIds(ids);
+  }
+
+  /**
+   * Events of the given types for a set of jobs, oldest first (insertion
+   * order breaks same-millisecond ties). Served by idx_events_job, so it never
+   * scans the 75k-row event log.
+   * @param {string[]} jobIds
+   * @param {string[]} types
+   * @returns {object[]}
+   */
+  listEventsForJobs(jobIds = [], types = []) {
+    if (!jobIds.length || !types.length) return [];
+    return this.prepareCached(`SELECT id, job_id, event_type, message, metadata, created_at
+      FROM application_events
+      WHERE job_id IN (SELECT value FROM json_each(?)) AND event_type IN (SELECT value FROM json_each(?))
+      ORDER BY created_at, rowid`).all(JSON.stringify(jobIds), JSON.stringify(types));
+  }
+
+  /**
    * Record a USER decision on a job (dashboard actions). Decisions are the
    * human's own triage state — they never overwrite pipeline status.
    * @param {string} id job id

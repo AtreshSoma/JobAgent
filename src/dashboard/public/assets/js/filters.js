@@ -62,13 +62,14 @@ export const TABS = [
   ['shortlisted', 'Shortlisted', false],
   ['needs_review', 'Needs review', true],
   ['ready_apply', 'Ready to apply', true],
-  ['blocked', 'Needs you', true],
+  ['needs_you', 'Needs you', true],
   ['submitted', 'Submitted', false],
 ];
 
 /** The application stages: the Applications view shows these, Jobs the rest. */
-export const APP_TABS = TABS.filter(([key]) => ['needs_review', 'ready_apply', 'blocked', 'submitted'].includes(key));
-export const APP_TAB_KEYS = new Set(APP_TABS.map(([key]) => key));
+export const APP_TABS = TABS.filter(([key]) => ['needs_review', 'ready_apply', 'needs_you', 'submitted'].includes(key));
+/** Application stages, plus `blocked`: next actions still deep-link to that narrower view. */
+export const APP_TAB_KEYS = new Set([...APP_TABS.map(([key]) => key), 'blocked']);
 
 /* ─────────────────────── filters + query ─────────────────────── */
 

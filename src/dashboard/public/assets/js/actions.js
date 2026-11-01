@@ -18,11 +18,36 @@ import { download, openHealth, openProfile, saveAllAnswers, saveProfileDetails, 
 import { applyRunGate, openRuns, pollRun, setRunDetails } from './runs.js';
 import { closeMainMenu, toggleMenu } from './menus.js';
 import { applyViewPrefs, hiddenColumns, onFilterChange, savePreference, setFilterSheet } from './main.js';
+import {
+  closeMoveMenu, followUp, openApplicationDetail, openMoveMenu, recordOutcome, setAppsLayout, undoLastOutcome, workspaceAct,
+} from './workspace.js';
+import { localDay } from './detail.js';
 
 /* ────────────────────── event delegation ────────────────────── */
 
 export const ACTIONS = {
   reload: () => location.reload(),
+  // Applications workspace. None of these approves or submits: outcomes and
+  // follow-ups are validated server-side and only ever follow a submission.
+  'set-apps-layout': (target) => setAppsLayout(target.dataset.layout),
+  'ws-open': (target) => selectJob(target.dataset.id ?? target.closest('.ws-card')?.dataset.id, { user: true }),
+  'ws-act': (target) => workspaceAct(target),
+  'ws-move-menu': (target) => openMoveMenu(target),
+  'ws-record': (target) => { closeMoveMenu({ returnFocus: true }); return recordOutcome(target.dataset.id, target.dataset.outcome); },
+  'ws-undo-outcome': (target) => { closeMoveMenu(); return undoLastOutcome(target.dataset.id); },
+  'ws-open-application': (target) => { closeMoveMenu(); return openApplicationDetail(target.dataset.id); },
+  'ws-record-form': (target) => {
+    const card = target.closest('.appcard');
+    return recordOutcome(target.dataset.id, card.querySelector('.ap-outcome').value, {
+      on: card.querySelector('.ap-on').value || null, note: card.querySelector('.ap-note').value || null,
+    });
+  },
+  'ws-followup': (target) => followUp(target.dataset.id, target.dataset.op),
+  'ws-followup-set': (target) => {
+    const dueOn = target.dataset.days ? localDay(Number(target.dataset.days)) : target.closest('.appcard')?.querySelector('.ap-due')?.value;
+    if (!dueOn) { toast('Pick a date for the follow-up first.', 'bad'); return undefined; }
+    return followUp(target.dataset.id, 'set', { dueOn });
+  },
   'cancel-run': async () => {
     try { await postJson('/api/run/cancel'); toast('Cancelling — finished work is kept.'); pollRun(); }
     catch (err) { toast(err.message, 'bad'); }
@@ -256,7 +281,7 @@ export const ACTIONS = {
   },
   'submit-link': submitLink,
   'open-submit-dialog': (target) => openSubmitDialog(target.dataset.id),
-  'set-view': (target) => setView(target.dataset.view),
+  'set-view': (target) => setView(target.dataset.view, { nav: true }),
   'today-review': (target) => selectJob(target.dataset.id, { user: true }),
   'today-act': (target) => todayAct(target),
   'copy-text': (target) => copyText(target.dataset.text, 'Copied'),
@@ -287,6 +312,7 @@ export const BUSY_ACTIONS = new Set([
   'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
+  'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',
 ]);
 
 /** Run one ACTIONS entry, busy-guarded when it mutates. */

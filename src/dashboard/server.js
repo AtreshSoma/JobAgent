@@ -85,6 +85,7 @@ import {
   dashboardSections, setJobNote, buildExportRows, exportRowsToCsv, buildReports,
   buildDocuments, buildMasterResume, MASTER_RESUME_RELATIVE, MASTER_HISTORY_RELATIVE,
   setDuringBulkRun, todayQueue, undoDecision, noteUserMutation, setBrowserAvailability,
+  applicationsWorkspace, recordOutcome, undoOutcome, updateFollowUp,
 } from './data.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import {
@@ -1937,6 +1938,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (req.method === 'GET' && path === '/api/today') {
       return sendJson(res, 200, todayQueue(db, { now: nowDate(), config, browserAvailable: await browserAvailableCached() }));
     }
+    // The Applications workspace: every application as a card in its stage,
+    // with recorded outcomes, follow-ups and the numbers they add up to.
+    if (req.method === 'GET' && path === '/api/applications') {
+      return sendJson(res, 200, applicationsWorkspace(db, { now: nowDate(), config }));
+    }
     if (req.method === 'GET' && path === '/api/jobs') {
       const filters = Object.fromEntries(url.searchParams.entries());
       filters.now = nowDate();
@@ -2586,7 +2592,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (jobMatch) {
       const [, jobId, action] = jobMatch.map((s) => (s ? decodeURIComponent(s) : s));
       if (req.method === 'GET' && !action) {
-        const detail = jobDetail(db, jobId, { ...deps, root: config?.root ?? null, now: nowDate() });
+        const detail = jobDetail(db, jobId, { ...deps, root: config?.root ?? null, config, now: nowDate() });
         if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
         return sendJson(res, 200, detail);
       }
@@ -2681,6 +2687,25 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         }
         refreshTracker();
         return sendJson(res, 200, result);
+      }
+      // Recruiting outcomes and follow-ups on a SUBMITTED application. Each is
+      // validated and appended as an event; none changes the job's status,
+      // submission or decision, and none approves or submits anything.
+      if (req.method === 'POST' && action === 'outcome') {
+        const body = await readBody(req);
+        return sendJson(res, 200, recordOutcome(db, jobId, {
+          outcome: body.outcome, on: body.on ?? null, note: body.note ?? null, now: nowDate(), config,
+        }));
+      }
+      if (req.method === 'POST' && action === 'undo-outcome') {
+        await readBody(req);
+        return sendJson(res, 200, undoOutcome(db, jobId, { now: nowDate(), config }));
+      }
+      if (req.method === 'POST' && action === 'follow-up') {
+        const body = await readBody(req);
+        return sendJson(res, 200, updateFollowUp(db, jobId, {
+          action: body.action, dueOn: body.dueOn ?? null, note: body.note ?? null, now: nowDate(), config,
+        }));
       }
       if (req.method === 'POST' && action === 'note') {
         const body = await readBody(req);
