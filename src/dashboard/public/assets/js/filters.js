@@ -66,6 +66,10 @@ export const TABS = [
   ['submitted', 'Submitted', false],
 ];
 
+/** The application stages: the Applications view shows these, Jobs the rest. */
+export const APP_TABS = TABS.filter(([key]) => ['needs_review', 'ready_apply', 'blocked', 'submitted'].includes(key));
+export const APP_TAB_KEYS = new Set(APP_TABS.map(([key]) => key));
+
 /* ─────────────────────── filters + query ─────────────────────── */
 
 export function filterParams({ forCount = false } = {}) {

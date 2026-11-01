@@ -317,8 +317,9 @@ A local web workbench at `http://127.0.0.1:4646`. It has no extra dependencies a
 
 | View | What you get |
 | --- | --- |
-| **✅ Today** | Up to ten next actions, most urgent first: confirm a submit, answer a blocking question, approve a packet, retry a fill. Setup problems appear once, as a notice with the fix. |
-| **📋 All jobs** | Search, fit and status filters with clearable chips, sorting, side-by-side comparison of up to three jobs, and tiles whose counts always match the rows they open. |
+| **✅ Today** | Up to ten next actions, grouped into *Finish applications*, *Decide on matches* and *Tidy up*, each flagged when a posting is aging, unread, closed or waiting on a sponsorship check: confirm a submit, answer a blocking question, approve a packet, retry a fill. Setup problems appear once, as a notice with the fix. |
+| **📋 Jobs** | Every open match, scoped by stage (All, Priority, Best matches, Shortlisted). Each row shows a fit meter, how many of the posting's skills you have, posting age and a *Verify first* mark when sponsorship is unconfirmed. Search, fit and status are always visible; *More filters* opens the rest in place, and active filters show as clearable chips. Sorting, paging and side-by-side comparison of up to three jobs. |
+| **📨 Applications** | The same board scoped to application stages: Needs review, Ready to apply, Needs you, Submitted. The header badge counts what is waiting on you. |
 | **🔍 Job inspector** | Score explanation, skills you have, skills you're missing, sponsorship verdict, audit trail, notes that autosave, and the actions *Fill in browser* and *I submitted it myself*. |
 | **▶ Find jobs ▾** | Runs discovery in the background with a live progress pill. The **More actions** menu adds *Search by job role*, *Remove closed postings*, *Run history*, *Discovery and data quality* (freshness and retention, reading missing descriptions, why jobs were filtered), *Master resume*, *Application profile*, reports, CSV exports, *System health*, and *Interview Prep*. |
 

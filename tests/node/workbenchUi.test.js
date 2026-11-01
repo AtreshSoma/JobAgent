@@ -155,9 +155,13 @@ describe('dashboard shell structure', () => {
 
   it('lays the refine row out as seven equal columns, so nothing is stranded', () => {
     // A wrapped flex row left single controls ("City", "Closed jobs") alone on
-    // rows of their own. A grid of equal columns cannot.
-    const refine = html.slice(html.indexOf('frow-refine'), html.indexOf('frow-only'));
-    expect((refine.match(/<select /g) || []).length).toBe(7);
+    // rows of their own. A grid of equal columns cannot. Location, city and
+    // the five remaining selects fill the seven columns; fit and status moved
+    // up to the always-visible find row.
+    const refine = html.slice(html.indexOf('frow-refine'), html.indexOf('frow-posted'));
+    expect((refine.match(/<select |<input id="city"/g) || []).length).toBe(7);
+    const find = html.slice(html.indexOf('frow-find'), html.indexOf('filter-panel'));
+    for (const id of ['id="q"', 'id="fit"', 'id="appStatus"', 'id="btnFilterSheet"']) expect(find).toContain(id);
     expect(css).toMatch(/\.frow-refine \{[^}]*grid-template-columns: repeat\(7, minmax\(0, 1fr\)\)/);
     // The grid reflows by the card's width, never into a ragged last row.
     expect(css).toContain('container-type: inline-size');
@@ -176,7 +180,7 @@ describe('dashboard shell structure', () => {
     // REPORTS state (connection, the run, health) is the header's second row,
     // so a run result gets the full width instead of an ellipsis.
     const header = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
-    expect(header.indexOf('id="tabs"')).toBeLessThan(header.indexOf('class="split menu"'));
+    expect(header.indexOf('class="stages"')).toBeLessThan(header.indexOf('class="split menu"'));
     const row = header.slice(header.indexOf('id="statusbar"'));
     for (const id of ['id="conn"', 'id="runbox"', 'id="health"']) expect(row).toContain(id);
     expect(row.indexOf('id="runbox"')).toBeLessThan(row.indexOf('class="spacer"'));
@@ -395,12 +399,16 @@ describe('theme and responsive design', () => {
 });
 
 describe('the top pane states things once', () => {
-  it('puts the work queues and the health facts in the header, not extra bands', () => {
-    // Separate bands (a metric strip, a tab band) spent vertical space before
-    // the first job row and restated counts in two visual languages.
+  it('keeps three views in the header and each view\'s stages inside it', () => {
+    // Eight stage tabs in the header wrapped it onto a second line below
+    // ~1500px. The header now carries Today / Jobs / Applications; the stage
+    // tabs sit in the board view they scope. Health stays in the status row.
     const header = html.slice(html.indexOf('<header class="topbar">'), html.indexOf('</header>'));
-    expect(header).toContain('id="tabs"');
+    expect(header).not.toContain('id="tabs"');
+    for (const view of ['today', 'board', 'applications']) expect(header).toContain(`data-view="${view}"`);
     expect(header).toContain('id="health"');
+    const board = html.slice(html.indexOf('id="boardView"'), html.indexOf('id="filterbar"'));
+    expect(board).toContain('id="tabs"');
     expect(html).not.toContain('class="pipeline"');
     expect(html).not.toContain('class="metrics"');
   });
@@ -412,9 +420,11 @@ describe('the top pane states things once', () => {
     for (const duplicated of ['pendingReview', 'readyForSubmit', 'submittedTotal']) {
       expect(facts, `${duplicated} duplicates a tab`).not.toContain(duplicated);
     }
-    // What remains is corpus size, freshness, fit, and coverage.
-    for (const kept of ['jobsTracked', 'discoveredLast24h', 'postedLast24h', 'strongFit']) {
-      expect(facts).toContain(kept);
+    // What remains is what changed and what is worth a look; corpus size and
+    // coverage moved to the Discovery and data quality dialog.
+    for (const kept of ['postedLast7d', 'strongFit']) expect(facts).toContain(kept);
+    for (const moved of ['jobsTracked', 'discoveredLast24h', 'postedLast24h']) {
+      expect(facts, `${moved} belongs in the data-quality dialog`).not.toContain(`key: '${moved}'`);
     }
   });
 

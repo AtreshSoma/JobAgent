@@ -3,7 +3,7 @@
 import { $, el, esc, fmt, relTime } from './dom.js';
 import { state } from './state.js';
 import { api } from './api.js';
-import { TABS } from './filters.js';
+import { TABS, APP_TABS, APP_TAB_KEYS } from './filters.js';
 import { renderBoardStatus } from './board.js';
 import { renderHealthProfileFlag } from './profile.js';
 
@@ -14,18 +14,18 @@ import { renderHealthProfileFlag } from './profile.js';
  * them twice, in two visual languages, is what made the top of the page busy.
  */
 
-/** Always shown: how big the corpus is and how fresh it is. */
+/**
+ * Always shown: what CHANGED and what is worth a look — not how big the
+ * database is. The strip used to open with "125,706 in store", "0 seen in
+ * last 24h", "0 posted in 24h" and "52/56 US states": four numbers about the
+ * corpus, three of them usually zero, none of them a reason to act. The
+ * corpus figures (and why most of it was filtered) now live one click away in
+ * "Discovery and data quality", linked from the end of this row.
+ */
 export const HEALTH_FACTS = [
-  // Labelled as the WHOLE STORE, because that is what they count. "122,977
-  // tracked · 8,964 found 24h" sat above a board of 43 open jobs and read as
-  // though the board were hiding 122,934 of them.
-  { key: 'jobsTracked', label: 'in store', filter: { includeClosed: true }, title: 'Every job ever stored, including closed and filtered-out ones — the whole corpus, not this board' },
-  { key: 'discoveredLast24h', label: 'seen in last 24h', tone: 'hot', title: 'Postings discovery saw for the first time in the last 24 hours, across the whole store' },
-  { key: 'postedLast24h', label: 'posted in 24h', tone: 'hot', filter: { postedWithinHours: '24' }, title: 'Jobs whose POSTING is less than 24 hours old' },
-  // The 24h count is often single digits while a week holds hundreds. Without
-  // this chip the bar implies there is nothing to apply to.
-  { key: 'postedLast7d', label: 'posted this week', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Jobs whose POSTING is less than 1 week old' },
-  { key: 'strongFit', label: 'strong fits in total', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match' },
+  // The 24h count is often single digits while a week holds hundreds.
+  { key: 'postedLast7d', label: 'posted this week', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Open jobs whose POSTING is less than 1 week old — filter the board to them' },
+  { key: 'strongFit', label: 'strong fits', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match — filter the board to them' },
 ];
 
 /** Shown only when non-zero, and only where no tab already carries it. */
@@ -77,29 +77,21 @@ export function statNode({ key, label, tone, filter, title }, stats) {
 export function renderHealth(stats) {
   const host = $('health');
   host.textContent = '';
-  for (const fact of HEALTH_FACTS) host.append(statNode(fact, stats));
-
-  // Nationwide coverage, stated as data rather than assumed. The searches ask
-  // for "United States"; this is how many states actually came back.
-  const coverage = stats.coverage;
-  if (coverage?.statesPossible) {
-    host.append(el('span', {
-      class: 'stat',
-      title: `Open jobs span ${coverage.statesCovered} of ${coverage.statesPossible} US states and territories`
-        + `, plus ${fmt(coverage.nationwide)} nationwide/remote and ${fmt(coverage.unstated)} with no stated location.`,
-    }, el('b', { text: `${coverage.statesCovered}/${coverage.statesPossible}` }),
-    el('span', { class: 'l', text: 'US states' })));
-  }
-
+  // When discovery last found anything — the first question on opening the app.
   const last = relTime(stats.lastDiscoveryAt);
   host.append(el('span', { class: 'stat', title: 'When discovery last found anything' },
-    el('b', { text: last ?? 'never' }), el('span', { class: 'l', text: 'last run' })));
+    el('span', { class: 'l', text: 'Last search' }), el('b', { text: last ?? 'never' })));
+  for (const fact of HEALTH_FACTS) host.append(statNode(fact, stats));
 
   for (const flag of HEALTH_FLAGS) {
     // An empty warning is noise; only real attention items get a pill.
     if ((stats.totals[flag.key] ?? 0) === 0) continue;
     host.append(statNode(flag, stats));
   }
+  host.append(el('button', {
+    type: 'button', class: 'stat clickable stat-link', 'data-action': 'open-data-quality',
+    title: `${fmt(stats.totals?.jobsTracked ?? 0)} jobs stored in total. See why jobs were filtered, how long they stay, and missing descriptions.`,
+  }, el('span', { class: 'l', text: 'Data quality' })));
 
   // This strip is rebuilt from scratch on every stats load, so the profile
   // pill has to be re-added here or it would vanish on the next poll.
@@ -114,8 +106,19 @@ export function renderTabs() {
   const host = $('tabs');
   const keptFocus = host.contains(document.activeElement);
   host.textContent = '';
+  // Each list view carries its own stages: discovery under Jobs, application
+  // work under Applications. The header nav shows the waiting application
+  // work as one number, so it is visible from anywhere.
+  const inApps = state.view === 'applications';
+  const appsWaiting = APP_TABS.filter(([, , urgent]) => urgent).reduce((n, [key]) => n + (state.stats?.views?.[key] ?? 0), 0);
+  const appsBadge = $('appsCount');
+  if (appsBadge) {
+    appsBadge.hidden = appsWaiting === 0;
+    appsBadge.textContent = fmt(appsWaiting);
+    appsBadge.title = `${fmt(appsWaiting)} application(s) waiting on you`;
+  }
   for (const [key, label, urgent] of TABS) {
-    if (key === 'needs_review') host.append(el('span', { class: 'tab-sep', role: 'presentation' }));
+    if (APP_TAB_KEYS.has(key) !== inApps) continue;
     const count = views[key] ?? 0;
     const selected = state.activeTab === key;
     host.append(el('button', {

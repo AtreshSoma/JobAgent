@@ -44,13 +44,19 @@
 <header class="topbar">
   <h1 class="brand"><span class="mark" aria-hidden="true"></span>JobAgent</h1>
 
-  <nav class="stages" aria-label="Workflow stages">
+  <!-- THREE PLACES, NOT ELEVEN. The header used to carry the view switch AND
+       all eight stage tabs, which wrapped onto a second line below ~1500px and
+       scrolled sideways on a phone. The stage tabs now live inside the view
+       they scope: discovery stages under Jobs, application stages under
+       Applications. -->
+  <nav class="stages" aria-label="Primary">
     <div class="viewswitch" role="group" aria-label="View">
       <button type="button" data-action="set-view" data-view="today" aria-pressed="true">Today
         <span class="badge" id="todayCount" hidden></span></button>
-      <button type="button" data-action="set-view" data-view="board" aria-pressed="false">All jobs</button>
+      <button type="button" data-action="set-view" data-view="board" aria-pressed="false">Jobs</button>
+      <button type="button" data-action="set-view" data-view="applications" aria-pressed="false">Applications
+        <span class="badge" id="appsCount" hidden></span></button>
     </div>
-    <div class="tabs" id="tabs" role="tablist" aria-label="Workflow stage" hidden></div>
   </nav>
 
   <div class="actions-group">
@@ -151,7 +157,15 @@
   </section>
 
   <section id="boardView" aria-labelledby="boardHeading" hidden>
-    <h2 id="boardHeading" class="sr-only">Job board</h2>
+    <div class="view-head">
+      <div>
+        <h2 id="boardHeading">Jobs</h2>
+        <p class="view-sub muted" id="boardSub">Every open job that matches your search, best fit first.</p>
+      </div>
+    </div>
+    <div class="scopebar">
+      <div class="tabs" id="tabs" role="tablist" aria-label="Stage"></div>
+    </div>
     <!-- WHICH LIST AM I LOOKING AT?
          The board can show two entirely separate things: the personalized
          results of "Find new jobs", and the results of one ad-hoc "Search by
@@ -206,38 +220,6 @@
         <span id="qScopeHint" class="sr-only">Filters the jobs already on this board.
           To search external job boards for this text instead, use the "Search boards"
           button that appears in this field once you type.</span>
-        <!-- Phones only (see .filter-toggle in the stylesheet). Search stays
-             visible; everything else folds behind this. -->
-        <button type="button" class="small ghost filter-toggle" id="btnFilterSheet"
-        data-action="toggle-filter-sheet" aria-expanded="false" aria-controls="filterbar">Filters</button>
-        <select id="state" aria-label="Filter by US state">
-        <option value="">Any location</option>
-        <option value="REMOTE">Remote</option>
-        </select>
-        <input id="city" type="search" placeholder="City…" aria-label="Filter by city"
-        autocomplete="off" spellcheck="false">
-        <div class="seg" role="group" aria-label="Posted within">
-          <span class="seg-label" aria-hidden="true">Posted</span>
-          <button type="button" data-action="set-posted" data-value="3" aria-pressed="false"
-            aria-label="Posted less than 3 hours ago">3h</button>
-          <button type="button" data-action="set-posted" data-value="6" aria-pressed="false"
-            aria-label="Posted less than 6 hours ago">6h</button>
-          <button type="button" data-action="set-posted" data-value="24" aria-pressed="false"
-            aria-label="Posted less than 24 hours ago">24h</button>
-          <!-- 3d/1w are where the jobs actually are: a measured run held 5
-               postings under 24h old and 4,439 under a week. Keep these in
-               sync with POSTED_WINDOWS (src/dashboard/data.js), which is what
-               the UI OFFERS; the server honors any positive window, so an
-               out-of-sync value here narrows honestly rather than silently
-               showing an unfiltered board. -->
-          <button type="button" data-action="set-posted" data-value="72" aria-pressed="false"
-            aria-label="Posted less than 3 days ago">3d</button>
-          <button type="button" data-action="set-posted" data-value="168" aria-pressed="false"
-            aria-label="Posted less than 1 week ago">1w</button>
-          <input type="hidden" id="postedWithinHours" value="">
-        </div>
-      </div>
-      <div class="filters frow frow-refine" role="group" aria-label="Refine results">
         <select id="fit" aria-label="Filter by fit">
         <option value="">Any fit</option>
         <option value="strong">Strong fit</option>
@@ -270,6 +252,23 @@
         <option value="discarded">Discarded</option>
         </optgroup>
         </select>
+        <!-- Everything beyond search, fit and status folds into the panel
+             below. It opens IN PLACE (pushing the board down, never covering
+             it), its count says how many hidden filters are on, and every
+             active filter is also a removable chip above the table. -->
+        <button type="button" class="small filter-toggle" id="btnFilterSheet"
+        data-action="toggle-filter-sheet" aria-expanded="false" aria-controls="filterPanel">More filters</button>
+        <button class="small ghost reset-filter" data-action="reset-filters"
+        title="Clear every filter and go back to all open jobs">Reset</button>
+      </div>
+      <div class="filter-panel" id="filterPanel">
+      <div class="filters frow frow-refine" role="group" aria-label="More filters">
+        <select id="state" aria-label="Filter by US state">
+        <option value="">Any location</option>
+        <option value="REMOTE">Remote</option>
+        </select>
+        <input id="city" type="search" placeholder="City…" aria-label="Filter by city"
+        autocomplete="off" spellcheck="false">
         <select id="sponsorship" aria-label="Filter by sponsorship likelihood">
         <option value="">Any sponsorship</option>
         <option value="Confirmed">Confirmed</option>
@@ -307,14 +306,35 @@
         <option value="none">Not prepared</option>
         </select>
       </div>
+      <div class="filters frow frow-posted" role="group" aria-label="Posted within">
+        <div class="seg" role="group" aria-label="Posted within">
+          <span class="seg-label" aria-hidden="true">Posted</span>
+          <button type="button" data-action="set-posted" data-value="3" aria-pressed="false"
+            aria-label="Posted less than 3 hours ago">3h</button>
+          <button type="button" data-action="set-posted" data-value="6" aria-pressed="false"
+            aria-label="Posted less than 6 hours ago">6h</button>
+          <button type="button" data-action="set-posted" data-value="24" aria-pressed="false"
+            aria-label="Posted less than 24 hours ago">24h</button>
+          <!-- 3d/1w are where the jobs actually are: a measured run held 5
+               postings under 24h old and 4,439 under a week. Keep these in
+               sync with POSTED_WINDOWS (src/dashboard/data.js), which is what
+               the UI OFFERS; the server honors any positive window, so an
+               out-of-sync value here narrows honestly rather than silently
+               showing an unfiltered board. -->
+          <button type="button" data-action="set-posted" data-value="72" aria-pressed="false"
+            aria-label="Posted less than 3 days ago">3d</button>
+          <button type="button" data-action="set-posted" data-value="168" aria-pressed="false"
+            aria-label="Posted less than 1 week ago">1w</button>
+          <input type="hidden" id="postedWithinHours" value="">
+        </div>
+      </div>
       <div class="filters frow frow-only" role="group" aria-labelledby="showOnlyLabel">
         <span class="frow-label" id="showOnlyLabel">Show only</span>
         <label class="toggle"><input type="checkbox" id="remoteOnly"> Remote only</label>
         <label class="toggle"><input type="checkbox" id="sponsorshipGated"> Needs sponsor check</label>
         <label class="toggle"><input type="checkbox" id="undated"> Date unknown</label>
         <label class="toggle"><input type="checkbox" id="includeClosed"> Closed jobs</label>
-        <button class="small ghost reset-filter" data-action="reset-filters"
-        title="Clear every filter and go back to all open jobs">Reset filters</button>
+      </div>
       </div>
     </div>
 

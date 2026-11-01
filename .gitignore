@@ -129,3 +129,6 @@ skills-lock.json
 
 # Local design sessions can include private screenshots and discussion.
 .impeccable/
+
+# Browser-automation session logs (Playwright MCP)
+.playwright-mcp/

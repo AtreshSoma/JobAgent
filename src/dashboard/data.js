@@ -1332,7 +1332,34 @@ export const BOARD_FIELDS = Object.freeze([
   'resumeStatus', 'resumeDocxPath', 'resumePdfPath', 'atsPlatform', 'employmentCategory', 'employmentLabel',
   'discoveryMode', 'searchQuery', 'userDecision', 'decision', 'decisionReason', 'applied',
   'linkState', 'linkCheckedAt',
+  // A compact, explainable fit summary for the row: how many of the posting's
+  // asked-for skills the profile evidences, and the first few by name. The
+  // full lists stay detail-only, so a 500-row page does not carry them.
+  'skillMatch',
 ]);
+
+/**
+ * A row's matched / missing skill terms, minus terms that are part of the
+ * role's own title ("Data Engineer" on a Data Engineer posting). Those are
+ * title fit, scored separately; counting them as skills inflated "9 of 14
+ * skills" with job names.
+ */
+function titleFreeSkills(row) {
+  const norm = (t) => String(t ?? '').toLowerCase().replace(/[^a-z0-9+#]+/g, ' ').trim();
+  const title = ` ${norm(row.title)} `;
+  const keep = (term) => !title.includes(` ${norm(term)} `);
+  const missing = (row.missingKeywords ?? []).filter(keep);
+  // Listed as both found and missing = not evidenced in the resume.
+  const gaps = new Set(missing.map(norm));
+  return { matched: (row.matchedKeywords ?? []).filter((t) => keep(t) && !gaps.has(norm(t))), missing };
+}
+
+/** How many skills matched / were missing, plus the top matches by name. */
+export function skillMatchOf(row) {
+  const { matched, missing } = titleFreeSkills(row);
+  if (!matched.length && !missing.length) return null;
+  return { matched: matched.length, missing: missing.length, top: matched.slice(0, 3) };
+}
 
 /** Project one decorated row onto BOARD_FIELDS. */
 export function boardProjection(row) {
@@ -1340,6 +1367,7 @@ export function boardProjection(row) {
   for (const key of BOARD_FIELDS) {
     if (key === 'decision') out.decision = row.userDecision ?? null;
     else if (key === 'applied') out.applied = row.appStatus === APP_STATUS.SUBMITTED;
+    else if (key === 'skillMatch') out.skillMatch = skillMatchOf(row);
     else out[key] = row[key] ?? null;
   }
   return out;
@@ -2131,6 +2159,13 @@ function todayReason(row, action) {
       + 'built for another profile it will be refused — prepare it again first.';
   }
   if (action.rank >= 9) {
+    // The card's chips already show grade, score, sponsorship and age; the
+    // reason line says what the chips cannot — which of your skills it asks for.
+    const { matched, missing } = titleFreeSkills(row);
+    if (matched.length) {
+      return `Asks for ${matched.slice(0, 4).join(', ')}${matched.length > 4 ? ` and ${matched.length - 4} more of your skills` : ''}`
+        + (missing.length ? ` · ${missing.length} asked-for skill${missing.length === 1 ? '' : 's'} not in your resume.` : '.');
+    }
     const parts = [row.grade?.label, row.score != null ? `score ${Math.round(row.score)}` : null,
       row.sponsorship ? `sponsorship ${String(row.sponsorship).toLowerCase()}` : null,
       row.postedLabel ? `posted ${row.postedLabel}` : null].filter(Boolean);
@@ -2304,6 +2339,12 @@ export function todayQueue(db, {
     statusLabel: row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus,
     reason: action.closed ? todayReason(row, action) : withCaveat(todayReason(row, action), staleCaveat(row, now, config)),
     nextAction: { kind: action.kind, label: action.label },
+    // Display-only signals, so a card can SAY whether a posting is aging,
+    // held for a sponsorship check, unread, or closed instead of implying it.
+    fit: row.fit ?? null,
+    postedAt: row.postedAt ?? null,
+    sponsorshipGated: row.sponsorshipGated === true,
+    linkState: row.linkState ?? null,
   }));
   return { generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config, { browserAvailable }) };
 }

@@ -8,6 +8,7 @@ import { renderTabs } from './analytics.js';
 import { cssEscape, isAggregatorUrl } from './detail.js';
 import { syncSelectAll } from './selection.js';
 import { hasActiveFilters } from './main.js';
+import { freshnessOf } from './format.js';
 
 /* ──────────────────────────── board ──────────────────────────── */
 
@@ -218,17 +219,27 @@ export function rowFor(job) {
       title: grade ? `${grade.label} · score ${job.score}` : 'Not scored yet',
       text: grade ? grade.letter : '—',
     }),
-    el('div', { class: 'faint', 'aria-hidden': 'true', text: job.score ?? '—' })));
+    fitMeter(job)));
 
   tr.append(nameCellFor(job));
 
   // sponsorship — the badge carries its own evidence, so a claim as consequential
   // as "Confirmed" can be checked on hover instead of taken on trust.
-  tr.append(el('td', { 'data-label': 'Sponsor' }, el('span', {
+  // A gated row (a strong fit held back from automatic preparation until
+  // sponsorship is verified) says so in words, not only in a tooltip.
+  const sponsorCell = el('td', { 'data-label': 'Sponsor' }, el('span', {
     class: `chip ${esc(job.sponsorship ?? '')}`,
     title: sponsorshipTitle(job),
     text: job.sponsorship ?? '—',
-  })));
+  }));
+  if (job.sponsorshipGated) {
+    sponsorCell.append(el('div', {
+      class: 'gate-mark',
+      title: 'A strong fit held back from automatic preparation until you confirm the employer sponsors. Open it to see the evidence.',
+      text: 'Verify first',
+    }));
+  }
+  tr.append(sponsorCell);
 
   // posted
   // The dot is a coloured 7px circle with no text: a `title` on an empty span is
@@ -238,7 +249,11 @@ export function rowFor(job) {
   // graphic with a real name.
   // The date stays on one line; the "new" chip may wrap under it. With the
   // whole cell nowrap, "Today" + chip overflowed and rendered as "Today …".
-  const postedCell = el('td', { class: 'posted-cell', 'data-label': 'Posted' },
+  const fresh = freshnessOf(job.postedAt);
+  const postedCell = el('td', {
+    class: `posted-cell${fresh ? ` age-${fresh.tone}` : ''}`, 'data-label': 'Posted',
+    title: fresh ? `Posted ${fresh.days} day${fresh.days === 1 ? '' : 's'} ago` : '',
+  },
     el('span', { class: 'nowrap' },
       el('span', {
         class: `dot ${job.postedConfidence}`,
@@ -248,6 +263,7 @@ export function rowFor(job) {
       }),
       job.postedLabel));
   if (job.postedLast24h) postedCell.append(' ', el('span', { class: 'chip good', text: 'new' }));
+  else if (fresh?.tone === 'stale') postedCell.append(el('div', { class: 'age-note', text: `${fresh.days}d old` }));
   tr.append(postedCell);
 
   // found — when THIS agent first discovered the job, which is a different
@@ -287,8 +303,11 @@ export function rowFor(job) {
   // that only made sense once you had read the status beside it, so the two
   // were always read together while being laid out apart.
   const statusCell = el('td', { class: `st-${job.appStatus}`, 'data-label': 'Status' });
-  statusCell.append(statusLabel(job));
-  const bar = progressBar(job.progress);
+  statusCell.append(el('span', { class: `stpill st-${job.appStatus}`, text: statusLabel(job) }));
+  // Progress only once an application is under way. On a discovered or
+  // scored row every bar was the same sliver, which said nothing and made
+  // every row look half-finished.
+  const bar = PRE_APPLICATION.has(job.appStatus) ? '' : progressBar(job.progress);
   if (bar) statusCell.append(bar);
   if (job.statusReason) {
     statusCell.append(el('div', {
@@ -302,6 +321,41 @@ export function rowFor(job) {
   // table for assistive tech at every width.
   for (const cell of tr.children) cell.setAttribute('role', 'cell');
   return tr;
+}
+
+/** Statuses before any application work, where a progress bar says nothing. */
+const PRE_APPLICATION = new Set(['discovered', 'scored', 'needs_description', 'shortlisted', 'date_unconfirmed']);
+
+/**
+ * The fit meter under the grade: the score as a number and a bar. The bar
+ * is decoration (the grade carries the accessible name); the number is what
+ * people compare. An unread row shows "unread" rather than a fabricated 0.
+ */
+export function fitMeter(job) {
+  if (job.score == null || job.appStatus === 'needs_description') {
+    return el('div', { class: 'fitmeter none', 'aria-hidden': 'true', text: job.appStatus === 'needs_description' ? 'unread' : '—' });
+  }
+  const fill = el('i');
+  fill.style.width = `${Math.max(4, Math.min(100, Number(job.score)))}%`;
+  return el('div', { class: `fitmeter ${job.fit ?? ''}`.trim(), 'aria-hidden': 'true' },
+    el('span', { class: 'fitmeter-n', text: String(job.score) }),
+    el('span', { class: 'fitmeter-bar' }, fill));
+}
+
+/** The one-line skills summary under a role: "4 of 6 skills · SQL, Python, dbt". */
+export function skillLine(job) {
+  const m = job.skillMatch;
+  if (job.appStatus === 'needs_description') {
+    return el('div', { class: 'skillline incomplete', text: 'Description not read yet, so fit is not judged' });
+  }
+  if (!m) return null;
+  const asked = m.matched + m.missing;
+  return el('div', {
+    class: 'skillline',
+    title: m.missing ? `${m.missing} asked-for skill(s) not evidenced in your resume. Open the job for the full list.` : 'Every asked-for skill is evidenced in your resume.',
+  },
+  el('span', { class: 'skillline-n', text: `${m.matched} of ${asked} skills` }),
+  m.top.length ? el('span', { class: 'skillline-top', text: ` · ${m.top.join(', ')}` }) : null);
 }
 
 /** Longest title rendered in full before eliding. */
@@ -403,6 +457,8 @@ export function nameCellFor(job) {
     }));
   }
   cell.append(meta);
+  const skills = skillLine(job);
+  if (skills) cell.append(skills);
   return cell;
 }
 

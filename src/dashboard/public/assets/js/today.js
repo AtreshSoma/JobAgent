@@ -10,6 +10,10 @@ import { syncSelectionBar } from './selection.js';
 import { openHealth, openProfile } from './profile.js';
 import { openSubmitDialog } from './actions.js';
 import { savePreference } from './main.js';
+import { APP_TABS, APP_TAB_KEYS } from './filters.js';
+import { renderTabs } from './analytics.js';
+import { freshnessOf } from './format.js';
+import { loadBoard } from './board.js';
 
 /* ─────────────────────────── Today ───────────────────────────
  * The landing view: at most ten jobs, each with the ONE next action that
@@ -25,17 +29,53 @@ import { savePreference } from './main.js';
  * next step — its cause is, and that surfaces as a notice).
  */
 
-export const VIEWS = ['today', 'board'];
+export const VIEWS = ['today', 'board', 'applications'];
 
+/** What each list view is for, in one line under its heading. */
+const VIEW_COPY = {
+  board: ['Jobs', 'Every open job that matches your search, best fit first.'],
+  applications: ['Applications', 'Jobs you are applying to, from tailored resume to submitted.'],
+};
+
+/**
+ * Switch the main view.
+ *
+ * Jobs and Applications are the same board scoped to different stage tabs
+ * (discovery stages vs application stages), so the VIEW follows the TAB: a
+ * caller that opens the board on "Needs review" (a Today action, a metric, a
+ * deep link) lands in Applications, and a Jobs stage opened from Applications
+ * lands in Jobs. That keeps every existing `setView('board')` caller correct.
+ */
 export function setView(view, { save = true } = {}) {
   if (!VIEWS.includes(view)) return;
+  let tabChanged = false;
+  if (view !== 'today') {
+    const appTab = APP_TAB_KEYS.has(state.activeTab);
+    if (view === 'board' && appTab && state.view === 'applications') {
+      // Jobs clicked from Applications: back to the discovery list.
+      state.activeTab = 'all'; tabChanged = true;
+    } else if (view === 'board' && appTab) {
+      view = 'applications';
+    } else if (view === 'applications' && !appTab) {
+      state.activeTab = APP_TABS[0][0]; tabChanged = true;
+    }
+  }
   const changed = state.view !== view;
   state.view = view;
   $('todayView').hidden = view !== 'today';
-  $('boardView').hidden = view !== 'board';
-  $('tabs').hidden = view !== 'board';
+  $('boardView').hidden = view === 'today';
   for (const button of document.querySelectorAll('[data-action="set-view"][aria-pressed]')) {
     button.setAttribute('aria-pressed', String(button.dataset.view === view));
+  }
+  if (view !== 'today') {
+    const [title, sub] = VIEW_COPY[view];
+    $('boardHeading').textContent = title;
+    $('boardSub').textContent = sub;
+    if (changed || tabChanged) {
+      state.page = 1;
+      renderTabs();
+      if (tabChanged) loadBoard();
+    }
   }
   if (save) savePreference('view', view);
   if (changed && view === 'today') loadToday();
@@ -206,9 +246,7 @@ export function renderToday() {
   const count = $('todayCount');
   count.hidden = items.length === 0;
   count.textContent = String(items.length);
-  $('todaySub').textContent = items.length
-    ? `${items.length} job${items.length === 1 ? '' : 's'} worth your time right now, most important first.`
-    : 'Nothing is waiting on you.';
+  $('todaySub').textContent = todaySummary(items);
 
   if (!items.length) {
     list.append(el('li', { class: 'today-empty' },
@@ -223,11 +261,70 @@ export function renderToday() {
     return;
   }
 
-  for (const item of items) list.append(todayCard(item));
+  // Grouped by the KIND of work, in the order it should be done: finishing
+  // an application you started beats deciding on a new match, and both beat
+  // housekeeping. The server's order is kept inside each group.
+  for (const group of TODAY_GROUPS) {
+    const members = items.filter((item) => groupOf(item) === group.key);
+    if (!members.length) continue;
+    const headingId = `today-g-${group.key}`;
+    const inner = el('ol', { class: 'today-group-list', 'aria-labelledby': headingId });
+    for (const item of members) inner.append(todayCard(item, group));
+    list.append(el('li', { class: `today-group g-${group.key}` },
+      el('div', { class: 'today-group-head' },
+        el('h3', { id: headingId, text: group.title }),
+        el('span', { class: 'today-group-n', text: String(members.length) }),
+        el('span', { class: 'today-group-hint muted', text: group.hint })),
+      inner));
+  }
   markCurrentRow(state.selectedId);
 }
 
-export function todayCard(item) {
+/** Today's groups, in the order the work should be done. */
+export const TODAY_GROUPS = [
+  { key: 'finish', title: 'Finish applications', hint: 'Work you started that is waiting on you', primary: true },
+  { key: 'decide', title: 'Decide on matches', hint: 'Strong and possible fits nobody has decided on', primary: false },
+  { key: 'tidy', title: 'Tidy up', hint: 'Closed postings and leftovers', primary: false },
+];
+
+/** Which group a Today item belongs to. */
+export function groupOf(item) {
+  const kind = item.nextAction?.kind;
+  if (kind === 'archive') return 'tidy';
+  if (['submit', 'answer', 'approve', 'autofill'].includes(kind)) return 'finish';
+  // "review" covers both an unverified submit and a match to decide on.
+  if (kind === 'review' && ['submit_unverified', 'blocked', 'failed'].includes(item.appStatus)) return 'finish';
+  return 'decide';
+}
+
+/** One line under the heading that says what is waiting, by group. */
+export function todaySummary(items) {
+  if (!items.length) return 'Nothing is waiting on you.';
+  const finish = items.filter((i) => groupOf(i) === 'finish').length;
+  const decide = items.filter((i) => groupOf(i) === 'decide').length;
+  const parts = [];
+  if (finish) parts.push(`${finish} application${finish === 1 ? '' : 's'} waiting on you`);
+  if (decide) parts.push(`${decide} match${decide === 1 ? '' : 'es'} to decide on`);
+  return parts.length ? `${parts.join(' · ')}.` : `${items.length} item${items.length === 1 ? '' : 's'} to tidy up.`;
+}
+
+/**
+ * Plain signals for a card: what kind of posting this is, beyond its fit.
+ * Each says what it means, so nothing is implied by colour alone.
+ */
+export function todaySignals(item) {
+  const out = [];
+  const fresh = freshnessOf(item.postedAt);
+  if (item.linkState === 'closed') out.push({ tone: 'bad', text: 'Posting closed' });
+  else if (fresh?.tone === 'stale') out.push({ tone: 'warn', text: `Posted ${fresh.days}d ago`, title: 'Over a month old. Check the link is still open before spending more time on it.' });
+  else if (fresh?.tone === 'fresh' && fresh.days <= 2) out.push({ tone: 'good', text: 'New' });
+  if (item.sponsorshipGated) out.push({ tone: 'warn', text: 'Verify sponsorship', title: 'A strong fit held back from automatic preparation until you confirm the employer sponsors.' });
+  if (item.appStatus === 'needs_description') out.push({ tone: '', text: 'Description not read' });
+  if (item.linkState === 'open') out.push({ tone: 'good', text: 'Link checked', title: 'The employer’s job system still lists this posting.' });
+  return out;
+}
+
+export function todayCard(item, group = TODAY_GROUPS[0]) {
   const grade = item.grade;
   const card = el('li', { class: `tcard${item.id === state.selectedId ? ' current' : ''}`, 'data-id': item.id });
   card.append(el('span', {
@@ -257,13 +354,18 @@ export function todayCard(item) {
   if (item.statusLabel || item.appStatus) {
     chips.append(el('span', { class: `chip st-${item.appStatus}`, text: item.statusLabel ?? statusLabel(item) }));
   }
+  for (const sig of todaySignals(item)) {
+    chips.append(el('span', { class: `chip signal ${sig.tone}`.trim(), title: sig.title ?? '', text: sig.text }));
+  }
   main.append(chips);
   if (item.reason) main.append(el('p', { class: 'tcard-reason', text: item.reason }));
   card.append(main);
 
   const next = item.nextAction ?? derivedNextAction(item);
   const attrs = {
-    type: 'button', class: 'small primary tcard-go', 'data-action': 'today-act',
+    // Filled only where the work is already under way; a decision on a new
+    // match is a quieter button, so ten identical blue buttons stop competing.
+    type: 'button', class: `small ${group.primary ? 'primary' : ''} tcard-go`.replace(/\s+/g, ' '), 'data-action': 'today-act',
     'data-id': item.id, 'data-kind': next.kind, text: next.label,
   };
   const blocked = next.kind === 'autofill' ? autofillBlockedReason() : null;

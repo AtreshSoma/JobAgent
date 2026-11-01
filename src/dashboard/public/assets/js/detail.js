@@ -1,6 +1,6 @@
 /** The detail rail / sheet: keyed sections, notes autosave, action plans, resume card. */
 
-import { compactLocation } from './format.js';
+import { compactLocation, withoutTitleTerms } from './format.js';
 import { $, el, esc, relTime, safeHref, shortStamp, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
@@ -289,29 +289,37 @@ export function detailSections(job) {
   // next best action
   out.push(railSection('next', el('h3', { text: 'Do this next' }), nextBestAction(job)));
 
+  // WHY THIS FIT, before the materials and buttons: the explanation is what
+  // a decision is made on, and it sat below nine action buttons.
+  out.push(railSection('fit', fitCard(job)));
+
   // resume card — the feature the workflow revolves around
   out.push(railSection('resume', resumeCard(job)));
 
   // quick actions
+  // Three groups: what you do most (open, shortlist, reject) stays visible;
+  // the link tools, the less common decisions and the manual submit record go
+  // behind one disclosure. Nine same-weight buttons in a wrap read as none.
   const actions = el('div', { class: 'actions' });
+  const more = el('div', { class: 'actions more-actions-list' });
   // A row with no stored URL used to render a dead <a> with no href that looked
   // clickable and did nothing. Say what is missing instead.
   const postingHref = safeHref(job.url);
   if (postingHref) {
     actions.append(el('a', { class: 'btn', href: postingHref, target: '_blank', rel: 'noopener noreferrer', text: 'Open posting ↗' }));
-    actions.append(el('button', { class: 'small', 'data-action': 'check-link', 'data-id': job.id, text: 'Check link' }));
+    more.append(el('button', { class: 'small', 'data-action': 'check-link', 'data-id': job.id, text: 'Check link' }));
   } else {
     actions.append(el('span', { class: 'chip bad', title: 'This job has no application URL stored', text: 'no posting URL' }));
   }
-  actions.append(el('button', { class: 'small', 'data-action': 'open-link-dialog', 'data-id': job.id, text: 'Replace URL' }));
-  for (const [decision, label] of [['shortlisted', '★ Shortlist'], ['rejected', '✕ Reject'],
-    ['archived', 'Archive'], ['clear', 'Clear']]) {
-    actions.append(el('button', {
+  more.append(el('button', { class: 'small', 'data-action': 'open-link-dialog', 'data-id': job.id, text: 'Replace URL' }));
+  for (const [decision, label, visible] of [['shortlisted', '★ Shortlist', true], ['rejected', '✕ Reject', true],
+    ['archived', 'Archive', false], ['clear', 'Clear', false]]) {
+    (visible ? actions : more).append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
     }));
   }
   if (job.approvalStatus === 'pending_review') {
-    actions.append(el('button', { class: 'small', 'data-action': 'reject-packet', 'data-id': job.id, text: 'Reject packet' }));
+    more.append(el('button', { class: 'small', 'data-action': 'reject-packet', 'data-id': job.id, text: 'Reject packet' }));
   }
   // Available at every stage except the ones where it's meaningless: already
   // recorded (submitted) or a closed/dead row (rejected/archived/discarded).
@@ -319,8 +327,11 @@ export function detailSections(job) {
   // Prepare/Approve/Auto-fill first — a job can sit at `discovered` or `scored`
   // and still have been applied to on the employer's own site.
   if (!['submitted', 'rejected', 'archived', 'discarded'].includes(job.appStatus)) {
-    actions.append(el('button', { class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself' }));
+    more.append(el('button', { class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself' }));
   }
+  const disclosure = el('details', { class: 'more-actions', 'data-key': 'more-actions' },
+    el('summary', { class: 'small', text: 'More actions' }), more);
+  actions.append(disclosure);
   // The last link check survives re-renders: it is a result the user asked
   // for, and redrawing the rail used to erase it a few seconds later.
   const health = state.linkHealth.get(job.id);
@@ -340,13 +351,6 @@ export function detailSections(job) {
 
   out.push(railSection('sponsorship', el('h3', { text: 'Sponsorship' }), sponsorshipEvidence(job)));
 
-  out.push(railSection('fit',
-    el('h3', { text: job.grade?.label ? `Why: ${job.grade.label.toLowerCase()}` : 'Why this may be a fit' }),
-    el('div', { class: 'why', text: job.explanation ?? job.discardReason ?? 'Not scored yet.' })));
-
-  out.push(railSection('skills',
-    el('h3', { text: 'Your skills found in this posting' }), keywordList(job.matchedKeywords, 'good'),
-    el('h3', { text: 'Asked for, not evidenced in your resume' }), keywordList(job.missingKeywords, 'bad')));
 
   out.push(railSection('notes', notesEditor(job)));
 
@@ -548,12 +552,76 @@ export function isAggregatorUrl(url) {
   } catch { return false; }
 }
 
+/**
+ * "Why this fit": the score, what it means, and the evidence behind it, as
+ * one card. The explanation, matched skills and missing skills used to be
+ * three sections at the bottom of the rail, below every button.
+ */
+export function fitCard(job) {
+  const unread = job.appStatus === 'needs_description';
+  const missing = withoutTitleTerms(job.missingKeywords ?? [], job.title);
+  // A term the scorer lists as BOTH found and missing is not evidenced in the
+  // resume; showing it as a strength would overclaim.
+  const missingSet = new Set(missing.map((t) => String(t).toLowerCase()));
+  const matched = withoutTitleTerms(job.matchedKeywords ?? [], job.title)
+    .filter((t) => !missingSet.has(String(t).toLowerCase()));
+  const card = el('div', { class: 'fitcard' });
+  const head = el('div', { class: 'fitcard-head' });
+  head.append(el('h3', { text: job.grade?.label ? `Why: ${job.grade.label.toLowerCase()}` : 'Why this may be a fit' }));
+  if (job.score != null && !unread) {
+    const fill = el('i');
+    fill.style.width = `${Math.max(4, Math.min(100, Number(job.score)))}%`;
+    head.append(el('div', { class: `fitcard-score ${job.fit ?? ''}`.trim(), 'aria-label': `score ${job.score} out of 100` },
+      el('b', { text: String(job.score) }), el('span', { class: 'muted', text: '/100' }),
+      el('span', { class: 'fitmeter-bar', 'aria-hidden': 'true' }, fill)));
+  }
+  card.append(head);
+  if (unread) {
+    card.append(el('p', { class: 'fitcard-summary', text:
+      'Not judged yet: only a summary of this posting was read. Read its description from More actions → Discovery and data quality, or open the posting.' }));
+  } else {
+    // Plain words first; the scorer's own breakdown stays one click away.
+    const asked = matched.length + missing.length;
+    const parts = [];
+    if (job.grade?.label && job.score != null) parts.push(`${job.grade.label} at ${job.score}/100.`);
+    if (asked) parts.push(`${matched.length} of the ${asked} skills this posting asks for are in your resume.`);
+    if (job.sponsorshipGated) parts.push('Held back from automatic preparation until you confirm the employer sponsors.');
+    if (parts.length) card.append(el('p', { class: 'fitcard-summary', text: parts.join(' ') }));
+    const raw = job.explanation ?? job.discardReason ?? (parts.length ? null : 'Not scored yet.');
+    if (raw && parts.length) {
+      card.append(el('details', { class: 'fitcard-raw', 'data-key': 'score-detail' },
+        el('summary', { text: 'How this score was calculated' }), el('div', { class: 'why', text: raw })));
+    } else if (raw) {
+      card.append(el('div', { class: 'why', text: raw }));
+    }
+  }
+  if (!unread && (matched.length || missing.length)) {
+    card.append(el('div', { class: 'fitcard-skills' },
+      el('div', {},
+        el('h4', { text: `Your skills found in this posting (${matched.length})` }), keywordList(matched, 'good')),
+      el('div', {},
+        el('h4', { text: `Asked for, not evidenced in your resume (${missing.length})` }), keywordList(missing, 'bad'))));
+  }
+  return card;
+}
+
 export function nextBestAction(job) {
   const box = el('div', { class: 'nba' });
   const { text, buttons } = actionPlan(job);
   box.append(el('div', { class: 'nba-text', text }));
   const row = el('div', { class: 'nba-actions' });
-  for (const button of buttons) if (button) row.append(button);
+  // ONE primary. Several steps offered two or three filled buttons side by
+  // side ("Review resume", "Auto-fill application"), so nothing read as THE
+  // next step. The first stays primary; the rest become ordinary buttons.
+  let primarySeen = false;
+  for (const button of buttons) {
+    if (!button?.nodeType) { if (button) row.append(button); continue; }
+    if (button.classList?.contains('primary')) {
+      if (primarySeen) button.classList.remove('primary');
+      primarySeen = true;
+    }
+    row.append(button);
+  }
   box.append(row);
   return box;
 }

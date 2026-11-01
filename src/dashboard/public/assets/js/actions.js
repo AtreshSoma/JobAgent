@@ -188,6 +188,7 @@ export const ACTIONS = {
   'clear-tab': () => {
     state.activeTab = 'all';
     state.page = 1;
+    setView('board');
     renderTabs();
     loadBoard();
   },

@@ -306,7 +306,8 @@ export function hasActiveFilters() {
 }
 
 /**
- * Phone-only: fold every control except search behind one button.
+ * "More filters": fold every control except search, fit and status behind
+ * one button, at every width.
  *
  * The CSS does the hiding (`.filterbar[data-collapsed]`), so this only tracks
  * the flag and keeps the button honest about how many filters are set — a
@@ -318,13 +319,17 @@ export function setFilterSheet(open) {
   $('btnFilterSheet').setAttribute('aria-expanded', String(open));
 }
 
-/** Keep the phone toggle's count in step with what is actually filtering. */
+/** Filters that are always on screen, so the panel count leaves them out. */
+const ALWAYS_VISIBLE_FILTERS = new Set(['q', 'fit', 'appStatus']);
+
+/** Keep the "More filters" count in step with what the panel is filtering. */
 export function syncFilterSheetCount() {
-  const n = [...FILTER_IDS, ...TOGGLE_IDS].filter((id) => filterValue(id)).length;
+  const n = [...FILTER_IDS, ...TOGGLE_IDS]
+    .filter((id) => !ALWAYS_VISIBLE_FILTERS.has(id) && filterValue(id)).length;
   const button = $('btnFilterSheet');
   button.textContent = '';
-  button.append('Filters');
-  if (n) button.append(el('span', { class: 'n', text: String(n) }));
+  button.append('More filters');
+  if (n) button.append(el('span', { class: 'n', 'aria-label': `${n} active`, text: String(n) }));
 }
 
 /* Dialog submit-on-Enter is the <form> itself now — see the submit listener. */
@@ -397,7 +402,7 @@ if (readPreference('analyticsOpen') === '1') {
 SHEET_QUERY.addEventListener('change', placeDetail);
 placeDetail();
 // Today is the landing view unless the user last chose the board.
-setView(readPreference('view') === 'board' ? 'board' : 'today', { save: false });
+setView(['board', 'applications'].includes(readPreference('view')) ? readPreference('view') : 'today', { save: false });
 applyViewPrefs();
 renderTabs();
 syncSortIndicator();

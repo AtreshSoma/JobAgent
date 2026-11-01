@@ -136,10 +136,11 @@ describe('Today is the landing view (U7)', () => {
   it('offers Today and the full board as one switch, remembering the choice', () => {
     expect(html).toContain('data-action="set-view" data-view="today"');
     expect(html).toContain('data-action="set-view" data-view="board"');
+    expect(html).toContain('data-action="set-view" data-view="applications"');
     expect(html).toContain('id="todayView"');
     expect(html).toContain('id="boardView"');
     expect(app).toContain("savePreference('view', view)");
-    expect(app).toContain("setView(readPreference('view') === 'board' ? 'board' : 'today', { save: false });");
+    expect(app).toContain("setView(['board', 'applications'].includes(readPreference('view')) ? readPreference('view') : 'today', { save: false });");
   });
 
   it('reads /api/today and falls back to todaysPriorities without failed rows', () => {
@@ -242,10 +243,14 @@ describe('numbers say what they count (U10)', () => {
     expect(card).not.toContain('still unknown');
   });
 
-  it('labels the health strip as the whole store', () => {
+  it('keeps whole-store numbers out of the activity row, one click away', () => {
+    // The row says what changed; the corpus total lives in the data-quality
+    // dialog, and the row's link to it names that total in its tooltip.
     const facts = app.slice(app.indexOf('const HEALTH_FACTS'), app.indexOf('function statNode'));
-    expect(facts).toContain("label: 'in store'");
-    expect(facts).toContain("label: 'seen in last 24h'");
+    expect(facts).not.toContain("label: 'in store'");
+    const health = app.slice(app.indexOf('export function renderHealth'), app.indexOf('export function renderTabs'));
+    expect(health).toContain("'data-action': 'open-data-quality'");
+    expect(health).toContain('jobs stored in total');
   });
 
   it('uses the server grade label instead of re-deriving a fit label', () => {

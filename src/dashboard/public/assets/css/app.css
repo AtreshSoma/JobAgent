@@ -71,9 +71,9 @@
 
   /* radii + spacing */
   --r-xs: 5px;
-  --r-sm: 7px;
-  --r-md: 10px;
-  --r-lg: 14px;
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
   --r-full: 999px;
   --s1: 4px;
   --s2: 8px;
@@ -87,7 +87,7 @@
   --sig-name: #dbe4ef;
 
   --rail: 420px;
-  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font: system-ui, -apple-system, "Segoe UI Variable Text", "Segoe UI", "Helvetica Neue", sans-serif;
   --mono: "Cascadia Code", "SF Mono", ui-monospace, Consolas, monospace;
   /* The one place a name is read as a name (.sig-name), not UI chrome. */
   --signature-font: "Alex Brush", "Brush Script MT", cursive;
@@ -334,6 +334,18 @@ button.icon { padding: 4px 7px; }
   border-radius: var(--r-full); padding: 2px 10px; white-space: nowrap;
 }
 .stages { gap: var(--s3); flex: 1 1 auto; min-width: 0; display: flex; justify-content: center; }
+/* Phones: identity and the primary action share the first line; the three
+   views become a full-width segmented control on the second, like a native
+   tab bar, instead of being squeezed until the header wraps unpredictably. */
+@media (max-width: 640px) {
+  .topbar { gap: var(--s2); }
+  .topbar .brand { flex: 1 1 auto; }
+  .stages { order: 3; flex: 1 0 100%; }
+  .stages .viewswitch { width: 100%; }
+  .stages .viewswitch button { flex: 1 1 0; justify-content: center; padding: 6px 8px; }
+  /* The activity row wraps instead of clipping its last items. */
+  .statusbar .health { flex-wrap: wrap; row-gap: 2px; overflow: visible; }
+}
 .spacer { flex: 1 1 auto; }
 .actions-group { display: flex; align-items: center; gap: var(--s2); flex: none; }
 
@@ -686,7 +698,6 @@ button.stat:hover { background: none; border-color: transparent; }
   max-width: 100%; overflow-x: auto; scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
-.tab-sep { flex: none; width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
 .tab {
   flex: none;
   background: transparent; border: 1px solid transparent; color: var(--text-dim);
@@ -714,13 +725,11 @@ button.stat:hover { background: none; border-color: transparent; }
   align-items: start;
 }
 @media (max-width: 1240px) { .layout { grid-template-columns: minmax(0, 1fr); } }
-/* Not enough width for the tabs beside the brand and the button: the tabs
-   take their own row, left-aligned with the content below. */
-@media (max-width: 1360px) {
-  .stages { order: 3; flex-basis: 100%; justify-content: flex-start; }
-  .actions-group { margin-left: auto; }
-  .statusbar { order: 4; }
-}
+/* The header holds three views now, so it stays on one line down to phone
+   width; only the status row (always) and, on phones, the views take rows
+   of their own. */
+.actions-group { margin-left: auto; }
+.statusbar { order: 4; }
 @media (max-width: 860px) {
   .topbar { padding: var(--s2) var(--s3) 0; row-gap: var(--s2); column-gap: var(--s2); }
   .layout { padding-left: var(--s3); padding-right: var(--s3); }
@@ -765,7 +774,7 @@ button.stat:hover { background: none; border-color: transparent; }
   display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s3);
   flex-wrap: wrap; margin: 0 0 var(--s3);
 }
-.today-head h2 { margin: 0; font-size: var(--fs-xl); }
+.today-head h2 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; }
 .today-sub { margin: 2px 0 0; font-size: var(--fs-md); }
 .today-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
 .tcard {
@@ -901,17 +910,20 @@ button.stat:hover { background: none; border-color: transparent; }
    whether the Next-up rail sits beside it or below it. */
 .filterbar { container-type: inline-size; container-name: filters; }
 .frow { display: grid; gap: var(--s2); align-items: center; }
+/* Find row: search, fit and status are always on screen; everything else is
+   in the panel behind "More filters", which opens in place. */
 .frow-find {
-  grid-template-columns: minmax(220px, 1fr) minmax(150px, 190px) minmax(120px, 160px) auto;
+  grid-template-columns: minmax(220px, 1fr) minmax(130px, 170px) minmax(150px, 200px) auto auto;
 }
-.frow-refine {
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+.filter-panel {
   margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line-soft);
+  display: grid; gap: 10px;
 }
-.frow-only {
-  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2);
-  margin-top: 10px;
-}
+.filterbar[data-collapsed="true"] .filter-panel { display: none; }
+.filter-panel:not([hidden]) { animation: panel-in .18s cubic-bezier(.2, .8, .2, 1); }
+@keyframes panel-in { from { opacity: 0; transform: translateY(-4px); } }
+.frow-refine { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.frow-posted, .frow-only { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
 .frow-label { font-size: var(--fs-sm); color: var(--text-faint); margin-right: 2px; }
 
 /* ── base control styling ── */
@@ -1107,19 +1119,24 @@ button.stat:hover { background: none; border-color: transparent; }
 /* Narrower card: search takes the first line on its own; the refine columns
    go to four, then two, so no row is ever left with one orphan control. */
 @container filters (max-width: 820px) {
-  .frow-find { grid-template-columns: 1fr 1fr; }
+  .frow-find { grid-template-columns: 1fr 1fr auto auto; }
   .frow-find .searchfield { grid-column: 1 / -1; }
-  .frow-find .seg { grid-column: 1 / -1; justify-self: start; }
   .frow-refine { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @container filters (max-width: 520px) {
+  .frow-find { grid-template-columns: 1fr 1fr; }
   .frow-refine { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .seg { width: 100%; justify-content: space-between; }
 }
 
-/* Phone-only control. Declared BEFORE the narrow-viewport block on purpose:
-   equal-specificity rules are decided by source order. */
-.filter-toggle { display: none; }
+/* "More filters": a disclosure at every width. Its count names how many
+   hidden filters are on; the chips above the table name which. */
+.filter-toggle { display: inline-flex; align-items: center; height: 34px; white-space: nowrap; }
+.filter-toggle[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.filter-toggle .n {
+  background: var(--accent); color: var(--accent-ink);
+  border-radius: var(--r-full); padding: 0 6px; font-size: var(--fs-xs); margin-left: 6px; line-height: 18px;
+}
 
 @media (max-width: 860px) {
   .filters .searchfield { width: 100%; }
@@ -1128,17 +1145,6 @@ button.stat:hover { background: none; border-color: transparent; }
      filter chrome above the first job is not a filter bar, it is a wall, and
      the chip row underneath still names whatever is active. */
   .filterbar { padding: 7px; }
-  .frow-find { grid-template-columns: 1fr auto; }
-  .frow-find .searchfield { grid-column: auto; min-width: 0; }
-  .frow-find #state, .frow-find #city { grid-column: span 1; }
-  .filterbar[data-collapsed="true"] .frow-find > :not(.searchfield):not(.filter-toggle),
-  .filterbar[data-collapsed="true"] .frow-refine,
-  .filterbar[data-collapsed="true"] .frow-only { display: none; }
-  .filter-toggle { display: inline-flex; height: 34px; }
-  .filter-toggle .n {
-    background: var(--accent); color: var(--accent-ink);
-    border-radius: var(--r-full); padding: 0 6px; font-size: var(--fs-xs); margin-left: 4px;
-  }
 }
 
 .boardbar { display: flex; align-items: flex-start; gap: var(--s3); margin: 0 0 var(--s3); }
@@ -1233,7 +1239,7 @@ th, td {
    sponsorship verdict. */
 #board { table-layout: fixed; min-width: 700px; }
 #board th:nth-child(1) { width: 44px; }   /* select — checkbox + its UA margin */
-#board th:nth-child(2) { width: 58px; }   /* grade                             */
+#board th:nth-child(2) { width: 64px; }   /* grade + fit meter                 */
 #board th:nth-child(3) { width: 34%; }    /* company/role — the one that matters */
 #board th:nth-child(4) { width: 114px; }  /* sponsor — fits "Unconfirmed"      */
 #board th:nth-child(5) { width: 116px; }  /* posted — fits "Today" + new badge */
@@ -2295,3 +2301,95 @@ a.btn:hover { color: var(--text); }
 .dq-progress { margin-top: var(--s2); font-size: var(--fs-md); }
 .dq-progress .bar { height: 6px; margin-top: var(--s2); }
 @media (max-width: 560px) { .dq-form { grid-template-columns: minmax(0, 1fr); } }
+
+/* ═══════════════════════ P1B-1 · views, Today, rows, detail ═══════════════════════
+   Built on the existing tokens only, so both themes inherit it. Calm by
+   default: hierarchy from size and weight, colour reserved for meaning. */
+
+/* View headings (Jobs / Applications) match Today's. */
+.view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s3); margin: 0 0 var(--s3); }
+.view-head h2 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; }
+.view-sub { margin: 2px 0 0; font-size: var(--fs-md); }
+.scopebar { margin: 0 0 var(--s3); }
+.scopebar .tabs { width: max-content; }
+.stat-link { margin-left: var(--s1); }
+.stat-link .l { color: var(--accent); }
+.health .stat .l + b { margin-left: 2px; }
+
+/* Today: groups, each with its own heading and count. */
+.today-group { list-style: none; }
+.today-group + .today-group { margin-top: var(--s4); }
+.today-group-head { display: flex; align-items: baseline; gap: var(--s2); margin: 0 0 var(--s2); flex-wrap: wrap; }
+.today-group-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 650; letter-spacing: .01em; }
+.today-group-n {
+  font-size: var(--fs-xs); font-weight: 650; color: var(--text-dim); background: var(--chip);
+  border-radius: var(--r-full); padding: 0 7px; line-height: 18px; font-variant-numeric: tabular-nums;
+}
+.today-group.g-finish .today-group-n { background: var(--accent); color: var(--accent-ink); }
+.today-group-hint { font-size: var(--fs-sm); }
+.today-group-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.tcard { transition: border-color .15s ease, box-shadow .15s ease; }
+.tcard:hover { box-shadow: var(--shadow); }
+.chip.signal { font-weight: 550; }
+.chip.signal.warn { color: var(--warn-text); background: var(--warn-soft); }
+.chip.signal.bad { color: var(--bad); background: var(--bad-soft); }
+.chip.signal.good { color: var(--good); background: var(--good-soft); }
+
+/* Board rows: fit meter, skills line, freshness, sponsorship gate, status. */
+.fitmeter { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; font-size: var(--fs-xs); color: var(--text-dim); }
+.fitmeter-n { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
+.fitmeter-bar { display: block; width: 40px; height: 4px; border-radius: var(--r-full); background: var(--chip); overflow: hidden; }
+.fitmeter-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--text-faint); }
+.fitmeter.strong .fitmeter-bar > i, .fitcard-score.strong .fitmeter-bar > i { background: var(--good); }
+.fitmeter.medium .fitmeter-bar > i, .fitcard-score.medium .fitmeter-bar > i { background: var(--accent); }
+.fitmeter.weak .fitmeter-bar > i, .fitcard-score.weak .fitmeter-bar > i { background: var(--warn); }
+.fitmeter.none { font-style: italic; color: var(--text-faint); }
+.skillline {
+  margin-top: 3px; font-size: var(--fs-sm); color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.skillline-n { color: var(--text); font-weight: 550; }
+.skillline.incomplete { color: var(--text-faint); font-style: italic; }
+.gate-mark { margin-top: 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--warn-text); }
+.gate-mark::before { content: "◔ "; }
+.posted-cell.age-aging .nowrap { color: var(--text-dim); }
+.posted-cell.age-stale .nowrap { color: var(--warn-text); }
+.age-note { margin-top: 2px; font-size: var(--fs-xs); color: var(--warn-text); }
+.stpill { display: inline-block; font-size: var(--fs-md); font-weight: 550; line-height: 1.35; }
+td.st-scored .stpill, td.st-discovered .stpill { color: var(--text-dim); font-weight: 500; }
+td.st-needs_description .stpill { color: var(--text-faint); font-weight: 500; font-style: italic; }
+tr.job { transition: background-color .12s ease; }
+
+/* Detail: the fit card and the grouped actions. */
+.fitcard {
+  background: var(--surface-2); border: 1px solid var(--line-soft); border-radius: var(--r-md);
+  padding: var(--s3) var(--s4);
+}
+.fitcard-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
+.fitcard-head h3 { margin: 0; }
+.fitcard-score { display: inline-flex; align-items: baseline; gap: 2px; font-variant-numeric: tabular-nums; }
+.fitcard-score b { font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; line-height: 1; }
+.fitcard-score .fitmeter-bar { align-self: center; margin-left: var(--s2); width: 56px; }
+.fitcard .why { margin-top: var(--s2); padding: 0; background: none; border: 0; font-size: var(--fs-sm); color: var(--text-dim); }
+.fitcard-summary { margin: var(--s2) 0 0; font-size: var(--fs-md); line-height: 1.5; color: var(--text); }
+.fitcard-raw { margin-top: var(--s2); }
+.fitcard-raw > summary { cursor: pointer; font-size: var(--fs-sm); color: var(--text-dim); }
+.fitcard-raw > summary:hover { color: var(--text); }
+.fitcard-skills { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); margin-top: var(--s3); }
+.fitcard-skills h4 { margin: 0 0 6px; font-size: var(--fs-sm); font-weight: 600; color: var(--text-dim); }
+.more-actions { flex-basis: 100%; }
+.more-actions > summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; font-size: var(--fs-sm); color: var(--text-dim);
+  border: 1px solid var(--line); border-radius: var(--r-xs); background: var(--surface-2);
+}
+.more-actions > summary::-webkit-details-marker { display: none; }
+.more-actions > summary::after { content: ""; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1.5px 1.5px 0; transform: rotate(45deg) translateY(-2px); }
+.more-actions[open] > summary::after { transform: rotate(225deg) translateY(-1px); }
+.more-actions > summary:hover { color: var(--text); border-color: var(--accent); }
+.more-actions > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.more-actions-list { margin-top: var(--s2); }
+
+@media (prefers-reduced-motion: reduce) {
+  .filter-panel:not([hidden]), .tcard, tr.job { animation: none; transition: none; }
+}

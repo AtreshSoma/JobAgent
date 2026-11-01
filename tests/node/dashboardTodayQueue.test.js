@@ -45,8 +45,8 @@ describe('A1 — GET /api/today contract (todayQueue)', () => {
     ]);
     for (const item of today.items) {
       expect(Object.keys(item).sort()).toEqual([
-        'appStatus', 'company', 'grade', 'id', 'location', 'nextAction', 'reason', 'score', 'statusLabel',
-        'tier', 'title',
+        'appStatus', 'company', 'fit', 'grade', 'id', 'linkState', 'location', 'nextAction', 'postedAt',
+        'reason', 'score', 'sponsorshipGated', 'statusLabel', 'tier', 'title',
       ]);
       expect(Object.keys(item.nextAction).sort()).toEqual(['kind', 'label']);
     }

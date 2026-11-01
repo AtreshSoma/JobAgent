@@ -369,7 +369,7 @@ Valid modes are **`DRY_RUN`**, **`PREPARE`**, and **`LIVE_ASSIST`**, set through
 
 ## 📊 The dashboard
 
-A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies, and drives the whole workflow from the browser. It opens on **Today** — a short action queue — with the full board one click away under **All jobs**; the selected-job inspector sits in the right column (a side sheet on laptops, a bottom sheet on phones), and documents, analytics, settings and run history open as dialogs rather than replacing the workbench.
+A local-only web cockpit that binds to `127.0.0.1`, needs no extra dependencies, and drives the whole workflow from the browser. It opens on **Today** — a short action queue — with the full board one click away under **Jobs** and in-flight applications under **Applications** (the same board, scoped to application stages); the selected-job inspector sits in the right column (a side sheet on laptops, a bottom sheet on phones), and documents, analytics, settings and run history open as dialogs rather than replacing the workbench.
 
 <details open>
 <summary><b>✅ Today: at most ten things worth doing next</b></summary>
