@@ -11,6 +11,19 @@ import {
 } from '../../src/cli/commands.js';
 import { loadTestConfig } from './helpers/testConfig.js';
 import { LIFECYCLE } from '../../src/lifecycle.js';
+import { scoreJob, freshnessModelFor } from '../../src/scoring/scorer.js';
+import { classifySponsorship } from '../../src/scoring/sponsorshipClassifier.js';
+
+describe('freshnessModelFor', () => {
+  it('reads the discovery window from runtime and retention from exclusions', () => {
+    expect(freshnessModelFor({ runtime: { jobFreshnessMode: 'LAST_3_DAYS' }, exclusions: { staleness: { skipOlderThanDays: 30 } } }))
+      .toEqual({ discoveryDays: 3, retentionDays: 30 });
+  });
+  it('defaults to 7 / 45 and maps ALL onto the retention limit', () => {
+    expect(freshnessModelFor({})).toEqual({ discoveryDays: 7, retentionDays: 45 });
+    expect(freshnessModelFor({ runtime: { jobFreshnessMode: 'ALL' } })).toEqual({ discoveryDays: 45, retentionDays: 45 });
+  });
+});
 
 function writePacketFile(dir, id, packet) {
   const path = join(dir, `${id}.json`);
@@ -132,6 +145,26 @@ describe('ingestUrl (add a job by URL)', () => {
 
   it('rejects an invalid (non-http) URL', async () => {
     await expect(ingestUrl({ config, db, url: 'not a url' })).rejects.toThrow(/valid public job URL/);
+  });
+
+  it('E2 — grades freshness with the same model as discovery, not the legacy 7/14-day curve', async () => {
+    const desc = 'Senior Data Engineer building Azure Databricks lakehouses with PySpark, Delta Lake and SQL.';
+    const fetchImpl = async () => ({ ok: true, status: 200, text: async () => jdHtml('Senior Data Engineer', desc) });
+    // 20 days after datePosted: outside the legacy curve's 14 days (0 points),
+    // inside the 45-day retention (partial points under the discovery model).
+    const now = new Date('2026-06-21');
+    const r = await ingestUrl({ config, db, url: 'https://careers.microsoft.com/jobs/456', deps: { fetchImpl, now } });
+    const row = db.getJob(r.id);
+    const job = {
+      id: row.id, source: row.source, company: row.company, title: row.title, location: row.location,
+      url: row.url, jdText: row.jd_text, postedAt: row.posted_at, employmentType: row.employment_type ?? '',
+    };
+    const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
+    const args = { scoring: config.scoring, sponsorship, candidate: config.candidate, now, exclusions: config.exclusions };
+    const model = scoreJob(job, { ...args, freshnessModel: freshnessModelFor(config) });
+    const legacy = scoreJob(job, args);
+    expect(model.breakdown.freshness.points).toBeGreaterThan(legacy.breakdown.freshness.points);
+    expect(r.score).toBe(model.total);
   });
 
   it('reports honestly when the page is blocked (no fabricated job)', async () => {

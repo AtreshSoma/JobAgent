@@ -90,6 +90,10 @@ export default function setup() {
   // Fixture approvals point at packets that do not exist on disk; the boot-time
   // packet check would withdraw them. packetHygiene.test.js turns it back on.
   process.env.JOB_AGENT_PACKET_HYGIENE = 'off';
+  // No boot-time retention sweep: fixture rows carry fixed posting dates, and
+  // retiring them by wall-clock age would make board assertions date-dependent.
+  // retentionSweep.test.js turns it back on.
+  process.env.JOB_AGENT_RETENTION_SWEEP = 'off';
   const root = buildTestRoot();
   process.env.JOB_AGENT_ROOT = root;
   return () => {

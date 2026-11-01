@@ -192,3 +192,24 @@ describe('browser-failure labels follow the live check, not the history', () => 
     }
   });
 });
+
+describe('E4 — Today discloses the age of in-flight work on an old posting', () => {
+  const config = { exclusions: { staleness: { skipOlderThanDays: 45 } } };
+
+  it('warns when a prepared packet targets a posting past retention, and says whether it is confirmed open', () => {
+    const db = openDatabase({ path: ':memory:' });
+    db.upsertJob({ id: 'oldpkt', title: 'O', status: 'prepared', score: 75, tier: 'Queue',
+      application_packet_path: '/tmp/o.json', posted_at: '2026-07-20T00:00:00.000Z' });
+    db.insertApproval({ id: 'ap-oldpkt', job_id: 'oldpkt', approval_status: 'pending_review' });
+    db.upsertJob({ id: 'oldopen', title: 'P', status: 'scored', score: 72, tier: 'Queue', user_decision: 'shortlisted',
+      posted_at: '2026-07-20T00:00:00.000Z', link_state: 'open', link_checked_at: NOW.toISOString() });
+    db.upsertJob({ id: 'recent', title: 'R', status: 'scored', score: 71, tier: 'Queue', user_decision: 'shortlisted',
+      posted_at: '2026-09-15T00:00:00.000Z' });
+    const items = Object.fromEntries(todayQueue(db, { now: NOW, config }).items.map((i) => [i.id, i]));
+    expect(items.oldpkt.reason).toMatch(/Posted 64 days ago and not confirmed open/);
+    expect(items.oldpkt.reason).toMatch(/^Its tailored resume/);
+    expect(items.oldopen.reason).toMatch(/Posted 64 days ago; the employer still lists it\./);
+    expect(items.recent.reason).not.toMatch(/Posted \d+ days ago/);
+    db.close();
+  });
+});

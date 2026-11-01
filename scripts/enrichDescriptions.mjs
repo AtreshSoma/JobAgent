@@ -49,7 +49,9 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../src/config/loadConfig.js';
 import { openDatabase } from '../src/logging/db.js';
 import { buildProfileVocabulary, classifyTitleFit } from '../src/scoring/profileFit.js';
-import { scoreJob } from '../src/scoring/scorer.js';
+import { scoreJob, freshnessModelFor } from '../src/scoring/scorer.js';
+import { scoringFingerprint } from '../src/scoring/fingerprint.js';
+import { isProtectedJobRow } from '../src/lifecycle.js';
 import { explainScore, TIERS } from '../src/scoring/explainScore.js';
 import { classifySponsorship } from '../src/scoring/sponsorshipClassifier.js';
 import { applyExclusions } from '../src/scoring/exclusionFilter.js';
@@ -222,12 +224,68 @@ async function getText(url, ctx) {
   return res.text();
 }
 
+/**
+ * The database patch for one enriched row, judged by the same chain discovery
+ * uses — including the shared freshness model and the scoring fingerprint, so
+ * an enriched verdict is current and is not immediately re-judged by
+ * rescoreStale. Returns `patch: null` for a row the human has acted on
+ * (shortlisted, packet built, applied): enrichment must never flip a row the
+ * user owns to `discarded`. upsertJob writes directly, so the pipeline's
+ * protected-row guard does not cover this path; the check here does.
+ *
+ * @param {object} row stored jobs row
+ * @param {{text: string, location?: string, postedAt?: string, country?: string}} got fetched description
+ * @param {{config: object, vocab: object, now: Date, fingerprint?: string}} ctx
+ * @returns {{patch: object|null, score: object, tier: string, exclusion: object}}
+ */
+export function judgeEnriched(row, got, { config, vocab, now, fingerprint }) {
+  const job = {
+    id: row.id, source: row.source, company: row.company, title: row.title,
+    location: got.location ?? row.location, url: row.url, jdText: got.text,
+    postedAt: got.postedAt ?? row.posted_at, employmentType: row.employment_type,
+    // An explicit country from the provider is decisive for the US-only gate.
+    rawMetadata: got.country ? { country: got.country } : {},
+  };
+  const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
+  const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
+  const score = scoreJob(job, {
+    scoring: config.scoring, sponsorship, candidate: config.candidate, now,
+    freshnessModel: freshnessModelFor(config),
+  });
+  const titleVerdict = classifyTitleFit(job.title, vocab).verdict;
+  const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
+  if (isProtectedJobRow(row)) return { patch: null, score, tier, exclusion };
+  const patch = {
+    id: row.id,
+    jd_text: got.text,
+    posted_at: job.postedAt,
+    location: job.location,
+    summary_only: 0,
+    score: score.total,
+    tier: exclusion.excluded ? null : tier,
+    sponsorship: sponsorship.status,
+    sponsorship_signals: sponsorship.signals ?? [],
+    explanation,
+    matched_keywords: score.matchedKeywords,
+    missing_keywords: score.missingKeywords,
+    scoring_fingerprint: fingerprint ?? scoringFingerprint(config),
+    status: exclusion.excluded
+      ? 'discarded'
+      : (tier === TIERS.DISCARD ? 'discarded' : 'scored'),
+    discard_reason: exclusion.excluded
+      ? exclusion.reason
+      : (tier === TIERS.DISCARD ? 'below score threshold (description now read)' : null),
+  };
+  return { patch, score, tier, exclusion };
+}
+
 async function main() {
   const args = parseArgs(process.argv);
   const config = loadConfig({ loadEnv: true, env: process.env });
   const db = openDatabase({});
   const vocab = buildProfileVocabulary(config.candidate);
   const now = new Date();
+  const fingerprint = scoringFingerprint(config);
 
   console.log('Enriching jobs that were stored but never read\n');
 
@@ -240,6 +298,7 @@ async function main() {
     if (args.source && r.source !== args.source) return false;
     if (args.minScore !== null && Number(r.score ?? 0) < args.minScore) return false;
     if (['applied', 'submitted', 'prepared', 'assist_blocked'].includes(r.status)) return false;
+    if (isProtectedJobRow(r)) return false;
     if (isExpiredRow(r)) return false;
     // A discarded row whose description WAS read (summary_only = 0) was judged;
     // discovery no longer stores the text of stale/excluded discards, so an
@@ -274,20 +333,8 @@ async function main() {
     if (!got?.text) { stats.failed += 1; return; }
     stats.fetched += 1;
 
-    const job = {
-      id: row.id, source: row.source, company: row.company, title: row.title,
-      location: got.location ?? row.location, url: row.url, jdText: got.text,
-      postedAt: got.postedAt ?? row.posted_at, employmentType: row.employment_type,
-      // An explicit country from the provider is decisive for the US-only gate.
-      rawMetadata: got.country ? { country: got.country } : {},
-    };
-
     // Same chain discovery uses, so an enriched row is judged identically.
-    const exclusion = applyExclusions(job, config.exclusions, { now, candidate: config.candidate });
-    const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
-    const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
-    const titleVerdict = classifyTitleFit(job.title, vocab).verdict;
-    const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
+    const { patch, score, tier, exclusion } = judgeEnriched(row, got, { config, vocab, now, fingerprint });
 
     const before = Number(row.score ?? 0);
     if (score.total > before) stats.improved += 1;
@@ -300,28 +347,7 @@ async function main() {
       stats.stillWeak += 1;
     }
 
-    if (args.apply) {
-      db.upsertJob({
-        id: row.id,
-        jd_text: got.text,
-        posted_at: job.postedAt,
-        location: job.location,
-        summary_only: 0,
-        score: score.total,
-        tier: exclusion.excluded ? null : tier,
-        sponsorship: sponsorship.status,
-        sponsorship_signals: sponsorship.signals ?? [],
-        explanation,
-        matched_keywords: score.matchedKeywords,
-        missing_keywords: score.missingKeywords,
-        status: exclusion.excluded
-          ? 'discarded'
-          : (tier === TIERS.DISCARD ? 'discarded' : 'scored'),
-        discard_reason: exclusion.excluded
-          ? exclusion.reason
-          : (tier === TIERS.DISCARD ? 'below score threshold (description now read)' : null),
-      });
-    }
+    if (args.apply && patch) db.upsertJob(patch);
   });
 
   console.log('\n================ RESULT ================');

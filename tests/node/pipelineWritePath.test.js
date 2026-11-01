@@ -150,6 +150,52 @@ describe('F10 — rescoreStale', () => {
   });
 });
 
+describe('E1 — retention is enforced by age, not only on rediscovery', () => {
+  const later = (days) => new Date(NOW.getTime() + days * 864e5);
+
+  it('retires an active row that aged past retention without being re-listed', async () => {
+    await run([job({ postedAt: daysAgo(2) })]);
+    expect(db.getJob('gh:1').status).toBe('scored');
+    // Same config (fingerprint unchanged), 60 days later, no run in between.
+    const out = rescoreStale({ db, config, now: later(60) });
+    expect(out.rescored).toBe(1);
+    const row = db.getJob('gh:1');
+    expect(row.status).toBe('discarded');
+    expect(row.discard_reason).toMatch(/^stale_posting/);
+  });
+
+  it('leaves rows inside the retention window alone', async () => {
+    await run([job({ postedAt: daysAgo(2) })]);
+    expect(rescoreStale({ db, config, now: later(10) }).rescored).toBe(0);
+    expect(db.getJob('gh:1').status).toBe('scored');
+  });
+
+  it('never retires a row the user acted on', async () => {
+    await run([job({ postedAt: daysAgo(2) })]);
+    db.db.prepare("UPDATE jobs SET user_decision = 'shortlisted' WHERE id = 'gh:1'").run();
+    expect(rescoreStale({ db, config, now: later(60) }).rescored).toBe(0);
+    expect(db.getJob('gh:1').status).toBe('scored');
+  });
+
+  it('does not touch undated rows (unknown age is not old age)', async () => {
+    await run([job({ postedAt: daysAgo(2) })]);
+    db.db.prepare("UPDATE jobs SET posted_at = NULL WHERE id = 'gh:1'").run();
+    expect(rescoreStale({ db, config, now: later(60) }).rescored).toBe(0);
+  });
+
+  it('is idempotent at the retention boundary — a second sweep selects nothing', async () => {
+    const retention = config.exclusions.staleness.skipOlderThanDays;
+    // Posted retention + 0.6 days before "now": older than the date-only cutoff
+    // the first implementation used, but judged `retention` days old.
+    for (const [i, frac] of [0.1, 0.6, 0.95, 1.2].entries()) {
+      await run([job({ id: `gh:b${i}`, url: `https://example.com/b${i}`, title: `Data Engineer ${i}`, postedAt: daysAgo(2) })]);
+      db.db.prepare('UPDATE jobs SET posted_at = ? WHERE id = ?').run(daysAgo(retention + frac), `gh:b${i}`);
+    }
+    rescoreStale({ db, config, now: NOW });
+    expect(rescoreStale({ db, config, now: NOW }).rescored).toBe(0);
+  });
+});
+
 describe('M3 — expiry', () => {
   it('expires an active row its source has not listed for 3 successful runs', async () => {
     await run([job()]);
@@ -217,5 +263,35 @@ describe('rescoreStale reads a blank stored Workday location from the URL', () =
     expect(row.status).toBe('discarded');
     expect(row.discard_reason).toMatch(/geography|outside the US|Hyderabad/i);
     db.close();
+  });
+});
+
+describe('E3 — a discard always states the reason it was actually discarded', () => {
+  // Matching title (never title-rejected) but a description with nothing in it.
+  const thin = (over = {}) => job({ jdText: 'Apply now.', ...over });
+
+  it('an unread row that is later read and scores low is not left labelled "not judged"', async () => {
+    await run([thin({ rawMetadata: { summaryOnly: true } })]);
+    const unread = db.getJob('gh:1');
+    expect(unread.status).toBe('needs_description');
+    expect(unread.discard_reason).toMatch(/^not judged/);
+
+    // Rediscovered with its (still weak) description actually fetched.
+    await run([thin({ jdText: 'Apply now. We answer phones and file paperwork all day.', rawMetadata: { summaryOnly: false } })]);
+    const read = db.getJob('gh:1');
+    expect(read.status).toBe('discarded');
+    expect(read.discard_reason).toBe('below near-miss threshold');
+  });
+
+  it('a fresh low-score discard records why', async () => {
+    await run([thin({ id: 'gh:7', url: 'https://example.com/7' })]);
+    const row = db.getJob('gh:7');
+    expect(row.status).toBe('discarded');
+    expect(row.discard_reason).toBe('below near-miss threshold');
+  });
+
+  it('a row that scores well carries no discard reason', async () => {
+    await run([job()]);
+    expect(db.getJob('gh:1').discard_reason ?? null).toBeNull();
   });
 });

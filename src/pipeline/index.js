@@ -34,10 +34,9 @@ import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { profileVocabularyFor, classifyTitleFit } from '../scoring/profileFit.js';
 import { postedPay } from '../scoring/searchConstraints.js';
 import { postedOnAgrees, locationFromExternalPath } from '../search/adapters/workday.js';
-import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
-import { scoreJob } from '../scoring/scorer.js';
+import { scoreJob, freshnessModelFor } from '../scoring/scorer.js';
 import { explainScore, TIERS } from '../scoring/explainScore.js';
 import { scoringFingerprint } from '../scoring/fingerprint.js';
 import { compareJobsForQueue } from '../scoring/jobRanking.js';
@@ -290,11 +289,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   stats.retained = retained.length;
   const freshness = applyFreshnessFilter(unretained, config.runtime ?? {}, { now });
   const freshJobs = [...retained, ...freshness.kept];
-  const freshnessModel = {
-    discoveryDays: freshness.windowDays,
-    retentionDays: Number(config.exclusions?.staleness?.skipOlderThanDays) || 45,
-  };
-  if (!Number.isFinite(freshnessModel.discoveryDays)) freshnessModel.discoveryDays = freshnessModel.retentionDays;
+  const freshnessModel = freshnessModelFor(config);
 
   // Every write below is batched into chunked transactions (P5).
   const writer = createWriter(db);
@@ -489,6 +484,11 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       // incremental skip above so a stale score can never pass as current.
       scoring_fingerprint: configFingerprint,
       status: tier === TIERS.DISCARD && !keepBelowThreshold ? 'discarded' : 'scored',
+      // Always written, as rescoreStale does. Left unset, a row that was once
+      // unread and has now been read and judged kept "not judged: the
+      // description was never fetched" — a false claim on 604 stored rows — and
+      // a fresh low-score discard carried no reason at all.
+      discard_reason: tier === TIERS.DISCARD && !keepBelowThreshold ? 'below near-miss threshold' : null,
       ...payFields(job),
       ...(unread ? {
         status: 'needs_description',
@@ -1290,22 +1290,37 @@ export function rescoreStale({ db, config, now = new Date(), fingerprint, limit 
   const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
   if (!raw || !config?.scoring) return out;
   const current = fingerprint ?? scoringFingerprint(config);
+  // AGE IS A VERDICT INPUT TOO. Retention used to be enforced only when a
+  // source re-listed the posting, so a row nobody rediscovered (no run for
+  // weeks, a source that stopped listing it) stayed "scored" forever — the
+  // store held 2,089 active rows past the 45-day limit and Today led with a
+  // 67-day-old job. Rows posted before the retention cutoff are re-judged here
+  // whatever their fingerprint, and the exclusion stage retires them exactly as
+  // it would on rediscovery. The cutoff sits one FULL day past retention, as a
+  // timestamp: with a date-only cutoff a posting 45.x days old was selected,
+  // judged "45 days" (not > 45) by the exclusion stage, kept, and re-selected
+  // on every sweep. ISO timestamps and date-only strings both compare
+  // correctly as text against it.
+  const retentionDays = Number(config.exclusions?.staleness?.skipOlderThanDays);
+  const cutoff = Number.isFinite(retentionDays) && retentionDays > 0
+    ? new Date(now.getTime() - (retentionDays + 1) * 864e5).toISOString()
+    : null;
   let rows;
   try {
     rows = raw.prepare(`SELECT id, source, company, title, location, url, jd_text, posted_at,
         applicant_count, employment_type, compensation_text, summary_only, discovery_mode, search_query
       FROM jobs
       WHERE status IN ('scored', 'needs_description')
-        AND coalesce(scoring_fingerprint, '') <> ?`).all(current);
+        AND (coalesce(scoring_fingerprint, '') <> ?
+          OR (? IS NOT NULL AND posted_at IS NOT NULL AND posted_at <> '' AND posted_at < ?
+            AND coalesce(applied, 0) = 0 AND coalesce(application_packet_path, '') = ''
+            AND coalesce(user_decision, '') = ''))`)
+      .all(current, cutoff, cutoff);
   } catch {
     return out;
   }
   const vocab = config.candidate ? profileVocabularyFor(config.candidate) : null;
-  const freshnessModel = {
-    discoveryDays: FRESHNESS_WINDOW_DAYS[config.runtime?.jobFreshnessMode ?? 'LAST_7_DAYS'] ?? 7,
-    retentionDays: Number(config.exclusions?.staleness?.skipOlderThanDays) || 45,
-  };
-  if (!Number.isFinite(freshnessModel.discoveryDays)) freshnessModel.discoveryDays = freshnessModel.retentionDays;
+  const freshnessModel = freshnessModelFor(config);
   const markers = config.exclusions?.employmentTypes;
   const writer = createWriter(db);
   for (const row of rows.slice(0, Number.isFinite(limit) ? limit : rows.length)) {

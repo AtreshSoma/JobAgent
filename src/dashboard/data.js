@@ -24,7 +24,7 @@ import { randomUUID } from 'node:crypto';
 
 import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply/approvalQueue.js';
 import { jsonList } from '../utils/json.js';
-import { isWithinLast24Hours, isWithinLastHours, formatPostedRelative } from '../utils/dates.js';
+import { isWithinLast24Hours, isWithinLastHours, formatPostedRelative, ageInDays } from '../utils/dates.js';
 import { EMPLOYMENT_LABELS } from '../scoring/employmentClassifier.js';
 import { applicationStatePath, legacyApplicationStatePath } from '../apply/applicationState.js';
 import { isSponsorshipGated, configureGateThreshold, gateThreshold } from '../scoring/explainScore.js';
@@ -2215,6 +2215,35 @@ export function systemNotices(rows = [], config = null, { browserAvailable = nul
  * @param {number} [options.limit=10]
  * @returns {{ generatedAt: string, items: object[], systemNotices: object[] }}
  */
+/**
+ * A plain-language warning for work on a posting older than the retention
+ * window. Untouched rows that old are retired (rescoreStale); what remains is
+ * work the user already invested in — a shortlist, a packet — which is kept,
+ * but must not be presented as though it were current. Today once led with a
+ * 67-day-old posting and said only "Its tailored resume and cover letter are
+ * ready", with no hint that the role might long be filled.
+ *
+ * @returns {string|null}
+ */
+function staleCaveat(row, now, config) {
+  const retention = Number(config?.exclusions?.staleness?.skipOlderThanDays) || 45;
+  const age = ageInDays(row.postedAt, now);
+  if (age === null || age <= retention) return null;
+  return row.linkState === 'open'
+    ? `Posted ${age} days ago; the employer still lists it.`
+    : `Posted ${age} days ago and not confirmed open — use Check link before spending more time on it.`;
+}
+
+/**
+ * Join a reason and a caveat without truncating the caveat away.
+ */
+function withCaveat(reason, caveat) {
+  if (!caveat) return reason;
+  const room = Math.max(0, TODAY_REASON_MAX - caveat.length - 1);
+  const head = reason && reason.length > room ? `${reason.slice(0, Math.max(0, room - 1))}…` : reason;
+  return head ? `${head} ${caveat}` : caveat;
+}
+
 export function todayQueue(db, {
   now = new Date(), config = null, limit = TODAY_LIMIT, browserAvailable = null,
 } = {}) {
@@ -2273,7 +2302,7 @@ export function todayQueue(db, {
     tier: row.tier,
     appStatus: row.appStatus,
     statusLabel: row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus,
-    reason: todayReason(row, action),
+    reason: action.closed ? todayReason(row, action) : withCaveat(todayReason(row, action), staleCaveat(row, now, config)),
     nextAction: { kind: action.kind, label: action.label },
   }));
   return { generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config, { browserAvailable }) };

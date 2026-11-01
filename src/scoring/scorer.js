@@ -18,6 +18,7 @@ import { excludedLocationMatch, postedPay } from './searchConstraints.js';
 import { seniorityRank } from '../profile/roleFamilies.js';
 import { matchedTitlePhrases } from './titleMatch.js';
 import { assessEligibility, eligibilityPenalty } from './eligibility.js';
+import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 
 /**
  * Sources considered "direct ATS" for the directAtsAvailability category — a
@@ -522,6 +523,26 @@ function scorePay(job, candidate, weight) {
   if (pay.max >= target) return { points: 0, weight: 0, matched: [`${label} meets target`] };
   const shortfall = Math.min(1, (target - pay.max) / (0.25 * target));
   return { points: -round2(max * shortfall), weight: 0, matched: [`${label} below target ${target.toLocaleString('en-US')}`] };
+}
+
+/**
+ * The freshness model every scoring path must use (F8): the discovery window
+ * from `runtime.jobFreshnessMode` and the retention limit from
+ * `exclusions.staleness.skipOlderThanDays`.
+ *
+ * ONE source, so the same posting scores the same however it arrived. The
+ * pipeline built this inline, while `rescore` and add-by-URL passed nothing
+ * and fell back to the legacy `scoring.freshness` 7/14-day curve — a manually
+ * added 15-day-old job lost every freshness point that the identical
+ * discovered job kept.
+ *
+ * @param {object} config loadConfig() bundle
+ * @returns {{discoveryDays: number, retentionDays: number}}
+ */
+export function freshnessModelFor(config = {}) {
+  const retentionDays = Number(config?.exclusions?.staleness?.skipOlderThanDays) || 45;
+  const discoveryDays = FRESHNESS_WINDOW_DAYS[config?.runtime?.jobFreshnessMode ?? 'LAST_7_DAYS'] ?? 7;
+  return { discoveryDays: Number.isFinite(discoveryDays) ? discoveryDays : retentionDays, retentionDays };
 }
 
 /**

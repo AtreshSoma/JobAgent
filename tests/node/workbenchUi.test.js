@@ -775,3 +775,14 @@ describe('no data-driven HTML', () => {
     expect(app).not.toMatch(/href: job\.url\b/);
   });
 });
+
+describe('E4 — the resume keyword-match chip states its band honestly', () => {
+  it('names every band atsReport.py writes, with a tone, and never calls the number an ATS score', () => {
+    const py = readFileSync(new URL('../../src/resume/atsReport.py', import.meta.url), 'utf8');
+    const bands = [...py.matchAll(/band = "([a-z_]+)"/g)].map((m) => m[1]);
+    expect(bands.sort()).toEqual(['below_threshold', 'over_optimized', 'strong']);
+    for (const band of bands) expect(app).toMatch(new RegExp(`${band}: \\{ label: '[^']+', tone: '(good|warn|bad)' \\}`));
+    expect(app).toContain('Keyword match ${job.atsScore}%');
+    expect(app).not.toContain('`ATS ${job.atsScore}%`');
+  });
+});

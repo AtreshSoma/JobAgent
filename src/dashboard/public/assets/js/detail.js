@@ -251,7 +251,17 @@ export function detailSections(job) {
     }));
   }
   if (job.atsScore != null) {
-    chips.append(el('span', { class: 'chip', title: 'Resume/JD keyword match from the ATS report', text: `ATS ${job.atsScore}%` }));
+    // This number is keyword coverage of the posting by the tailored resume —
+    // not a pass/fail from any applicant tracking system. It used to read
+    // "ATS 65%" in a neutral chip even when the report's own band said
+    // below_threshold, beside "ATS generic" (the platform) in the same header.
+    const band = ATS_BANDS[job.atsBand] ?? null;
+    chips.append(el('span', {
+      class: `chip ${band?.tone ?? ''}`.trim(),
+      title: 'How much of this posting\'s key terms the tailored resume covers (estimated). '
+        + 'It is not a score from the employer\'s applicant tracking system.',
+      text: `Keyword match ${job.atsScore}%${band ? ` · ${band.label}` : ''}`,
+    }));
   }
   headMain.append(chips);
   head.append(headMain);
@@ -480,6 +490,16 @@ window.addEventListener('pagehide', () => {
     headers: { 'content-type': 'application/json', 'X-Job-Agent': '1' },
     body: JSON.stringify({ note: box.value }),
   }).catch(() => {});
+});
+
+/**
+ * The keyword-coverage bands written by src/resume/atsReport.py, in words and
+ * tone. Unknown bands render the number alone rather than a guessed verdict.
+ */
+const ATS_BANDS = Object.freeze({
+  below_threshold: { label: 'below target', tone: 'warn' },
+  strong: { label: 'in target range', tone: 'good' },
+  over_optimized: { label: 'possibly keyword-stuffed', tone: 'warn' },
 });
 
 /** Why a job was closed. Order is the order the chips are offered in. */

@@ -513,6 +513,22 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   }
 
   /**
+   * Retire postings that aged past the retention window while nobody ran
+   * discovery. rescoreStale re-judges rows posted before the cutoff, so a
+   * dashboard left open for weeks — or reopened after a long gap — never leads
+   * Today with a posting the exclusion stage would already have retired. Shares
+   * scheduleRescore's coalescing and its "yield to a running pipeline" rule.
+   */
+  function scheduleRetentionSweeps() {
+    if (process.env.JOB_AGENT_RETENTION_SWEEP === 'off' || !config?.root) return;
+    const first = setTimeout(scheduleRescore, deps.retentionSweepDelayMs ?? 2_000);
+    const every = setInterval(scheduleRescore, deps.retentionSweepEveryMs ?? 6 * 3600_000);
+    first.unref?.();
+    every.unref?.();
+    server.on('close', () => { clearTimeout(first); clearInterval(every); });
+  }
+
+  /**
    * Record the questions one assist run could not answer.
    *
    * This is the learning loop's only capture point: without it the human
@@ -2586,6 +2602,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   }
 
   schedulePostingSweeps();
+  scheduleRetentionSweeps();
   reconcilePackets();
 
   return {

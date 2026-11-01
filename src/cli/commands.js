@@ -36,7 +36,7 @@ import {
 import { applyExclusions } from '../scoring/exclusionFilter.js';
 import { classifySponsorship, SPONSORSHIP } from '../scoring/sponsorshipClassifier.js';
 import { classifyEmployment } from '../scoring/employmentClassifier.js';
-import { scoreJob } from '../scoring/scorer.js';
+import { scoreJob, freshnessModelFor } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
 import { scoringFingerprint } from '../scoring/fingerprint.js';
 import { assistApply } from '../automation/applyRunner.js';
@@ -337,7 +337,9 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
       continue;
     }
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
-    const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now });
+    const score = scoreJob(job, {
+      scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel: freshnessModelFor(config),
+    });
     const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
     db.upsertJob({
       id: job.id,
@@ -438,6 +440,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
   // penalty and reason, not only as a caveat.
   const score = scoreJob(job, {
     scoring: config.scoring, sponsorship, candidate: config.candidate, now, exclusions: config.exclusions,
+    freshnessModel: freshnessModelFor(config),
   });
   const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
   const fullExplanation = caveat ? `${caveat} ${explanation}` : explanation;
