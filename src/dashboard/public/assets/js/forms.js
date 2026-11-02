@@ -42,6 +42,38 @@ export function formIsDirty(root) {
   return [...root.querySelectorAll(CONTROLS)].some(isEdited);
 }
 
+/**
+ * Declare the current values to be "as rendered", so only later typing counts as an edit.
+ * For forms that are FILLED in code (value set by script) rather than rendered with values.
+ */
+export function markClean(root) {
+  for (const node of root.querySelectorAll(CONTROLS)) {
+    if (isCheckable(node)) node.defaultChecked = node.checked;
+    else if (node.tagName === 'SELECT') for (const o of node.options) o.defaultSelected = o.selected;
+    else node.defaultValue = node.value;
+  }
+}
+
+/**
+ * Enter must never save a form by accident.
+ *
+ * Enter in a text box submits its form, and in these dialogs the save then
+ * CLOSES them — so finishing a field (or pressing Enter once more after adding
+ * a job title) saved and dismissed the dialog before the person reached Save.
+ * Plain Enter now does nothing in a field; Ctrl/Cmd+Enter is the deliberate
+ * keyboard save and goes through the Save button, so a disabled Save still
+ * blocks it. Enter on a button, link or in a textarea keeps its normal meaning.
+ */
+export function saveOnlyOnPurpose(form) {
+  form.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' || event.isComposing || event.defaultPrevented) return;
+    const target = event.target;
+    if (target.tagName === 'TEXTAREA' || target.closest('button, a, summary')) return;
+    event.preventDefault();
+    if (event.ctrlKey || event.metaKey) form.querySelector('[type="submit"]:not(:disabled)')?.click();
+  });
+}
+
 /** What would put focus back where it was after a rebuild. */
 function focusKey(node) {
   if (!node || node === document.body) return null;

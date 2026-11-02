@@ -10,7 +10,8 @@
 
 import { $, el, toast } from './dom.js';
 import { api, postJson } from './api.js';
-import { closeDialog, openDialog } from './dialogs.js';
+import { closeDialog, guardDialog, openDialog } from './dialogs.js';
+import { formIsDirty, markClean, saveOnlyOnPurpose } from './forms.js';
 import { scheduleRefresh } from './mutations.js';
 import { displayName, initials } from './format.js';
 
@@ -285,10 +286,25 @@ export async function removePerson() {
 /* ─────────────────────── add or edit a person ─────────────────────── */
 
 const form = {
-  mode: 'add', id: null, roles: [], resumeBase64: null, phone: '',
+  mode: 'add', id: null, roles: [], resumeBase64: null, phone: '', rolesInitial: '[]',
 };
 
 const MAX_ROLES = 15;
+
+/**
+ * Is there anything typed here that Save has not stored? The boxes are judged
+ * by the browser (value vs the value they were filled with); the job-title
+ * chips are not boxes, so they are compared to how they started; and a resume
+ * the person picked is data too.
+ */
+function personIsDirty() {
+  return formIsDirty($('dlgPerson'))
+    || JSON.stringify(form.roles) !== form.rolesInitial
+    || form.resumeBase64 !== null;
+}
+guardDialog($('dlgPerson'), personIsDirty);
+// Enter in a box must not save and close this dialog; Ctrl/Cmd+Enter does.
+saveOnlyOnPurpose($('dlgPerson').querySelector('form'));
 
 function renderRoleChips() {
   const list = $('personRoleList');
@@ -329,7 +345,13 @@ function setFieldError(key, message) {
   input?.setAttribute('aria-invalid', String(Boolean(message)));
 }
 
-function fillForm(values = {}) {
+/**
+ * @param {object} [values]
+ * @param {{ pristine?: boolean }} [options] `pristine` (the default) says these values ARE
+ *   the stored ones, so only later typing is an edit. Values read from a resume are
+ *   not stored yet, so that caller passes false and they count as unsaved.
+ */
+function fillForm(values = {}, { pristine = true } = {}) {
   $('personName').value = displayName(values.fullName ?? '');
   $('personEmail').value = values.email ?? '';
   $('personCity').value = values.city ?? '';
@@ -344,6 +366,10 @@ function fillForm(values = {}) {
   form.phone = values.phone ?? '';
   addRoles((values.targetRoles ?? []).join(','));
   for (const key of ['Name', 'Email', 'Roles', 'Form']) setFieldError(key, '');
+  if (pristine) {
+    markClean($('dlgPerson'));
+    form.rolesInitial = JSON.stringify(form.roles);
+  }
 }
 
 /** Open the form to add a person (optionally pre-filled from a resume already in hand). */
@@ -414,7 +440,7 @@ export async function readResumeIntoForm(file) {
       fullName: typed.fullName || r.fields.fullName,
       email: typed.email || r.fields.email,
       targetRoles: [...form.roles, ...(r.fields.targetRoles ?? [])],
-    });
+    }, { pristine: false });
     const found = [r.found.roles && `${r.found.roles} job title${r.found.roles === 1 ? '' : 's'}`,
       r.found.jobs && `${r.found.jobs} past job${r.found.jobs === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
     status.textContent = found ? `Read ${found} from ${file.name}. Check them below.` : `Read ${file.name}. No job titles found; add them below.`;
@@ -484,7 +510,7 @@ export async function savePerson() {
 $('personRoleInput')?.addEventListener('keydown', (event) => {
   const input = event.target;
   if (event.key === 'Enter' || event.key === ',') {
-    if (!input.value.trim()) return; // an empty Enter submits the form
+    if (!input.value.trim()) return; // an empty Enter does nothing (see saveOnlyOnPurpose)
     event.preventDefault();
     addRoles(input.value);
     input.value = '';
