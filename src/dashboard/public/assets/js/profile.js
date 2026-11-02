@@ -4,12 +4,15 @@ import { $, el, fmt, relTime, slowProgress, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { cssEscape } from './detail.js';
-import { openDialog } from './dialogs.js';
-import { restoreForm, snapshotForm } from './forms.js';
+import { guardDialog, openDialog } from './dialogs.js';
+import { formIsDirty, restoreForm, saveOnlyOnPurpose, snapshotForm } from './forms.js';
 import { setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';
 
 /* ─────────────────── application profile + question queue ─────────────────── */
+
+// Closing this dialog with typed-but-unsaved text asks first (see dialogs.js).
+guardDialog($('dlgProfile'), () => formIsDirty($('profileBody')));
 
 /**
  * The profile page has three commitments, so it has three save buttons: the
@@ -206,6 +209,8 @@ export function renderProfileFields(profile) {
   form.append(grid, el('div', { class: 'row-gap' },
     el('button', { type: 'submit', class: 'small primary', text: 'Save details' }),
     el('span', { class: 'faint fineprint', text: profile.path ?? '' })));
+  // Enter in a box must not save half-finished work; Ctrl/Cmd+Enter does.
+  saveOnlyOnPurpose(form);
   section.append(form);
   return section;
 }

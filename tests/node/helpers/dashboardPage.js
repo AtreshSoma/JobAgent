@@ -87,6 +87,43 @@ export async function expandSavedAnswers(page) {
 
 export const answerBox = (page, id) => page.locator(`[data-a-answer="${id}"]`);
 
+/** Header menu -> "Add profile…", the way a person gets to the Add form. */
+export async function openAddProfileDialog(page) {
+  await page.locator('[data-action="toggle-account-menu"]').click();
+  await page.getByRole('menuitem', { name: /Add profile/ }).click();
+  await page.locator('#dlgPerson[open]').waitFor();
+}
+
+/** Header menu -> Master resume -> the first profile's Edit button. */
+export async function openEditProfileDialog(page) {
+  await page.locator('[data-action="toggle-account-menu"]').click();
+  await page.getByRole('menuitem', { name: 'Master resume' }).click();
+  await page.locator('#dlgMaster [data-action="open-edit-profile"]').first().click();
+  await page.locator('#dlgPerson[open]').waitFor();
+}
+
+/** Save a search profile through the API, so there is someone to edit. */
+export async function createProfile(url, fields) {
+  const res = await fetch(`${url}/api/search-profiles`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'X-Job-Agent': '1' },
+    body: JSON.stringify({ fields, activate: true }),
+  });
+  if (!res.ok) throw new Error(`could not create the test profile: HTTP ${res.status}`);
+}
+
+/** A click on the dimmed area outside every dialog (the corner is always backdrop). */
+export const clickBackdrop = (page) => page.mouse.click(4, 4);
+
+export const isOpen = (page, id) => page.evaluate((d) => document.getElementById(d)?.open === true, id);
+
+/** Every PATCH the page sends (the Edit profile form saves with PATCH). */
+export function watchPatches(page) {
+  const sent = [];
+  page.on('request', (r) => { if (r.method() === 'PATCH') sent.push(r.url()); });
+  return sent;
+}
+
 /**
  * Run `action`, then wait until the Application profile dialog has REBUILT its
  * body. A test that asserts "my text survived the re-render" must know the
