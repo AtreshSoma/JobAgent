@@ -193,8 +193,15 @@ describe('the Add / Edit profile form', () => {
     for (const id of ['personName', 'personEmail', 'personRoleInput', 'personCity', 'personState', 'personSeniority']) {
       expect(dialog, id).toContain(`for="${id}"`);
     }
-    expect(dialog).toContain('id="personName" type="text" autocomplete="name" required aria-describedby="personNameError"');
-    expect(dialog).toContain('id="personEmail" type="email" autocomplete="email" required aria-describedby="personEmailError"');
+    // The facts that matter, not the order the attributes happen to be written in.
+    const tagOf = (id) => dialog.match(new RegExp(`<input id="${id}"[^>]*>`))?.[0] ?? '';
+    for (const [id, type, autocomplete] of [['personName', 'text', 'name'], ['personEmail', 'email', 'email']]) {
+      const tag = tagOf(id);
+      expect(tag, id).toContain(`type="${type}"`);
+      expect(tag, id).toContain(`autocomplete="${autocomplete}"`);
+      expect(tag, id).toMatch(/\srequired[\s>]/);
+      expect(tag, id).toContain(`aria-describedby="${id}Error"`);
+    }
     expect(dialog).toContain('aria-describedby="personRolesHint personRolesError"');
     expect(dialog).toContain('id="personFormError" role="alert"');
     expect(dialog).toContain('id="personResumeStatus" role="status" aria-live="polite"');

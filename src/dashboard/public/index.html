@@ -985,11 +985,11 @@
     </div>
 
     <label for="personName">Full name <span class="req" aria-hidden="true">*</span></label>
-    <input id="personName" type="text" autocomplete="name" required aria-describedby="personNameError">
+    <input id="personName" type="text" autocomplete="name" placeholder="e.g., Alex Morgan" required aria-describedby="personNameError">
     <p class="field-error" id="personNameError" hidden></p>
 
     <label for="personEmail">Email <span class="req" aria-hidden="true">*</span></label>
-    <input id="personEmail" type="email" autocomplete="email" required aria-describedby="personEmailError">
+    <input id="personEmail" type="email" autocomplete="email" placeholder="e.g., alex@example.com" required aria-describedby="personEmailError">
     <p class="field-error" id="personEmailError" hidden></p>
 
     <label for="personRoleInput" id="personRolesLabel">Job titles to search for <span class="req" aria-hidden="true">*</span></label>
@@ -1004,17 +1004,17 @@
     <div class="person-row">
       <div>
         <label for="personCity">City</label>
-        <input id="personCity" type="text" autocomplete="address-level2">
+        <input id="personCity" type="text" autocomplete="address-level2" placeholder="e.g., Austin">
       </div>
       <div>
         <label for="personState">State</label>
-        <input id="personState" type="text" autocomplete="address-level1">
+        <input id="personState" type="text" autocomplete="address-level1" placeholder="e.g., TX">
       </div>
     </div>
 
     <label for="personSeniority">Level</label>
     <select id="personSeniority">
-      <option value="">Not set</option>
+      <option value="">Select a level (optional)</option>
       <option value="intern">Intern</option>
       <option value="entry">Entry level</option>
       <option value="associate">Associate</option>
