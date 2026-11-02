@@ -20,7 +20,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { browserUnavailable } from './helpers/browser.js';
 import {
-  afterRerender, answerBox, clickBackdrop, createProfile, expandSavedAnswers, isOpen, launchBrowser,
+  afterRerender, answerBox, clickBackdrop, createProfile, editJson, expandSavedAnswers, isOpen, launchBrowser,
   openAddProfileDialog, openApplicationProfile, openDashboard, openEditProfileDialog, startTestDashboard,
   watchPatches,
 } from './helpers/dashboardPage.js';
@@ -251,6 +251,112 @@ describe('Edit profile: Enter never saves or closes by accident', { timeout: 30_
       expect(saves).toBe(0);
       await afterRerender(page, () => page.keyboard.press('Control+Enter'));
       expect(saves).toBe(1);
+    }, own);
+  });
+});
+
+describe('Template text is a placeholder, never a saved value', { timeout: 30_000 }, () => {
+  const TEMPLATE_YEARS = 'YOUR total years of professional experience.';
+  const TEMPLATE_CHECK = 'YOUR answer about background checks.';
+  let own;
+  beforeAll(async () => {
+    if (!available) return;
+    own = await startTestDashboard({
+      prepare: (root) => {
+        editJson(root, 'config/screening_answers.json', (doc) => {
+          doc.answers.find((a) => a.id === 'years_experience').answer = TEMPLATE_YEARS;
+          doc.answers.find((a) => a.id === 'background_check').answer = TEMPLATE_CHECK;
+        });
+        editJson(root, 'config/candidate.json', (c) => { c.location.city = 'Your City'; });
+      },
+    });
+  }, HOOK_TIMEOUT);
+  afterAll(async () => { await own?.stop(); }, HOOK_TIMEOUT);
+
+  /** Record every POST the page sends, with its parsed JSON body. */
+  const watchPosts = (page) => {
+    const sent = [];
+    page.on('request', (r) => {
+      if (r.method() === 'POST') sent.push({ url: new URL(r.url()).pathname, body: JSON.parse(r.postData() || '{}') });
+    });
+    return sent;
+  };
+
+  it('shows template text as grey placeholder text in an empty box', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withPage(async (page) => {
+      await openApplicationProfile(page);
+      await expandSavedAnswers(page);
+      const years = answerBox(page, 'years_experience');
+      expect(await years.inputValue()).toBe('');
+      expect(await years.getAttribute('placeholder')).toBe(TEMPLATE_YEARS);
+      expect(await page.locator('#pf-city').inputValue()).toBe('');
+      expect(await page.locator('#pf-city').getAttribute('placeholder')).toBe('Your City');
+
+      // Grey: the placeholder's colour is not the colour typed text would have.
+      const [placeholder, typed] = await years.evaluate((n) => [
+        getComputedStyle(n, '::placeholder').color, getComputedStyle(n).color,
+      ]);
+      expect(placeholder).not.toBe(typed);
+    }, own);
+  });
+
+  it('saves an untouched template exactly as stored, and sends no template detail at all', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withPage(async (page) => {
+      const posts = watchPosts(page);
+      await openApplicationProfile(page);
+      await expandSavedAnswers(page);
+
+      await page.locator('#pf-phone').fill('9195550199');
+      await afterRerender(page, () => page.getByRole('button', { name: 'Save details' }).click());
+      const details = posts.find((p) => p.url === '/api/profile');
+      // The city is still template text and was never touched: it is not sent.
+      expect(Object.keys(details.body.values)).not.toContain('location.city');
+      expect(details.body.values['contact.phone']).toBe('9195550199');
+
+      await afterRerender(page, () => page.getByRole('button', { name: 'Save all answers' }).click());
+      const answers = posts.find((p) => p.url === '/api/profile/answers').body.answers;
+      // An untouched template answer is the entry as it already is on disk,
+      // not an answer the person typed.
+      expect(answers.find((a) => a.id === 'years_experience').answer).toBe(TEMPLATE_YEARS);
+    }, own);
+  });
+
+  it('typing replaces the placeholder, and the typed text is what is saved and shown next time', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withPage(async (page) => {
+      const posts = watchPosts(page);
+      await openApplicationProfile(page);
+      await expandSavedAnswers(page);
+      await answerBox(page, 'background_check').fill('Yes, willing to complete one.');
+      await afterRerender(page, () => page.getByRole('button', { name: 'Save all answers' }).click());
+      const sent = posts.find((p) => p.url === '/api/profile/answers').body.answers;
+      expect(sent.find((a) => a.id === 'background_check').answer).toBe('Yes, willing to complete one.');
+    }, own);
+
+    await withPage(async (page) => {
+      await openApplicationProfile(page);
+      await expandSavedAnswers(page);
+      const box = answerBox(page, 'background_check');
+      expect(await box.inputValue()).toBe('Yes, willing to complete one.');
+      expect(await box.getAttribute('placeholder')).toBeNull();
+    }, own);
+  });
+
+  it('Add profile: boxes carry grey examples and the level starts on a "Select" prompt', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withPage(async (page) => {
+      await openAddProfileDialog(page);
+      for (const id of ['personName', 'personEmail', 'personCity', 'personState']) {
+        expect(await page.locator(`#${id}`).inputValue()).toBe('');
+        expect(await page.locator(`#${id}`).getAttribute('placeholder')).toMatch(/^e\.g\., /);
+      }
+      const level = page.locator('#personSeniority');
+      expect(await level.evaluate((n) => n.selectedOptions[0].textContent)).toBe('Select a level (optional)');
+      const prompt = await level.evaluate((n) => getComputedStyle(n).color);
+      await level.selectOption('senior');
+      expect(await level.evaluate((n) => getComputedStyle(n).color)).not.toBe(prompt);
     }, own);
   });
 });

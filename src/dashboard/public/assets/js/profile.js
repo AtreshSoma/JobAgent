@@ -193,9 +193,16 @@ export function renderProfileFields(profile) {
     cell.append(el('label', { for: `pf-${field.field}` },
       field.label,
       field.required ? el('span', { class: 'pf-req', title: 'Required by most application forms', text: ' *' }) : null));
+    // A value that is still the shipped template text ("Your City") is not the
+    // person's answer. It is shown as grey placeholder text in an EMPTY box, so
+    // it reads as "fill this in" and is never submitted as if it were theirs.
+    const template = field.placeholder === true;
     cell.append(el('input', {
       type: field.type === 'url' ? 'url' : 'text',
-      id: `pf-${field.field}`, 'data-path': field.path, value: field.value ?? '',
+      id: `pf-${field.field}`, 'data-path': field.path,
+      value: template ? '' : (field.value ?? ''),
+      placeholder: template ? field.value : null,
+      'data-template': template ? '' : null,
       // type=email/tel would let the browser block a save with its own bubble,
       // which hides the server's specific reason. Validation lives on the server.
       inputmode: field.type === 'tel' ? 'tel' : null,
@@ -280,7 +287,14 @@ export function renderSavedAnswers(screening) {
     row.append(el('label', { text: 'Answer', for: answerId }));
     // `text`, not `.value =`: it sets the textarea's DEFAULT value, which is how
     // the browser (and forms.js) tells "as rendered" from "edited since".
-    row.append(el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id, text: entry.answer ?? '' }));
+    // Template text ("YOUR total years…") is not an answer: it is shown as grey
+    // placeholder text in an empty box. The original rides along in data-template
+    // so an untouched box can be saved back exactly as it was stored.
+    const template = entry.placeholder === true;
+    row.append(el('textarea', {
+      rows: '2', id: answerId, 'data-a-answer': entry.id,
+      ...(template ? { placeholder: entry.answer ?? '', 'data-template': entry.answer ?? '' } : { text: entry.answer ?? '' }),
+    }));
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
       text: '✕ Delete this answer',
@@ -300,6 +314,9 @@ export const splitPatterns = (value) => String(value ?? '').split('|').map((p) =
 export async function saveProfileDetails() {
   const values = {};
   for (const input of $('profileBody').querySelectorAll('[data-path]')) {
+    // Still showing its template placeholder and never typed in: not the
+    // person's data, so it is not sent and the stored value is left alone.
+    if (input.hasAttribute('data-template') && !input.value.trim()) continue;
     values[input.dataset.path] = input.value;
   }
   profileMessage('Saving…');
@@ -350,10 +367,16 @@ export async function saveAllAnswers({ removeId = null } = {}) {
     const id = row.dataset.answerId;
     if (id === removeId) continue;
     const existing = (state.profile?.screening?.answers ?? []).find((a) => a.id === id) ?? {};
+    const box = row.querySelector('[data-a-answer]');
+    const typed = box?.value ?? '';
+    // A box still showing its template placeholder was never answered. The save
+    // replaces the whole list, so that entry goes back exactly as stored; it is
+    // not something the person typed.
+    const unanswered = box?.dataset.template !== undefined && !typed.trim();
     answers.push({
       id,
       patterns: splitPatterns(row.querySelector('[data-a-patterns]')?.value),
-      answer: row.querySelector('[data-a-answer]')?.value ?? '',
+      answer: unanswered ? box.dataset.template : typed,
       type: existing.type ?? 'text',
     });
   }
