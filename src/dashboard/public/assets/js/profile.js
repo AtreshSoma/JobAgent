@@ -5,6 +5,7 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { cssEscape } from './detail.js';
 import { openDialog } from './dialogs.js';
+import { restoreForm, snapshotForm } from './forms.js';
 import { setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';
 
@@ -20,7 +21,8 @@ export async function openProfile() {
   const stop = slowProgress(body, 'Loading your application profile…');
   profileMessage('');
   openDialog($('dlgProfile'));
-  try { await renderProfile(); } finally { stop(); }
+  // Opening starts from what is stored: nothing typed before is still on screen.
+  try { await renderProfile({ keep: false }); } finally { stop(); }
 }
 
 export function profileMessage(text, tone = 'muted') {
@@ -29,7 +31,20 @@ export function profileMessage(text, tone = 'muted') {
   node.textContent = text;
 }
 
-export async function renderProfile() {
+/**
+ * Redraw the dialog from the server's copy.
+ *
+ * Each of the three sections saves on its own, and each save lands here. The
+ * redraw used to replace everything, so text typed into a section that was NOT
+ * being saved vanished (and the open "Saved answers" list snapped shut). What
+ * the person has typed is carried across instead; only controls the save just
+ * COMMITTED take the stored value.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.keep=true] carry unsaved edits across (false when opening)
+ * @param {string|null} [options.committed] selector for the controls this save just wrote
+ */
+export async function renderProfile({ keep = true, committed = null } = {}) {
   const body = $('profileBody');
   let data;
   try { data = await api('/api/profile'); }
@@ -39,6 +54,8 @@ export async function renderProfile() {
     return;
   }
   state.profile = data;
+  // Taken AFTER the fetch, so keystrokes made while it was in flight count too.
+  const pending = keep ? snapshotForm(body, { skip: committed }) : null;
   body.textContent = '';
 
   if (!data.available) {
@@ -57,6 +74,7 @@ export async function renderProfile() {
   body.append(renderQuestionQueue(data.questions));
   body.append(renderProfileFields(data.profile));
   body.append(renderSavedAnswers(data.screening));
+  restoreForm(body, pending);
   renderHealthProfileFlag();
 }
 
@@ -195,7 +213,7 @@ export function renderProfileFields(profile) {
 /** The answers already in config, editable and deletable. */
 export function renderSavedAnswers(screening) {
   const section = el('section', { class: 'pf-section', id: 'pfAnswers' });
-  const wrap = el('details', { class: 'pf-saved' });
+  const wrap = el('details', { class: 'pf-saved', 'data-keep': 'saved-answers' });
   wrap.append(el('summary', { text: `Saved answers (${fmt((screening.answers ?? []).length)})` }));
 
   if (screening.error) {
@@ -255,9 +273,9 @@ export function renderSavedAnswers(screening) {
       value: (entry.patterns ?? []).join(' | '),
     }));
     row.append(el('label', { text: 'Answer', for: answerId }));
-    const answer = el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id });
-    answer.value = entry.answer ?? '';
-    row.append(answer);
+    // `text`, not `.value =`: it sets the textarea's DEFAULT value, which is how
+    // the browser (and forms.js) tells "as rendered" from "edited since".
+    row.append(el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id, text: entry.answer ?? '' }));
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
       text: '✕ Delete this answer',
@@ -286,7 +304,7 @@ export async function saveProfileDetails() {
     toast(result.changed.length
       ? `Saved — ${result.changed.length} field(s) changed. New applications use these values.`
       : 'No changes to save.', 'good');
-    await renderProfile();
+    await renderProfile({ committed: '[data-path]' });
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }
@@ -305,7 +323,9 @@ export async function saveQuestionAnswer(key) {
     await postJson('/api/profile/questions/answer', { key, id, patterns, answer, question, type: 'text' });
     toast('Answered. Every future application that asks this fills it automatically.', 'good');
     profileMessage('');
-    await renderProfile();
+    // The answered question leaves the queue; every OTHER box keeps its text.
+    const k = cssEscape(key);
+    await renderProfile({ committed: `[data-q-answer="${k}"], [data-q-patterns="${k}"], [data-q-id="${k}"]` });
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }
@@ -340,7 +360,9 @@ export async function saveAllAnswers({ removeId = null } = {}) {
     });
     profileMessage(result.warning ?? '', result.warning ? 'st-blocked' : 'muted');
     toast(removeId ? `Deleted "${removeId}".` : `Saved ${result.count} answer(s).`, 'good');
-    await renderProfile();
+    // Every answer row was just written, so those take the stored value; an
+    // unsaved details edit or queued-question answer is still the person's.
+    await renderProfile({ committed: '[data-a-answer], [data-a-patterns]' });
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }
