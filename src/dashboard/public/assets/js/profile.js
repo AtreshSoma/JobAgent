@@ -4,11 +4,15 @@ import { $, el, fmt, relTime, slowProgress, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { cssEscape } from './detail.js';
-import { openDialog } from './dialogs.js';
+import { guardDialog, openDialog } from './dialogs.js';
+import { formIsDirty, restoreForm, saveOnlyOnPurpose, snapshotForm } from './forms.js';
 import { setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';
 
 /* ─────────────────── application profile + question queue ─────────────────── */
+
+// Closing this dialog with typed-but-unsaved text asks first (see dialogs.js).
+guardDialog($('dlgProfile'), () => formIsDirty($('profileBody')));
 
 /**
  * The profile page has three commitments, so it has three save buttons: the
@@ -20,7 +24,8 @@ export async function openProfile() {
   const stop = slowProgress(body, 'Loading your application profile…');
   profileMessage('');
   openDialog($('dlgProfile'));
-  try { await renderProfile(); } finally { stop(); }
+  // Opening starts from what is stored: nothing typed before is still on screen.
+  try { await renderProfile({ keep: false }); } finally { stop(); }
 }
 
 export function profileMessage(text, tone = 'muted') {
@@ -29,7 +34,20 @@ export function profileMessage(text, tone = 'muted') {
   node.textContent = text;
 }
 
-export async function renderProfile() {
+/**
+ * Redraw the dialog from the server's copy.
+ *
+ * Each of the three sections saves on its own, and each save lands here. The
+ * redraw used to replace everything, so text typed into a section that was NOT
+ * being saved vanished (and the open "Saved answers" list snapped shut). What
+ * the person has typed is carried across instead; only controls the save just
+ * COMMITTED take the stored value.
+ *
+ * @param {object} [options]
+ * @param {boolean} [options.keep=true] carry unsaved edits across (false when opening)
+ * @param {string|null} [options.committed] selector for the controls this save just wrote
+ */
+export async function renderProfile({ keep = true, committed = null } = {}) {
   const body = $('profileBody');
   let data;
   try { data = await api('/api/profile'); }
@@ -39,6 +57,8 @@ export async function renderProfile() {
     return;
   }
   state.profile = data;
+  // Taken AFTER the fetch, so keystrokes made while it was in flight count too.
+  const pending = keep ? snapshotForm(body, { skip: committed }) : null;
   body.textContent = '';
 
   if (!data.available) {
@@ -57,6 +77,7 @@ export async function renderProfile() {
   body.append(renderQuestionQueue(data.questions));
   body.append(renderProfileFields(data.profile));
   body.append(renderSavedAnswers(data.screening));
+  restoreForm(body, pending);
   renderHealthProfileFlag();
 }
 
@@ -172,9 +193,16 @@ export function renderProfileFields(profile) {
     cell.append(el('label', { for: `pf-${field.field}` },
       field.label,
       field.required ? el('span', { class: 'pf-req', title: 'Required by most application forms', text: ' *' }) : null));
+    // A value that is still the shipped template text ("Your City") is not the
+    // person's answer. It is shown as grey placeholder text in an EMPTY box, so
+    // it reads as "fill this in" and is never submitted as if it were theirs.
+    const template = field.placeholder === true;
     cell.append(el('input', {
       type: field.type === 'url' ? 'url' : 'text',
-      id: `pf-${field.field}`, 'data-path': field.path, value: field.value ?? '',
+      id: `pf-${field.field}`, 'data-path': field.path,
+      value: template ? '' : (field.value ?? ''),
+      placeholder: template ? field.value : null,
+      'data-template': template ? '' : null,
       // type=email/tel would let the browser block a save with its own bubble,
       // which hides the server's specific reason. Validation lives on the server.
       inputmode: field.type === 'tel' ? 'tel' : null,
@@ -188,6 +216,8 @@ export function renderProfileFields(profile) {
   form.append(grid, el('div', { class: 'row-gap' },
     el('button', { type: 'submit', class: 'small primary', text: 'Save details' }),
     el('span', { class: 'faint fineprint', text: profile.path ?? '' })));
+  // Enter in a box must not save half-finished work; Ctrl/Cmd+Enter does.
+  saveOnlyOnPurpose(form);
   section.append(form);
   return section;
 }
@@ -195,7 +225,7 @@ export function renderProfileFields(profile) {
 /** The answers already in config, editable and deletable. */
 export function renderSavedAnswers(screening) {
   const section = el('section', { class: 'pf-section', id: 'pfAnswers' });
-  const wrap = el('details', { class: 'pf-saved' });
+  const wrap = el('details', { class: 'pf-saved', 'data-keep': 'saved-answers' });
   wrap.append(el('summary', { text: `Saved answers (${fmt((screening.answers ?? []).length)})` }));
 
   if (screening.error) {
@@ -255,9 +285,16 @@ export function renderSavedAnswers(screening) {
       value: (entry.patterns ?? []).join(' | '),
     }));
     row.append(el('label', { text: 'Answer', for: answerId }));
-    const answer = el('textarea', { rows: '2', id: answerId, 'data-a-answer': entry.id });
-    answer.value = entry.answer ?? '';
-    row.append(answer);
+    // `text`, not `.value =`: it sets the textarea's DEFAULT value, which is how
+    // the browser (and forms.js) tells "as rendered" from "edited since".
+    // Template text ("YOUR total years…") is not an answer: it is shown as grey
+    // placeholder text in an empty box. The original rides along in data-template
+    // so an untouched box can be saved back exactly as it was stored.
+    const template = entry.placeholder === true;
+    row.append(el('textarea', {
+      rows: '2', id: answerId, 'data-a-answer': entry.id,
+      ...(template ? { placeholder: entry.answer ?? '', 'data-template': entry.answer ?? '' } : { text: entry.answer ?? '' }),
+    }));
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
       text: '✕ Delete this answer',
@@ -277,6 +314,9 @@ export const splitPatterns = (value) => String(value ?? '').split('|').map((p) =
 export async function saveProfileDetails() {
   const values = {};
   for (const input of $('profileBody').querySelectorAll('[data-path]')) {
+    // Still showing its template placeholder and never typed in: not the
+    // person's data, so it is not sent and the stored value is left alone.
+    if (input.hasAttribute('data-template') && !input.value.trim()) continue;
     values[input.dataset.path] = input.value;
   }
   profileMessage('Saving…');
@@ -286,7 +326,7 @@ export async function saveProfileDetails() {
     toast(result.changed.length
       ? `Saved — ${result.changed.length} field(s) changed. New applications use these values.`
       : 'No changes to save.', 'good');
-    await renderProfile();
+    await renderProfile({ committed: '[data-path]' });
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }
@@ -305,7 +345,9 @@ export async function saveQuestionAnswer(key) {
     await postJson('/api/profile/questions/answer', { key, id, patterns, answer, question, type: 'text' });
     toast('Answered. Every future application that asks this fills it automatically.', 'good');
     profileMessage('');
-    await renderProfile();
+    // The answered question leaves the queue; every OTHER box keeps its text.
+    const k = cssEscape(key);
+    await renderProfile({ committed: `[data-q-answer="${k}"], [data-q-patterns="${k}"], [data-q-id="${k}"]` });
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }
@@ -325,10 +367,16 @@ export async function saveAllAnswers({ removeId = null } = {}) {
     const id = row.dataset.answerId;
     if (id === removeId) continue;
     const existing = (state.profile?.screening?.answers ?? []).find((a) => a.id === id) ?? {};
+    const box = row.querySelector('[data-a-answer]');
+    const typed = box?.value ?? '';
+    // A box still showing its template placeholder was never answered. The save
+    // replaces the whole list, so that entry goes back exactly as stored; it is
+    // not something the person typed.
+    const unanswered = box?.dataset.template !== undefined && !typed.trim();
     answers.push({
       id,
       patterns: splitPatterns(row.querySelector('[data-a-patterns]')?.value),
-      answer: row.querySelector('[data-a-answer]')?.value ?? '',
+      answer: unanswered ? box.dataset.template : typed,
       type: existing.type ?? 'text',
     });
   }
@@ -340,7 +388,9 @@ export async function saveAllAnswers({ removeId = null } = {}) {
     });
     profileMessage(result.warning ?? '', result.warning ? 'st-blocked' : 'muted');
     toast(removeId ? `Deleted "${removeId}".` : `Saved ${result.count} answer(s).`, 'good');
-    await renderProfile();
+    // Every answer row was just written, so those take the stored value; an
+    // unsaved details edit or queued-question answer is still the person's.
+    await renderProfile({ committed: '[data-a-answer], [data-a-patterns]' });
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }

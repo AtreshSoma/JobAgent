@@ -984,12 +984,14 @@
       <span class="person-resume-status" id="personResumeStatus" role="status" aria-live="polite">Optional. A .docx file; it becomes their own master resume.</span>
     </div>
 
+    <p class="fineprint muted person-legend" id="personLegend"><span class="req" aria-hidden="true">*</span> Required. Everything else is optional.</p>
+
     <label for="personName">Full name <span class="req" aria-hidden="true">*</span></label>
-    <input id="personName" type="text" autocomplete="name" required aria-describedby="personNameError">
+    <input id="personName" type="text" autocomplete="name" placeholder="e.g., Alex Morgan" required aria-describedby="personNameError">
     <p class="field-error" id="personNameError" hidden></p>
 
     <label for="personEmail">Email <span class="req" aria-hidden="true">*</span></label>
-    <input id="personEmail" type="email" autocomplete="email" required aria-describedby="personEmailError">
+    <input id="personEmail" type="email" autocomplete="email" placeholder="e.g., alex@example.com" required aria-describedby="personEmailError">
     <p class="field-error" id="personEmailError" hidden></p>
 
     <label for="personRoleInput" id="personRolesLabel">Job titles to search for <span class="req" aria-hidden="true">*</span></label>
@@ -1003,18 +1005,18 @@
 
     <div class="person-row">
       <div>
-        <label for="personCity">City</label>
-        <input id="personCity" type="text" autocomplete="address-level2">
+        <label for="personCity">City <span class="opt">(optional)</span></label>
+        <input id="personCity" type="text" autocomplete="address-level2" placeholder="e.g., Austin">
       </div>
       <div>
-        <label for="personState">State</label>
-        <input id="personState" type="text" autocomplete="address-level1">
+        <label for="personState">State <span class="opt">(optional)</span></label>
+        <input id="personState" type="text" autocomplete="address-level1" placeholder="e.g., TX">
       </div>
     </div>
 
-    <label for="personSeniority">Level</label>
+    <label for="personSeniority">Level <span class="opt">(optional)</span></label>
     <select id="personSeniority">
-      <option value="">Not set</option>
+      <option value="">Select a level (optional)</option>
       <option value="intern">Intern</option>
       <option value="entry">Entry level</option>
       <option value="associate">Associate</option>
@@ -1038,8 +1040,9 @@
     <p class="field-error person-form-error" id="personFormError" role="alert" hidden></p>
   </div>
   <div class="dlg-foot">
+    <span class="grow-1 fineprint muted person-why" id="personSaveWhy" aria-live="polite"></span>
     <button type="button" class="small" data-action="close-dialog">Cancel</button>
-    <button type="submit" class="small primary" id="personSave">Add profile</button>
+    <button type="submit" class="small primary" id="personSave" aria-describedby="personSaveWhy" title="Save (Ctrl or ⌘ + Enter)">Add profile</button>
   </div>
   </form>
 </dialog>
@@ -1096,7 +1099,7 @@
   <form method="dialog" class="dlg-form" data-submit="confirm-go">
   <div class="dlg-body"><div id="confirmBody"></div></div>
   <div class="dlg-foot">
-    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="button" class="small" id="confirmCancel" data-action="close-dialog">Cancel</button>
     <button type="submit" class="small primary" id="confirmGo">Continue</button>
   </div>
   </form>

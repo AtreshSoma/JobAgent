@@ -2588,6 +2588,10 @@ kbd {
 .person-dialog .dlg-body > label:first-of-type { margin-top: var(--s2); }
 .person-dialog input[type=text], .person-dialog input[type=email] { margin-bottom: 0; width: 100%; }
 .person-dialog select { width: 100%; }
+/* A select resting on its "Select …" prompt reads like a placeholder, until a choice replaces it.
+   The options keep the normal colour, or the whole list would be grey. */
+.person-dialog select:has(option[value=""]:checked) { color: color-mix(in srgb, var(--text-dim) 50%, var(--text-faint)); }
+.person-dialog select option { color: var(--text); }
 .person-dialog .req { color: var(--bad); }
 .person-resume {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
@@ -2602,6 +2606,11 @@ kbd {
 .person-seed .person-toggle { margin-bottom: 0; }
 .person-seed .fineprint { margin: 4px 0 0 2px; max-width: 60ch; }
 [aria-invalid="true"] { border-color: var(--bad) !important; }
+.opt { color: var(--text-faint); font-weight: 400; }
+.person-legend { margin: var(--s2) 0 0; }
+.person-why, .pf-why { font-size: var(--fs-sm); align-self: center; min-width: 0; }
+.st-ok { color: var(--good); }
+.pf-hint { margin: 0 0 4px; }
 .chips-input {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--h-md);
   padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--r-sm);

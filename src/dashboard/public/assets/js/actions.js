@@ -7,7 +7,7 @@ import { applyFilterObject, clearFilter, filterValue, resetFilters, setFilterVal
 import { loadSections, renderTabs } from './analytics.js';
 import { loadBoard } from './board.js';
 import { cssEscape, loadDetail, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
-import { closeDialog, openDialog, runPendingAlt, runPendingConfirm } from './dialogs.js';
+import { closeDialog, openDialog, requestClose, runPendingAlt, runPendingConfirm } from './dialogs.js';
 import { autofillOne, checkLink, sweepClosedPostings, fillProfileFromResume, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
 import { setView, todayAct } from './today.js';
 import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection, reasonHandlers, showCompare, toggleSelect } from './selection.js';
@@ -318,7 +318,8 @@ export const ACTIONS = {
     if (!handler) return;
     try { await handler(target.dataset.reason); } catch (err) { toast(err.message, 'bad'); }
   },
-  'close-dialog': (target) => closeDialog(target.closest('dialog')),
+  // Close, × and Cancel: the person asked, so unsaved text gets a question first.
+  'close-dialog': (target) => requestClose(target.closest('dialog')),
 };
 
 /**
