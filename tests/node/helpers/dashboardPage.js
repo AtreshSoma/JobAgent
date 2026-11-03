@@ -68,7 +68,10 @@ export async function openDashboard(browser, url) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   await page.goto(`${url}/`);
-  await page.waitForSelector('#accountMenu', { state: 'attached' });
+  // "Connected" appears only after the page's scripts have run (and attached their
+  // click handlers) and the first request came back. The menu EXISTS in the HTML
+  // long before that, and a click on it in between is silently lost.
+  await page.waitForSelector('#conn.ok');
   return { page, context };
 }
 

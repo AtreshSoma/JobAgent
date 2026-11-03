@@ -11,7 +11,8 @@
 import { $, el, toast } from './dom.js';
 import { api, postJson } from './api.js';
 import { closeDialog, guardDialog, openDialog } from './dialogs.js';
-import { formIsDirty, markClean, saveOnlyOnPurpose } from './forms.js';
+import { formIsDirty, markClean, saveOnlyOnPurpose, withLabel } from './forms.js';
+import { validateEmail, validateFullName, validateRoles } from './validate.js';
 import { scheduleRefresh } from './mutations.js';
 import { displayName, initials } from './format.js';
 
@@ -306,6 +307,59 @@ guardDialog($('dlgPerson'), personIsDirty);
 // Enter in a box must not save and close this dialog; Ctrl/Cmd+Enter does.
 saveOnlyOnPurpose($('dlgPerson').querySelector('form'));
 
+/** What Save is waiting for, in the words used on the button's explanation. */
+const SAVE_NEEDS = { Name: 'a first and last name', Email: 'a valid email', Roles: 'at least one job title' };
+const FIELD_OF = { personName: 'Name', personEmail: 'Email', personRoleInput: 'Roles' };
+
+const joinWords = (items) => (items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+/**
+ * What is wrong with the form right now, by field ({} = ready to save).
+ * A job title typed but not yet turned into a chip already counts: Save would add it.
+ */
+function personProblems() {
+  const roles = [...form.roles];
+  for (const raw of $('personRoleInput').value.split(/[,\n;]/)) {
+    const role = raw.replace(/\s+/g, ' ').trim();
+    if (role && !roles.some((r) => r.toLowerCase() === role.toLowerCase())) roles.push(role);
+  }
+  const found = {
+    Name: validateFullName($('personName').value),
+    Email: validateEmail($('personEmail').value),
+    Roles: validateRoles(roles),
+  };
+  return Object.fromEntries(Object.entries(found).filter(([, message]) => message));
+}
+
+/**
+ * Save is off until it can succeed, and the footer says why. Computed silently
+ * on every change, because it is an explanation, not an error: the red messages
+ * under the fields wait until the person leaves a field (see the listeners).
+ */
+function refreshPersonSave() {
+  const missing = Object.keys(personProblems()).map((key) => SAVE_NEEDS[key]);
+  let why = '';
+  if (missing.length) why = `Save is off until you add ${joinWords(missing)}.`;
+  else if (form.mode === 'edit' && !personIsDirty()) why = 'No changes to save yet.';
+  $('personSave').disabled = Boolean(why);
+  $('personSaveWhy').textContent = why;
+}
+
+// Typing never ADDS an error; it only clears one that has been fixed.
+$('dlgPerson').addEventListener('input', () => {
+  const problems = personProblems();
+  for (const key of Object.values(FIELD_OF)) {
+    if (!problems[key] && !$(`person${key}Error`).hidden) setFieldError(key, '');
+  }
+  refreshPersonSave();
+});
+$('dlgPerson').addEventListener('change', refreshPersonSave);
+// A problem is shown when the person LEAVES the field.
+$('dlgPerson').addEventListener('focusout', (event) => {
+  const key = FIELD_OF[event.target.id];
+  if (key) setFieldError(key, personProblems()[key] ?? '');
+});
+
 function renderRoleChips() {
   const list = $('personRoleList');
   list.replaceChildren();
@@ -316,6 +370,7 @@ function renderRoleChips() {
         'aria-label': `Remove ${role}`, title: `Remove ${role}`,
       }, '×')));
   }
+  refreshPersonSave();
 }
 
 /** Add one or several (comma- or line-separated) titles, keeping order and dropping repeats. */
@@ -370,6 +425,7 @@ function fillForm(values = {}, { pristine = true } = {}) {
     markClean($('dlgPerson'));
     form.rolesInitial = JSON.stringify(form.roles);
   }
+  refreshPersonSave();
 }
 
 /** Open the form to add a person (optionally pre-filled from a resume already in hand). */
@@ -462,16 +518,27 @@ export async function savePerson() {
     ...(form.allowDuplicate ? { allowDuplicate: true } : {}),
   };
   for (const key of ['Name', 'Email', 'Roles', 'Form']) setFieldError(key, '');
+  // Save is off while these are wrong, but the form can still be submitted by
+  // code or a stray event; say what is wrong and put the cursor on it.
+  const problems = personProblems();
+  const firstProblem = Object.keys(problems)[0];
+  if (firstProblem) {
+    for (const [key, message] of Object.entries(problems)) setFieldError(key, message);
+    (firstProblem === 'Roles' ? $('personRoleInput') : $(`person${firstProblem}`))?.focus();
+    return;
+  }
   const before = listingCache?.activeId ?? null;
   try {
-    const r = form.mode === 'add'
-      ? await postJson('/api/search-profiles', {
+    const send = () => (form.mode === 'add'
+      ? postJson('/api/search-profiles', {
         fields, activate: $('personActivate').checked, seed: !$('personSeedRow').hidden && $('personSeed').checked,
         ...(form.resumeBase64 ? { resume: { contentBase64: form.resumeBase64 } } : {}),
       })
-      : await api(`/api/search-profiles/${encodeURIComponent(form.id)}`, {
+      : api(`/api/search-profiles/${encodeURIComponent(form.id)}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields }),
-      });
+      }));
+    // The wording shows the save is under way; the typed values stay put whatever happens.
+    const r = await withLabel($('personSave'), 'Saving…', send);
     const { closeDialog } = await import('./dialogs.js');
     closeDialog($('dlgPerson'));
     const seededNote = seedNote(r.seeded);
