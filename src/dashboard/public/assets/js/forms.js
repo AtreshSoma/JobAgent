@@ -74,6 +74,21 @@ export function saveOnlyOnPurpose(form) {
   });
 }
 
+/**
+ * Show `label` on a button while `fn` runs, then put the old words back.
+ * (The busy/disabled state itself is set by the action dispatcher; this is only the wording.)
+ */
+export async function withLabel(button, label, fn) {
+  if (!button) return fn();
+  const idle = button.textContent;
+  button.textContent = label;
+  try {
+    return await fn();
+  } finally {
+    if (button.isConnected) button.textContent = idle;
+  }
+}
+
 /** What would put focus back where it was after a rebuild. */
 function focusKey(node) {
   if (!node || node === document.body) return null;

@@ -360,3 +360,227 @@ describe('Template text is a placeholder, never a saved value', { timeout: 30_00
     }, own);
   });
 });
+
+describe('Edit profile: clear rules, specific messages, honest save states', { timeout: 40_000 }, () => {
+  let own;
+  beforeAll(async () => {
+    if (!available) return;
+    own = await startTestDashboard();
+    await createProfile(own.url, {
+      fullName: 'Casey Fixture', email: 'casey@example.com', targetRoles: ['Data Engineer'], city: 'Austin', state: 'TX',
+    });
+  }, HOOK_TIMEOUT);
+  afterAll(async () => { await own?.stop(); }, HOOK_TIMEOUT);
+
+  const visible = (page, selector) => page.locator(selector).isVisible();
+  const text = (page, selector) => page.locator(selector).innerText();
+  const jsonRoute = (status, body) => (route) => route.fulfill({
+    status, contentType: 'application/json', body: JSON.stringify(body),
+  });
+
+  describe('Add / Edit profile', () => {
+    it('marks what is required and what is optional', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openAddProfileDialog(page);
+        expect(await text(page, '#personLegend')).toMatch(/Required/);
+        expect(await page.locator('#dlgPerson label .req').count()).toBe(3);
+        for (const id of ['personCity', 'personState', 'personSeniority']) {
+          expect(await text(page, `label[for="${id}"]`), id).toMatch(/optional/i);
+        }
+      }, own);
+    });
+
+    it('keeps Save off until the required fields are valid, and says what is missing', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openAddProfileDialog(page);
+        expect(await page.locator('#personSave').isDisabled()).toBe(true);
+        const why = await text(page, '#personSaveWhy');
+        expect(why).toMatch(/first and last name/);
+        expect(why).toMatch(/email/);
+        expect(why).toMatch(/job title/);
+
+        await page.locator('#personName').fill('Alex Morgan');
+        expect(await text(page, '#personSaveWhy')).not.toMatch(/first and last name/);
+        await page.locator('#personEmail').fill('alex@example.com');
+        await page.locator('#personRoleInput').fill('Data Engineer');
+        // A title typed but not yet turned into a chip already counts.
+        expect(await page.locator('#personSave').isDisabled()).toBe(false);
+        expect(await text(page, '#personSaveWhy')).toBe('');
+      }, own);
+    });
+
+    it('shows a problem when the field is left, not on every keystroke', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openAddProfileDialog(page);
+        await page.locator('#personName').pressSequentially('Al');
+        expect(await visible(page, '#personNameError')).toBe(false); // still typing
+
+        await page.keyboard.press('Tab'); // leaving the field
+        expect(await text(page, '#personNameError')).toBe('Enter a first and last name.');
+        expect(await page.locator('#personName').getAttribute('aria-invalid')).toBe('true');
+
+        await page.locator('#personName').pressSequentially(' Morgan');
+        expect(await visible(page, '#personNameError')).toBe(false); // fixed: cleared at once
+
+        await page.locator('#personEmail').pressSequentially('alex@');
+        await page.keyboard.press('Tab');
+        expect(await text(page, '#personEmailError')).toBe('Enter a valid email address, like name@example.com.');
+      }, own);
+    });
+
+    it('Edit: Save stays off until something actually changes', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openEditProfileDialog(page);
+        expect(await page.locator('#personSave').isDisabled()).toBe(true);
+        expect(await text(page, '#personSaveWhy')).toBe('No changes to save yet.');
+        await page.locator('#personCity').fill('Denver');
+        expect(await page.locator('#personSave').isDisabled()).toBe(false);
+      }, own);
+    });
+
+    it('a failed save keeps what was typed, says why, and leaves Save usable', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await page.route(/\/api\/search-profiles\/[^/]+$/, (route) => (route.request().method() === 'PATCH'
+          ? jsonRoute(500, { error: 'disk full' })(route) : route.continue()));
+        await openEditProfileDialog(page);
+        await page.locator('#personCity').fill('Denver');
+        await page.locator('#personSave').click();
+        await page.locator('#personFormError:not([hidden])').waitFor();
+
+        expect(await text(page, '#personFormError')).toMatch(/disk full/);
+        expect(await isOpen(page, 'dlgPerson')).toBe(true);
+        expect(await page.locator('#personCity').inputValue()).toBe('Denver');
+        expect(await page.locator('#personSave').isDisabled()).toBe(false);
+        expect(await text(page, '#personSave')).toBe('Save changes');
+      }, own);
+    });
+
+    it('shows Saving… while the save is in flight, then confirms it', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await page.route(/\/api\/search-profiles\/[^/]+$/, async (route) => {
+          if (route.request().method() !== 'PATCH') return route.continue();
+          await new Promise((resolve) => { setTimeout(resolve, 800); });
+          return route.continue();
+        });
+        await openEditProfileDialog(page);
+        await page.locator('#personCity').fill('Boulder');
+        await page.locator('#personSave').click();
+
+        await page.waitForFunction(() => document.getElementById('personSave').textContent === 'Saving…');
+        expect(await page.locator('#personSave').getAttribute('aria-busy')).toBe('true');
+
+        await page.locator('#dlgPerson').waitFor({ state: 'hidden' });
+        expect(await page.locator('.toast', { hasText: 'Saved' }).count()).toBeGreaterThan(0);
+      }, own);
+    });
+  });
+
+  describe('Application profile', () => {
+    it('years of experience: the message appears on leaving the box, and Save all answers says why it is off', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openApplicationProfile(page);
+        await expandSavedAnswers(page);
+        const years = answerBox(page, 'years_experience');
+        await years.pressSequentially('lots');
+        expect(await visible(page, '#answer-err-years_experience')).toBe(false); // still typing
+
+        await page.keyboard.press('Tab');
+        expect(await text(page, '#answer-err-years_experience'))
+          .toBe('Years of experience must be a number between 0 and 50, like 8 or 8+.');
+        const save = page.getByRole('button', { name: 'Save all answers' });
+        expect(await save.isDisabled()).toBe(true);
+        expect(await text(page, '#saveAnswersWhy')).toMatch(/1 answer/);
+
+        await years.fill('8+');
+        await page.keyboard.press('Tab');
+        expect(await visible(page, '#answer-err-years_experience')).toBe(false);
+        expect(await save.isDisabled()).toBe(false);
+        expect(await text(page, '#saveAnswersWhy')).toBe('');
+      }, own);
+    });
+
+    it('a required detail that is emptied is called out by name, and Save details says why it is off', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openApplicationProfile(page);
+        await page.locator('#pf-city').fill('');
+        await page.keyboard.press('Tab');
+        expect(await text(page, '#pf-err-city')).toBe('City is required.');
+        const save = page.getByRole('button', { name: 'Save details' });
+        expect(await save.isDisabled()).toBe(true);
+        expect(await text(page, '#saveDetailsWhy')).toMatch(/City/);
+
+        await page.locator('#pf-city').fill('Austin');
+        expect(await save.isDisabled()).toBe(false);
+      }, own);
+    });
+
+    it('marks required and optional details', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openApplicationProfile(page);
+        expect(await text(page, '#pfLegend')).toMatch(/Required/);
+        expect(await text(page, 'label[for="pf-portfolio"]')).toMatch(/optional/i);
+        expect(await text(page, 'label[for="pf-email"]')).not.toMatch(/optional/i);
+      }, own);
+    });
+
+    it('the server refusing ONE answer is shown on that answer, with the typed text kept', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        const refusal = 'answer "require_sponsorship": that answer contains "need visa sponsorship", which contradicts '
+          + 'the work authorization in your profile (you do not require sponsorship). State your real status instead.';
+        await page.route('**/api/profile/answers', jsonRoute(400, { error: refusal }));
+        await openApplicationProfile(page);
+        await expandSavedAnswers(page);
+        await answerBox(page, 'require_sponsorship').fill('Need visa sponsorship now or in the future.');
+        await page.getByRole('button', { name: 'Save all answers' }).click();
+        await page.locator('#answer-err-require_sponsorship:not([hidden])').waitFor();
+
+        expect(await text(page, '#answer-err-require_sponsorship')).toMatch(/contradicts the work authorization/);
+        expect(await answerBox(page, 'require_sponsorship').inputValue()).toBe('Need visa sponsorship now or in the future.');
+        expect(await isOpen(page, 'dlgProfile')).toBe(true);
+        // The cursor is put on the answer that needs fixing.
+        expect(await page.evaluate(() => document.activeElement?.dataset?.aAnswer)).toBe('require_sponsorship');
+      }, own);
+    });
+
+    it('explains how work authorization and sponsorship relate, right where they are answered', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await openApplicationProfile(page);
+        await expandSavedAnswers(page);
+        const row = (id) => page.locator(`[data-answer-id="${id}"]`);
+        expect(await row('work_authorization').innerText()).toMatch(/work in the US today/i);
+        expect(await row('require_sponsorship').innerText()).toMatch(/search profile/i);
+        expect(await row('years_experience').innerText()).toMatch(/0 to 50/);
+      }, own);
+    });
+
+    it('shows Saving… and then Saved while answers are written', async (ctx) => {
+      if (!available) return ctx.skip();
+      await withPage(async (page) => {
+        await page.route('**/api/profile/answers', async (route) => {
+          await new Promise((resolve) => { setTimeout(resolve, 700); });
+          return route.continue();
+        });
+        await openApplicationProfile(page);
+        await expandSavedAnswers(page);
+        await answerBox(page, 'relocation').fill('Yes, within the US.');
+        const save = page.getByRole('button', { name: 'Save all answers' });
+        await afterRerender(page, async () => {
+          await save.click();
+          await page.waitForFunction(() => [...document.querySelectorAll('#profileBody button')].some((b) => b.textContent === 'Saving…'));
+        });
+        expect(await text(page, '#profileMsg')).toMatch(/Saved/);
+      }, own);
+    });
+  });
+});

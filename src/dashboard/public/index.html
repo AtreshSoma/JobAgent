@@ -987,6 +987,8 @@
       <span class="person-resume-status" id="personResumeStatus" role="status" aria-live="polite">Optional. A .docx file; it becomes their own master resume.</span>
     </div>
 
+    <p class="fineprint muted person-legend" id="personLegend"><span class="req" aria-hidden="true">*</span> Required. Everything else is optional.</p>
+
     <label for="personName">Full name <span class="req" aria-hidden="true">*</span></label>
     <input id="personName" type="text" autocomplete="name" placeholder="e.g., Alex Morgan" required aria-describedby="personNameError">
     <p class="field-error" id="personNameError" hidden></p>
@@ -1006,16 +1008,16 @@
 
     <div class="person-row">
       <div>
-        <label for="personCity">City</label>
+        <label for="personCity">City <span class="opt">(optional)</span></label>
         <input id="personCity" type="text" autocomplete="address-level2" placeholder="e.g., Austin">
       </div>
       <div>
-        <label for="personState">State</label>
+        <label for="personState">State <span class="opt">(optional)</span></label>
         <input id="personState" type="text" autocomplete="address-level1" placeholder="e.g., TX">
       </div>
     </div>
 
-    <label for="personSeniority">Level</label>
+    <label for="personSeniority">Level <span class="opt">(optional)</span></label>
     <select id="personSeniority">
       <option value="">Select a level (optional)</option>
       <option value="intern">Intern</option>
@@ -1041,8 +1043,9 @@
     <p class="field-error person-form-error" id="personFormError" role="alert" hidden></p>
   </div>
   <div class="dlg-foot">
+    <span class="grow-1 fineprint muted person-why" id="personSaveWhy" aria-live="polite"></span>
     <button type="button" class="small" data-action="close-dialog">Cancel</button>
-    <button type="submit" class="small primary" id="personSave">Add profile</button>
+    <button type="submit" class="small primary" id="personSave" aria-describedby="personSaveWhy" title="Save (Ctrl or ⌘ + Enter)">Add profile</button>
   </div>
   </form>
 </dialog>
