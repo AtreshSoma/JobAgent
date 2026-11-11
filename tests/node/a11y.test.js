@@ -59,7 +59,12 @@ afterAll(async () => {
 
 /** A page on the dashboard. axe is injected as a script, so the context bypasses CSP for the test only. */
 async function withPage(fn, { theme } = {}) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 }, bypassCSP: true, colorScheme: theme });
+  // reducedMotion: dialogs fade in, and a scan taken mid-fade measured text at
+  // 85% opacity (4.36:1) instead of its real colour. The app honours reduced
+  // motion, so the page settles at once and axe sees the final colours.
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 900 }, bypassCSP: true, colorScheme: theme, reducedMotion: 'reduce',
+  });
   const page = await context.newPage();
   // A stuck wait must fail the test quickly, not outlive it.
   page.setDefaultTimeout(20_000);

@@ -173,8 +173,10 @@
   --text: #131a24;
   --text-dim: #566274;
   /* Light failed harder than dark: #7d8899 was 3.59:1 on --surface and only
-     3.34:1 on --bg. 4.93:1 / 4.60:1 — AA on both surfaces it actually sits on. */
-  --text-faint: #68717f;
+     3.34:1 on --bg. Then #68717f was 4.43:1 on --surface-2 (the email list's
+     details, axe 2026-11-11). #5f6875 is AA on every light surface:
+     5.64 / 5.25 / 5.07 / 4.71 on surface / bg / surface-2 / surface-3. */
+  --text-faint: #5f6875;
   --accent: #1360c7;
   --accent-hover: #0f57ba;
   --accent-ink: #ffffff;
@@ -237,7 +239,7 @@
     --text-dim: #566274;
     /* Light failed harder than dark: #7d8899 was 3.59:1 on --surface and only
        3.34:1 on --bg. 4.93:1 / 4.60:1 — AA on both surfaces it actually sits on. */
-    --text-faint: #68717f;
+    --text-faint: #5f6875;
     --accent: #1360c7;
     --accent-hover: #0f57ba;
     --accent-ink: #ffffff;
