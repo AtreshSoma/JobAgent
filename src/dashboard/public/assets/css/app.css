@@ -2399,7 +2399,7 @@ dialog label { display: block; font-size: var(--fs-sm); color: var(--text-dim); 
    always opened empty; the moment it carries a real phrase the text scrolls out
    of view. Fixed on the SELECTOR rather than on the one id, so the next
    `type=search` in a dialog inherits the system instead of repeating the bug. */
-dialog input[type=text], dialog input[type=url], dialog input[type=search],
+dialog input[type=text], dialog input[type=url], dialog input[type=search], dialog input[type=email],
 dialog textarea {
   width: 100%; background-color: var(--surface-2); color: var(--text);
   border: 1px solid var(--line); border-radius: var(--r-sm);
@@ -3396,4 +3396,29 @@ button.linklike:hover { background: none; text-decoration: underline; }
   .ws-card, .ws-col, .ws-card button, .appcard button { transition: none; }
   .ws-menu { animation: none; }
   .ws-card.dragging, .ws-card:active, .ws-card button:active { transform: none; }
+}
+
+/* ─────────────────── email these jobs ───────────────────
+   A read-only preview of the draft. The email itself is built as data in
+   emailDraft.js; this only shows it, in the app's own tokens. */
+#dlgEmail { width: min(640px, 94vw); max-height: 88vh; flex-direction: column; }
+#dlgEmail[open] { display: flex; }
+#dlgEmail .dlg-body { overflow: auto; min-height: 0; overscroll-behavior: contain; }
+.email-preview-label { font-size: var(--fs-sm); color: var(--text-dim); margin-bottom: 3px; }
+.email-preview {
+  max-height: 42vh; overflow: auto; overscroll-behavior: contain;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-sm);
+  padding: var(--s3) var(--s3) var(--s2);
+}
+.email-list { margin: 0; padding-left: 22px; }
+.email-list li { margin: 0 0 var(--s2); line-height: 1.45; }
+.email-list a { font-weight: 600; }
+.email-nolink { font-weight: 600; }
+.email-co { color: var(--text-dim); }
+.email-meta { color: var(--text-faint); font-size: var(--fs-sm); }
+.email-more { margin: var(--s2) 0 0; }
+.email-note { font-size: var(--fs-sm); margin: var(--s3) 0 0; }
+@media (max-width: 560px) {
+  #dlgEmail .dlg-foot { flex-wrap: wrap; }
+  #dlgEmail .dlg-foot button { flex: 1 1 100%; justify-content: center; }
 }

@@ -19,6 +19,24 @@ export const CHANGELOG_GROUPS = Object.freeze([
 
 export const CHANGELOG = Object.freeze([
   {
+    date: '2026-11-10',
+    summary: 'Share the jobs you are looking at as a neat email.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      new: [
+        'Email list, next to the page numbers under the Jobs table, turns the jobs you are viewing into an email draft with a clickable link to each posting. It follows your filters and tab, or uses only the jobs you ticked.',
+        'Copy the email and paste it into Gmail, Outlook or Apple Mail with the links intact, open it straight in your email app, or download it as a draft. Nothing is sent from JobAgent.',
+        'Also in Activity, under Reports and exports: Email these jobs.',
+      ],
+      improved: [
+        'Security updates for the tools JobAgent is built on, so a fresh install reports no known vulnerabilities.',
+      ],
+      fixed: [
+        'On Linux, a desktop alert for a job whose title starts with a dash now shows that title instead of failing.',
+      ],
+    },
+  },
+  {
     date: '2026-11-01',
     summary: 'A cleaner look, smarter job actions, and job search for more careers.',
     safety: 'Nothing is submitted without your review. That has not changed.',

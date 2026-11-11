@@ -23,6 +23,7 @@ import {
 } from './workspace.js';
 import { localDay } from './detail.js';
 import { openChangelog } from './changelog.js';
+import { copyEmail, downloadEmailDraft, openEmailJobs, openInMailApp } from './emailJobs.js';
 import { activeProfileId, addAnyway, loadProfiles, openAddProfile, openEditProfile, openRemoveProfile, removePerson, removeRole, savePerson, switchProfile } from './profiles.js';
 
 /* ────────────────────── event delegation ────────────────────── */
@@ -218,6 +219,10 @@ export const ACTIONS = {
   'open-health': openHealth,
   'export-jobs': () => download('/api/export/jobs.csv', 'jobagent_jobs.csv'),
   'export-tracker': () => download('/api/export/tracker.csv', 'job_tracker.csv'),
+  'open-email-jobs': () => openEmailJobs(),
+  'email-copy': () => copyEmail(),
+  'email-open': () => openInMailApp(),
+  'email-download': () => downloadEmailDraft(),
 
   'set-tab': (target) => {
     // Filters SURVIVE a tab change. They used to be wiped here for the same
@@ -330,7 +335,7 @@ export const BUSY_ACTIONS = new Set([
   'profile-from-resume-create', 'profile-from-resume-keep', 'confirm-merge-selection',
   'profile-from-resume-reconsider', 'adopt-resume-titles', 'adopt-resume-skills',
   'restore-master', 'save-profile', 'save-question-answer', 'dismiss-question',
-  'save-answers', 'delete-answer', 'export-jobs', 'export-tracker', 'clear-role-search',
+  'save-answers', 'delete-answer', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',
   'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare',
   'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',

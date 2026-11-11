@@ -92,6 +92,8 @@
         <button role="menuitem" data-action="open-reports">View reports</button>
         <button role="menuitem" data-action="export-jobs">Export all jobs and scores (CSV)</button>
         <button role="menuitem" data-action="export-tracker">Export application tracker (CSV)</button>
+        <button role="menuitem" data-action="open-email-jobs"
+          title="An email draft with links to the jobs you are viewing, or the ones you selected.">Email these jobs…</button>
       </div>
     </span>
 
@@ -537,6 +539,8 @@
 
     <div class="pagerbar">
       <div class="pager" id="pager"></div>
+      <button type="button" class="small ghost" data-action="open-email-jobs"
+        title="An email draft with links to the jobs you are viewing, or the ones you selected.">Email list</button>
       <!-- View preferences live with pagination, not with the filters: they
            change how much of a result set you see and how it is drawn, never
            WHICH jobs match. Same reasoning that put "Rows" here. -->
@@ -1084,6 +1088,34 @@
   <div class="dlg-body" id="changelogBody" tabindex="-1"></div>
   <div class="dlg-foot">
     <button type="button" class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlgEmail" aria-labelledby="dlgEmailTitle" aria-describedby="emailScope">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgEmailTitle">Email these jobs</h2>
+      <div class="muted subtle-sub" id="emailScope"></div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body">
+    <label for="emailTo">To <span class="muted">(optional)</span></label>
+    <input id="emailTo" type="email" multiple placeholder="friend@example.com, me@example.com" autocomplete="email">
+    <label for="emailSubject">Subject</label>
+    <input id="emailSubject" type="text" autocomplete="off">
+    <div class="email-preview-label" id="emailPreviewLabel">Preview</div>
+    <div class="email-preview" id="emailPreview" role="region" aria-labelledby="emailPreviewLabel" tabindex="0"></div>
+    <p class="muted email-note">Nothing is sent from JobAgent. Copy the email and paste it into a new message, or open it in
+      your email app, then send it yourself.</p>
+    <p class="muted email-note" id="emailMailtoNote" hidden>This list is too long for a mail link, which would cut it off.
+      Use Copy email or Download draft instead.</p>
+    <div class="preview-status" id="emailStatus" role="status" aria-live="polite"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="email-download">Download draft (.eml)</button>
+    <button type="button" class="small" data-action="email-open" id="emailOpenBtn">Open in email app</button>
+    <button type="button" class="small primary" data-action="email-copy">Copy email</button>
   </div>
 </dialog>
 

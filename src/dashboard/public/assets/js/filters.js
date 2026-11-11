@@ -156,6 +156,30 @@ export const VALUE_LABELS = {
   city: (value) => `City: ${value}`,
 };
 
+/**
+ * Every active filter (not the tab) as [id, label], in the words the chip row
+ * shows. The email draft describes its scope with the same labels.
+ */
+export function activeFilterChips() {
+  const chips = [];
+  const labelFor = (id) => {
+    const node = $(id);
+    const option = node.selectedOptions?.[0];
+    return option ? option.textContent.trim() : node.value;
+  };
+  for (const id of FILTER_IDS) {
+    const value = filterValue(id);
+    if (!value) continue;
+    if (id === 'q') chips.push([id, `“${value}”`]);
+    else if (VALUE_LABELS[id]) chips.push([id, VALUE_LABELS[id](value)]);
+    else chips.push([id, FIELD_LABELS[id] ? `${FIELD_LABELS[id]}: ${labelFor(id)}` : labelFor(id)]);
+  }
+  for (const [id, label] of Object.entries(TOGGLE_LABELS)) {
+    if ($(id).checked) chips.push([id, label]);
+  }
+  return chips;
+}
+
 /** Human-readable chips for every active filter, each individually clearable. */
 export function renderActiveFilters() {
   const host = $('activeFilters');
@@ -171,22 +195,10 @@ export function renderActiveFilters() {
         el('button', { 'data-action': 'clear-tab', 'aria-label': `Leave the ${tab[1]} tab`, text: '✕' })));
     }
   }
-  const labelFor = (id) => {
-    const node = $(id);
-    const option = node.selectedOptions?.[0];
-    return option ? option.textContent.trim() : node.value;
-  };
   for (const id of FILTER_IDS) {
-    const value = filterValue(id);
-    if ($(id).tagName === 'SELECT') $(id).classList.toggle('on', Boolean(value));
-    if (!value) continue;
-    if (id === 'q') chips.push([id, `“${value}”`]);
-    else if (VALUE_LABELS[id]) chips.push([id, VALUE_LABELS[id](value)]);
-    else chips.push([id, FIELD_LABELS[id] ? `${FIELD_LABELS[id]}: ${labelFor(id)}` : labelFor(id)]);
+    if ($(id).tagName === 'SELECT') $(id).classList.toggle('on', Boolean(filterValue(id)));
   }
-  for (const [id, label] of Object.entries(TOGGLE_LABELS)) {
-    if ($(id).checked) chips.push([id, label]);
-  }
+  chips.push(...activeFilterChips());
 
   syncFilterSheetCount();
   // Every path that writes the query without an `input` event lands here —
