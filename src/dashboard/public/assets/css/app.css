@@ -2611,6 +2611,8 @@ kbd {
 .person-why, .pf-why { font-size: var(--fs-sm); align-self: center; min-width: 0; }
 .st-ok { color: var(--good); }
 .pf-hint { margin: 0 0 4px; }
+/* A config file path has no spaces; without this it pushed the dialog 10px wider than a phone. */
+.pf-path { overflow-wrap: anywhere; min-width: 0; }
 .chips-input {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: var(--h-md);
   padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--r-sm);

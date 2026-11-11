@@ -5,7 +5,10 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { cssEscape } from './detail.js';
 import { guardDialog, openDialog } from './dialogs.js';
-import { formIsDirty, restoreForm, saveOnlyOnPurpose, snapshotForm } from './forms.js';
+import { formIsDirty, isEdited, restoreForm, saveOnlyOnPurpose, snapshotForm, withLabel } from './forms.js';
+import {
+  parseAnswerError, validateAnswerText, validateEmail, validatePatterns, validatePhone, validateRequired, validateYears,
+} from './validate.js';
 import { setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';
 
@@ -13,6 +16,148 @@ import { miniTable } from './reports.js';
 
 // Closing this dialog with typed-but-unsaved text asks first (see dialogs.js).
 guardDialog($('dlgProfile'), () => formIsDirty($('profileBody')));
+
+/* ─────────────────── field rules: shown on leaving a box ───────────────────
+   The same pattern as Add / Edit profile: a problem appears when the person
+   LEAVES a box (never while they are still typing), typing only ever clears a
+   problem that has been fixed, and each Save button is off while its section
+   has one, with a line beside it saying why. Only boxes the person has CHANGED
+   are judged: a value that was already stored is the server's business, and an
+   untouched empty box must not stop someone saving the rest. */
+
+/** Short guidance under the answers people most often get wrong. */
+const ANSWER_HINTS = {
+  work_authorization: 'Whether you can work in the US today, and on what basis (for example US citizen, '
+    + 'green card or H-1B). Employers read it exactly as written.',
+  require_sponsorship: 'Whether you will need visa sponsorship, now or later. It has to agree with the '
+    + 'sponsorship setting in your search profile, or the save is refused.',
+  years_experience: 'A number from 0 to 50, like 8 or 8+. Forms often put it in a number box.',
+};
+
+const joinWords = (items) => (items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
+function showError(node, message) {
+  if (!node) return;
+  node.textContent = message;
+  node.hidden = !message;
+}
+
+/** What is wrong with one details box ('' = fine). */
+function detailProblem(input) {
+  const value = input.value.trim();
+  if (!value) {
+    // A box still resting on its template placeholder is "not answered yet", not an error.
+    return input.hasAttribute('data-required') && !input.hasAttribute('data-template')
+      ? validateRequired(input.dataset.label, '') : '';
+  }
+  if (input.dataset.kind === 'email') return validateEmail(value);
+  if (input.dataset.kind === 'phone') return validatePhone(value);
+  return '';
+}
+
+const detailError = (input) => $(`pf-err-${input.id.replace(/^pf-/, '')}`);
+
+function setDetailError(input, message) {
+  showError(detailError(input), message);
+  input.setAttribute('aria-invalid', String(Boolean(message)));
+}
+
+/** Changed details boxes that would be refused, with their messages. */
+function detailProblems() {
+  return [...$('profileBody').querySelectorAll('[data-path]')]
+    .filter(isEdited)
+    .map((input) => ({ input, message: detailProblem(input) }))
+    .filter((p) => p.message);
+}
+
+function refreshDetailsSave() {
+  const button = $('saveDetailsBtn');
+  if (!button) return;
+  const labels = detailProblems().map((p) => p.input.dataset.label);
+  button.disabled = labels.length > 0;
+  showError($('saveDetailsWhy'), labels.length ? `Save is off until you fix ${joinWords(labels)}.` : '');
+}
+
+const answerRowEdited = (row) => [...row.querySelectorAll('[data-a-answer], [data-a-patterns]')].some(isEdited);
+
+/** What is wrong with one saved-answer row ('' = fine). */
+function answerProblem(row) {
+  const box = row.querySelector('[data-a-answer]');
+  const value = box?.value ?? '';
+  const unanswered = box?.dataset.template !== undefined && !value.trim();
+  if (!unanswered) {
+    const message = validateAnswerText(value)
+      || (row.dataset.answerId === 'years_experience' ? validateYears(value) : '');
+    if (message) return message;
+  }
+  return validatePatterns(splitPatterns(row.querySelector('[data-a-patterns]')?.value));
+}
+
+function setAnswerError(row, message) {
+  showError($(`answer-err-${row.dataset.answerId}`), message);
+  row.querySelector('[data-a-answer]')?.setAttribute('aria-invalid', String(Boolean(message)));
+}
+
+/** Changed answer rows that would be refused, with their messages. */
+function answerProblems({ except = null } = {}) {
+  return [...$('profileBody').querySelectorAll('[data-answer-id]')]
+    .filter((row) => row.dataset.answerId !== except && answerRowEdited(row))
+    .map((row) => ({ row, message: answerProblem(row) }))
+    .filter((p) => p.message);
+}
+
+function refreshAnswersSave() {
+  const button = $('saveAnswersBtn');
+  if (!button) return;
+  const count = answerProblems().length;
+  button.disabled = count > 0;
+  showError($('saveAnswersWhy'), count ? `Save is off until you fix ${count} answer${count === 1 ? '' : 's'}.` : '');
+}
+
+/** After a rebuild: carried-over edits keep their messages, and both Save buttons are re-judged. */
+function rejudgeProfileForm() {
+  for (const { input, message } of detailProblems()) setDetailError(input, message);
+  for (const { row, message } of answerProblems()) setAnswerError(row, message);
+  refreshDetailsSave();
+  refreshAnswersSave();
+}
+
+// Typing never ADDS a message; it only clears one that has been fixed.
+$('profileBody').addEventListener('input', (event) => {
+  const target = event.target;
+  if (target.matches?.('[data-path]')) {
+    if (!detailError(target)?.hidden && !detailProblem(target)) setDetailError(target, '');
+    refreshDetailsSave();
+    return;
+  }
+  const row = target.closest?.('[data-answer-id]');
+  if (row) {
+    const shown = $(`answer-err-${row.dataset.answerId}`);
+    // A refusal from the server is about what was sent; editing that answer is
+    // the fix in progress, so it goes. A local problem goes once it is fixed.
+    if (shown && !shown.hidden && (shown.dataset.server || !answerProblem(row))) {
+      delete shown.dataset.server;
+      setAnswerError(row, '');
+    }
+    refreshAnswersSave();
+  }
+});
+
+// A problem is shown when the person LEAVES the box.
+$('profileBody').addEventListener('focusout', (event) => {
+  const target = event.target;
+  if (target.matches?.('[data-path]')) {
+    if (isEdited(target)) setDetailError(target, detailProblem(target));
+    refreshDetailsSave();
+    return;
+  }
+  const row = target.closest?.('[data-answer-id]');
+  if (row && target.matches?.('[data-a-answer], [data-a-patterns]')) {
+    const shown = $(`answer-err-${row.dataset.answerId}`);
+    if (answerRowEdited(row) && !shown?.dataset.server) setAnswerError(row, answerProblem(row));
+    refreshAnswersSave();
+  }
+});
 
 /**
  * The profile page has three commitments, so it has three save buttons: the
@@ -78,6 +223,7 @@ export async function renderProfile({ keep = true, committed = null } = {}) {
   body.append(renderProfileFields(data.profile));
   body.append(renderSavedAnswers(data.screening));
   restoreForm(body, pending);
+  rejudgeProfileForm();
   renderHealthProfileFlag();
 }
 
@@ -187,12 +333,19 @@ export function renderProfileFields(profile) {
         + `which is what turns an auto-fill run into "blocked".${optionalNote}`
       : `Every required field has a value, typed onto forms exactly as written here.${optionalNote}`)));
 
+  section.append(el('p', { class: 'fineprint muted pf-hint', id: 'pfLegend' },
+    el('span', { class: 'pf-req', 'aria-hidden': 'true', text: '* ' }),
+    'Required by most application forms. Everything else is optional.'));
+
   const grid = el('div', { class: 'pf-grid' });
   for (const field of profile.fields ?? []) {
     const cell = el('div', { class: 'pf-cell' });
+    const errorId = `pf-err-${field.field}`;
     cell.append(el('label', { for: `pf-${field.field}` },
       field.label,
-      field.required ? el('span', { class: 'pf-req', title: 'Required by most application forms', text: ' *' }) : null));
+      field.required
+        ? el('span', { class: 'pf-req', title: 'Required by most application forms', text: ' *' })
+        : el('span', { class: 'opt', text: ' (optional)' })));
     // A value that is still the shipped template text ("Your City") is not the
     // person's answer. It is shown as grey placeholder text in an EMPTY box, so
     // it reads as "fill this in" and is never submitted as if it were theirs.
@@ -203,10 +356,17 @@ export function renderProfileFields(profile) {
       value: template ? '' : (field.value ?? ''),
       placeholder: template ? field.value : null,
       'data-template': template ? '' : null,
+      // What the field rules above need: its name in messages, whether it is
+      // required, and which format check applies.
+      'data-label': field.label,
+      'data-required': field.required ? '' : null,
+      'data-kind': field.field,
+      'aria-describedby': errorId,
       // type=email/tel would let the browser block a save with its own bubble,
-      // which hides the server's specific reason. Validation lives on the server.
+      // which hides the specific message under the box. The rules live here and on the server.
       inputmode: field.type === 'tel' ? 'tel' : null,
     }));
+    cell.append(el('p', { class: 'field-error', id: errorId, hidden: true }));
     if (field.hint) cell.append(el('div', { class: 'faint fineprint', text: field.hint }));
     grid.append(cell);
   }
@@ -214,8 +374,12 @@ export function renderProfileFields(profile) {
   // dialogs use (see the document 'submit' listener).
   const form = el('form', { class: 'pf-form', 'data-submit': 'save-profile', novalidate: true });
   form.append(grid, el('div', { class: 'row-gap' },
-    el('button', { type: 'submit', class: 'small primary', text: 'Save details' }),
-    el('span', { class: 'faint fineprint', text: profile.path ?? '' })));
+    el('button', {
+      type: 'submit', class: 'small primary', id: 'saveDetailsBtn', text: 'Save details',
+      'aria-describedby': 'saveDetailsWhy', title: 'Save (Ctrl or ⌘ + Enter)',
+    }),
+    el('span', { class: 'fineprint muted pf-why', id: 'saveDetailsWhy', 'aria-live': 'polite', hidden: true }),
+    el('span', { class: 'faint fineprint pf-path', text: profile.path ?? '' })));
   // Enter in a box must not save half-finished work; Ctrl/Cmd+Enter does.
   saveOnlyOnPurpose(form);
   section.append(form);
@@ -285,6 +449,7 @@ export function renderSavedAnswers(screening) {
       value: (entry.patterns ?? []).join(' | '),
     }));
     row.append(el('label', { text: 'Answer', for: answerId }));
+    if (ANSWER_HINTS[entry.id]) row.append(el('p', { class: 'fineprint muted pf-hint', text: ANSWER_HINTS[entry.id] }));
     // `text`, not `.value =`: it sets the textarea's DEFAULT value, which is how
     // the browser (and forms.js) tells "as rendered" from "edited since".
     // Template text ("YOUR total years…") is not an answer: it is shown as grey
@@ -292,9 +457,10 @@ export function renderSavedAnswers(screening) {
     // so an untouched box can be saved back exactly as it was stored.
     const template = entry.placeholder === true;
     row.append(el('textarea', {
-      rows: '2', id: answerId, 'data-a-answer': entry.id,
+      rows: '2', id: answerId, 'data-a-answer': entry.id, 'aria-describedby': `answer-err-${entry.id}`,
       ...(template ? { placeholder: entry.answer ?? '', 'data-template': entry.answer ?? '' } : { text: entry.answer ?? '' }),
     }));
+    row.append(el('p', { class: 'field-error', id: `answer-err-${entry.id}`, hidden: true }));
     row.append(el('button', {
       type: 'button', class: 'small ghost', 'data-action': 'delete-answer', 'data-id': entry.id,
       text: '✕ Delete this answer',
@@ -302,8 +468,12 @@ export function renderSavedAnswers(screening) {
     wrap.append(row);
   }
   wrap.append(el('div', { class: 'row-gap' },
-    el('button', { type: 'button', class: 'small primary', 'data-action': 'save-answers', text: 'Save all answers' }),
-    el('span', { class: 'faint fineprint', text: screening.path ?? '' })));
+    el('button', {
+      type: 'button', class: 'small primary', 'data-action': 'save-answers', id: 'saveAnswersBtn',
+      'aria-describedby': 'saveAnswersWhy', text: 'Save all answers',
+    }),
+    el('span', { class: 'fineprint muted pf-why', id: 'saveAnswersWhy', 'aria-live': 'polite', hidden: true }),
+    el('span', { class: 'faint fineprint pf-path', text: screening.path ?? '' })));
   section.append(wrap);
   return section;
 }
@@ -312,6 +482,15 @@ export function renderSavedAnswers(screening) {
 export const splitPatterns = (value) => String(value ?? '').split('|').map((p) => p.trim()).filter(Boolean);
 
 export async function saveProfileDetails() {
+  // Save is off while a changed box would be refused, but Ctrl+Enter or a stray
+  // submit can still land here: say what is wrong and put the cursor on it.
+  const problems = detailProblems();
+  if (problems.length) {
+    for (const { input, message } of problems) setDetailError(input, message);
+    problems[0].input.focus();
+    refreshDetailsSave();
+    return;
+  }
   const values = {};
   for (const input of $('profileBody').querySelectorAll('[data-path]')) {
     // Still showing its template placeholder and never typed in: not the
@@ -321,8 +500,9 @@ export async function saveProfileDetails() {
   }
   profileMessage('Saving…');
   try {
-    const result = await postJson('/api/profile', { values });
-    profileMessage(result.warning ?? '', result.warning ? 'st-blocked' : 'muted');
+    const result = await withLabel($('saveDetailsBtn'), 'Saving…', () => postJson('/api/profile', { values }));
+    profileMessage(result.warning ?? (result.changed.length ? 'Saved.' : 'No changes to save.'),
+      result.warning ? 'st-blocked' : 'muted');
     toast(result.changed.length
       ? `Saved — ${result.changed.length} field(s) changed. New applications use these values.`
       : 'No changes to save.', 'good');
@@ -362,6 +542,16 @@ export async function setQuestionStatus(key, status) {
 
 export async function saveAllAnswers({ removeId = null } = {}) {
   const body = $('profileBody');
+  // Every row is sent (the save replaces the whole list), so a changed row that
+  // would be refused blocks the save, a delete included: say which, and go there.
+  const problems = answerProblems({ except: removeId });
+  if (problems.length) {
+    for (const { row, message } of problems) setAnswerError(row, message);
+    problems[0].row.querySelector('[data-a-answer]')?.focus();
+    refreshAnswersSave();
+    profileMessage(removeId ? 'Fix the highlighted answer first; nothing was deleted.' : '', removeId ? 'st-blocked' : 'muted');
+    return;
+  }
   const answers = [];
   for (const row of body.querySelectorAll('[data-answer-id]')) {
     const id = row.dataset.answerId;
@@ -382,17 +572,31 @@ export async function saveAllAnswers({ removeId = null } = {}) {
   }
   profileMessage('Saving…');
   try {
-    const result = await postJson('/api/profile/answers', {
+    const result = await withLabel($('saveAnswersBtn'), 'Saving…', () => postJson('/api/profile/answers', {
       defaults: state.profile?.screening?.defaults ?? {},
       answers,
-    });
-    profileMessage(result.warning ?? '', result.warning ? 'st-blocked' : 'muted');
-    toast(removeId ? `Deleted "${removeId}".` : `Saved ${result.count} answer(s).`, 'good');
+    }));
+    const done = removeId ? `Deleted "${removeId}".` : `Saved ${result.count} answer(s).`;
+    profileMessage(result.warning ?? done, result.warning ? 'st-blocked' : 'muted');
+    toast(done, 'good');
     // Every answer row was just written, so those take the stored value; an
     // unsaved details edit or queued-question answer is still the person's.
     await renderProfile({ committed: '[data-a-answer], [data-a-patterns]' });
   } catch (err) {
-    profileMessage(err.message, 'st-blocked');
+    // The server names the answer it refused (`answer "<id>": why`). Put the
+    // reason ON that answer, keep what was typed, and move the cursor there.
+    const refused = parseAnswerError(err.message);
+    const row = refused && body.querySelector(`[data-answer-id="${cssEscape(refused.id)}"]`);
+    if (row) {
+      setAnswerError(row, refused.text);
+      const shown = $(`answer-err-${row.dataset.answerId}`);
+      if (shown) shown.dataset.server = '1';
+      row.closest('details')?.setAttribute('open', '');
+      row.querySelector('[data-a-answer]')?.focus();
+      profileMessage(`Not saved: the "${refused.id}" answer needs a change (see the message on it).`, 'st-blocked');
+    } else {
+      profileMessage(err.message, 'st-blocked');
+    }
   }
 }
 
