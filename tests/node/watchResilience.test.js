@@ -124,7 +124,7 @@ describe('new-match notifications', () => {
     const sink = createDesktopSink({ platform: 'linux', spawnImpl, fallback });
     const event = { level: 'action_required', title: 'T "x"; rm -rf /', message: 'M', at: 'now' };
     sink(event);
-    expect(spawnImpl).toHaveBeenCalledWith('notify-send', ['--app-name=Job Agent', 'T "x"; rm -rf /', 'M'], expect.any(Object));
+    expect(spawnImpl).toHaveBeenCalledWith('notify-send', ['--app-name=Job Agent', '--', 'T "x"; rm -rf /', 'M'], expect.any(Object));
     child.emit('error', new Error('ENOENT'));
     expect(fallback).toHaveBeenCalledWith(event);
   });

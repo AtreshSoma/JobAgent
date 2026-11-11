@@ -111,7 +111,9 @@ export function createDesktopSink({
         '-e', 'end run', title, message];
     } else if (platform === 'linux' || platform === 'freebsd' || platform === 'openbsd') {
       cmd = 'notify-send';
-      args = ['--app-name=Job Agent', title, message];
+      // `--` ends option parsing: a job title such as "-u critical" (scraped
+      // text) must be shown, never read as a notify-send flag.
+      args = ['--app-name=Job Agent', '--', title, message];
     }
     if (!cmd) {
       fallback(event);
