@@ -99,6 +99,7 @@ import { reconcileStalePackets } from '../apply/packetHygiene.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
 import { writeUserSettings } from '../config/userSettings.js';
+import { isPlaceholderValue } from '../config/placeholders.js';
 import { runEnrichment } from '../search/enrich.js';
 import { dataQualitySummary, freshnessSummary } from './dataQuality.js';
 import {
@@ -721,8 +722,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     const questions = summarizeQuestionQueue(root);
     return {
       available: true,
-      profile,
-      screening,
+      // `placeholder` marks a value that is still the shipped TEMPLATE text, not
+      // something the person wrote. The page shows it as grey placeholder text in
+      // an empty box, so it can never be mistaken for (or sent as) their answer.
+      profile: { ...profile, fields: profile.fields.map((f) => ({ ...f, placeholder: isPlaceholderValue(f.value) })) },
+      screening: { ...screening, answers: screening.answers.map((a) => ({ ...a, placeholder: isPlaceholderValue(a.answer) })) },
       questions: {
         ...questions,
         // Suggested id/patterns are computed here, so the browser never has to

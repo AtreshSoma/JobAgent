@@ -20,7 +20,7 @@ export const CHANGELOG_GROUPS = Object.freeze([
 export const CHANGELOG = Object.freeze([
   {
     date: '2026-11-10',
-    summary: 'Share the jobs you are looking at as a neat email.',
+    summary: 'Share the jobs you are looking at as a neat email, and profile forms that never lose what you type.',
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       new: [
@@ -29,9 +29,17 @@ export const CHANGELOG = Object.freeze([
         'Also in Activity, under Reports and exports: Email these jobs.',
       ],
       improved: [
+        'Edit profile and Add profile mark what is required, keep Save off until it can work, and say why right next to the button.',
+        'A problem with a field, such as a missing name, an email or phone number that looks wrong, or years of experience that are not a number, shows when you leave the box, not while you are still typing.',
+        'When an answer is refused, for example because it contradicts your sponsorship setting, the reason appears on that answer and what you typed is kept.',
+        'Example text such as "Your City" now shows as a grey hint in an empty box, instead of looking like your real answer.',
+        'On Mac and Linux, the start script switches to the right version of Node through nvm when it can.',
         'Security updates for the tools JobAgent is built on, so a fresh install reports no known vulnerabilities.',
       ],
       fixed: [
+        'Saving one part of Edit profile no longer wipes what you typed in the other parts.',
+        'Clicking outside a window, or pressing Esc, Close or Cancel, now asks before throwing away what you typed.',
+        'Pressing Enter in a field no longer saves and closes the window by accident. Press Ctrl or ⌘ + Enter to save from the keyboard.',
         'On Linux, a desktop alert for a job whose title starts with a dash now shows that title instead of failing.',
       ],
     },
