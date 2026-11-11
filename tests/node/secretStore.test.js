@@ -10,7 +10,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { BACKENDS, createSecretStore } from '../../src/utils/secretStore.js';
+import { BACKENDS, createSecretStore, windowsPowerShellEnv } from '../../src/utils/secretStore.js';
 
 let root;
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'secrets-')); });
@@ -69,6 +69,14 @@ describe('OS backends never put the secret in the arguments', () => {
     expect(calls[0].args.join(' ')).not.toContain('plain-secret');
     expect(calls[0].input).toBe('plain-secret');
     expect(readFileSync(join(root, 'data', 'secrets', 'INBOX_PASSWORD.dpapi'), 'utf8')).toBe('01000000d08c9ddf-protected');
+  });
+
+  it('dpapi: Windows PowerShell starts without an inherited PowerShell 7 module path', () => {
+    const calls = [];
+    const execImpl = (cmd, args, opts) => { calls.push(opts); return { status: 0, stdout: 'blob', stderr: '' }; };
+    BACKENDS.dpapi.set('INBOX_PASSWORD', 'x', { root, execImpl });
+    expect(Object.keys(calls[0].env).some((k) => k.toUpperCase() === 'PSMODULEPATH')).toBe(false);
+    expect(windowsPowerShellEnv({ PSModulePath: 'C:\\pwsh7\\Modules', Path: 'C:\\Windows' })).toEqual({ Path: 'C:\\Windows' });
   });
 
   it('secret-tool: the secret travels on stdin', () => {

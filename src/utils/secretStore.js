@@ -28,9 +28,23 @@ function checkName(name) {
   if (!NAME_RE.test(String(name))) throw new Error(`invalid secret name "${name}" (use UPPER_SNAKE_CASE)`);
 }
 
+/**
+ * The environment for Windows PowerShell 5.1 (`powershell.exe`). Started from
+ * PowerShell 7 (as GitHub's Windows runners and many terminals do), it
+ * inherits PowerShell 7's PSModulePath, then fails to load its own
+ * Microsoft.PowerShell.Security module ("ConvertTo-SecureString ... the module
+ * could not be loaded"). Without the variable it builds its default path.
+ */
+export function windowsPowerShellEnv(env = process.env) {
+  const out = { ...env };
+  for (const key of Object.keys(out)) if (key.toUpperCase() === 'PSMODULEPATH') delete out[key];
+  return out;
+}
+
 /** Run a program with input on stdin; never pass secrets as arguments. */
 function run(cmd, args, input, execImpl = spawnSync) {
-  const r = execImpl(cmd, args, { input, encoding: 'utf8', windowsHide: true, timeout: 15_000 });
+  const env = cmd === 'powershell' ? windowsPowerShellEnv() : process.env;
+  const r = execImpl(cmd, args, { input, encoding: 'utf8', windowsHide: true, timeout: 15_000, env });
   return { status: r.status, stdout: String(r.stdout ?? ''), stderr: String(r.stderr ?? ''), error: r.error ?? null };
 }
 

@@ -52,6 +52,13 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+      # Some Node tests drive the real Python tailor (python-docx): rewrites,
+      # cover-letter .docx, document versions, the Chromium PDF path.
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
       - run: npm ci
 
       - name: Resolve Playwright version
