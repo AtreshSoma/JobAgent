@@ -43,6 +43,7 @@ import {
 import { findPlaceholders } from '../config/placeholders.js';
 import { csvCell } from '../reports/csv.js';
 import { masterResumeFile, workspacePaths } from '../profile/workspace.js';
+import { letterModeFor } from '../apply/letterMode.js';
 
 // The status vocabulary and the pure per-row rules moved to src/domain so the
 // tracker, reports and CLI can use them without importing this whole data
@@ -1657,6 +1658,7 @@ export function jobDetail(db, jobId, deps = {}) {
         coverLetterGenerated: Boolean(full.coverLetterGenerated),
         coverLetterGrounding: full.coverLetterGrounding ?? null,
         coverLetterDocxPath: full.coverLetterDocxPath ?? null,
+        letterMode: letterModeFor(db, jobId),
       };
     } catch (err) {
       packet = { error: `packet unreadable: ${err.message}` };

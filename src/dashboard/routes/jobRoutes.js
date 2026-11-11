@@ -17,6 +17,7 @@ import { NOT_HANDLED } from './notHandled.js';
 import { decideRewrites, latestRewrites, proposeRewrites, refineRewrites, rewriteSettings } from '../../resume/rewrites.js';
 import { APPROVAL_STATUS } from '../../apply/approvalQueue.js';
 import { freezeVersions, readManifest, restoreVersion, versionText } from '../../apply/documentVersions.js';
+import { setLetterMode } from '../../apply/letterMode.js';
 
 export async function handleJobRoutes(ctx, req, res, { url, path }) {
 
@@ -226,6 +227,11 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
         needsReapproval = true;
       }
       return sendJson(res, 200, { record, changed, needsReapproval });
+    }
+    // The cover-letter choice for this job (template instead of grounded).
+    if (req.method === 'POST' && action === 'letter-mode') {
+      const body = await readBody(req);
+      return sendJson(res, 200, setLetterMode(ctx.db, jobId, String(body.mode ?? '')));
     }
     if (req.method === 'POST' && action === 'note') {
       const body = await readBody(req);

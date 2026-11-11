@@ -45,11 +45,13 @@ export const CHANGELOG = Object.freeze([
         'The same job advertised for two different teams is no longer merged into one; the same role in many cities still is.',
         'Light theme colours, tables and dialogs pass an accessibility check, and the Changelog can be scrolled with the keyboard.',
         'Passwords such as the inbox app password can be kept in your system keychain instead of .env (npm run secret).',
+        'With cover letters written from your resume, any one job can use your own template instead: Use my template for this job instead, in its packet.',
       ],
       fixed: [
         'Auto-submit is refused on any application system that has not had a supervised live run recorded, even though it passed every saved-page test.',
         'The support matrix said Oracle Recruiting found nothing and that Adzuna was on by default; both are now correct.',
         'A copy of the job store is taken before any database upgrade, so an upgrade can be undone.',
+        'On Windows, saving a password failed when JobAgent was started from PowerShell 7.',
       ],
     },
   },

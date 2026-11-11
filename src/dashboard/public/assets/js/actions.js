@@ -233,6 +233,19 @@ export const ACTIONS = {
   'export-jobs': () => download('/api/export/jobs.csv', 'jobagent_jobs.csv'),
   'export-tracker': () => download('/api/export/tracker.csv', 'job_tracker.csv'),
   'export-calendar': () => download('/api/calendar.ics', 'jobagent-follow-ups.ics'),
+  // The cover-letter choice for one job (template instead of grounded).
+  'letter-mode': async (target) => {
+    await postJson(`/api/jobs/${encodeURIComponent(target.dataset.id)}/letter-mode`, { mode: target.dataset.mode });
+    toast(target.dataset.mode === 'template'
+      ? 'This job will use your template. Prepare it again to rebuild the letter.'
+      : 'This job will have its letter written from your resume again when it is prepared.');
+    // The detail rail never redraws a section that holds focus (so typing is
+    // never lost); this button does, so step out, redraw, then put focus on
+    // the button that replaced it.
+    target.blur();
+    await loadDetail(target.dataset.id);
+    document.querySelector('.cl-grounding [data-action="letter-mode"]')?.focus();
+  },
   'open-email-jobs': () => openEmailJobs(),
   'email-copy': () => copyEmail(),
   'email-open': () => openInMailApp(),
@@ -352,7 +365,7 @@ export const BUSY_ACTIONS = new Set([
   'restore-master', 'save-profile', 'save-question-answer', 'dismiss-question',
   'save-answers', 'delete-answer', 'backup-now',
   'propose-rewrites', 'rewrite-accept', 'rewrite-reject', 'rewrite-accept-all', 'refine-rewrites',
-  'compare-versions', 'restore-version', 'inbox-sync', 'inbox-record', 'inbox-dismiss', 'inbox-draft', 'run-rerank', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',
+  'compare-versions', 'restore-version', 'letter-mode', 'inbox-sync', 'inbox-record', 'inbox-dismiss', 'inbox-draft', 'run-rerank', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',
   'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare',
   'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',

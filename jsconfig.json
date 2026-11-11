@@ -32,5 +32,6 @@
     "src/inbox/match.js",
     "src/resume/claimVerifier.js",
     "src/llm/task.js",
-    "src/apply/liveVerification.js"]
+    "src/apply/liveVerification.js",
+    "src/apply/letterMode.js"]
 }

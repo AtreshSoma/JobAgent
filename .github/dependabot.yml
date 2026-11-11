@@ -16,6 +16,13 @@ updates:
       npm-minor-and-patch:
         update-types: [minor, patch]
         exclude-patterns: ['playwright', 'playwright-core', '@playwright/*']
+    # Major versions of other tools (TypeScript, vitest, ...) still arrive as
+    # their own PRs, to be reviewed one at a time.
+    ignore:
+      # Types must match the Node line JobAgent supports (package.json
+      # engines: Node 22), not the newest Node.
+      - dependency-name: '@types/node'
+        update-types: ['version-update:semver-major']
   - package-ecosystem: pip
     directory: /
     schedule:
@@ -25,6 +32,10 @@ updates:
     groups:
       pip-minor-and-patch:
         update-types: [minor, patch]
+    ignore:
+      # Only the optional connectivity probe (scripts/llm-check.py) uses it;
+      # raising its minimum version changes nothing for anyone.
+      - dependency-name: 'openai'
   - package-ecosystem: github-actions
     directory: /
     schedule:

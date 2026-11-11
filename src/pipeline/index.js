@@ -50,6 +50,7 @@ import { buildJobPaths } from '../utils/outputPaths.js';
 import { keywordsForJob, tailorResumeForJob, writeLetterDocx } from '../resume/tailorRunner.js';
 import { composeGroundedLetter, letterSettings } from '../apply/groundedLetter.js';
 import { recordVersion } from '../apply/documentVersions.js';
+import { letterModeFor } from '../apply/letterMode.js';
 import { acceptedRewritesFor } from '../resume/rewrites.js';
 import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '../lifecycle.js';
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
@@ -851,7 +852,8 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
   // goes through the same greeting, closing, humanizer and checks.
   let grounded = null;
   const env = deps.env ?? process.env;
-  if (letterSettings(env, { root: config.root }).enabled) {
+  const templateChosen = db ? letterModeFor(db, job.id) === 'template' : false;
+  if (letterSettings(env, { root: config.root }).enabled && !templateChosen) {
     try {
       grounded = await (deps.composeGroundedLetterFn ?? composeGroundedLetter)({
         job, config, requirements: keywordsForJob(score), env, deps,
@@ -870,7 +872,7 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     cover.grounding = grounded?.ok
       ? { mode: 'grounded', task: grounded.provenance?.task ?? null, model: grounded.provenance?.model ?? null,
         paragraphs: grounded.paragraphs, dropped: grounded.dropped ?? [] }
-      : { mode: 'template', fallbackReason: grounded ? grounded.reason : null, dropped: grounded?.dropped ?? [] };
+      : { mode: 'template', fallbackReason: templateChosen ? 'you chose your template for this job' : (grounded ? grounded.reason : null), dropped: grounded?.dropped ?? [] };
   }
   let coverLetterPath = null;
   if (cover.generated) {

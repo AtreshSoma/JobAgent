@@ -388,7 +388,7 @@ export function detailSections(job) {
     out.push(railSection('assist', el('h3', { text: 'Last assisted fill' }), box));
   }
 
-  if (job.packet) out.push(railSection('packet', packetSection(job.packet)));
+  if (job.packet) out.push(railSection('packet', packetSection(job.packet, job.id)));
 
   // job id (for the browser extension)
   const idRow = el('div', { class: 'row-gap' });
@@ -977,7 +977,7 @@ export function resumeCard(job) {
   return card;
 }
 
-export function packetSection(packet) {
+export function packetSection(packet, jobId = null) {
   const wrap = el('div');
   if (packet.error) {
     wrap.append(el('h3', { text: 'Application packet' }));
@@ -990,7 +990,7 @@ export function packetSection(packet) {
   guarantee.append(`Stops before submit: ${packet.stopBeforeSubmit ? 'yes' : 'NO — report this'} · `);
   guarantee.append(`submit-ready flag: ${packet.submitReady ? 'YES — report this' : 'no'}`);
   wrap.append(guarantee);
-  const letter = coverLetterSection(packet);
+  const letter = coverLetterSection(packet, jobId);
   if (letter) wrap.append(letter);
 
   if (packet.tailoring?.changes?.length || packet.tailoring?.gaps?.length) {
@@ -1104,7 +1104,7 @@ export function resumeChangeLabel(change = {}) {
 }
 
 /** How the cover letter was written (P1-3): template, or grounded in the resume. */
-export function coverLetterSection(packet) {
+export function coverLetterSection(packet, jobId = null) {
   const grounding = packet.coverLetterGrounding;
   if (!packet.coverLetterGenerated || !grounding) return null;
   const wrap = el('div', { class: 'cl-grounding' });
@@ -1126,6 +1126,16 @@ export function coverLetterSection(packet) {
   }
   if (packet.coverLetterDocxPath) {
     wrap.append(el('p', { class: 'faint', text: `Also saved as a Word document: ${String(packet.coverLetterDocxPath).split(/[\\/]/).pop()}` }));
+  }
+  // "Use template instead" for this job: takes effect when the application is
+  // prepared again, which also sends an approved packet back to review.
+  if (jobId && packet.letterMode === 'template') {
+    wrap.append(el('p', { class: 'cl-choice', role: 'status', text: grounding.mode === 'grounded'
+      ? 'You chose your own template for this job. Prepare this application again to rebuild the letter.'
+      : 'You chose your own template for this job.' }));
+    wrap.append(el('button', { type: 'button', class: 'small ghost', 'data-action': 'letter-mode', 'data-id': jobId, 'data-mode': 'default', text: 'Write it from my resume again' }));
+  } else if (jobId && grounding.mode === 'grounded') {
+    wrap.append(el('button', { type: 'button', class: 'small ghost', 'data-action': 'letter-mode', 'data-id': jobId, 'data-mode': 'template', text: 'Use my template for this job instead' }));
   }
   return wrap;
 }
