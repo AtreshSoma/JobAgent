@@ -422,7 +422,12 @@ describe('Edit profile: clear rules, specific messages, honest save states', { t
         expect(await text(page, '#personNameError')).toBe('Enter a first and last name.');
         expect(await page.locator('#personName').getAttribute('aria-invalid')).toBe('true');
 
-        await page.locator('#personName').pressSequentially(' Morgan');
+        // Back in the box, the caret is NOT where typing stopped: refocusing puts it at the start,
+        // so typing straight away would make " MorganAl". Move to the end, as a person would.
+        await page.locator('#personName').focus();
+        await page.keyboard.press('End');
+        await page.keyboard.type(' Morgan');
+        expect(await page.locator('#personName').inputValue()).toBe('Al Morgan');
         expect(await visible(page, '#personNameError')).toBe(false); // fixed: cleared at once
 
         await page.locator('#personEmail').pressSequentially('alex@');
