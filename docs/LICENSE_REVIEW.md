@@ -37,8 +37,8 @@ unattributed code copied before this review or waive another author's rights.
 | Declared dependency | Version constraint | Declared license |
 | --- | --- | --- |
 | python-docx | 1.1.2 | MIT |
-| pytest | 8.3.3 | MIT |
-| python-dotenv | 1.0.1 | BSD-3-Clause |
+| pytest | 9.0.3 | MIT |
+| python-dotenv | 1.2.2 | BSD-3-Clause |
 | docx2pdf | 0.1.8 | MIT |
 | openai (optional probe) | >=1.40.0 | Apache-2.0 |
 
