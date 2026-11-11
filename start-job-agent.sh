@@ -20,11 +20,14 @@ node_ok() {
 if ! node_ok; then
   NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   if [ -s "$NVM_DIR/nvm.sh" ]; then
-    set +u  # nvm.sh reads unset variables
+    # nvm.sh is not written for `set -eu`: it reads unset variables, and a
+    # command failing inside it would end this script silently, before the
+    # clear "requires Node 22.13" message below. Relax both while it runs.
+    set +eu
     # shellcheck disable=SC1091
-    . "$NVM_DIR/nvm.sh" --no-use
-    nvm use --silent >/dev/null 2>&1 || true  # no-op if that version is not installed
-    set -u
+    . "$NVM_DIR/nvm.sh" --no-use >/dev/null 2>&1
+    nvm use --silent >/dev/null 2>&1  # no-op if that version is not installed
+    set -eu
   fi
 fi
 
