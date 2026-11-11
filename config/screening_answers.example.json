@@ -1,0 +1,102 @@
+{
+  "_note": "TEMPLATE \u2014 copy to config/screening_answers.json and fill in YOUR truthful answers. screening_answers.json is gitignored because it contains personal data (salary, EEO, authorization). If no high-confidence match exists, the system PAUSES and asks the user. Never answer 'no sponsorship required' unless it is true. All answers must be truthful.",
+  "defaults": {
+    "unknownAction": "ask_user",
+    "salaryFallback": "Open / Negotiable"
+  },
+  "answers": [
+    {
+      "id": "years_experience",
+      "patterns": [
+        "years of experience",
+        "how many years",
+        "total experience"
+      ],
+      "answer": "YOUR total years of professional experience.",
+      "type": "text"
+    },
+    {
+      "id": "work_authorization",
+      "patterns": [
+        "work authorization",
+        "authorized to work",
+        "legally authorized",
+        "right to work"
+      ],
+      "answer": "YOUR truthful authorization status.",
+      "type": "text"
+    },
+    {
+      "id": "require_sponsorship",
+      "patterns": [
+        "require sponsorship",
+        "need sponsorship",
+        "visa sponsorship",
+        "will you require",
+        "now or in the future require sponsorship",
+        "sponsor you for a visa",
+        "need an employer to sponsor",
+        "employer to sponsor you",
+        "require an employer to sponsor",
+        "sponsorship to work",
+        "sponsor you for an immigration",
+        "need visa sponsorship"
+      ],
+      "answer": "YOUR truthful sponsorship answer \u2014 state whether you need visa sponsorship now or in the future.",
+      "type": "text"
+    },
+    {
+      "id": "salary_expectation",
+      "patterns": [
+        "salary expectation",
+        "salary expectations",
+        "desired salary",
+        "compensation expectation",
+        "compensation expectations",
+        "expected compensation",
+        "desired compensation",
+        "expected pay",
+        "expected salary",
+        "salary requirement",
+        "salary requirements",
+        "pay expectation",
+        "pay expectations",
+        "base salary expectation",
+        "what salary"
+      ],
+      "answer": "YOUR salary expectation, or the range you would accept.",
+      "type": "text"
+    },
+    {
+      "id": "start_date",
+      "patterns": [
+        "start date",
+        "when can you start",
+        "availability to start",
+        "notice period"
+      ],
+      "answer": "YOUR availability, e.g. how much notice you need.",
+      "type": "text"
+    },
+    {
+      "id": "relocation",
+      "patterns": [
+        "willing to relocate",
+        "open to relocation",
+        "relocate for this role"
+      ],
+      "answer": "Yes, open to relocation within the United States.",
+      "type": "text"
+    },
+    {
+      "id": "background_check",
+      "patterns": [
+        "background check",
+        "consent to background",
+        "drug screen"
+      ],
+      "answer": "Yes, willing to complete a standard background check.",
+      "type": "boolean_yes"
+    }
+  ]
+}

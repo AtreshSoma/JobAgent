@@ -1,0 +1,1106 @@
+<!doctype html>
+<!-- No `data-theme` here on purpose. Hardcoding it meant a light-mode machine
+     was served the dark palette until the user found the toggle. The attribute
+     now appears only when the user has actually CHOSEN a theme; until then the
+     stylesheet follows prefers-color-scheme. Resolving it in CSS rather than in
+     boot JS also means there is no dark-to-light flash — and the page's CSP is
+     `script-src 'self'`, so an inline theme script is not available anyway. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JobAgent Dashboard</title>
+<meta name="description" content="Local-first job discovery, scoring and application triage. Runs on your machine; nothing is submitted without your review.">
+<meta name="color-scheme" content="dark light">
+<!-- Favicon as an inline SVG data URI, not a file request.
+     The dashboard is local-first and must work with no network at all, and the
+     page's CSP allows `img-src 'self' data:` — so the mark ships in the markup
+     rather than as an asset that could 404 or be fetched remotely. It is the
+     same gradient as the header's brand chip (--sig-a/-b/-c), so the tab and
+     the app read as one thing. A blank tab icon was the last obviously
+     unfinished edge of the UI. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2064%2064%22%3E%3Cdefs%3E%3ClinearGradient%20id=%22g%22%20x1=%220%22%20y1=%220%22%20x2=%221%22%20y2=%221%22%3E%3Cstop%20offset=%220%22%20stop-color=%22#4d9fff%22/%3E%3Cstop%20offset=%2255%25%22%20stop-color=%22#7cc7ff%22/%3E%3Cstop%20offset=%22100%25%22%20stop-color=%22#3ecf8e%22/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width=%2264%22%20height=%2264%22%20rx=%2215%22%20fill=%22url(#g)%22/%3E%3Cpath%20d=%22M20%2044%20L32%2018%20L44%2044%22%20fill=%22none%22%20stroke=%22#05121f%22%20stroke-width=%227%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/css/app.css">
+</head>
+<body>
+
+<!-- Without this, reaching the work by keyboard means tabbing past the whole
+     header, eight tabs, a health strip and thirteen filter controls — on every
+     page load. It targets the main element because the landing view is now Today, not
+     the board. -->
+<a class="skip-link" href="#main">Skip to main content</a>
+
+<div id="offline" role="alert">
+  ⚠ Lost connection to the dashboard server, it may have stopped.
+  Restart it with <code>npm run dashboard</code>, then
+  <button class="small" data-action="reload">Reload</button>
+</div>
+
+<!-- The header answers two questions only: where is the work (the stage tabs,
+     read left to right as the pipeline runs) and what can I start (one primary
+     button, everything else in its menu). Everything that REPORTS state (the
+     connection, a run in progress, the pipeline's health) lives in the status
+     row beneath, so it can never squeeze the header's actions. -->
+<header class="topbar">
+  <h1 class="brand"><span class="mark" aria-hidden="true"></span>JobAgent</h1>
+
+  <!-- THREE PLACES, NOT ELEVEN. The header used to carry the view switch AND
+       all eight stage tabs, which wrapped onto a second line below ~1500px and
+       scrolled sideways on a phone. The stage tabs now live inside the view
+       they scope: discovery stages under Jobs, application stages under
+       Applications. -->
+  <nav class="stages" aria-label="Primary">
+    <div class="viewswitch" role="group" aria-label="View">
+      <button type="button" data-action="set-view" data-view="today" aria-pressed="true">Today
+        <span class="badge" id="todayCount" hidden></span></button>
+      <button type="button" data-action="set-view" data-view="board" aria-pressed="false">Jobs</button>
+      <button type="button" data-action="set-view" data-view="applications" aria-pressed="false">Applications
+        <span class="badge" id="appsCount" hidden></span></button>
+    </div>
+  </nav>
+
+  <!-- Utilities, then the one primary action at the far right.
+       The header menu used to be ONE list of twenty items: run actions,
+       résumé files, reports, exports and settings in a single column, so
+       finding "Run history" meant reading past "Master resume". It is now
+       three menus, each answering one question:
+         Find jobs ▾   what can I START
+         Activity      what HAPPENED (runs, data quality, health, reports)
+         Profile       what the agent knows about ME (résumé, answers, prefs)
+       and the theme is a one-click toggle instead of the twentieth item. -->
+  <div class="actions-group">
+    <button type="button" class="iconbtn theme-toggle" data-action="toggle-theme"
+      aria-label="Switch to light theme" title="Switch to light theme">
+      <svg class="ic-sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg>
+      <svg class="ic-moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+    </button>
+
+    <span class="menu utilmenu">
+      <button type="button" class="iconbtn" data-action="toggle-activity-menu" aria-haspopup="true"
+        aria-expanded="false" aria-controls="activityMenu"
+        aria-label="Activity, data quality and reports" title="Activity, data quality and reports">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></svg>
+      </button>
+      <div class="menu-pop" id="activityMenu" role="menu" aria-label="Activity, data quality and reports">
+        <div class="menu-label" role="presentation">Activity</div>
+        <button role="menuitem" data-action="open-runs">Run history</button>
+        <button role="menuitem" data-action="open-data-quality"
+          title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Discovery and data quality</button>
+        <button role="menuitem" data-action="open-health">System health</button>
+        <hr role="separator">
+        <div class="menu-label" role="presentation">Reports and exports</div>
+        <button role="menuitem" data-action="open-reports">View reports</button>
+        <button role="menuitem" data-action="export-jobs">Export all jobs and scores (CSV)</button>
+        <button role="menuitem" data-action="export-tracker">Export application tracker (CSV)</button>
+      </div>
+    </span>
+
+    <span class="menu utilmenu">
+      <button type="button" class="iconbtn" data-action="toggle-account-menu" aria-haspopup="true"
+        aria-expanded="false" aria-controls="accountMenu"
+        aria-label="Profile, resume and preferences" title="Profile, resume and preferences">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="8.5" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
+        <!-- The active person's initials, once known (profiles.js): who the
+             dashboard is searching as, visible from every screen. -->
+        <span class="avatar" id="profileAvatar" aria-hidden="true" hidden></span>
+      </button>
+      <div class="menu-pop" id="accountMenu" role="menu" aria-label="Profile, resume and preferences">
+        <!-- Switching people, one click from anywhere. Filled by profiles.js
+             and shown only when more than one profile is saved. -->
+        <div class="menu-label" role="presentation" id="profileMenuLabel" hidden>Searching as</div>
+        <div id="profileMenuItems" role="group" aria-labelledby="profileMenuLabel"></div>
+        <button role="menuitem" class="pf-add-item" data-action="open-add-profile"
+          title="Add another person's job search. Each person gets their own jobs, resume and applications.">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>
+          Add profile…
+        </button>
+        <!-- Its pair. Shown once there is someone besides the active person to
+             remove; the dialog it opens says what happens to their files. -->
+        <button role="menuitem" class="pf-remove-item" data-action="open-remove-profile" hidden
+          title="Remove a person's job search from this computer. Nothing is erased: their files are kept.">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg>
+          Remove profile…
+        </button>
+        <hr role="separator" id="profileMenuSep">
+        <div class="menu-label" role="presentation">Your materials</div>
+        <button role="menuitem" data-action="open-master"
+          title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>
+        <button role="menuitem" data-action="open-profile"
+          title="The name, contact details and links the form filler types on every application, plus how it answers the questions forms ask.">Application profile</button>
+        <button role="menuitem" data-action="open-documents">Resume library</button>
+        <hr role="separator">
+        <div class="menu-label" role="presentation">Preferences</div>
+        <!-- The header's theme button gives way on a phone; this keeps the
+             choice one tap away there. Hidden items are skipped by the
+             menu's arrow keys (menus.js filters on offsetParent). -->
+        <button role="menuitem" class="only-narrow" data-action="toggle-theme">Switch light or dark</button>
+        <button role="menuitem" data-action="open-keys">Keyboard shortcuts</button>
+      </div>
+    </span>
+
+    <span class="actions-sep" aria-hidden="true"></span>
+
+    <!-- A split button: the everyday action on the face, its siblings — the
+         other ways to START work — one click away. -->
+    <div class="split menu">
+      <button id="btnDiscover" class="runBtn split-main" data-action="run" data-phase="discover"
+        title="Search every configured job board, score each match against your profile, and update the board."><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>Find jobs</button>
+      <button type="button" class="split-toggle" data-action="toggle-menu" aria-haspopup="true"
+        aria-expanded="false" aria-controls="mainMenu" aria-label="More ways to find jobs" title="More ways to find jobs"><svg class="ic split-chev" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m7 10 5 5 5-5"/></svg></button>
+      <div class="menu-pop" id="mainMenu" role="menu" aria-label="Find jobs">
+        <button id="btnPrepare" class="runBtn" role="menuitem" data-action="run" data-phase="prepare"
+          title="Full pass: find new jobs, score them, and tailor a resume packet for every strong match.">
+          <span class="mi-title">Find jobs and prepare packets</span>
+          <span class="mi-sub">Also tailors a resume for every strong match</span>
+        </button>
+        <button id="btnAddUrl" role="menuitem" data-action="open-add-url"
+          title="Add a specific posting from any public job URL. It is read, scored, and tracked like a discovered job.">
+          <span class="mi-title">Add a job by URL</span>
+          <span class="mi-sub">Paste any public job posting</span>
+        </button>
+        <button role="menuitem" data-action="run" data-phase="score"
+          title="Recompute fit for jobs already on the board, from their stored descriptions. No network.">
+          <span class="mi-title">Re-score existing jobs</span>
+          <span class="mi-sub">From stored descriptions, no network</span>
+        </button>
+        <hr role="separator">
+        <button id="btnRoleSearch" role="menuitem" data-action="open-job-search">Search by job role</button>
+        <button role="menuitem" data-action="sweep-postings">Remove closed postings</button>
+      </div>
+    </div>
+  </div>
+  <!-- The status row: everything that REPORTS state, as the header's second
+       line. Left: the connection and the run (with its full result text and
+       per-source detail one click away). Right: the pipeline's health in plain
+       words, plus anything that needs attention. -->
+  <div class="statusbar" id="statusbar" role="region" aria-label="Status" data-run="idle">
+    <span id="conn" class="conn" title="Connection to the local dashboard server. It runs only on 127.0.0.1, and auto-fill always stops before the final Submit button unless you explicitly authorize a submit for that run.">Connecting</span>
+    <div class="runbox" id="runbox" data-state="idle">
+      <span class="run-icon" aria-hidden="true"></span>
+      <span class="run-main">
+        <span id="runStatus" aria-live="polite" role="status"></span>
+        <span class="run-meta" id="runMeta"></span>
+      </span>
+      <button type="button" class="small ghost run-btn" id="btnRunDetails" hidden
+        data-action="toggle-run-details" aria-expanded="false" aria-controls="runDetails">Details</button>
+      <button type="button" id="btnCancel" class="small ghost run-btn" hidden data-action="cancel-run">Cancel</button>
+      <button type="button" class="small ghost run-btn icon" id="btnRunDismiss" hidden
+        data-action="dismiss-run" aria-label="Dismiss this result"><span class="x" aria-hidden="true"></span></button>
+      <div class="run-details" id="runDetails" hidden></div>
+    </div>
+    <span class="spacer"></span>
+    <div class="health" id="health"><span class="muted">Loading</span></div>
+  </div>
+
+  <!-- The loading bar, along the very top edge of the window. Determinate when
+       the server reports totals, motion-only when it does not. -->
+  <div class="runline" id="runline" hidden><i id="runlineFill"></i></div>
+</header>
+
+<main class="layout" id="main" tabindex="-1">
+  <div class="workarea">
+  <!-- Facts about the TOOL that block work ("Auto-fill can't start: the
+       browser is not installed"). Above both views, because they are true in
+       both, and calm rather than red: they are setup, not emergencies. -->
+  <div id="systemNotices" class="notices"></div>
+
+  <section id="todayView" class="today" aria-labelledby="todayHeading">
+    <div class="today-head">
+      <div>
+        <h2 id="todayHeading">Today</h2>
+        <p class="today-sub muted" id="todaySub">The few jobs worth your time right now, in order.</p>
+      </div>
+      <button type="button" class="small ghost" data-action="set-view" data-view="board">Open the full board →</button>
+    </div>
+    <div id="setupChecklist"></div>
+    <ol class="today-list" id="todayList" aria-labelledby="todayHeading"></ol>
+  </section>
+
+  <section id="boardView" aria-labelledby="boardHeading" hidden>
+    <div class="view-head">
+      <div>
+        <h2 id="boardHeading">Jobs</h2>
+        <p class="view-sub muted" id="boardSub">Every open job that matches your search, best fit first.</p>
+      </div>
+      <!-- Applications only: the workspace board, or the stage-tab list it
+           grew from (kept for bulk approve / auto-fill on many rows). -->
+      <div class="seg layoutswitch" id="appsLayout" role="group" aria-label="Layout" hidden>
+        <button type="button" data-action="set-apps-layout" data-layout="kanban" aria-pressed="true">Board</button>
+        <button type="button" data-action="set-apps-layout" data-layout="list" aria-pressed="false">List</button>
+      </div>
+    </div>
+    <!-- THE APPLICATIONS WORKSPACE. One column per stage, before and after
+         you apply. Moving a card is a request the server validates: an
+         outcome can only follow a submission, a submission is only ever
+         recorded through the "I submitted it myself" dialog, and nothing here
+         approves, fills or submits. See assets/js/workspace.js. -->
+    <section class="workspace" id="workspace" aria-labelledby="boardHeading" hidden>
+      <div class="ws-metrics" id="wsMetrics" role="group" aria-label="Application numbers"></div>
+      <p id="wsAnnounce" class="sr-only" role="status" aria-live="polite"></p>
+      <div class="ws-board" id="wsBoard" tabindex="-1"></div>
+    </section>
+    <div class="scopebar">
+      <div class="tabs" id="tabs" role="tablist" aria-label="Stage"></div>
+    </div>
+    <!-- WHICH LIST AM I LOOKING AT?
+         The board can show two entirely separate things: the personalized
+         results of "Find new jobs", and the results of one ad-hoc "Search by
+         job role". They are stored apart and must never be mistaken for each
+         other, so the banner is shown whenever the board is NOT showing the
+         personalized list. It is hidden in the default (personalized) state,
+         because a banner that is always present stops being read. -->
+    <div class="mode-banner" id="modeBanner" role="status" hidden>
+      <span class="mode-banner-tag">Role search</span>
+      <span id="modeBannerText"></span>
+      <span class="spacer"></span>
+      <button type="button" class="small ghost" data-action="clear-role-search"
+        title="Discard the results of this role search. Your personalized board is not touched.">Clear results</button>
+      <button type="button" class="small primary" data-action="exit-role-search">← Back to my jobs</button>
+    </div>
+    <div class="filterbar" id="filterbar" aria-label="Job filters" data-collapsed="true">
+      <div class="filters frow frow-find">
+        <!-- ONE QUESTION, TWO SCOPES.
+             "Search job boards" used to be a ghost button with an emoji, wedged
+             between this input and the first <select> — a VERB in a row of
+             NOUNS. Everything else on this bar narrows what is already on
+             screen; that one control left to fetch new postings off the
+             internet, and sitting among the filters it read as another one of
+             them. Clicking it also opened an EMPTY modal, so whatever you had
+             just typed had to be typed again.
+
+             It is now the same field. You type once; the field filters the
+             board live, and the trailing action escalates that exact query to
+             the job boards. The action only exists once there is something to
+             search for, so it can no longer be clicked into an empty dialog,
+             and the zero-results state offers the same escalation at the moment
+             it is actually wanted. -->
+        <div class="searchfield">
+          <svg class="searchfield-icon" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+            <circle cx="7" cy="7" r="4.5"></circle>
+            <line x1="10.4" y1="10.4" x2="14" y2="14"></line>
+          </svg>
+          <input type="search" id="q" placeholder="Company, role or location…"
+            aria-label="Filter this board by company, role, or location"
+            aria-describedby="qScopeHint" autocomplete="off">
+          <button type="button" class="searchfield-scope" id="btnFindJobs"
+            data-action="open-job-search" hidden
+            aria-label="Search the job boards for this text"
+            title="Ask the job boards for this role — it does not have to be in your profile">
+            <span>Search boards</span>
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <line x1="4" y1="12" x2="12" y2="4"></line>
+              <polyline points="6,4 12,4 12,10"></polyline>
+            </svg>
+          </button>
+        </div>
+        <span id="qScopeHint" class="sr-only">Filters the jobs already on this board.
+          To search external job boards for this text instead, use the "Search boards"
+          button that appears in this field once you type.</span>
+        <select id="fit" aria-label="Filter by fit">
+        <option value="">Any fit</option>
+        <option value="strong">Strong fit</option>
+        <option value="medium">Medium fit</option>
+        <option value="weak">Weak fit</option>
+        <option value="no_fit">No fit</option>
+        </select>
+        <select id="appStatus" aria-label="Filter by application status">
+        <option value="">Any status</option>
+        <optgroup label="Waiting on you">
+        <option value="needs_review">Review resume</option>
+        <option value="approved">Ready to auto-fill</option>
+        <option value="ready_for_submit">Filled, submit yourself</option>
+        <option value="submit_unverified">Verify submission</option>
+        <option value="blocked">Blocked</option>
+        <option value="failed">Failed</option>
+        <option value="cancelled">Cancelled</option>
+        <option value="date_unconfirmed">Date unconfirmed</option>
+        </optgroup>
+        <optgroup label="In the pipeline">
+        <option value="discovered">Discovered</option>
+        <option value="scored">Scored</option>
+        <option value="shortlisted">Shortlisted</option>
+        </optgroup>
+        <optgroup label="Closed out">
+        <option value="submitted">Submitted</option>
+        <option value="skipped">Skipped</option>
+        <option value="rejected">Rejected</option>
+        <option value="archived">Archived</option>
+        <option value="discarded">Discarded</option>
+        </optgroup>
+        </select>
+        <!-- Everything beyond search, fit and status folds into the panel
+             below. It opens IN PLACE (pushing the board down, never covering
+             it), its count says how many hidden filters are on, and every
+             active filter is also a removable chip above the table. -->
+        <button type="button" class="small filter-toggle" id="btnFilterSheet"
+        data-action="toggle-filter-sheet" aria-expanded="false" aria-controls="filterPanel">More filters</button>
+        <button class="small ghost reset-filter" data-action="reset-filters"
+        title="Clear every filter and go back to all open jobs">Reset</button>
+      </div>
+      <div class="filter-panel" id="filterPanel">
+      <div class="filters frow frow-refine" role="group" aria-label="More filters">
+        <select id="state" aria-label="Filter by US state">
+        <option value="">Any location</option>
+        <option value="REMOTE">Remote</option>
+        </select>
+        <input id="city" type="search" placeholder="City…" aria-label="Filter by city"
+        autocomplete="off" spellcheck="false">
+        <select id="sponsorship" aria-label="Filter by sponsorship likelihood">
+        <option value="">Any sponsorship</option>
+        <option value="Confirmed">Confirmed</option>
+        <option value="Likely">Likely</option>
+        <option value="Unconfirmed">Unconfirmed</option>
+        <option value="Denied">Denied</option>
+        </select>
+        <select id="employmentType" aria-label="Filter by job type">
+        <option value="">Any job type</option>
+        <option value="full_time">Full-time</option>
+        <option value="contract">Contract</option>
+        <option value="contract_to_hire">Contract-to-hire</option>
+        <option value="part_time">Part-time</option>
+        <option value="unknown">Type unknown</option>
+        </select>
+        <select id="source" aria-label="Filter by discovery source">
+        <option value="">Any source</option>
+        </select>
+        <select id="ats" aria-label="Filter by ATS platform">
+        <option value="">Any ATS</option>
+        <option value="greenhouse">Greenhouse</option>
+        <option value="lever">Lever</option>
+        <option value="workday">Workday</option>
+        <option value="ashby">Ashby</option>
+        <option value="smartrecruiters">SmartRecruiters</option>
+        <option value="icims">iCIMS</option>
+        <option value="taleo">Taleo</option>
+        <option value="jobvite">Jobvite</option>
+        <option value="generic">Generic</option>
+        </select>
+        <select id="resumeStatus" aria-label="Filter by resume state">
+        <option value="">Any resume</option>
+        <option value="tailored">Tailored</option>
+        <option value="prepared">Packet only</option>
+        <option value="none">Not prepared</option>
+        </select>
+      </div>
+      <div class="filters frow frow-posted" role="group" aria-label="Posted within">
+        <div class="seg" role="group" aria-label="Posted within">
+          <span class="seg-label" aria-hidden="true">Posted</span>
+          <button type="button" data-action="set-posted" data-value="3" aria-pressed="false"
+            aria-label="Posted less than 3 hours ago">3h</button>
+          <button type="button" data-action="set-posted" data-value="6" aria-pressed="false"
+            aria-label="Posted less than 6 hours ago">6h</button>
+          <button type="button" data-action="set-posted" data-value="24" aria-pressed="false"
+            aria-label="Posted less than 24 hours ago">24h</button>
+          <!-- 3d/1w are where the jobs actually are: a measured run held 5
+               postings under 24h old and 4,439 under a week. Keep these in
+               sync with POSTED_WINDOWS (src/dashboard/data.js), which is what
+               the UI OFFERS; the server honors any positive window, so an
+               out-of-sync value here narrows honestly rather than silently
+               showing an unfiltered board. -->
+          <button type="button" data-action="set-posted" data-value="72" aria-pressed="false"
+            aria-label="Posted less than 3 days ago">3d</button>
+          <button type="button" data-action="set-posted" data-value="168" aria-pressed="false"
+            aria-label="Posted less than 1 week ago">1w</button>
+          <input type="hidden" id="postedWithinHours" value="">
+        </div>
+      </div>
+      <div class="filters frow frow-only" role="group" aria-labelledby="showOnlyLabel">
+        <span class="frow-label" id="showOnlyLabel">Show only</span>
+        <label class="toggle"><input type="checkbox" id="remoteOnly"> Remote only</label>
+        <label class="toggle"><input type="checkbox" id="sponsorshipGated"> Needs sponsor check</label>
+        <label class="toggle"><input type="checkbox" id="undated"> Date unknown</label>
+        <label class="toggle"><input type="checkbox" id="includeClosed"> Closed jobs</label>
+      </div>
+      </div>
+    </div>
+
+    <!-- The chips say WHAT the board is scoped to; the status line beside them
+         says how FRESH it is ("Updated 12 s ago", "Refreshing…"). Deliberately
+         not a live region — it ticks every ten seconds. -->
+    <div class="boardbar">
+      <div class="activefilters" id="activeFilters"></div>
+      <span class="boardstatus" id="boardStatus"></span>
+    </div>
+
+    <!-- Filtering is the core loop of this page and it happened in total silence
+         for anyone not looking at the pager: typing in the search box swaps the
+         table contents with no announcement, so "142 results" becoming "12" was
+         invisible. Polite so it waits for a pause in speech rather than cutting
+         across the typing that caused it. -->
+    <p id="boardAnnounce" class="sr-only" role="status" aria-live="polite"></p>
+
+    <!-- role="tabpanel" completes the tablist above: the tabs said they were
+         tabs but controlled nothing a screen reader could follow.
+         `role="table"` and the rowgroup/cell roles below are NOT redundant —
+         the narrow-viewport card layout sets `display: block/flex` on these
+         elements, which strips their implicit table semantics in every engine.
+         Stating them keeps the board a table on a phone. -->
+    <div class="boardwrap" id="boardwrap" role="tabpanel" tabindex="-1">
+      <!-- THE BULK-ACTION BAR, DOCKED ON THE TABLE'S OWN HEADER ROW.
+           It used to float at the bottom of the window, over whichever rows
+           happened to be there, and wrap into a three-line block on a phone.
+           Now, when rows are ticked, it slides over the column headers it
+           replaces (select-all stays visible beside it), sticks with them as
+           the board scrolls, and costs no layout shift: the wrapper is 0px
+           tall, so ticking the first box never moves the row under the
+           pointer. On a phone it becomes a floating bar above the thumb.
+
+           SAFETY: this is presentation only. Every button dispatches the same
+           action as before (batch-autofill, batch-prepare, batch-approve,
+           batch-decide, compare). Auto-fill still confirms first and still
+           stops before Submit; nothing here can submit an application. -->
+      <div id="selbar" role="toolbar" aria-label="Bulk actions for selected jobs"
+        aria-describedby="selHint" aria-orientation="horizontal" data-open="false">
+        <div class="selbar-inner">
+          <span class="selbar-count"><b id="selCount">0 selected</b></span>
+          <button type="button" class="small ghost selbar-clear" data-action="clear-selection"
+            aria-label="Clear selection" title="Clear selection (Esc)">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            <span class="lbl">Clear</span>
+          </button>
+          <span class="selbar-sep" aria-hidden="true"></span>
+          <div class="selbar-group selbar-decide" role="group" aria-label="Decide">
+            <button type="button" class="small ghost" data-action="batch-decide" data-decision="shortlisted"
+              title="Shortlist the selected jobs. Undo is offered.">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.9l-5.2 2.7 1-5.8L3.5 9.7l5.9-.9z"/></svg>
+              <span class="lbl">Shortlist</span>
+            </button>
+            <button type="button" class="small ghost selbar-wide" data-action="batch-decide" data-decision="rejected"
+              title="Mark the selected jobs as not for you. Undo is offered, and you can say why.">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8.5"/><path d="M9 9l6 6M15 9l-6 6"/></svg>
+              <span class="lbl">Reject</span>
+            </button>
+            <button type="button" class="small ghost selbar-wide" data-action="batch-decide" data-decision="archived"
+              title="Archive the selected jobs. Undo is offered.">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5 8.5V19a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8.5M10 12.5h4"/></svg>
+              <span class="lbl">Archive</span>
+            </button>
+          </div>
+          <button type="button" class="small ghost selbar-wide" id="cmpBtn" data-action="compare" disabled
+            title="Select 2 to 4 jobs to compare">
+            <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="3.5" y="4.5" width="7" height="15" rx="1.5"/><rect x="13.5" y="4.5" width="7" height="15" rx="1.5"/></svg>
+            <span class="lbl">Compare</span>
+          </button>
+          <span class="spacer"></span>
+          <!-- The pipeline steps. Exactly one carries `primary`, chosen from
+               where the selected jobs actually are (selection.js): Approve
+               when packets are waiting, Auto-fill when they are approved,
+               otherwise Prepare. -->
+          <div class="selbar-group selbar-pipeline" role="group" aria-label="Apply">
+            <button type="button" class="small" data-action="batch-prepare" data-step="prepare"
+              title="Tailor a resume and build an application packet for each selected job.">Prepare</button>
+            <button type="button" class="small" data-action="batch-approve" data-step="approve"
+              title="Approve prepared packets.">Approve</button>
+            <button type="button" id="autoApplyBtn" class="small" data-action="batch-autofill" data-step="autofill"
+              title="Prepare a packet if needed, approve it, open each posting in a browser, and fill it, always stopping before Submit.">Auto-fill</button>
+          </div>
+          <span class="menu selbar-more">
+            <button type="button" class="small ghost iconbtn" data-action="toggle-bulk-menu" aria-haspopup="true"
+              aria-expanded="false" aria-controls="bulkMenu" aria-label="More bulk actions" title="More bulk actions">
+              <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><circle cx="5.5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="18.5" cy="12" r="1.2"/></svg>
+            </button>
+            <div class="menu-pop" id="bulkMenu" role="menu" aria-label="More bulk actions">
+              <button role="menuitem" data-action="batch-prepare" data-step="prepare">Prepare packets</button>
+              <button role="menuitem" data-action="batch-approve" data-step="approve">Approve packets</button>
+              <button role="menuitem" data-action="batch-autofill" data-step="autofill">Auto-fill (stops before Submit)</button>
+              <button role="menuitem" data-action="compare" data-step="compare">Compare</button>
+              <hr role="separator">
+              <button role="menuitem" class="bulk-narrowest" data-action="batch-decide" data-decision="shortlisted">Shortlist</button>
+              <button role="menuitem" data-action="batch-decide" data-decision="rejected">Reject</button>
+              <button role="menuitem" data-action="batch-decide" data-decision="archived">Archive</button>
+            </div>
+          </span>
+        </div>
+      </div>
+      <p id="selHint" class="sr-only"></p>
+      <table id="board" role="table">
+        <caption class="sr-only">Discovered jobs with fit, sponsorship, resume, and application status</caption>
+        <thead role="rowgroup">
+          <tr role="row">
+            <th class="check" role="columnheader"><input type="checkbox" id="selAll" aria-label="Select all rows on this page"></th>
+            <th class="sortable" role="columnheader" data-sort="score" scope="col" tabindex="0" title="Sort by fit score, best first">Grade</th>
+            <th class="sortable" role="columnheader" data-sort="company" scope="col" tabindex="0" title="Sort by company name, A-Z">Company / role</th>
+            <th scope="col" role="columnheader">Sponsor</th>
+            <th class="sortable" role="columnheader" data-sort="posted" scope="col" tabindex="0" title="Sort by posting date, newest first. Click 'Found' to sort by when this agent first discovered the job instead.">Posted</th>
+            <th class="sortable" role="columnheader" data-sort="discovered" scope="col" tabindex="0" title="Sort by when this agent first found the job, use this to see what the latest run actually turned up">Found</th>
+            <th scope="col" role="columnheader">Resume</th>
+            <!-- ATS moved into the role cell's meta line, and Progress merged
+                 into Status. Both cost a fixed column that pushed Status off
+                 the right edge on a 1280px laptop — the one column that says
+                 whether a job needs you. -->
+            <th scope="col" role="columnheader">Status</th>
+          </tr>
+        </thead>
+        <tbody id="rows" role="rowgroup"></tbody>
+      </table>
+    </div>
+
+    <div class="pagerbar">
+      <div class="pager" id="pager"></div>
+      <!-- View preferences live with pagination, not with the filters: they
+           change how much of a result set you see and how it is drawn, never
+           WHICH jobs match. Same reasoning that put "Rows" here. -->
+      <span class="menu viewmenu">
+        <button type="button" class="small ghost" data-action="toggle-view-menu"
+          aria-haspopup="true" aria-expanded="false" aria-controls="viewMenu">View</button>
+        <div class="menu-pop" id="viewMenu" role="menu">
+          <div class="menu-label" role="presentation">Density</div>
+          <button type="button" role="menuitemradio" aria-checked="true" data-action="set-density" data-density="comfortable">Comfortable</button>
+          <button type="button" role="menuitemradio" aria-checked="false" data-action="set-density" data-density="compact">Compact</button>
+          <hr role="separator">
+          <div class="menu-label" role="presentation">Columns</div>
+          <div id="columnToggles" role="group" aria-label="Columns"></div>
+        </div>
+      </span>
+      <label class="pagesize" for="pageSize"><span>Rows</span>
+        <select id="pageSize" aria-label="Rows per page">
+          <option value="50">50</option>
+          <option value="100" selected>100</option>
+          <option value="200">200</option>
+          <option value="500">500</option>
+        </select>
+      </label>
+    </div>
+
+    <!-- These read the WHOLE corpus, deliberately: they answer "is discovery
+         healthy", which a filtered slice cannot. But sitting directly under a
+         filtered board they looked like they belonged to it — with a board
+         filtered to zero rows, "workday 52,733" reads as a contradiction. The
+         heading says whose numbers these are.
+
+         It is also the <h2> that was missing: the page went H1 -> H3 here, and
+         the only other H2 (Next actions) is rendered later in the DOM, so the
+         heading outline skipped a level and then went backwards. -->
+    <!-- Collapsed by default. Measured, this section was 3,041px — 28% of a
+         10,738px page — and it sits BELOW the entire board, so every pixel of
+         it is pixels you scroll past to reach the signature. It is diagnostics:
+         you open it when you want to ask "is discovery healthy", not on the way
+         to triaging a job. Collapsed it costs one row; the state is remembered.
+
+         A disclosure, not a popover: it expands IN PLACE and pushes the page
+         down rather than covering anything. -->
+    <h2 class="analytics-head">
+      <button type="button" id="btnAnalytics" class="analytics-toggle"
+        data-action="toggle-analytics" aria-expanded="false" aria-controls="analytics">
+        <span class="caret" aria-hidden="true">▸</span>
+        Discovery health
+        <span class="faint">- whole corpus, not affected by the filters above</span>
+      </button>
+    </h2>
+    <div class="analytics" id="analytics" hidden>
+      <!-- Reading order is deliberate: is the pipeline MOVING (full width, the
+           headline), then where the jobs COME FROM and where they ARE, then
+           whether they are APPLICABLE and what is FAILING. Five cards that each
+           answer one question, each stating its answer before its detail.
+
+           Two columns, never three: at 1600px an auto-fit grid gave three
+           narrow cards plus an orphan on a second row, and a 5-column table in
+           a 250px card truncated its own headers ("STRONG F…"). -->
+      <section class="card wide" aria-labelledby="cardActivity">
+        <div class="card-head">
+          <h3 id="cardActivity">Pipeline activity</h3>
+          <p class="card-lead" id="activityLead"></p>
+        </div>
+        <div id="dailyTrend" class="trend-row"></div>
+      </section>
+
+      <section class="card" aria-labelledby="cardSources">
+        <div class="card-head">
+          <h3 id="cardSources">Where jobs come from</h3>
+          <!-- Prepared/Submitted used to be columns here. They measure how much
+               YOU worked, not how the source performed, and they were empty for
+               9 of 16 sources — two columns of zeroes crowding out the one
+               comparison that matters: volume against strong-fit yield. -->
+          <p class="card-lead" id="sourceLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Source</th>
+            <th scope="col" class="r">Found</th>
+            <th scope="col" class="r">Strong</th>
+          </tr></thead>
+          <tbody id="srcRows"></tbody>
+        </table>
+      </section>
+
+      <section class="card" aria-labelledby="cardStates">
+        <div class="card-head">
+          <h3 id="cardStates">Where the jobs are</h3>
+          <p class="card-lead" id="stateLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Location</th>
+            <th scope="col" class="r">Jobs</th>
+            <th scope="col" class="r">Strong</th>
+          </tr></thead>
+          <tbody id="stateRows"></tbody>
+        </table>
+      </section>
+
+      <section class="card" aria-labelledby="cardSponsor">
+        <div class="card-head">
+          <h3 id="cardSponsor">Can you apply? <span class="faint">sponsorship verdicts</span></h3>
+          <p class="card-lead" id="sponsorLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Confidence</th>
+            <th scope="col" class="r">Jobs</th>
+            <th scope="col" class="r">Strong</th>
+          </tr></thead>
+          <tbody id="sponRows"></tbody>
+        </table>
+      </section>
+
+      <section class="card" aria-labelledby="cardBlocked">
+        <div class="card-head">
+          <h3 id="cardBlocked">What is failing</h3>
+          <p class="card-lead" id="blockLead"></p>
+        </div>
+        <table class="minitable">
+          <thead><tr>
+            <th scope="col">Reason</th>
+            <th scope="col" class="r">Jobs</th>
+          </tr></thead>
+          <tbody id="blockRows"></tbody>
+        </table>
+      </section>
+    </div>
+  </section>
+  </div>
+
+  <aside aria-label="Job detail">
+    <div class="rail-sticky">
+      <div class="panel" id="nextActions"></div>
+      <div id="detail">
+        <div class="panel empty">
+          <div class="big">Select a job</div>
+          Its grade, fit breakdown, sponsorship, tailored resume, and next best action appear here.
+        </div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+
+<!-- Selection changes, said once, politely. Outside the bar: a live region
+     inside an element that becomes visible at the same moment is announced
+     unreliably. -->
+<p id="selAnnounce" class="sr-only" role="status" aria-live="polite"></p>
+
+<!-- A colophon, not a byline. Attribution belongs at the END of the document,
+     after the work it refers to — never floated over the board, where it would
+     compete with the data on every screen. So the one place it appears is the
+     one place it can afford a signed name, with the standing facts about the
+     thing that was built underneath it.
+
+     It is still the last stop in the tab order, and it still carries no
+     controls, so making it larger costs nothing on the way to a job. -->
+<footer class="signature" aria-label="Colophon">
+  <div class="sig-rule" aria-hidden="true"></div>
+
+  <!-- A quiet sans label, then the name in a bold italic serif, on one line. -->
+  <p class="sig-line">
+    <span class="sig-label">Designed and Engineered by</span>
+    <span class="sig-name">Atresh Somayajula</span>
+  </p>
+
+  <!-- Each fact is one unbreakable unit, so a narrow window breaks BETWEEN
+       clauses instead of stranding "exposed" on a line of its own. -->
+  <p class="sig-meta">
+    <span class="sig-fact"><b>JobAgent</b>, a local-first application cockpit</span>
+    <span class="sig-dot" aria-hidden="true"></span>
+    <span class="sig-fact">binds to 127.0.0.1, never exposed</span>
+    <span class="sig-dot" aria-hidden="true"></span>
+    <span class="sig-fact">nothing is submitted without you</span>
+  </p>
+
+  <!-- The one control in the colophon: it opens the changelog dialog. It is a
+       real button (it does not navigate), styled as a link, and it is the last
+       stop in the tab order, so it still costs nothing on the way to a job. -->
+  <p class="sig-links">
+    <button type="button" class="sig-link" data-action="open-changelog"
+      aria-haspopup="dialog" aria-controls="dlgChangelog">Changelog</button>
+  </p>
+</footer>
+
+<div id="toasts" aria-live="polite" aria-atomic="false"></div>
+
+<!-- ───────────────────────── dialogs ───────────────────────── -->
+<!-- Each small dialog's body is a <form>, so Enter submits it from any
+     field — "Search job boards" ignored Enter entirely — and the one submit
+     handler (actions.js, `data-submit`) is the only path to the action, which is
+     what makes a second Enter or click a no-op while the first is in flight. -->
+<dialog id="dlgAddUrl" class="narrow" aria-labelledby="dlgAddUrlTitle">
+  <div class="dlg-head">
+    <h2 id="dlgAddUrlTitle">Add a job by URL</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-add-url">
+  <div class="dlg-body">
+    <p class="muted mt0">Paste a public job posting URL from any career site. It is read,
+      scored against your profile, and added to the board. Sites that block automated reads are reported honestly.</p>
+    <label for="addUrlInput">Job posting URL</label>
+    <input id="addUrlInput" type="url" placeholder="https://careers.example.com/jobs/12345" autocomplete="off">
+    <div id="addUrlMsg" class="muted"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="addUrlGo">Add &amp; score</button>
+  </div>
+  </form>
+</dialog>
+
+<dialog id="dlgJobSearch" class="narrow" aria-labelledby="dlgJobSearchTitle">
+  <div class="dlg-head">
+    <h2 id="dlgJobSearchTitle">Search job boards</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-job-search">
+  <div class="dlg-body">
+    <p class="muted mt0">Search the job boards for <strong>any</strong> role, whether or not it
+      has anything to do with your profile.</p>
+    <label for="jobSearchInput">Role or title</label>
+    <input id="jobSearchInput" type="search" placeholder="Senior Product Manager, payments" autocomplete="off">
+    <p class="muted small">Results are kept in their own list, labelled with the role you
+      searched for. They never appear on your personalized board, and running this can never
+      change what <em>Find new jobs</em> returns — your profile, target titles and scoring are
+      left exactly as they are.</p>
+    <p class="muted small">Uses the query-first sources only (Workable, and Adzuna if you have a
+      key), which answer in seconds rather than the ~14 minutes a full profile run takes.</p>
+    <div id="jobSearchRecent" class="muted small" hidden></div>
+    <div id="jobSearchMsg" class="muted"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="jobSearchGo">Search</button>
+  </div>
+  </form>
+</dialog>
+
+<dialog id="dlgSubmit" class="narrow" aria-labelledby="dlgSubmitTitle">
+  <div class="dlg-head">
+    <h2 id="dlgSubmitTitle">Record your submission</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="confirm-submitted">
+  <div class="dlg-body">
+    <p class="muted mt0" id="dlgSubmitJob"></p>
+    <label for="submitConf">Confirmation number <span class="faint">(optional, from the ATS page or email)</span></label>
+    <input id="submitConf" type="text" placeholder="e.g. REQ-2026-12345">
+    <label for="submitNote">Note <span class="faint">(optional)</span></label>
+    <textarea id="submitNote" rows="3" placeholder="e.g. submitted via Workday, confirmation sent to my email"></textarea>
+    <p class="faint fineprint">With a confirmation number this is recorded as
+      <b>submitted</b>. Without one it is recorded as <b>reported, pending verification</b> - never silently counted as applied.</p>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary">✓ I submitted this myself</button>
+  </div>
+  </form>
+</dialog>
+
+<dialog id="dlgLink" class="narrow" aria-labelledby="dlgLinkTitle">
+  <div class="dlg-head">
+    <h2 id="dlgLinkTitle">Replace the application URL</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="submit-link">
+  <div class="dlg-body">
+    <p class="muted mt0">Paste the direct employer or ATS application URL. Aggregator links
+      (LinkedIn, Indeed, Dice…) cannot be auto-filled reliably, so they are rejected here.</p>
+    <label for="linkInput">Direct application URL</label>
+    <input id="linkInput" type="url" autocomplete="off">
+    <div id="linkMsg" class="muted"></div>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary">Save URL</button>
+  </div>
+  </form>
+</dialog>
+
+<dialog id="dlgResume" aria-labelledby="dlgResumeTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgResumeTitle">Tailored resume</h2>
+      <div class="muted subtle-sub" id="dlgResumeSub"></div>
+    </div>
+    <div class="row-gap">
+      <span id="dlgResumeLinks"></span>
+      <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    </div>
+  </div>
+  <div class="dlg-body">
+    <div id="resumePreviewStatus" class="preview-status"></div>
+    <div id="resumeFrameHost" class="fill"></div>
+  </div>
+</dialog>
+
+<dialog id="dlgReports" class="sheet" aria-labelledby="dlgReportsTitle">
+  <div class="dlg-head">
+    <h2 id="dlgReportsTitle">Reports</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="reportsBody"></div>
+</dialog>
+
+<dialog id="dlgRuns" class="sheet" aria-labelledby="dlgRunsTitle">
+  <div class="dlg-head">
+    <h2 id="dlgRunsTitle">Run history</h2>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="runsBody"></div>
+</dialog>
+
+<dialog id="dlgMaster" aria-labelledby="dlgMasterTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgMasterTitle">Master resume</h2>
+      <div class="muted subtle-sub">The one document every tailored resume is built from. Opened read-only, never edited in place.</div>
+    </div>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="masterBody"></div>
+  <div class="dlg-foot">
+    <!-- The file picker is driven by the visible "Replace" button so the
+         control matches the rest of the UI; the input itself stays hidden. -->
+    <input type="file" id="masterFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+    <span class="grow-1" id="masterMsg"></span>
+    <button class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<!-- The two personal config files the form filler reads, edited in place. Each
+     section saves itself: the details form, an individual queued question, and
+     the saved-answer list are three separate commitments, and one "Save" for
+     all three would make it unclear what a click was about to write. -->
+<dialog id="dlgProfile" class="sheet" aria-labelledby="dlgProfileTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgProfileTitle">Application profile</h2>
+      <div class="muted subtle-sub">What the filler types on every application, and how it answers what forms ask.</div>
+    </div>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="profileBody"></div>
+  <div class="dlg-foot">
+    <span class="grow-1" id="profileMsg"></span>
+    <button class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlgDocuments" class="sheet" aria-labelledby="dlgDocumentsTitle">
+  <div class="dlg-head">
+    <h2 id="dlgDocumentsTitle">Resume library</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="documentsBody"></div>
+</dialog>
+
+<dialog id="dlgCompare" class="sheet" aria-labelledby="dlgCompareTitle">
+  <div class="dlg-head">
+    <h2 id="dlgCompareTitle">Compare jobs</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="compareBody"></div>
+</dialog>
+
+<dialog id="dlgDataQuality" class="sheet" aria-labelledby="dlgDataQualityTitle">
+  <div class="dlg-head">
+    <h2 id="dlgDataQualityTitle">Discovery and data quality</h2>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="dataQualityBody"></div>
+</dialog>
+
+<dialog id="dlgHealth" class="sheet" aria-labelledby="dlgHealthTitle">
+  <div class="dlg-head">
+    <h2 id="dlgHealthTitle">System health</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="healthBody"></div>
+</dialog>
+
+<!-- Job detail, on layouts too narrow for the side rail (<=1240px). One
+     #detail element is MOVED here rather than rendered twice, so both layouts
+     share one renderer, one set of ids and one note editor. -->
+<dialog id="dlgDetail" class="detail-sheet" aria-labelledby="dlgDetailTitle">
+  <div class="dlg-head">
+    <h2 id="dlgDetailTitle" tabindex="-1">Job detail</h2>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close job detail"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="dlgDetailBody"></div>
+</dialog>
+
+<!-- Every shortcut below already worked; none of them were discoverable, which
+     makes them shortcuts only for the person who wrote them. `?` is the
+     conventional key for this, so it needs no advertising of its own. -->
+
+<dialog id="dlgKeys" class="narrow" aria-labelledby="dlgKeysTitle">
+  <div class="dlg-head">
+    <h2 id="dlgKeysTitle">Keyboard shortcuts</h2>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body">
+    <dl class="keys">
+      <dt><kbd>/</kbd></dt><dd>Jump to search</dd>
+      <dt><kbd>?</kbd></dt><dd>Show this list</dd>
+      <dt><kbd>Esc</kbd></dt><dd>Close a dialog or menu; clear the search box</dd>
+      <dt class="keys-sec" aria-hidden="true"></dt><dd class="keys-sec">On the job board</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move between jobs</dd>
+      <dt><kbd>Enter</kbd></dt><dd>Open the selected job in the detail rail</dd>
+      <dt><kbd>Space</kbd></dt><dd>Open the selected job</dd>
+      <dt><kbd>X</kbd></dt><dd>Tick or untick the row for a bulk action</dd>
+      <dt class="keys-sec" aria-hidden="true"></dt><dd class="keys-sec">On the stage tabs</dd>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>Move between stages (wraps around)</dd>
+      <dt><kbd>Home</kbd> <kbd>End</kbd></dt><dd>First or last stage</dd>
+    </dl>
+  </div>
+</dialog>
+
+<!-- Add or edit a person. One short form; "Fill in from their resume" reads a
+     .docx into it, and that file is saved into the NEW person's workspace only
+     — it never replaces anyone's master resume. Every field has a visible
+     label; errors are written next to their field and linked to it. -->
+<dialog id="dlgPerson" class="narrow person-dialog" aria-labelledby="dlgPersonTitle" aria-describedby="dlgPersonSub">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgPersonTitle">Add a profile</h2>
+      <div class="muted subtle-sub" id="dlgPersonSub">Each person gets their own jobs, resume and applications.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="save-person" novalidate>
+  <div class="dlg-body">
+    <div class="person-resume" id="personResumeRow">
+      <input type="file" id="personResumeFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+      <button type="button" class="small" data-action="person-pick-resume">
+        <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v4h14v-4"/></svg>
+        Fill in from their resume
+      </button>
+      <span class="person-resume-status" id="personResumeStatus" role="status" aria-live="polite">Optional. A .docx file; it becomes their own master resume.</span>
+    </div>
+
+    <label for="personName">Full name <span class="req" aria-hidden="true">*</span></label>
+    <input id="personName" type="text" autocomplete="name" required aria-describedby="personNameError">
+    <p class="field-error" id="personNameError" hidden></p>
+
+    <label for="personEmail">Email <span class="req" aria-hidden="true">*</span></label>
+    <input id="personEmail" type="email" autocomplete="email" required aria-describedby="personEmailError">
+    <p class="field-error" id="personEmailError" hidden></p>
+
+    <label for="personRoleInput" id="personRolesLabel">Job titles to search for <span class="req" aria-hidden="true">*</span></label>
+    <div class="chips-input" id="personRoles" data-action="focus-role-input">
+      <ul class="chips-list" id="personRoleList" aria-label="Job titles added"></ul>
+      <input id="personRoleInput" type="text" autocomplete="off" placeholder="Type a title, press Enter"
+        aria-describedby="personRolesHint personRolesError">
+    </div>
+    <p class="fineprint muted" id="personRolesHint">Up to 15. Close variations are searched too, so "Regulatory Specialist" also finds "Senior Regulatory Specialist".</p>
+    <p class="field-error" id="personRolesError" hidden></p>
+
+    <div class="person-row">
+      <div>
+        <label for="personCity">City</label>
+        <input id="personCity" type="text" autocomplete="address-level2">
+      </div>
+      <div>
+        <label for="personState">State</label>
+        <input id="personState" type="text" autocomplete="address-level1">
+      </div>
+    </div>
+
+    <label for="personSeniority">Level</label>
+    <select id="personSeniority">
+      <option value="">Not set</option>
+      <option value="intern">Intern</option>
+      <option value="entry">Entry level</option>
+      <option value="associate">Associate</option>
+      <option value="mid">Mid level</option>
+      <option value="senior">Senior</option>
+      <option value="lead">Lead</option>
+      <option value="principal">Principal</option>
+      <option value="director">Director</option>
+      <option value="executive">Executive</option>
+    </select>
+
+    <label class="toggle person-toggle"><input type="checkbox" id="personRemote"> Remote jobs only</label>
+    <label class="toggle person-toggle" id="personActivateRow"><input type="checkbox" id="personActivate"> Switch to this profile now</label>
+    <!-- Seeding: copy postings already found that clearly fit this person, so
+         their list does not start empty. Posting facts only — never the other
+         person's scores, notes or applications. -->
+    <div class="person-seed" id="personSeedRow" hidden>
+      <label class="toggle person-toggle"><input type="checkbox" id="personSeed" aria-describedby="personSeedHint"> <span id="personSeedLabel">Start with matching jobs already found</span></label>
+      <p class="fineprint muted" id="personSeedHint">Copies postings whose titles fit this person. Scores, notes and applications are never copied; their own search adds more.</p>
+    </div>
+    <p class="field-error person-form-error" id="personFormError" role="alert" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="personSave">Add profile</button>
+  </div>
+  </form>
+</dialog>
+
+<!-- Remove a person. Choosing who is the confirmation: nothing is preselected
+     unless there is only one choice (or they came from that person's trash
+     button), and the button names the person. The person being searched as is
+     never offered (the server refuses it too); the note says how to remove
+     them. Nothing is erased: the profile and any workspace of its own are
+     archived, and a profile on the original files leaves those in place. -->
+<dialog id="dlgRemovePerson" class="narrow remove-dialog" aria-labelledby="dlgRemoveTitle" aria-describedby="dlgRemoveSub">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgRemoveTitle">Remove a profile</h2>
+      <div class="muted subtle-sub" id="dlgRemoveSub">Their profile is archived, and their jobs, resume and applications are kept on this computer. Nothing is erased.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="remove-person" novalidate>
+  <div class="dlg-body">
+    <fieldset class="pf-picks" aria-describedby="removeError">
+      <legend>Who should be removed?</legend>
+      <div id="removeList" class="pf-pick-list"></div>
+    </fieldset>
+    <p class="muted remove-note" id="removeActiveNote" hidden></p>
+    <p class="field-error" id="removeError" role="alert" hidden></p>
+  </div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small danger" id="removeGo">Remove profile</button>
+  </div>
+  </form>
+</dialog>
+
+<dialog id="dlgChangelog" aria-labelledby="dlgChangelogTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgChangelogTitle">Changelog</h2>
+      <div class="muted subtle-sub">What changed in JobAgent, newest first.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="changelogBody" tabindex="-1"></div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<dialog id="dlgConfirm" class="narrow" aria-labelledby="dlgConfirmTitle">
+  <div class="dlg-head">
+    <h2 id="dlgConfirmTitle">Confirm</h2>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <form method="dialog" class="dlg-form" data-submit="confirm-go">
+  <div class="dlg-body"><div id="confirmBody"></div></div>
+  <div class="dlg-foot">
+    <button type="button" class="small" data-action="close-dialog">Cancel</button>
+    <button type="submit" class="small primary" id="confirmGo">Continue</button>
+  </div>
+  </form>
+</dialog>
+
+<script type="module" src="/assets/js/main.js"></script>
+</body>
+</html>

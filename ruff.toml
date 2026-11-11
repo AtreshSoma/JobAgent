@@ -1,0 +1,11 @@
+# Ruff: a bug-catcher for the Python side (resume tailoring, audit tools,
+# pytest suite), not a formatter. Pyflakes (F) + pycodestyle ERRORS (E) only;
+# no `ruff format`, and nothing that would justify reformatting files.
+target-version = "py312"
+extend-exclude = ["node_modules", "PyProjects", ".claude", "reports"]
+
+[lint]
+select = ["E", "F"]
+ignore = [
+  "E501",  # line length: long literal strings are common and harmless here
+]

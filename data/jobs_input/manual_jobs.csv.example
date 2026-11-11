@@ -1,0 +1,4 @@
+source,company,title,location,url,jd_text,posted_at,applicant_count,employment_type
+manual,Globex,Lead Data Engineer,"Remote, US",https://boards.greenhouse.io/globex/jobs/42,"Senior data engineer building medallion lakehouses on Azure Databricks and Microsoft Fabric. Delta Lake, ADF, Synapse, PySpark, Python, SQL, Power BI semantic models. Finance domain. Visa sponsorship available for the right candidate.",2026-06-02,17,Full-time
+manual,Initech,Senior Data Engineer,"Austin, TX",https://initech.example/jobs/7,"Snowflake and dbt shop. No sponsorship; US citizens only.",2026-06-01,210,Full-time
+manual,Umbrella Corp,Senior Data Engineer,"Remote, US",https://jobs.lever.co/umbrella/abc123,"Azure Data Factory, Databricks, PySpark, SQL, lakehouse, ETL/ELT. We sponsor H-1B visas. Healthcare analytics.",2026-06-03,34,Full-time

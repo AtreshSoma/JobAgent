@@ -1,0 +1,430 @@
+{
+  "weights": {
+    "titleFit": 12,
+    "seniorityFit": 8,
+    "azureFabricStack": 14,
+    "dataEngineeringStack": 12,
+    "biSemanticDepth": 8,
+    "pythonSqlPyspark": 12,
+    "domainFit": 6,
+    "sponsorshipFeasibility": 10,
+    "geographyFit": 6,
+    "freshness": 4,
+    "directAtsAvailability": 3,
+    "companySponsorshipLikelihood": 5,
+    "resumeKeywordAlignment": 10
+  },
+  "tiers": {
+    "priority": 85,
+    "apply": 75,
+    "queue": 60,
+    "nearMiss": 50
+  },
+  "sponsorshipGate": {
+    "allowApplyWhen": [
+      "Confirmed",
+      "Likely",
+      "Approved"
+    ]
+  },
+  "sponsorship": {
+    "affirmativePhrases": [
+      "we sponsor h-1b",
+      "we sponsor h1b",
+      "visa sponsorship available",
+      "visa sponsorship is available",
+      "sponsorship available",
+      "will sponsor",
+      "h-1b sponsorship",
+      "green card sponsorship",
+      "sponsor visa",
+      "h-1b transfer",
+      "h1b transfer",
+      "visa transfer",
+      "able to sponsor",
+      "can sponsor",
+      "willing to sponsor",
+      "sponsorship is offered",
+      "sponsorship offered",
+      "sponsorship provided",
+      "work visa sponsorship",
+      "immigration sponsorship",
+      "support visa sponsorship",
+      "supports visa sponsorship",
+      "cap-exempt"
+    ],
+    "likelySponsors": [
+      "capgemini",
+      "tcs",
+      "tata consultancy",
+      "infosys",
+      "accenture",
+      "deloitte",
+      "wipro",
+      "cognizant",
+      "hcl",
+      "ibm",
+      "microsoft",
+      "amazon",
+      "google",
+      "meta",
+      "oracle",
+      "sap",
+      "ey",
+      "ernst & young",
+      "pwc",
+      "kpmg",
+      "mckinsey",
+      "capco"
+    ]
+  },
+  "freshness": {
+    "skipOlderThanDays": 14,
+    "flagOlderThanDays": 7,
+    "highApplicantThreshold": 200
+  },
+  "keywords": {
+    "titles": [
+      "data engineer",
+      "senior data engineer",
+      "lead data engineer",
+      "data engineering",
+      "business intelligence developer",
+      "business intelligence engineer",
+      "bi developer",
+      "bi engineer",
+      "power bi developer",
+      "analytics engineer",
+      "analytics developer",
+      "data warehouse engineer",
+      "data warehouse developer",
+      "etl developer",
+      "data platform engineer"
+    ],
+    "azureFabric": [
+      "azure",
+      "microsoft fabric",
+      "fabric",
+      "azure data factory",
+      "adf",
+      "synapse",
+      "azure synapse",
+      "databricks",
+      "delta lake",
+      "azure databricks",
+      "onelake"
+    ],
+    "dataEngineering": [
+      "etl",
+      "elt",
+      "data pipeline",
+      "data warehouse",
+      "lakehouse",
+      "data lake",
+      "spark",
+      "kafka",
+      "airflow",
+      "dbt",
+      "streaming",
+      "stream",
+      "batch processing"
+    ],
+    "biSemantic": [
+      "power bi",
+      "semantic model",
+      "semantic modeling",
+      "dax",
+      "tabular model",
+      "dimensional modeling",
+      "star schema",
+      "tableau"
+    ],
+    "languages": [
+      "python",
+      "sql",
+      "pyspark",
+      "t-sql",
+      "scala"
+    ],
+    "domains": [
+      "finance",
+      "healthcare",
+      "insurance",
+      "retail",
+      "banking",
+      "bank"
+    ],
+    "devopsInfra": [
+      "kubernetes",
+      "k8s",
+      "docker",
+      "terraform",
+      "ci/cd",
+      "github actions",
+      "azure devops",
+      "infrastructure as code"
+    ],
+    "dataQuality": [
+      "data quality",
+      "data lineage",
+      "observability",
+      "data contracts",
+      "great expectations",
+      "data validation"
+    ],
+    "genAI": [
+      "llm",
+      "large language model",
+      "rag",
+      "retrieval augmented generation",
+      "langchain",
+      "langgraph",
+      "vector database"
+    ]
+  },
+  "evidenceAliases": {
+    "adf": [
+      "azure data factory"
+    ],
+    "azure data factory": [
+      "adf"
+    ],
+    "fabric": [
+      "microsoft fabric"
+    ],
+    "microsoft fabric": [
+      "fabric"
+    ],
+    "synapse": [
+      "azure synapse"
+    ],
+    "spark": [
+      "pyspark",
+      "apache spark",
+      "databricks"
+    ],
+    "pyspark": [
+      "spark python",
+      "apache spark"
+    ],
+    "lakehouse": [
+      "delta lake",
+      "databricks",
+      "medallion architecture"
+    ],
+    "delta lake": [
+      "lakehouse",
+      "delta live tables"
+    ],
+    "data lake": [
+      "adls",
+      "adls gen2",
+      "azure data lake",
+      "delta lake",
+      "lakehouse"
+    ],
+    "data warehouse": [
+      "azure synapse",
+      "synapse",
+      "snowflake",
+      "dimensional modeling",
+      "star schema",
+      "ssas"
+    ],
+    "etl": [
+      "azure data factory",
+      "adf",
+      "ssis",
+      "elt",
+      "data pipeline"
+    ],
+    "elt": [
+      "etl",
+      "azure data factory",
+      "adf",
+      "adf pipelines",
+      "delta live tables",
+      "medallion architecture",
+      "dbt"
+    ],
+    "batch processing": [
+      "azure data factory",
+      "databricks",
+      "etl",
+      "data pipeline"
+    ],
+    "data pipeline": [
+      "azure data factory",
+      "adf pipelines",
+      "etl",
+      "databricks"
+    ],
+    "data engineering": [
+      "data engineer"
+    ],
+    "semantic model": [
+      "semantic models",
+      "ssas tabular",
+      "tabular model"
+    ],
+    "semantic modeling": [
+      "semantic models",
+      "ssas tabular"
+    ],
+    "tabular model": [
+      "ssas tabular",
+      "semantic models"
+    ],
+    "dimensional modeling": [
+      "star schema",
+      "kimball",
+      "dimensional modeling"
+    ],
+    "star schema": [
+      "dimensional modeling",
+      "kimball"
+    ],
+    "sql": [
+      "t-sql"
+    ],
+    "t-sql": [
+      "sql server",
+      "tsql"
+    ],
+    "streaming": [
+      "stream",
+      "structured streaming",
+      "kafka",
+      "event hub",
+      "spark streaming"
+    ],
+    "stream": [
+      "streaming",
+      "structured streaming"
+    ],
+    "banking": [
+      "bank"
+    ],
+    "bank": [
+      "banking"
+    ],
+    "kubernetes": [
+      "k8s"
+    ],
+    "k8s": [
+      "kubernetes"
+    ],
+    "ci/cd": [
+      "continuous integration",
+      "continuous deployment",
+      "continuous delivery",
+      "github actions",
+      "azure devops"
+    ],
+    "infrastructure as code": [
+      "terraform",
+      "iac"
+    ],
+    "llm": [
+      "large language model",
+      "large language models"
+    ],
+    "large language model": [
+      "llm"
+    ],
+    "rag": [
+      "retrieval augmented generation"
+    ],
+    "retrieval augmented generation": [
+      "rag"
+    ],
+    "vector database": [
+      "vector db",
+      "vector store"
+    ],
+    "gcp": [
+      "google cloud platform",
+      "google cloud"
+    ],
+    "aws": [
+      "amazon web services"
+    ],
+    "postgres": [
+      "postgresql"
+    ],
+    "postgresql": [
+      "postgres"
+    ]
+  },
+  "_saturationNote": "How many distinct keyword hits earn full marks for a category. These were hardcoded literals (3/3/2/2/1) that saturated early enough to reward presence over depth: a JD mentioning Azure, Databricks and Delta Lake once each scored the same as a perfect stack match. Measured on a shallow vs deep JD for the same title: at 3/3/2/2 they scored 58 and 75; at 5/5/3/3 they score 49 and 71, so the shallow one now falls below the 50 floor and the separation widens from 17 to 22 points. Lower these back to 3/3/2/2/1 to restore the old behaviour. Stored scores do not change until you re-score (npm run score).",
+  "saturation": {
+    "titleFit": 1,
+    "azureFabricStack": 5,
+    "dataEngineeringStack": 5,
+    "biSemanticDepth": 3,
+    "pythonSqlPyspark": 3,
+    "domainFit": 2
+  },
+  "categories": [
+    {
+      "id": "titleFit",
+      "label": "Title fit",
+      "weight": 18,
+      "fullAt": 1,
+      "match": "title",
+      "from": "targetTitles",
+      "note": "Reads candidate.targetTitles, which the active profile generates from its target roles plus role-family title variations. Editing your profile changes what is SCORED as well as what is searched — those used to be two lists that silently disagreed.",
+      "derived": true
+    },
+    {
+      "id": "coreSkills",
+      "label": "Core skills",
+      "weight": 30,
+      "fullAt": 6,
+      "from": "technicalStack",
+      "note": "Reads every value in candidate.technicalStack — the skills you want to keep using, what your resume evidences, and what you want to grow into. They do not have to be software.",
+      "derived": true
+    },
+    {
+      "id": "domainFit",
+      "label": "Industry / domain",
+      "weight": 6,
+      "fullAt": 1,
+      "from": "industries",
+      "note": "Reads candidate.domainExperience: the industries from your background plus any your search intent names.",
+      "derived": true
+    }
+  ],
+  "marketSkills": [
+    "sql",
+    "python",
+    "spark",
+    "pyspark",
+    "databricks",
+    "snowflake",
+    "power bi",
+    "tableau",
+    "looker",
+    "dbt",
+    "airflow",
+    "kafka",
+    "redshift",
+    "bigquery",
+    "synapse",
+    "azure data factory",
+    "delta lake",
+    "microsoft fabric",
+    "hadoop",
+    "informatica",
+    "ssis",
+    "ssas",
+    "dax",
+    "star schema",
+    "kimball",
+    "r",
+    "sas",
+    "matlab",
+    "pandas"
+  ],
+  "_categoriesNote": "Categories marked \"derived\": true are regenerated from the active profile on every activation — titleFit follows candidate.targetTitles and coreSkills follows candidate.technicalStack. Categories you add yourself, and weights you change on a derived one, are preserved across activations. Delete the \"categories\" array to fall back to the legacy hardcoded data-engineering categories (weights/keywords shape)."
+}

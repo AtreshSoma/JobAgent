@@ -1,0 +1,42 @@
+{
+  "_note": "Patterns the humanizer removes or rewrites from generated resume/cover-letter text. Deterministic cleanup only; does not invent content.",
+  "bannedPhrases": [
+    "as an ai",
+    "leverage synergies",
+    "synergy",
+    "results-driven professional",
+    "dynamic professional",
+    "team player with a passion",
+    "think outside the box",
+    "hit the ground running",
+    "go-getter",
+    "rockstar",
+    "ninja",
+    "guru",
+    "wizard",
+    "best of breed",
+    "move the needle",
+    "circle back",
+    "low-hanging fruit",
+    "boil the ocean",
+    "passionate about leveraging",
+    "proven track record of delivering",
+    "in today's fast-paced world",
+    "i am writing to express my interest"
+  ],
+  "bannedCharacters": ["\u2014", "\u2013"],
+  "characterReplacements": {
+    "\u2014": ", ",
+    "\u2013": "-",
+    "\u2018": "'",
+    "\u2019": "'",
+    "\u201c": "\"",
+    "\u201d": "\""
+  },
+  "maxConsecutiveAdjectives": 2,
+  "rules": {
+    "removeEmDashes": true,
+    "collapseExclamation": true,
+    "normalizeWhitespace": true
+  }
+}

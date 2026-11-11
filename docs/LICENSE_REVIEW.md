@@ -1,0 +1,65 @@
+# License review
+
+Reviewed on **2026-10-27**, for the integration of local changes with upstream
+`55ee87a`. This is a repository evidence review, not a certification of the
+ownership of every historical contribution.
+
+## Scope and conclusion
+
+No existing root license or conflicting source-file license was found in the
+reviewed tree. The repository owner requested MIT licensing. A standard MIT
+license now covers original JobAgent code and documentation, with matching
+`package.json` and lockfile root metadata. Third-party code and assets retain
+their licenses under [THIRD_PARTY_NOTICES.md](../THIRD_PARTY_NOTICES.md).
+
+Checked: tracked source/license headers, package manifests and lockfile,
+bundled font metadata, font notices, and the dependency metadata in the
+isolated Python review environment. This does not establish provenance for
+unattributed code copied before this review or waive another author's rights.
+
+## Findings addressed
+
+- Added the missing MIT license and explicit license scope.
+- Retained Playfair Display's OFL notice and added the missing Alex Brush OFL
+  notice from the Google Fonts upstream repository. Both notices match the
+  bundled fonts' internal copyright metadata.
+- Recorded every npm package entry and its declared license in the
+  [dependency inventory](licenses/npm-dependencies.md), including development
+  and platform-specific packages. No entry lacked a declared license.
+- Identified MPL-2.0 packages explicitly; these are separate dependencies and
+  are not being relabeled MIT.
+- Kept local design-session artifacts and candidate data out of the release.
+  The upstream tree already replaces the tracked real master resume with a
+  synthetic example; this integration preserves that privacy improvement.
+
+## Python dependencies
+
+| Declared dependency | Version constraint | Declared license |
+| --- | --- | --- |
+| python-docx | 1.1.2 | MIT |
+| pytest | 8.3.3 | MIT |
+| python-dotenv | 1.0.1 | BSD-3-Clause |
+| docx2pdf | 0.1.8 | MIT |
+| openai (optional probe) | >=1.40.0 | Apache-2.0 |
+
+Python transitive dependencies are not locked by this repository. The review
+environment included lxml (BSD), typing-extensions (PSF-2.0), pluggy (MIT),
+packaging (Apache-2.0 OR BSD-2-Clause), iniconfig (MIT), colorama (BSD-3-Clause),
+pywin32 (PSF), and tqdm (MPL-2.0 AND MIT). Inspect the installed distributions'
+license files when packaging a release; this table is not a redistribution
+notice bundle for every possible resolver result. Microsoft Word is an
+optional separately licensed application, not a redistributed dependency.
+
+## Maintainer checklist
+
+1. Preserve original copyright and license notices when importing code/assets.
+2. Record new bundled assets and their provenance in the third-party notices.
+3. Regenerate/check the npm inventory when the lockfile changes.
+4. For packaged releases, include dependency notices and satisfy source-offer
+   obligations for the exact distributed versions.
+5. Do not commit real profiles, resumes, API keys, browser sessions, or job data.
+
+References: [MIT license](https://opensource.org/license/mit),
+[Mozilla MPL FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/),
+[SIL OFL FAQ](https://openfontlicense.org/ofl-faq/), and
+[Alex Brush upstream notice](https://github.com/google/fonts/blob/main/ofl/alexbrush/OFL.txt).

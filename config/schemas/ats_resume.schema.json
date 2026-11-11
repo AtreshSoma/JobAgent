@@ -1,0 +1,53 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ats_resume.schema.json",
+  "title": "ATS resume readiness configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["coverage", "requiredMarkers", "preferredMarkers", "outcomeSignals", "bannedBulletPhrases", "acronymPairs", "atsUnsafe"],
+  "properties": {
+    "_note": { "type": "string" },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strongMin", "strongMax", "overOptimizedMin", "tier1CriticalMin", "tier1Weight", "tier2Weight"],
+      "properties": {
+        "strongMin": { "type": "number", "minimum": 0, "maximum": 1 },
+        "strongMax": { "type": "number", "minimum": 0, "maximum": 1 },
+        "overOptimizedMin": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tier1CriticalMin": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tier1Weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "tier2Weight": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "requiredMarkers": { "type": "array", "items": { "type": "string" } },
+    "preferredMarkers": { "type": "array", "items": { "type": "string" } },
+    "outcomeSignals": { "type": "array", "items": { "type": "string" } },
+    "bannedBulletPhrases": { "type": "array", "items": { "type": "string" } },
+    "acronymPairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["acronym", "full"],
+        "properties": {
+          "acronym": { "type": "string", "minLength": 1 },
+          "full": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "atsUnsafe": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flagTables": { "type": "boolean" },
+        "flagImages": { "type": "boolean" },
+        "flagHeaderFooterContent": { "type": "boolean" },
+        "flagMultiColumn": { "type": "boolean" },
+        "flagEmDash": { "type": "boolean" },
+        "flagNonAsciiSymbols": { "type": "boolean" },
+        "flagBannedBulletPhrases": { "type": "boolean" }
+      }
+    }
+  }
+}

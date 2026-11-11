@@ -1,0 +1,3 @@
+source,company,title,location,url,jd_text,posted_at,applicant_count,employment_type
+manual,Globex,Lead Data Engineer,"Remote, US",https://globex.example/jobs/42,"Azure Databricks, PySpark, Delta Lake. Visa sponsorship available.",2026-05-30,17,Full-time
+manual,Initech,Senior Data Engineer,"Austin, TX",https://initech.example/jobs/7,"Snowflake and dbt shop. No sponsorship; US citizens only.",2026-05-20,210,Full-time

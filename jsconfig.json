@@ -1,0 +1,24 @@
+{
+  // Type-checks JavaScript through JSDoc, with no build step and no .ts files.
+  // `npm run typecheck` runs `tsc -p jsconfig.json`. checkJs is OFF globally:
+  // a file opts in with `// @ts-check` at its top, so the check can grow file
+  // by file instead of demanding the whole codebase be clean at once.
+  // Opted in today: src/cli/{app,watch,doctor,preflight,ui,sourceSelection,
+  // dependencyCheck}.js. Not yet: guided.js, profiles.js, src/index.js and
+  // src/config — they call functions whose JSDoc in commands.js / profile /
+  // dashboard is inaccurate, so they need those fixed first.
+  "compilerOptions": {
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2023"],
+    "types": ["node"],
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true,
+    "strict": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/cli/**/*.js", "src/config/**/*.js", "src/index.js"]
+}

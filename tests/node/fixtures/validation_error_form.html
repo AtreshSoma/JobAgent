@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Apply — Acme (validation fixture)</title></head>
+<body>
+  <h1>Apply to Acme</h1>
+  <form id="app-form">
+    <label for="first_name">First name</label>
+    <input id="first_name" name="first_name" type="text" required>
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" required>
+
+    <!-- Salary expectation: the agent must never guess this, so it stays empty
+         and the ATS rejects the step with an inline error. -->
+    <label for="salary">Salary expectation (numbers only)</label>
+    <input id="salary" name="salary" type="text">
+
+    <div id="salary-error" role="alert" style="display:none;color:#b00">
+      Salary expectation is required to continue.
+    </div>
+
+    <button type="button" id="next-btn" onclick="reject()">Next</button>
+  </form>
+  <script>
+    // Simulates the classic ATS step rejection: clicking Next does NOT
+    // navigate; the same page re-renders with the field marked invalid and a
+    // visible error message.
+    function reject() {
+      var salary = document.getElementById('salary');
+      if (!salary.value) {
+        salary.setAttribute('aria-invalid', 'true');
+        document.getElementById('salary-error').style.display = 'block';
+      }
+    }
+  </script>
+</body>
+</html>

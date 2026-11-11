@@ -1,0 +1,90 @@
+{
+  "_note": "ATS resume readiness rules. DOMAIN KNOWLEDGE / thresholds only — the deterministic tailor uses these to TIER the job's keywords, lint the generated resume for ATS-hostile formatting, and produce an honest readiness report. It never invents content or rewrites the resume. Adjust thresholds/markers here; nothing is hardcoded in source.",
+  "coverage": {
+    "strongMin": 0.7,
+    "strongMax": 0.85,
+    "overOptimizedMin": 0.9,
+    "tier1CriticalMin": 0.5,
+    "tier1Weight": 0.7,
+    "tier2Weight": 0.3
+  },
+  "requiredMarkers": [
+    "required",
+    "requirements",
+    "must have",
+    "must-have",
+    "minimum qualifications",
+    "minimum qualification",
+    "basic qualifications",
+    "what you need",
+    "what you'll need",
+    "what you will need",
+    "you have",
+    "you bring",
+    "qualifications"
+  ],
+  "preferredMarkers": [
+    "preferred",
+    "nice to have",
+    "nice-to-have",
+    "bonus",
+    "a plus",
+    "plus",
+    "desired",
+    "preferred qualifications",
+    "good to have"
+  ],
+  "outcomeSignals": [
+    "sla",
+    "uptime",
+    "latency",
+    "throughput",
+    "cost reduction",
+    "cost savings",
+    "reduce cost",
+    "data quality",
+    "data governance",
+    "stakeholder",
+    "cross-functional",
+    "cross functional",
+    "self-service",
+    "self service",
+    "time to insight",
+    "incident",
+    "scalability",
+    "reliability"
+  ],
+  "bannedBulletPhrases": [
+    "responsible for",
+    "helped with",
+    "worked on",
+    "assisted with",
+    "assisted in",
+    "involved in",
+    "participated in",
+    "duties included",
+    "tasked with",
+    "in charge of"
+  ],
+  "acronymPairs": [
+    { "acronym": "ADF", "full": "Azure Data Factory" },
+    { "acronym": "ADLS", "full": "Azure Data Lake Storage" },
+    { "acronym": "ETL", "full": "Extract Transform Load" },
+    { "acronym": "ELT", "full": "Extract Load Transform" },
+    { "acronym": "CI/CD", "full": "Continuous Integration Continuous Delivery" },
+    { "acronym": "DWH", "full": "Data Warehouse" },
+    { "acronym": "BI", "full": "Business Intelligence" },
+    { "acronym": "RBAC", "full": "Role Based Access Control" },
+    { "acronym": "DAX", "full": "Data Analysis Expressions" },
+    { "acronym": "SCD", "full": "Slowly Changing Dimension" }
+  ],
+  "atsUnsafe": {
+    "flagTables": true,
+    "flagImages": true,
+    "flagHeaderFooterContent": true,
+    "flagMultiColumn": true,
+    "flagEmDash": true,
+    "flagNonAsciiSymbols": true,
+    "flagBannedBulletPhrases": true
+  }
+}

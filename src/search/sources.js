@@ -1,0 +1,134 @@
+/**
+ * Source-type registry.
+ *
+ * Draws a hard, machine-readable line between three kinds of sources so the rest
+ * of the system can never conflate "real discovery" with "URL reader":
+ *
+ *   - 'discovery'  : enumerates many jobs from a public board/endpoint on its own
+ *                    (Greenhouse, Lever, Workday CXS, company careers pages).
+ *   - 'url-reader' : only parses the specific public posting URLs the user gives
+ *                    it. It performs NO query/search and finds nothing on its own
+ *                    (Dice, LinkedIn, Indeed, generic public pages).
+ *   - 'manual'     : the fully-compliant manual fallback (curated URLs + CSV).
+ *
+ * This module is pure data + tiny lookups. It is the single source of truth for
+ * "is this real discovery?" used by config validation, the orchestrator, and the
+ * found_jobs.json report.
+ */
+
+/** Adapter ids that genuinely enumerate jobs from a public source. */
+export const DISCOVERY_ADAPTERS = Object.freeze(new Set([
+  'greenhouse',
+  'lever',
+  'workday',
+  'careers',
+  'apify',
+  'ashby',
+  'smartrecruiters',
+  // Query-first discovery: these search ACROSS employers rather than
+  // enumerating one configured board at a time.
+  'atsSearch',
+  'adzuna',
+  // Per-company public ATS board API, same posture as greenhouse/lever/ashby.
+  'rippling',
+  // Oracle Fusion Recruiting Cloud — public candidate-experience REST API.
+  'oracleRecruiting',
+  // Amazon's own public search.json, covering the whole amazon.jobs family.
+  'amazonJobs',
+  // iCIMS public career portals (server-rendered behind in_iframe=1).
+  'icims',
+]));
+
+/**
+ * Discovery adapters that search ACROSS employers from a free-text query,
+ * rather than enumerating one configured board at a time.
+ *
+ * This is the subset that can answer "find me jobs matching THIS phrase, now".
+ * Company-first adapters cannot: they enumerate a fixed tenant list, and a full
+ * run spans 226 Workday tenants for ~14 minutes, which is not a search box.
+ * These two are keyless (Workable) or a free API tier (Adzuna) and return in
+ * seconds, so they are what an interactive search can honestly be built on.
+ *
+ * Both already accept an `options.queries` override, so no adapter change is
+ * needed to point them at something other than `candidate.targetTitles`.
+ */
+export const QUERY_FIRST_ADAPTERS = Object.freeze(new Set([
+  'atsSearch',
+  'adzuna',
+]));
+
+/** Can this adapter be driven by an ad-hoc text query? */
+export function isQueryFirstAdapter(adapter) {
+  return QUERY_FIRST_ADAPTERS.has(String(adapter ?? ''));
+}
+
+/** Adapter ids that only read user-supplied public posting URLs (no search). */
+export const URL_READER_ADAPTERS = Object.freeze(new Set([
+  'dice',
+  'linkedin',
+  'indeed',
+  'genericPublicPage',
+]));
+
+/** The compliant manual fallback (curated URLs + CSV import). */
+export const MANUAL_ADAPTERS = Object.freeze(new Set([
+  'manualUrls',
+]));
+
+/**
+ * Classify a configured source by its adapter id.
+ * @param {string} adapter adapter id from jobboards.json
+ * @returns {'discovery'|'url-reader'|'manual'|'unknown'}
+ */
+export function adapterKind(adapter) {
+  if (DISCOVERY_ADAPTERS.has(adapter)) return 'discovery';
+  if (URL_READER_ADAPTERS.has(adapter)) return 'url-reader';
+  if (MANUAL_ADAPTERS.has(adapter)) return 'manual';
+  return 'unknown';
+}
+
+/**
+ * The `source` string a normalized job carries can differ from the adapter id
+ * (e.g. a careers page that delegates to Greenhouse still emits source
+ * 'greenhouse'; a generic page emits 'public'). Map those to a kind too so the
+ * found_jobs.json report can summarize provenance accurately.
+ */
+const SOURCE_STRING_KIND = Object.freeze({
+  greenhouse: 'discovery',
+  lever: 'discovery',
+  workday: 'discovery',
+  careers: 'discovery',
+  apify: 'discovery',
+  ashby: 'discovery',
+  smartrecruiters: 'discovery',
+  atsSearch: 'discovery',
+  adzuna: 'discovery',
+  rippling: 'discovery',
+  oracleRecruiting: 'discovery',
+  amazonJobs: 'discovery',
+  icims: 'discovery',
+  // atsSearch tags each cross-company provider with its own source string so
+  // the provenance report can tell Workable breadth from Himalayas breadth.
+  himalayas: 'discovery',
+  themuse: 'discovery',
+  dice: 'url-reader',
+  linkedin: 'url-reader',
+  indeed: 'url-reader',
+  public: 'url-reader',
+  generic: 'url-reader',
+  manual: 'manual',
+});
+
+/**
+ * Classify a normalized job's `source` string.
+ * @param {string} sourceString job.source
+ * @returns {'discovery'|'url-reader'|'manual'|'unknown'}
+ */
+export function sourceKind(sourceString) {
+  return SOURCE_STRING_KIND[sourceString] ?? 'unknown';
+}
+
+/** True only for adapters that perform real public discovery. */
+export function isDiscoveryAdapter(adapter) {
+  return DISCOVERY_ADAPTERS.has(adapter);
+}

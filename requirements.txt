@@ -1,0 +1,9 @@
+# Python 3.12+
+# Resume editing and audit toolchain.
+python-docx==1.1.2
+pytest==8.3.3
+python-dotenv==1.0.1
+
+# Optional PDF export (used by src/resume/pdfExport.py).
+# docx2pdf relies on MS Word on Windows; safe to omit if unavailable.
+docx2pdf==0.1.8

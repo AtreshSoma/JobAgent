@@ -1,0 +1,6 @@
+# Optional LLM assist layer (grounded JD requirement extraction).
+#
+# NOT required by the core agent. Install only if you set LLM_ASSIST=on.
+# The agent talks to an OpenAI-compatible endpoint over plain fetch, so this
+# package is needed only by scripts/llm-check.py (the connectivity probe).
+openai>=1.40.0

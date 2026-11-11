@@ -1,0 +1,136 @@
+# --- Secrets ---
+# Every .env variant (.env.local, .env.production, .env.bak …), not just the
+# two spellings that used to be listed — a copied `.env.backup` holding the
+# Apify token was one `git add -A` from being committed.
+.env*
+*.env
+!.env.example
+# Ad-hoc probe/experiment scripts at the repo root. These routinely get a real
+# key pasted into them "just to test"; keeping them untracked means a stray
+# `git add -A` can never publish one. Committed tooling lives in scripts/.
+/test_*.py
+/scratch*.py
+/scratch*.mjs
+
+# --- Personal data (real name/contact/EEO/salary answers) — keep local only ---
+config/candidate.json
+config/screening_answers.json
+!config/candidate.example.json
+!config/screening_answers.example.json
+
+# Saved search profiles. These hold the same personal data candidate.json does
+# -- name, contact details, work authorization, pay expectations -- and more of
+# it, since a profile also stores the background parsed out of a resume. The
+# taxonomy they are matched against (config/role_families.json) is shared,
+# impersonal data and IS tracked.
+config/profiles/
+# Files regenerated from the active profile — derived, never edited by hand.
+config/derived/
+
+# Timestamped backups written by scripts/harvestSources.mjs --apply
+config/*.bak
+
+# --- Node ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+*.egg-info/
+
+# --- Local data & generated artifacts ---
+.tmp/
+coverage/
+# EVERYTHING under data/ is local state — the SQLite store and its backups and
+# sidecars, packets, run state, question queue, discovery caches, trackers.
+# It used to be ignored file-by-file, and every new artifact (backup sidecars,
+# source_timings.json, question_queue.json …) was committable until someone
+# noticed and added a line. Now it is ignored unless deliberately re-included.
+data/*
+# Tracked inputs: the manual-jobs CSV and its example.
+!data/jobs_input/
+resumes/output/*
+!resumes/output/.gitkeep
+# Timestamped copies the tailoring step writes before touching the master.
+# Generated artifacts, not sources.
+resumes/base/history/
+# THE MASTER RESUME IS PERSONAL DATA, NOT A SOURCE ARTIFACT.
+# It was tracked for years because it is the only thing that makes the tailor
+# testable — which put a real full name, personal mobile number, personal email,
+# LinkedIn handle and a complete 10-year employment history into every clone of
+# this repository. `MASTER_RESUME.example.docx` is a synthetic stand-in with the
+# same structure; `npm run setup` copies it into place, and the tailor and its
+# tests run against it unchanged.
+# Carries YOUR facts into documents sent to employers: total years of
+# experience, and the work-authorization sentence. It was tracked, so every
+# clone shipped one person's "10+ years" and their H-1B wording.
+config/cover_letter.json
+
+resumes/base/MASTER_RESUME.docx
+!resumes/base/MASTER_RESUME.example.docx
+# A PDF rendered FROM the master. Derived, regenerated on demand, and a binary
+# that would churn on every export.
+resumes/base/MASTER_RESUME.pdf
+applications/output/*
+!applications/output/.gitkeep
+
+# Each person's own workspace (src/profile/workspace.js): their master resume
+# and history, tailored outputs and application packets. Personal, like the
+# originals above. Their job databases live under data/ (already ignored).
+resumes/profiles/
+applications/profiles/
+logs/*
+!logs/.gitkeep
+!logs/README.md
+
+# --- Reports (generated output at the repo root ONLY — never src/reports/) ---
+# Everything under reports/ is runtime output.
+/reports/*
+
+# --- Playwright ---
+playwright-report/
+test-results/
+.cache/
+
+# --- Browser profile (saved logins/cookies — never commit) ---
+.browser-profile/
+.browser-profile-*/
+
+# --- Unrelated projects that happen to live under this checkout ---
+# `git check-ignore PyProjects` matched nothing, so 34 MB of unrelated work
+# (quant trading, stock analysis, a second job-search agent) sat untracked and
+# un-ignored: one `git add -A` away from being committed here.
+PyProjects/
+
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.code-workspace
+
+# Local Claude Code tooling: vendored skills/agents plus `.claude/worktrees/`,
+# which holds real git worktrees. A worktree is a checkout, never a thing to
+# commit into the repo it belongs to.
+.claude/
+
+# Design skills vendored by `npx skills add` (third-party Markdown, ~324 KB).
+# Ignored like node_modules: the content is someone else's and reinstallable in
+# one command. Its lockfile is local tooling state too.
+.agents/
+skills-lock.json
+
+# Local design sessions can include private screenshots and discussion.
+.impeccable/
+
+# Browser-automation session logs (Playwright MCP)
+.playwright-mcp/

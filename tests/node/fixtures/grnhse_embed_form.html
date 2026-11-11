@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Embedded Greenhouse-style Application Form</title>
+</head>
+<body>
+  <!-- This stands in for the Greenhouse form that real ATS embeds (Dropbox,
+       Samsara) load inside an <iframe>. The filename contains "grnhse" so its
+       file:// URL matches the production ATS_FRAME_RE, exercising the REAL
+       frame-resolution path against real Chromium. -->
+  <form id="application_form">
+    <label for="first_name">First name</label>
+    <input id="first_name" name="first_name" type="text" />
+
+    <label for="last_name">Last name</label>
+    <input id="last_name" name="last_name" type="text" />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+
+    <label for="phone">Phone</label>
+    <input id="phone" name="phone" type="tel" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <button id="submit_app" type="button">Submit application</button>
+  </form>
+</body>
+</html>

@@ -1,0 +1,122 @@
+{
+  "_note": "TEMPLATE \u2014 copy to config/candidate.json and fill in with YOUR real details. candidate.json is gitignored because it contains personal data. Never fabricate skills, history, certifications, or authorization.",
+  "identity": {
+    "fullName": "Jane Doe",
+    "preferredName": "Jane",
+    "headline": "Senior Data Engineer",
+    "links": {
+      "linkedin": "https://www.linkedin.com/in/your-handle/",
+      "github": "",
+      "portfolio": ""
+    }
+  },
+  "contact": {
+    "email": "you@example.com",
+    "phone": "5551234567"
+  },
+  "location": {
+    "street": "",
+    "street2": "",
+    "city": "Your City",
+    "state": "Your State",
+    "zip": "00000",
+    "country": "United States",
+    "timezone": "America/New_York"
+  },
+  "workAuthorization": {
+    "status": "US Citizen | Green Card | H-1B | OPT | ...",
+    "requiresSponsorship": false,
+    "details": "Describe your authorization truthfully \u2014 this is used verbatim in screening answers."
+  },
+  "sponsorshipRequired": false,
+  "targetTitles": [
+    "Senior Data Engineer",
+    "Data Engineer",
+    "Analytics Engineer"
+  ],
+  "seniority": "senior",
+  "employmentPreferences": {
+    "types": [
+      "W2",
+      "fulltime",
+      "contract-to-hire"
+    ],
+    "minContractMonths": 12,
+    "requiresW2": true
+  },
+  "locationPreferences": {
+    "remote": true,
+    "onsite": false,
+    "hybrid": true,
+    "preferredRegions": [
+      "United States"
+    ],
+    "excludedLocations": [],
+    "excludedTimezones": []
+  },
+  "technicalStack": {
+    "cloud": [
+      "Azure"
+    ],
+    "dataEngineering": [
+      "Azure Data Factory",
+      "Databricks",
+      "PySpark"
+    ],
+    "languages": [
+      "Python",
+      "SQL"
+    ],
+    "biAndModeling": [
+      "Power BI"
+    ],
+    "orchestration": [
+      "Azure DevOps"
+    ],
+    "other": []
+  },
+  "_skillExperienceNote": "OPTIONAL. Per-skill years, used ONLY to answer questions that name a skill (\"How many years of experience do you have with X?\"). Anything not listed here is deferred to you rather than answered from your career total \u2014 that is deliberate: a total is not experience with a named tool. Example: { \"python\": \"8 years\", \"sap abap\": \"None\" }",
+  "skillExperience": {},
+  "certifications": [],
+  "domainExperience": [],
+  "workHistory": [
+    {
+      "employer": "Example Corp",
+      "title": "Senior Data Engineer",
+      "location": "Remote",
+      "startDate": "January 2020",
+      "endDate": "",
+      "current": true,
+      "highlights": [
+        "One-line, metric-backed achievement bullet"
+      ]
+    }
+  ],
+  "education": [
+    {
+      "institution": "Example University",
+      "degree": "Master of Science",
+      "field": "Computer Science",
+      "graduationYear": "2016"
+    }
+  ],
+  "salaryPreference": {
+    "display": "",
+    "minAnnualUSD": null,
+    "targetAnnualUSD": null,
+    "currency": "USD"
+  },
+  "relocationPreference": {
+    "willing": true,
+    "notes": "Open to relocation within the United States."
+  },
+  "travelPreference": {
+    "maxPercent": 25,
+    "notes": ""
+  },
+  "startDate": "Two weeks from offer",
+  "prohibited": {
+    "employers": [],
+    "terms": []
+  }
+}

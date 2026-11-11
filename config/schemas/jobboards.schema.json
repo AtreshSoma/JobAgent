@@ -1,0 +1,340 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "jobboards.schema.json",
+  "title": "Job board / connector configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "defaults",
+    "sources"
+  ],
+  "properties": {
+    "defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rateLimitMs",
+        "maxRetries"
+      ],
+      "properties": {
+        "rateLimitMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "maxRetries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "requestTimeoutMs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sourceConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many independent sources to run in parallel."
+        },
+        "boardConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many boards/tenants/companies one adapter fetches in parallel."
+        },
+        "pageConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many paginated list pages a single tenant fetches in parallel (Workday)."
+        },
+        "detailConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many per-job detail requests run in parallel per tenant (Workday)."
+        },
+        "actorConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many Apify actors run in parallel."
+        },
+        "hostConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many requests may be in flight against ONE host (for Workday, one shared pod like wd5.myworkdayjobs.com) across every source. This is the ceiling the server actually enforces: many boards/tenants share a single host, so the per-source ceilings above cannot prevent a 429 on their own."
+        },
+        "perHostConcurrency": {
+          "type": "object",
+          "additionalProperties": { "type": "integer", "minimum": 1 },
+          "description": "Per-host overrides of hostConcurrency, keyed by hostname (a Workday tenant host configures its whole pod). A source may also set its own hosts from its hostConcurrency (the Workday adapter does)."
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "adapter",
+          "enabled",
+          "priority"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "adapter": {
+            "type": "string",
+            "enum": [
+              "manualUrls",
+              "dice",
+              "indeed",
+              "linkedin",
+              "greenhouse",
+              "lever",
+              "workday",
+              "careers",
+              "genericPublicPage",
+              "apify",
+              "ashby",
+              "smartrecruiters",
+              "atsSearch",
+              "adzuna",
+              "rippling",
+              "oracleRecruiting",
+              "amazonJobs",
+              "icims"
+            ]
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "rateLimitMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "hostConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional per-source in-flight ceiling when the adapter creates its own host gate."
+          },
+          "hostSpacingMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Minimum delay between request starts against one physical host/pod."
+          },
+          "maxDetailFetches": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum optional Workday full-description requests per tenant; cached descriptions do not consume this budget."
+          },
+          "maxPostingsPerCompany": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "SmartRecruiters: ceiling on postings read per company across all pages. The adapter pages until totalFound is reached; this only stops a runaway loop."
+          },
+          "boardConcurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "How many boards/tenants this source fetches in parallel, overriding the global default. Safe to raise for Workday: every tenant is a different host and per-host politeness is enforced separately by the host gate, so with 200+ boards a low value is pure serialization."
+          },
+          "maxPagesPerTerm": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Workday: cap list pages fetched per search phrase per tenant (default 50 = no cap). The ONE knob that trades coverage for speed, because a fuzzy searchText matches far more than it should (one tenant returns 927 hits for 'data engineer', ~90 on-target) and every 20 is a request. Measured on-target recall by cap: 3 pages 40%, 5 pages 50%, 8 pages 65%, 12 pages 71%. Ordering is only weakly relevance-based and uneven between tenants, so a low cap silently drops real matches."
+          },
+          "maxSearchTerms": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Workday: how many search phrases to derive from candidate.targetTitles per tenant (default 2). Each term multiplies that tenant's page cost, and Workday's search is fuzzy enough that a minimal cover of the title list suffices — measured, one phrase already recovered all but 3 on-target titles across 12 tenants. 0 disables searching (enumerate everything)."
+          },
+          "searchTexts": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Workday: pin the search phrases for every tenant in this source, overriding the derivation from candidate.targetTitles. Keep each phrase to ~2 tokens: Workday's CXS search NARROWS as tokens are added (measured: 'data' 115 hits, 'data engineer' 51, a nine-word query 0)."
+          },
+          "maxAgeDays": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "atsSearch: hard ceiling on posting age in days (default 180; 0 disables). A zombie guard, not a freshness filter — cross-company search indexes keep requisitions nobody ever closed, and 89% of SmartRecruiters rows measured over a year old (oldest: 2014). Undated rows are kept."
+          },
+          "dayRange": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "atsSearch/Workable: only return postings from the last N days (default 7). Workable ranks by relevance and accepts no sort parameter, so this is the only recency lever — and widening it displaces fresh jobs rather than merely adding old ones (measured: 7 days yields 137 jobs under a week old, 30 days only 76). Raise it only when back-filling."
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "boards": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                { "type": "string" },
+                {
+                  "type": "object",
+                  "required": ["host"],
+                  "properties": {
+                    "host": { "type": "string", "minLength": 1 },
+                    "company": { "type": "string" },
+                    "name": { "type": "string" }
+                  }
+                }
+              ]
+            },
+            "description": "Board slugs (Greenhouse/Lever/Ashby/SmartRecruiters/Rippling), or for icims a portal host string / { host, company } object."
+          },
+          "tenants": {
+            "type": "array",
+            "description": "Per-tenant coordinates. Two shapes are accepted, one per adapter that uses this key: Workday needs { host, tenant, site }; oracleRecruiting needs { host, siteNumber }. Each shape is validated strictly on its own terms, so a Workday entry missing `site` is still an error.",
+            "items": {
+              "type": "object",
+              "anyOf": [
+                {
+                  "required": [
+                    "host",
+                    "tenant",
+                    "site"
+                  ]
+                },
+                {
+                  "required": [
+                    "host",
+                    "siteNumber"
+                  ]
+                }
+              ],
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "tenant": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "site": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "siteNumber": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "oracleRecruiting: the Candidate Experience site number, e.g. 'CX_1001'. Read it from the tenant's own careers page HTML (sitenumber=\"CX_...\") — the API does NOT validate it and silently falls back to the tenant's default site, so a 200 is not proof the number is right."
+                },
+                "company": {
+                  "type": "string",
+                  "description": "Human-readable employer name for the tracker. Falls back to the tenant/host slug."
+                },
+                "name": {
+                  "type": "string"
+                },
+                "locale": {
+                  "type": "string"
+                },
+                "pageSize": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "fetchDetails": {
+                  "type": "boolean",
+                  "description": "Set false to skip the per-job detail request. The posting keeps its summary/teaser description."
+                },
+                "maxPagesPerTerm": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "keywords": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "oracleRecruiting: pin this tenant's server-side keyword searches, overriding the phrases derived from candidate.targetTitles. An empty array means 'enumerate everything'."
+                },
+                "searchText": {
+                  "type": "string",
+                  "description": "Pin this tenant's single search phrase, overriding the phrases derived from candidate.targetTitles. An empty string means 'enumerate everything'."
+                },
+                "searchTexts": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "Pin several search phrases for this tenant. Results are merged and de-duplicated before detail enrichment, so the per-tenant detail budget is spent once per job, not once per phrase."
+                }
+              }
+            }
+          },
+          "maxLinksPerCompany": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "companies": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "ats": {
+                  "type": "string",
+                  "enum": [
+                    "greenhouse",
+                    "lever",
+                    "workday",
+                    "ashby",
+                    "smartrecruiters"
+                  ]
+                },
+                "slug": {
+                  "type": "string"
+                },
+                "token": {
+                  "type": "string"
+                },
+                "host": {
+                  "type": "string"
+                },
+                "tenant": {
+                  "type": "string"
+                },
+                "site": {
+                  "type": "string"
+                },
+                "locale": {
+                  "type": "string"
+                },
+                "pageSize": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "searchText": {
+                  "type": "string"
+                },
+                "careersUrl": {
+                  "type": "string"
+                },
+                "sitemap": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "options": {
+            "type": "object"
+          }
+        }
+      }
+    }
+  }
+}

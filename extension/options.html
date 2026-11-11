@@ -1,0 +1,13 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><link rel="stylesheet" href="styles.css"><title>Job Agent settings</title></head>
+<body><main class="wide">
+  <h1>Connection settings</h1>
+  <p class="muted">The dashboard must be running locally. The key stays in Chromium extension storage.</p>
+  <label>Local server<input id="serverUrl" value="http://127.0.0.1:4646" spellcheck="false"></label>
+  <label>Extension key<input id="key" type="password" autocomplete="off" minlength="32"></label>
+  <button id="save">Save and test</button>
+  <div id="status" role="status"></div>
+  <h2>Safety model</h2>
+  <ul><li>Only the active tab is accessed after you click Fill.</li><li>Only human-approved packets are returned.</li><li>Passwords, CAPTCHAs, demographic questions, attestations, and submit buttons are never filled or clicked.</li></ul>
+  <script src="options.js"></script>
+</main></body></html>
