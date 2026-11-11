@@ -32,6 +32,7 @@ import { spawn } from 'node:child_process';
 import { ui } from './ui.js';
 import { quickPreflight } from './preflight.js';
 import { masterResumeFile } from '../profile/workspace.js';
+import { readToken, TOKEN_HEADER, unlockUrl } from '../dashboard/apiToken.js';
 
 /** Parse and validate a user-facing dashboard port. */
 export function parseDashboardPort(value, fallback = 4646) {
@@ -83,12 +84,15 @@ export async function findFreePort(start, tries = 20) {
  * @param {object} [options]
  * @param {number} [options.timeoutMs=1000] a JobAgent answers this instantly
  * @param {typeof fetch} [options.fetchImpl]
+ * @param {string|null} [options.token] the dashboard's access token, when known
  * @returns {Promise<string|null>} the dashboard URL, or null
  */
-export async function probeRunningDashboard(port, { timeoutMs = 1000, fetchImpl = fetch } = {}) {
+export async function probeRunningDashboard(port, { timeoutMs = 1000, fetchImpl = fetch, token = null } = {}) {
   const url = `http://127.0.0.1:${port}`;
   try {
-    const res = await fetchImpl(`${url}/api/run/status`, { signal: AbortSignal.timeout(timeoutMs) });
+    // A running dashboard requires its access token (P1-5); send it when known.
+    const headers = token ? { [TOKEN_HEADER]: token } : {};
+    const res = await fetchImpl(`${url}/api/run/status`, { signal: AbortSignal.timeout(timeoutMs), headers });
     if (!res.ok) return null;
     /** @type {any} */
     const body = await res.json();
@@ -102,12 +106,12 @@ export async function probeRunningDashboard(port, { timeoutMs = 1000, fetchImpl 
 }
 
 /** Wait until the dashboard answers HTTP (it should immediately; be sure). */
-async function waitForReady(url, { timeoutMs = 10_000, fetchImpl = fetch } = {}) {
+async function waitForReady(url, { timeoutMs = 10_000, fetchImpl = fetch, token = null } = {}) {
   const deadline = Date.now() + timeoutMs;
   let lastErr = null;
   while (Date.now() < deadline) {
     try {
-      const res = await fetchImpl(`${url}/api/run/status`);
+      const res = await fetchImpl(`${url}/api/run/status`, { headers: token ? { [TOKEN_HEADER]: token } : {} });
       if (res.ok) return true;
       lastErr = new Error(`HTTP ${res.status}`);
     } catch (err) { lastErr = err; }
@@ -261,11 +265,12 @@ export async function runApp({ parsed, env, deps = {} }) {
   // Already running? Reuse it instead of starting a second server on the next
   // port. Checked before the database is opened: a second instance must not
   // touch the store the first one is serving.
-  const existingUrl = await (deps.probeRunningDashboard ?? probeRunningDashboard)(requestedPort);
+  const existingToken = readToken(config.root);
+  const existingUrl = await (deps.probeRunningDashboard ?? probeRunningDashboard)(requestedPort, { token: existingToken });
   if (existingUrl) {
     ui.success(`Job Agent is already running at ${ui.c.bold(existingUrl)}`);
     if (!noOpen) {
-      const opened = (deps.openBrowser ?? openBrowser)(existingUrl, {
+      const opened = (deps.openBrowser ?? openBrowser)(unlockUrl(existingUrl, existingToken), {
         onError: (err) => ui.warn(`Could not open the browser automatically: ${err.message}. Open ${existingUrl} yourself.`),
       });
       if (opened === false) ui.warn(`Could not open the browser automatically. Open ${existingUrl} yourself.`);
@@ -304,17 +309,19 @@ export async function runApp({ parsed, env, deps = {} }) {
     // 4. Serve + readiness.
     dash = await startDashboardImpl({ config, db, logger, port });
     uninstallSafetyNet = installSafetyNetImpl({ runState: dash.runState, logger });
-    await (deps.waitForReady ?? waitForReady)(dash.url);
+    await (deps.waitForReady ?? waitForReady)(dash.url, { token: dash.apiToken });
 
-    // 5. Browser.
+    // 5. Browser. The unlock link carries the access token once; the server
+    // swaps it for a cookie and redirects to the plain URL.
     if (!noOpen) {
-      const opened = (deps.openBrowser ?? openBrowser)(dash.url, {
+      const opened = (deps.openBrowser ?? openBrowser)(dash.unlockUrl ?? dash.url, {
         onError: (err) => ui.warn(`Could not open the browser automatically: ${err.message}. Open ${dash.url} yourself.`),
       });
       if (opened === false) ui.warn(`Could not open the browser automatically. Open ${dash.url} yourself.`);
     }
 
     ui.success(`Dashboard running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
+    if (dash.apiToken) ui.note(`If the browser shows "JobAgent is locked", open: ${dash.unlockUrl}`);
     if (firstRun) {
       ui.warn('First run: place your resume at resumes/base/MASTER_RESUME.docx to enable tailoring.');
     }

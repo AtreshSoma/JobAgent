@@ -7,6 +7,8 @@ import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
 import { openDialog, placeToasts } from './dialogs.js';
 import { autofillBlockedReason, BROWSER_MISSING } from './today.js';
+import { rewritesSection } from './rewrites.js';
+import { versionsSection } from './versions.js';
 
 /* ──────────────────────── detail rail ──────────────────────── */
 
@@ -307,6 +309,10 @@ export function detailSections(job) {
 
   // resume card — the feature the workflow revolves around
   out.push(railSection('resume', resumeCard(job)));
+  const rewrites = rewritesSection(job);
+  if (rewrites) out.push(rewrites);
+  const versions = versionsSection(job);
+  if (versions) out.push(versions);
 
   // quick actions
   // Three groups: what you do most (open, shortlist, reject) stays visible;
@@ -984,6 +990,8 @@ export function packetSection(packet) {
   guarantee.append(`Stops before submit: ${packet.stopBeforeSubmit ? 'yes' : 'NO — report this'} · `);
   guarantee.append(`submit-ready flag: ${packet.submitReady ? 'YES — report this' : 'no'}`);
   wrap.append(guarantee);
+  const letter = coverLetterSection(packet);
+  if (letter) wrap.append(letter);
 
   if (packet.tailoring?.changes?.length || packet.tailoring?.gaps?.length) {
     wrap.append(el('h3', { text: 'What was changed in your resume' }));
@@ -1083,13 +1091,43 @@ export function resumeChangeLabel(change = {}) {
     stabilize_page_breaks: 'Kept section headings with their first content line.',
     normalize_layout: 'Cleaned up layout artifacts (manual page breaks, merged role blocks, blank filler).',
     fit_to_page_budget: 'Omitted the least relevant bullets from the oldest roles to hold the page limit.',
+    rewrite: 'Used a rewording you accepted, backed by your own resume text.',
+    rewrite_skipped: 'Skipped a rewording you accepted: that bullet is no longer in your master resume.',
   };
   const label = labels[change.type] || change.reason
     || String(change.type ?? 'Recorded an update').replace(/_/g, ' ');
   // These two describe WHAT they did in `after`, and that detail is the point.
+  if (change.type === 'rewrite' && change.before && change.after) return `${label} "${change.before}" became "${change.after}"`;
   return ['normalize_layout', 'fit_to_page_budget'].includes(change.type) && change.after
     ? `${label} (${change.after})`
     : label;
+}
+
+/** How the cover letter was written (P1-3): template, or grounded in the resume. */
+export function coverLetterSection(packet) {
+  const grounding = packet.coverLetterGrounding;
+  if (!packet.coverLetterGenerated || !grounding) return null;
+  const wrap = el('div', { class: 'cl-grounding' });
+  wrap.append(el('h3', { text: 'Cover letter' }));
+  if (grounding.mode === 'grounded') {
+    wrap.append(el('p', { text: `Written from your resume: each of its ${grounding.paragraphs?.length ?? 0} paragraphs uses only lines it cites.` }));
+    const ul = el('ul', { class: 'change-list' });
+    for (const p of grounding.paragraphs ?? []) {
+      ul.append(el('li', {}, el('span', { text: p.text }), el('span', { class: 'faint', text: ` (backed by ${p.evidence.length} resume line(s))` })));
+    }
+    wrap.append(ul);
+  } else {
+    wrap.append(el('p', { text: grounding.fallbackReason
+      ? `Written from your cover-letter template, because ${grounding.fallbackReason}.`
+      : 'Written from your cover-letter template.' }));
+  }
+  if (grounding.dropped?.length) {
+    wrap.append(el('p', { class: 'muted', text: `${grounding.dropped.length} suggested paragraph(s) were left out because your resume does not back them.` }));
+  }
+  if (packet.coverLetterDocxPath) {
+    wrap.append(el('p', { class: 'faint', text: `Also saved as a Word document: ${String(packet.coverLetterDocxPath).split(/[\\/]/).pop()}` }));
+  }
+  return wrap;
 }
 
 /* ─────────────────────── resume preview ─────────────────────── */

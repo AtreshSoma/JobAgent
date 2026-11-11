@@ -35,18 +35,19 @@ export function launchBrowser() {
  * @param {(root: string) => void} [options.prepare] edit the private workspace before the server reads it
  * @returns {Promise<{ url: string, root: string, stop: () => Promise<void> }>}
  */
-export async function startTestDashboard({ prepare } = {}) {
+export async function startTestDashboard({ prepare, deps: extraDeps = {} } = {}) {
   const root = buildTestRoot();
   prepare?.(root);
   const loadHere = (opts = {}) => loadConfig({ ...opts, root });
   const config = loadHere({ loadEnv: false });
   const db = openDatabase({ path: ':memory:' });
   const dash = await startDashboard({
-    config, db, logger: null, port: 0, deps: { loadConfigImpl: loadHere },
+    config, db, logger: null, port: 0, deps: { loadConfigImpl: loadHere, ...extraDeps },
   });
   return {
     url: dash.url,
     root,
+    db,
     async stop() {
       await dash.close();
       db.close();

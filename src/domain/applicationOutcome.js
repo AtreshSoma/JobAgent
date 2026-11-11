@@ -237,6 +237,48 @@ export function applicationMetrics(items = []) {
   };
 }
 
+/** Fewer submitted applications than this in a cell: no rate is shown. */
+export const MIN_CONVERSION_CELL = 5;
+
+/** "70-79" for a score of 74; null when unscored. */
+export function scoreBand(score) {
+  const n = Number(score);
+  if (score == null || !Number.isFinite(n)) return null;
+  const low = Math.max(0, Math.min(90, Math.floor(n / 10) * 10));
+  return low === 90 ? '90-100' : `${low}-${low + 9}`;
+}
+
+/**
+ * Which kinds of applications lead to interviews (P2-9): for each source,
+ * ATS, score band and tier, how many submitted applications reached an
+ * interview. A cell with fewer than MIN_CONVERSION_CELL applications shows
+ * its counts but no rate ("too few to tell"), so a 1-of-2 never reads as 50%.
+ * Recorded facts only; nothing is projected.
+ */
+export function conversionBreakdown(items = [], { minCell = MIN_CONVERSION_CELL } = {}) {
+  const dims = {
+    source: (i) => i.source, ats: (i) => i.atsPlatform, scoreBand: (i) => scoreBand(i.score), tier: (i) => i.tier,
+  };
+  const out = {};
+  for (const [dim, keyOf] of Object.entries(dims)) {
+    const cells = new Map();
+    for (const item of items) {
+      if (item.appStatus !== 'submitted') continue;
+      const key = keyOf(item) || 'unknown';
+      const cell = cells.get(key) ?? { key, submitted: 0, interviews: 0, offers: 0 };
+      cell.submitted += 1;
+      const reached = PROGRESS[item.reached] ?? 0;
+      if (reached >= PROGRESS[OUTCOME.INTERVIEWING]) cell.interviews += 1;
+      if (reached >= PROGRESS[OUTCOME.OFFER]) cell.offers += 1;
+      cells.set(key, cell);
+    }
+    out[dim] = [...cells.values()]
+      .map((c) => ({ ...c, tooFew: c.submitted < minCell, interviewRate: c.submitted >= minCell ? Math.round((c.interviews / c.submitted) * 100) : null }))
+      .sort((a, b) => b.submitted - a.submitted || a.key.localeCompare(b.key));
+  }
+  return { minCell, ...out };
+}
+
 /** Empty export cells, for a job that was never submitted. */
 export const NO_OUTCOME_EXPORT = Object.freeze({ outcome: '', outcomeDate: '', outcomeHistory: '', followUpDue: '' });
 

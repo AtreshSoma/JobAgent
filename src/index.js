@@ -32,7 +32,8 @@
  * On auto-submit, precisely (this file used to say "there is no auto-submit
  * path", which contradicted both the README and the code):
  *
- *   - No CLI command can submit. `runAssist` hardcodes autoSubmit: false.
+ *   - No CLI command can submit. `runAssist` forces autoSubmit: false whatever
+ *     options it is given, and no CLI path passes any.
  *   - ONE path can submit: POST /api/auto-submit-batch on the local dashboard,
  *     which requires an explicit per-run authorization (`confirmed: true`), a
  *     fresh server-side eligibility check, zero blockers, a truthful-sponsorship
@@ -380,6 +381,7 @@ async function runCommand(command, parsed, env) {
           uninstallSafetyNet = installProcessSafetyNet({ runState: dash.runState, logger });
           ui.heading('JobAgent Dashboard');
           ui.success(`Running at ${ui.c.bold(dash.url)}  (local-only, never exposed)`);
+          if (dash.apiToken) ui.note(`Open this link to unlock it in your browser: ${dash.unlockUrl}`);
           ui.note('Discover, score, review, approve, and auto-apply from the browser.');
           ui.note('By default it stops before Submit; auto-submit only runs when you explicitly opt in per run.');
           ui.blank();

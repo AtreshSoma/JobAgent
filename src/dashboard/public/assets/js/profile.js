@@ -667,6 +667,78 @@ export async function openHealth() {
     c.detail ?? '—',
     c.fix ?? '—',
   ])));
+  await renderBackups(body);
+  await renderLlmUsage(body);
+}
+
+/** LLM usage over the last 30 days (P3-5): tokens per task and model. */
+export async function renderLlmUsage(host) {
+  let usage = null;
+  try { usage = await api('/api/llm-usage'); } catch { return; }
+  if (!usage?.totals?.calls) return;
+  const section = el('section', { 'aria-labelledby': 'llmUsageTitle' });
+  section.append(el('h3', { id: 'llmUsageTitle', text: 'AI usage (last 30 days)' }));
+  const t = usage.totals;
+  section.append(el('p', { text: `${fmt(t.calls)} request(s), ${fmt(t.cached)} answered from the cache; `
+    + `${fmt(t.inputTokens)} tokens sent and ${fmt(t.outputTokens)} received. Only counts are kept, never what was sent.` }));
+  section.append(miniTable(['Task', 'Model', 'Requests', 'Tokens in', 'Tokens out'], usage.rows.map((r) => [
+    r.task, `${r.model} (${r.provider})`, fmt(r.calls), fmt(r.inputTokens), fmt(r.outputTokens),
+  ])));
+  host.append(section);
+}
+
+/** "1.2 GB", "640 MB" — sizes for people, not bytes. */
+export function humanBytes(bytes) {
+  const n = Number(bytes) || 0;
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 1e6) return `${Math.round(n / 1e6)} MB`;
+  return `${Math.max(1, Math.round(n / 1e3))} KB`;
+}
+
+/** One sentence about the backups, from GET /api/backups (P1-6). Pure. */
+export function backupSummary(info) {
+  if (!info?.available) return 'Backups are not available for this dashboard.';
+  const count = info.backups?.length ?? 0;
+  if (!count) return 'No backups yet. The first automatic backup runs a couple of minutes after JobAgent starts.';
+  const newest = info.backups[0];
+  const when = relTime(newest.createdAt) ?? newest.createdAt;
+  return `Last backup ${when}. ${count} kept, using ${humanBytes(info.totalBytes)} in data/backups.`;
+}
+
+/** The Backups section of System health: status, Back up now, and how to export. */
+export async function renderBackups(host) {
+  const section = el('section', { class: 'backups', 'aria-labelledby': 'backupsTitle' });
+  section.append(el('h3', { id: 'backupsTitle', text: 'Backups' }));
+  let info = null;
+  try { info = await api('/api/backups'); } catch { info = null; }
+  if (!info) {
+    section.append(el('p', { class: 'muted', text: 'Backups need a newer dashboard process. Restart JobAgent, then reopen this window.' }));
+    host.append(section);
+    return;
+  }
+  section.append(el('p', { id: 'backupStatus', role: 'status', text: backupSummary(info) }));
+  if (info.lastError) section.append(el('p', { class: 'st-blocked', text: `The last backup failed: ${info.lastError}` }));
+  if (info.available) {
+    section.append(el('button', { type: 'button', class: 'small', 'data-action': 'backup-now', text: 'Back up now' }));
+  }
+  section.append(el('p', { class: 'muted', text: 'Every job list, with its decisions, notes and applications, is copied daily and checked. '
+    + 'To move everything to another computer in one file, run "npm run export" in the JobAgent folder.' }));
+  host.append(section);
+}
+
+/** Back up now, then refresh the sentence. */
+export async function backupNow() {
+  const status = $('backupStatus');
+  if (status) status.textContent = 'Backing up…';
+  try {
+    await postJson('/api/backups');
+    const info = await api('/api/backups');
+    if (status) status.textContent = backupSummary(info);
+    toast('Backup saved.');
+  } catch (err) {
+    if (status) status.textContent = err.message;
+    toast(err.message, 'bad');
+  }
 }
 
 export function download(path, filename) {

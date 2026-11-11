@@ -19,6 +19,41 @@ export const CHANGELOG_GROUPS = Object.freeze([
 
 export const CHANGELOG = Object.freeze([
   {
+    version: 'v0.2.0',
+    date: '2026-11-11',
+    summary: 'Writing help that only uses your own resume, daily backups, email replies, and a locked-down dashboard.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      new: [
+        'Rewrite suggestions, in a job\'s detail: a model proposes clearer wordings of your bullets for that job. Each one is checked against your own resume first, and nothing changes until you accept it. Turn on with RESUME_REWRITE=suggest.',
+        'Ask for a specific change ("lead the Power BI bullet with its outcome"). What your resume cannot back is declined, with the reason.',
+        'Cover letters can be written paragraph by paragraph from your resume (COVER_LETTER_MODE=grounded), and every letter is also saved as a Word document.',
+        'Document versions: each prepared resume and letter is kept, can be compared word by word, and restored. Once you submit, they are frozen as sent.',
+        'Daily backups of every job list, checked after copying, plus Back up now under System health. One file moves everything to another computer: npm run export.',
+        'Email replies, in the Activity menu: JobAgent reads replies about applications you submitted and suggests the outcome, showing the sentence that says so. It never sends, moves or marks mail.',
+        'Draft a reply to an employer email from your resume, with what only you can fill in left as a gap. Copy it, open it in your email app, or download it.',
+        'Export your follow-ups to Google Calendar, Outlook or Apple Calendar (.ics), and optional desktop alerts when one is due.',
+        'Rank top matches by meaning, in the Activity menu: a second number beside the fit score, with the resume lines each posting is closest to.',
+        'What gets interviews, under Applications: which sources, systems and score ranges led to interviews, once there is enough to tell.',
+        'Use your job data from Claude or another assistant through an MCP server (npm run mcp). It can read, add a note and record an outcome, and has no way to apply or submit.',
+        'Choose the AI provider: any OpenAI-compatible server, Anthropic, or Ollama and LM Studio on your own computer.',
+      ],
+      improved: [
+        'The dashboard now needs its own access link, so other programs and other accounts on this computer cannot use it. The launcher opens the link for you.',
+        'Links you paste, and links found in postings, are refused if they lead to this computer or your home network, checked at the moment of connecting.',
+        'A resume PDF is always made: when Word or LibreOffice is missing, JobAgent prints it with its own browser.',
+        'The same job advertised for two different teams is no longer merged into one; the same role in many cities still is.',
+        'Light theme colours, tables and dialogs pass an accessibility check, and the Changelog can be scrolled with the keyboard.',
+        'Passwords such as the inbox app password can be kept in your system keychain instead of .env (npm run secret).',
+      ],
+      fixed: [
+        'Auto-submit is refused on any application system that has not had a supervised live run recorded, even though it passed every saved-page test.',
+        'The support matrix said Oracle Recruiting found nothing and that Adzuna was on by default; both are now correct.',
+        'A copy of the job store is taken before any database upgrade, so an upgrade can be undone.',
+      ],
+    },
+  },
+  {
     date: '2026-11-10',
     summary: 'Share the jobs you are looking at as a neat email, and profile forms that never lose what you type.',
     safety: 'Nothing is submitted without your review. That has not changed.',

@@ -42,6 +42,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { readRunLock, isPidAlive } from '../src/utils/runLock.js';
+import { readToken, TOKEN_HEADER } from '../src/dashboard/apiToken.js';
 
 // Same createRequire pattern as src/logging/db.js: a static `import ... from
 // 'node:sqlite'` is resolved eagerly by bundlers and test runners, which do not
@@ -132,9 +133,14 @@ export async function unsafeToWriteReason({ root, port = 4646, fetchImpl = fetch
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1500);
-    const res = await fetchImpl(`http://127.0.0.1:${port}/api/run/status`, { signal: controller.signal });
+    const token = readToken(root);
+    const res = await fetchImpl(`http://127.0.0.1:${port}/api/run/status`, {
+      signal: controller.signal, headers: token ? { [TOKEN_HEADER]: token } : {},
+    });
     clearTimeout(timer);
-    if (res.ok) return `the dashboard is running on 127.0.0.1:${port} — stop it first`;
+    // 401 is a dashboard that is up but locked (its access token, P1-5): it is
+    // still holding the database, so writing now is just as unsafe.
+    if (res.ok || res.status === 401) return `the dashboard is running on 127.0.0.1:${port} — stop it first`;
   } catch { /* nothing listening: safe */ }
   return null;
 }
