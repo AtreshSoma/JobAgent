@@ -88,7 +88,10 @@ describe('OS backends never put the secret in the arguments', () => {
 });
 
 const realOs = process.env.REAL_SECRET_STORE_TEST === '1' || process.platform === 'win32';
-describe.runIf(realOs)('real OS store round-trip', () => {
+// Each Windows PowerShell start takes 1-2 s on CI runners and this test starts
+// it three times (availability, protect, unprotect): 5.3 s measured on Node 22
+// / windows-latest, over vitest's 5 s default. Slow, not broken.
+describe.runIf(realOs)('real OS store round-trip', { timeout: 60_000 }, () => {
   it('stores, reads and deletes with the platform backend', () => {
     const s = createSecretStore({ root, env: {} });
     const name = `JOBAGENT_TEST_${process.pid}`;
