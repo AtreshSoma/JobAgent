@@ -132,7 +132,7 @@ describe('dashboard server hardening', () => {
     expect(isLoopbackHost('localhost')).toBe(true);
     expect(isLoopbackHost('[::1]:9999')).toBe(true);
     expect(isLoopbackHost('evil.com')).toBe(false);
-    expect(isLoopbackHost(undefined)).toBe(true); // ancient clients; socket is loopback-bound
+    expect(isLoopbackHost(undefined)).toBe(false); // every HTTP/1.1 client sends Host; none is refused (P1-5)
     expect(isAllowedOrigin(undefined)).toBe(true);
     expect(isAllowedOrigin('http://localhost:4646')).toBe(true);
     expect(isAllowedOrigin('https://evil.com')).toBe(false);

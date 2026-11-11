@@ -38,6 +38,11 @@ export const state = {
   roleQuery: null,
   /** Last link-check result per job id, so a re-render does not erase it. */
   linkHealth: new Map(),
+  /** Rewrite suggestions per job id (GET /api/jobs/:id/rewrites), and whether the feature is on. */
+  rewrites: new Map(),
+  rewritesEnabled: null,
+  /** Document versions per job id (GET /api/jobs/:id/versions). */
+  versions: new Map(),
   /** 'today' (the action queue), 'board' (Jobs) or 'applications'. */
   view: 'today',
   /** Last /api/today payload (or its derived fallback). */

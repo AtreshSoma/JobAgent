@@ -21,9 +21,10 @@ import { openDatabase } from '../../src/logging/db.js';
 import { startDashboard } from '../../src/dashboard/server.js';
 import { loadConfig } from '../../src/config/loadConfig.js';
 import { makeDocx } from './fixtures/docx.js';
+import { readText } from './helpers/readText.js';
 
 const REPO = process.cwd();
-const read = (rel) => readFileSync(new URL(`../../src/dashboard/public/${rel}`, import.meta.url), 'utf8');
+const read = (rel) => readText(new URL(`../../src/dashboard/public/${rel}`, import.meta.url));
 
 /** Title and dates on one line; employer | place on the next; long headings. */
 const DATED_TITLE_RESUME = [
@@ -197,7 +198,13 @@ describe('the switcher in the interface', () => {
   });
 
   it('puts a "Searching as" radio group in the Profile menu and initials on its button', () => {
-    const menu = html.slice(html.indexOf('id="accountMenu"'), html.indexOf('</div>\n    </span>', html.indexOf('id="accountMenu"')));
+    const start = html.indexOf('id="accountMenu"');
+    const end = html.indexOf('</div>\n    </span>', start);
+    // Guard the slice itself: a -1 here would make every assertion below
+    // check the whole page and pass for the wrong reason (P3-2).
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const menu = html.slice(start, end);
     expect(menu).toContain('id="profileMenuLabel"');
     expect(menu).toContain('id="profileMenuItems" role="group" aria-labelledby="profileMenuLabel"');
     expect(html).toContain('<span class="avatar" id="profileAvatar" aria-hidden="true" hidden></span>');

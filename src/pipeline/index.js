@@ -47,7 +47,10 @@ import { generateReport } from '../reports/reportGenerator.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { dateStamp, formatPostedRelative } from '../utils/dates.js';
 import { buildJobPaths } from '../utils/outputPaths.js';
-import { tailorResumeForJob } from '../resume/tailorRunner.js';
+import { keywordsForJob, tailorResumeForJob, writeLetterDocx } from '../resume/tailorRunner.js';
+import { composeGroundedLetter, letterSettings } from '../apply/groundedLetter.js';
+import { recordVersion } from '../apply/documentVersions.js';
+import { acceptedRewritesFor } from '../resume/rewrites.js';
 import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '../lifecycle.js';
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
 import { findPlaceholders } from '../config/placeholders.js';
@@ -784,6 +787,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
         exportPdf: config?.runtime?.resumeExportPdf !== false,
         outputDir: outPaths.folder,
         outputFilename: `${outPaths.resumeBase}.docx`,
+        // Rewrites the person accepted for this job (P1-2); verified against
+        // the master resume, so the tailor can apply exactly these.
+        acceptedRewrites: db ? acceptedRewritesFor(db, job.id) : [],
       },
       deps,
     });
@@ -839,16 +845,69 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     logger.error(resumeWarning, {}, job.id);
   }
 
-  // Cover letter (deterministic; only when warranted).
+  // Cover letter, only when warranted. The template is the default; with
+  // COVER_LETTER_MODE=grounded the body is written paragraph by paragraph from
+  // the resume and each paragraph is verified against it (P1-3). Either way it
+  // goes through the same greeting, closing, humanizer and checks.
+  let grounded = null;
+  const env = deps.env ?? process.env;
+  if (letterSettings(env, { root: config.root }).enabled) {
+    try {
+      grounded = await (deps.composeGroundedLetterFn ?? composeGroundedLetter)({
+        job, config, requirements: keywordsForJob(score), env, deps,
+      });
+    } catch (err) {
+      grounded = { ok: false, reason: `grounded letter failed: ${err.message}` };
+    }
+  }
   const cover = generateCoverLetter(job, score, {
     coverLetter: config.coverLetter,
     candidate: config.candidate,
     humanizerPatterns: config.humanizerPatterns,
+    ...(grounded?.ok ? { compose: () => grounded.body } : {}),
   });
+  if (cover.generated) {
+    cover.grounding = grounded?.ok
+      ? { mode: 'grounded', task: grounded.provenance?.task ?? null, model: grounded.provenance?.model ?? null,
+        paragraphs: grounded.paragraphs, dropped: grounded.dropped ?? [] }
+      : { mode: 'template', fallbackReason: grounded ? grounded.reason : null, dropped: grounded?.dropped ?? [] };
+  }
   let coverLetterPath = null;
   if (cover.generated) {
     coverLetterPath = writeCoverLetter(outPaths.folder, `${outPaths.coverLetterBase}.txt`, cover, deps);
-    logger.event(EVENT_TYPES.COVER_LETTER_GENERATED, { jobId: job.id, message: `cover letter (${cover.wordCount} words)` });
+    // The same text as a .docx for portals and recruiters that want a document.
+    // Best-effort: the .txt above stays the file uploads use.
+    const docxFn = deps.writeLetterDocxFn ?? (deps.writeFileImpl ? null : writeLetterDocx);
+    if (docxFn) {
+      try {
+        cover.docxPath = await docxFn({
+          text: cover.text, path: join(outPaths.folder, `${outPaths.coverLetterBase}.docx`), root: config.root, deps,
+        });
+      } catch (err) {
+        logger.warn?.(`cover letter .docx not written: ${err.message}`);
+      }
+    }
+    logger.event(EVENT_TYPES.COVER_LETTER_GENERATED, {
+      jobId: job.id, message: `cover letter (${cover.wordCount} words, ${cover.grounding.mode})`,
+    });
+  }
+
+  // Version history of this application's documents (P2-2). Real runs only:
+  // a test that stubs file writes has no documents on disk to copy.
+  const versionFn = deps.recordVersionFn ?? (deps.writeFileImpl ? null : recordVersion);
+  if (versionFn) {
+    try {
+      versionFn(outPaths.folder, {
+        cause: 'generated',
+        files: {
+          resume: resumeTailored ? resumePath : null, resumePdf: resumePdfPath,
+          letter: coverLetterPath, letterDocx: cover.docxPath ?? null,
+        },
+        task: cover.grounding?.task ?? null,
+      });
+    } catch (err) {
+      logger.warn?.(`document version not recorded: ${err.message}`);
+    }
   }
 
   const packet = buildApplicationPacket({

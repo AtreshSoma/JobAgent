@@ -37,10 +37,14 @@ Tailoring actions (all honest, content-preserving):
      rewording anything. Omissions are listed in `changes` for review.
   9. Save the result to a per-job .docx in the job's output folder.
 
-Free-form rewriting is intentionally disabled. Without a separately approved,
-claim-level evidence map, even plausible wording changes can silently invent
-scope, ownership, technologies, or metrics. This module therefore performs only
-exact-text movement and formatting changes whose provenance is auditable.
+Free-form rewriting is intentionally disabled. Without a claim-level evidence
+map, even plausible wording changes can silently invent scope, ownership,
+technologies, or metrics. This module therefore performs exact-text movement
+and formatting changes whose provenance is auditable, plus ONE narrow
+exception: ``accepted_rewrites``, bullets whose rewording was verified against
+cited master-resume lines (src/resume/claimVerifier.js) and then accepted by a
+person. Exactly those bullets change; every other unit is still checked
+byte-for-byte by the truth invariants.
 
 Every action is recorded in a structured ``changes`` list (what changed, where,
 before/after, and the evidence for why) so a human can review the tailored
@@ -1956,6 +1960,148 @@ def _verify_layout_invariants(
     return invariants
 
 
+def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
+    """An ATS-safe HTML rendering of a resume, for printing to PDF (P2-3).
+
+    One column of real text: section headings become <h2>, role lines <h3>,
+    bullets <li>, everything else <p>; bold runs stay bold. No tables, images,
+    headers or footers. Returns the HTML and the paragraph texts it contains,
+    so the caller can check the rendered page holds every one of them.
+    """
+    import html as html_lib
+    from docx import Document
+
+    document = Document(str(docx_path))
+    parts: List[str] = []
+    texts: List[str] = []
+    in_list = False
+
+    def runs_html(paragraph) -> str:
+        out = []
+        for run in paragraph.runs:
+            text = html_lib.escape(run.text or "")
+            if not text:
+                continue
+            out.append(f"<strong>{text}</strong>" if run.bold else text)
+        return "".join(out) or html_lib.escape(paragraph.text or "")
+
+    for paragraph in document.paragraphs:
+        text = (paragraph.text or "").strip()
+        if not text:
+            continue
+        texts.append(text)
+        bullet = _is_bullet(paragraph)
+        if bullet and not in_list:
+            parts.append("<ul>")
+            in_list = True
+        if not bullet and in_list:
+            parts.append("</ul>")
+            in_list = False
+        body = runs_html(paragraph)
+        if bullet:
+            item = re.sub(r"^[•·▪◦]\s+", "", body)
+            parts.append(f"<li>{item}</li>")
+        elif _is_section_heading(text):
+            parts.append(f"<h2>{body}</h2>")
+        elif _is_role_heading(paragraph):
+            parts.append(f"<h3>{body}</h3>")
+        else:
+            parts.append(f"<p>{body}</p>")
+    if in_list:
+        parts.append("</ul>")
+    style = (
+        "@page{size:Letter;margin:0.55in 0.6in}"
+        "body{font-family:Calibri,Carlito,Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.3;color:#000}"
+        "h2{font-size:11.5pt;margin:10pt 0 3pt;border-bottom:1px solid #000;text-transform:uppercase;break-after:avoid}"
+        "h3{font-size:10.5pt;margin:6pt 0 2pt;break-after:avoid}"
+        "p{margin:0 0 3pt}ul{margin:0 0 4pt;padding-left:16pt}li{margin:0 0 2pt}"
+    )
+    title = html_lib.escape(texts[0] if texts else "Resume")
+    html = (
+        f"<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>{title}</title>"
+        f"<style>{style}</style></head><body>{''.join(parts)}</body></html>"
+    )
+    return {"html": html, "texts": texts}
+
+
+def master_units(master_path: str | Path) -> List[Dict[str, Any]]:
+    """The master resume's paragraphs as stable, citable evidence units.
+
+    Each non-empty paragraph gets an id ``u<n>`` (its position among non-empty
+    paragraphs), its exact text, its kind (``bullet``, ``role``, ``section`` or
+    ``paragraph``) and the role heading it sits under. The grounded-rewrite
+    layer (src/resume/rewrites.js) cites these ids as evidence; ids stay the
+    same for as long as the master resume does.
+    """
+    from docx import Document
+
+    document = Document(str(master_path))
+    units: List[Dict[str, Any]] = []
+    role = None
+    for paragraph in document.paragraphs:
+        text = (paragraph.text or "").strip()
+        if not text:
+            continue
+        if _is_section_heading(text):
+            kind = "section"
+            role = None
+        elif _is_role_heading(paragraph):
+            kind = "role"
+            role = text
+        elif _is_bullet(paragraph):
+            kind = "bullet"
+        else:
+            kind = "paragraph"
+        units.append({"id": f"u{len(units)}", "text": paragraph.text, "kind": kind, "role": role})
+    return units
+
+
+def _apply_accepted_rewrites(
+    document, rewrites: Sequence[Dict[str, Any]] | None
+) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
+    """Replace the text of exactly the bullets a person accepted.
+
+    Each rewrite names the master's ``original`` text, the ``rewrite`` that was
+    verified against cited master-resume evidence and then accepted by a
+    person, and that evidence. A rewrite is applied only when ``original``
+    matches exactly one bullet paragraph; anything else is skipped and
+    reported. The first run keeps its formatting and takes the new text.
+    Returns the change records and {original_unit: rewritten_unit} so the
+    truth invariant can expect these units, and only these, to differ.
+    """
+    changes: List[Dict[str, Any]] = []
+    replaced: Dict[str, str] = {}
+    for item in rewrites or []:
+        original = str(item.get("original") or "")
+        rewrite = str(item.get("rewrite") or "").strip()
+        if not original or not rewrite or rewrite == original:
+            continue
+        matches = [p for p in document.paragraphs if p.text == original and _is_bullet(p)]
+        if len(matches) != 1:
+            changes.append({
+                "type": "rewrite_skipped", "where": "experience", "before": original, "after": None,
+                "reason": "the original bullet is no longer in the master resume exactly once",
+                "evidence": item.get("evidence") or [], "source": "accepted_rewrite",
+            })
+            continue
+        paragraph = matches[0]
+        runs = paragraph.runs
+        if runs:
+            runs[0].text = rewrite
+            for run in runs[1:]:
+                run.text = ""
+        else:
+            paragraph.add_run(rewrite)
+        replaced[f"paragraph:{original}"] = f"paragraph:{paragraph.text}"
+        changes.append({
+            "type": "rewrite", "where": "experience", "before": original, "after": paragraph.text,
+            "reason": "verified against the cited master-resume evidence and accepted by you",
+            "evidence": item.get("evidence") or [], "source": "accepted_rewrite",
+            "task": item.get("task"),
+        })
+    return changes, replaced
+
+
 def tailor_resume(
     master_path: str | Path,
     output_dir: str | Path,
@@ -1972,12 +2118,15 @@ def tailor_resume(
     now: datetime | None = None,
     output_name: str | None = None,
     llm_qualifications: Dict[str, Sequence[str]] | None = None,
+    accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """Create a tailored resume for ``job`` and return a result dict.
 
     The function may reorder exact existing content and change emphasis. It
-    never rewrites claims. ``enable_rewrites`` is accepted only so callers get
-    an explicit policy response; it does not enable an unsafe implementation.
+    never rewrites claims on its own: the only reworded text it writes is
+    ``accepted_rewrites`` (evidence-verified and accepted by a person).
+    ``enable_rewrites`` is accepted only so callers get an explicit policy
+    response; it does not enable free-form rewriting.
 
     Returns the output path plus qualification audit, selected content,
     provenance records, gaps, rewrite policy, and verified invariants.
@@ -2013,12 +2162,16 @@ def tailor_resume(
     # Open the master read-only: we load it, mutate the in-memory copy, and save
     # to a NEW path. The master file on disk is never written.
     document = Document(str(master_path))
+    # Accepted, evidence-verified rewrites (P1-2) are applied first, and the
+    # invariant baseline is updated for exactly those units: every other unit
+    # must still survive byte-for-byte, and these must be the accepted text.
+    rewrite_changes, rewritten_units = _apply_accepted_rewrites(document, accepted_rewrites)
     source_units = _content_units(document)
     source_nodes = [paragraph._p for paragraph in document.paragraphs]
     source_styles = {
         paragraph._p: paragraph.style.name or "" for paragraph in document.paragraphs
     }
-    changes: List[Dict[str, Any]] = []
+    changes: List[Dict[str, Any]] = list(rewrite_changes)
 
     content_changes, selected_content, movable_nodes = _prioritize_existing_content(
         document, audit["present"], qualification_details
@@ -2064,6 +2217,9 @@ def tailor_resume(
     focus_line_inserted = False
     limitations = [
         (
+            f"{len([c for c in rewrite_changes if c['type'] == 'rewrite'])} bullet(s) use a rewording you "
+            "accepted, each verified against cited lines of your master resume; nothing else was reworded."
+            if any(c["type"] == "rewrite" for c in rewrite_changes) else
             "Free-form bullet and summary rewriting is disabled: no approved claim-level "
             "evidence map is available. Tailoring is limited to exact-text reordering and "
             "format emphasis."
@@ -2166,16 +2322,22 @@ def tailor_resume(
         key=lambda gap: -_QUALIFICATION_WEIGHT.get(gap["qualification"], 1)
     )
 
+    applied_rewrites = [c for c in rewrite_changes if c["type"] == "rewrite"]
     rewrite_policy = {
-        "mode": "disabled",
+        "mode": "evidence_accepted" if applied_rewrites else "disabled",
         "requested": bool(enable_rewrites),
-        "applied": 0,
+        "applied": len(applied_rewrites),
         "reason": (
+            "Only bullets whose rewrite was verified against cited master-resume evidence and "
+            "accepted by a person were changed; every other unit is preserved exactly."
+            if applied_rewrites else
             "Claim rewriting requires an approved claim-level evidence map; none is accepted "
             "by this deterministic tailor."
         ),
     }
-    if enable_rewrites:
+    if applied_rewrites:
+        rewrite_policy["rewritten_units"] = len(rewritten_units)
+    if enable_rewrites and not applied_rewrites:
         limitations.append(
             "A rewrite was requested but deliberately not performed because supported rewriting is unavailable."
         )

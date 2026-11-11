@@ -30,6 +30,7 @@ import { writeFoundJobs } from '../outputs.js';
 import { emptyCounters } from '../outputs.js';
 import { LIFECYCLE, isProtectedJobRow } from '../lifecycle.js';
 import { assertPublicHttpUrl, publicOnlyFetch } from '../utils/publicUrl.js';
+import { createSafeFetch, safeFetch } from '../utils/safeFetch.js';
 import {
   listPending, approve, reject, APPROVAL_STATUS,
 } from '../apply/approvalQueue.js';
@@ -380,7 +381,7 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
  * @param {import('../logging/db.js').Database} args.db
  * @param {object} [args.logger]
  * @param {string} args.url a public job posting URL
- * @param {object} [args.deps] { fetchImpl, now }
+ * @param {object} [args.deps] { fetchImpl, lookupImpl, now }
  * @returns {Promise<{ id, company, title, url, score, tier, sponsorship, appStatusHint, alreadyExisted }>}
  */
 export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
@@ -396,15 +397,23 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
     throw Object.assign(new Error(publicCheck.reason), { statusCode: 400 });
   }
   const now = deps.now ?? new Date();
-  // The check above covers the pasted URL only; this keeps every redirect hop
-  // public too, so a posting cannot bounce the read onto a private address and
-  // have that page's content saved as a "job".
-  const fetchImpl = publicOnlyFetch(deps.fetchImpl ?? fetch);
+  // The check above covers the pasted URL's shape only. The real fetch is
+  // safeFetch, which checks every hop AND the address each hop resolves to when
+  // it connects, so neither a redirect nor a public name that resolves to a
+  // private address can bounce the read onto this machine or the LAN. An
+  // injected fetch (tests) keeps the per-hop shape check.
+  const fetchImpl = deps.fetchImpl
+    ? publicOnlyFetch(deps.fetchImpl)
+    : (deps.lookupImpl ? createSafeFetch({ lookupImpl: deps.lookupImpl }) : safeFetch);
 
   let parsed;
   try {
     parsed = await fetchUrl(clean, { fetchImpl, source: 'manual-url', maxRetries: 1 });
   } catch (err) {
+    // An address the guard refused is the user's input problem, not the site's.
+    if (err?.code === 'BLOCKED_URL') {
+      throw Object.assign(new Error(err.message), { statusCode: 400 });
+    }
     // A blocked/erroring page is a normal outcome for bot-protected sites — be
     // honest rather than fabricate a job. Never bypass the protection.
     throw Object.assign(
@@ -557,6 +566,10 @@ export function loadPacket(approvalRow, deps = {}) {
 export async function runAssist({ config, db, logger, mode, options = {}, deps = {} } = {}) {
   const assistFn = deps.assistFn ?? assistApply;
   const effectiveMode = mode ?? 'LIVE_ASSIST';
+  // The CLI never submits. Enforce it here rather than trusting every caller:
+  // the only final-submit path is the dashboard's explicitly confirmed
+  // POST /api/auto-submit-batch, which does not come through this function.
+  const assistOptions = { ...options, autoSubmit: false };
 
   // Only act on packets a human has approved. Pending/rejected are skipped.
   const approvals = db.listApprovals({ status: APPROVAL_STATUS.APPROVED });
@@ -600,7 +613,7 @@ export async function runAssist({ config, db, logger, mode, options = {}, deps =
     }
 
     const result = await assistFn({
-      packet, config, mode: effectiveMode, approval, dailyCount, options,
+      packet, config, mode: effectiveMode, approval, dailyCount, options: assistOptions,
       // A confirmation page seen after hand-off is recorded as a human
       // submission awaiting the user's confirmation (never applied=1).
       deps: { onHumanSubmitted: (update) => recordAssistResult(db, approval.job_id, update), ...deps },

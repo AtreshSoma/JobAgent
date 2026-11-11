@@ -37,7 +37,7 @@ import {
 import { candidateTimeZone, dayOf } from '../domain/time.js';
 import {
   FOLLOWUP_EVENT, OUTCOME, OUTCOME_EVENT, OUTCOME_LABELS, OUTCOME_VALUES, TERMINAL_OUTCOMES, WORKSPACE_STAGES,
-  allowedOutcomes, applicationMetrics, canRecordOutcome, daysBetween, isIsoDay, replayFollowUps, replayOutcomes, stageOf,
+  allowedOutcomes, applicationMetrics, conversionBreakdown, canRecordOutcome, daysBetween, isIsoDay, replayFollowUps, replayOutcomes, stageOf,
   NO_OUTCOME_EXPORT, outcomeEventsByJob, outcomeExport, weeklySummary,
 } from '../domain/applicationOutcome.js';
 import { findPlaceholders } from '../config/placeholders.js';
@@ -1654,6 +1654,9 @@ export function jobDetail(db, jobId, deps = {}) {
         uploads: full.uploads ?? null,
         stopBeforeSubmit: full.stopBeforeSubmit !== false,
         submitReady: Boolean(full.submitReady),
+        coverLetterGenerated: Boolean(full.coverLetterGenerated),
+        coverLetterGrounding: full.coverLetterGrounding ?? null,
+        coverLetterDocxPath: full.coverLetterDocxPath ?? null,
       };
     } catch (err) {
       packet = { error: `packet unreadable: ${err.message}` };
@@ -2049,6 +2052,7 @@ function workspaceItem(row, events, { today, timeZone, history = false }) {
     score: row.score, grade: row.grade, fit: row.fit, sponsorship: row.sponsorship ?? null,
     sponsorshipGated: row.sponsorshipGated === true, postedAt: row.postedAt ?? null, linkState: row.linkState ?? null,
     atsPlatform: row.atsPlatform ?? null, discoveryMode: row.discoveryMode ?? null,
+    source: row.source ?? null, tier: row.tier ?? null,
     appStatus: row.appStatus, statusLabel: row.statusLabel ?? APP_STATUS_LABELS[row.appStatus] ?? row.appStatus,
     statusReason: row.statusReason ? stripBannerChars(row.statusReason) : null,
     appliedAt: row.appliedAt ?? null, appliedOn: appliedDay, updatedAt: row.updatedAt ?? null,
@@ -2090,6 +2094,7 @@ export function applicationsWorkspace(db, { now = new Date(), config = null } = 
   const timeZone = candidateTimeZone(config);
   return {
     generatedAt: now.toISOString(), today, stages: WORKSPACE_STAGES, items, metrics: applicationMetrics(items),
+    conversion: conversionBreakdown(items),
     weekly: weeklySummary({ items, eventsByJob: events, today, dayOf: (iso) => dayOf(iso, timeZone) }),
   };
 }

@@ -1,0 +1,35 @@
+# Weekly dependency updates. Security updates are also enabled in the
+# repository settings and arrive as soon as an advisory is published.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Playwright drives the browser against live, untrusted pages: keep it on
+      # its own PR so a browser bump is reviewed and tested by itself.
+      playwright:
+        patterns: ['playwright', 'playwright-core', '@playwright/*']
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+        exclude-patterns: ['playwright', 'playwright-core', '@playwright/*']
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    groups:
+      pip-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ['*']

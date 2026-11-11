@@ -87,11 +87,17 @@
         <button role="menuitem" data-action="open-data-quality"
           title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Discovery and data quality</button>
         <button role="menuitem" data-action="open-health">System health</button>
+        <button role="menuitem" data-action="open-rerank"
+          title="Your top matches ranked by how close they are in meaning to your resume, next to their fit score.">Rank top matches by meaning</button>
+        <button role="menuitem" data-action="open-inbox"
+          title="Replies from employers about applications you submitted, read from your inbox without changing it.">Email replies</button>
         <hr role="separator">
         <div class="menu-label" role="presentation">Reports and exports</div>
         <button role="menuitem" data-action="open-reports">View reports</button>
         <button role="menuitem" data-action="export-jobs">Export all jobs and scores (CSV)</button>
         <button role="menuitem" data-action="export-tracker">Export application tracker (CSV)</button>
+        <button role="menuitem" data-action="export-calendar"
+          title="Your follow-up reminders as a calendar file for Google Calendar, Outlook or Apple Calendar.">Export follow-ups to your calendar (.ics)</button>
         <button role="menuitem" data-action="open-email-jobs"
           title="An email draft with links to the jobs you are viewing, or the ones you selected.">Email these jobs…</button>
       </div>
@@ -927,6 +933,31 @@
   <div class="dlg-body" id="healthBody"></div>
 </dialog>
 
+<!-- Rank by meaning (P2-1): a second number beside the fit score, never instead of it. -->
+<dialog id="dlgRerank" class="sheet" aria-labelledby="dlgRerankTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgRerankTitle">Top matches by meaning</h2>
+      <div class="muted subtle-sub">How close each posting is in meaning to your resume. The fit score still decides tiers and what can be auto-applied.</div>
+    </div>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="rerankBody"></div>
+</dialog>
+
+<!-- Email replies (P1-7): read-only inbox suggestions. Nothing is recorded
+     until the person clicks Record. -->
+<dialog id="dlgInbox" class="sheet" aria-labelledby="dlgInboxTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgInboxTitle">Email replies</h2>
+      <div class="muted subtle-sub">Replies about applications you submitted. JobAgent only reads your inbox; it never sends, moves or marks mail.</div>
+    </div>
+    <button class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="inboxBody"></div>
+</dialog>
+
 <!-- Job detail, on layouts too narrow for the side rail (<=1240px). One
      #detail element is MOVED here rather than rendered twice, so both layouts
      share one renderer, one set of ids and one note editor. -->
@@ -1088,7 +1119,8 @@
     </div>
     <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </div>
-  <div class="dlg-body" id="changelogBody" tabindex="-1"></div>
+  <!-- tabindex 0 so a keyboard user can reach and scroll the long list (axe scrollable-region-focusable). -->
+  <div class="dlg-body" id="changelogBody" tabindex="0" role="region" aria-labelledby="dlgChangelogTitle"></div>
   <div class="dlg-foot">
     <button type="button" class="small" data-action="close-dialog">Close</button>
   </div>

@@ -19,6 +19,7 @@ import { nowIso } from '../utils/dates.js';
 import { assertTransition } from '../lifecycle.js';
 import { localDayWindow } from '../domain/time.js';
 import { workspacePaths } from '../profile/workspace.js';
+import { backupStamp } from './backup.js';
 
 // Load the built-in `node:sqlite` via createRequire so bundlers/test runners
 // (Vite/Vitest) do not statically analyze and try to transform this newer
@@ -294,6 +295,7 @@ export function openDatabase({ path = activeDbPath() } = {}) {
   // for `ORDER BY score` out of a temp file.
   db.exec('PRAGMA cache_size = -65536;');
   db.exec('PRAGMA temp_store = MEMORY;');
+  backupBeforeMigration(db, path);
   db.exec(SCHEMA_SQL);
   applyMigrations(db);
   applyVersionedMigrations(db);
@@ -304,6 +306,25 @@ export function openDatabase({ path = activeDbPath() } = {}) {
     try { db.exec('PRAGMA wal_checkpoint(TRUNCATE);'); } catch { /* best effort */ }
   }
   return new Database(db);
+}
+
+/**
+ * Opening the store applies pending schema migrations automatically, so before
+ * a store that holds jobs is migrated, a copy is taken next to it in
+ * backups/applied_jobs-pre-migration-<stamp>.db (P1-6). A migration that goes
+ * wrong can then be undone by restoring that file. Synchronous on purpose: it
+ * must finish before the first migration runs.
+ */
+function backupBeforeMigration(db, path) {
+  if (path === ':memory:' || process.env.JOB_AGENT_PRE_MIGRATION_BACKUP === 'off') return;
+  const from = Number(db.prepare('PRAGMA user_version').get().user_version) || 0;
+  const latest = MIGRATIONS[MIGRATIONS.length - 1].version;
+  if (from >= latest) return;
+  const hasJobs = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get();
+  if (!hasJobs || !db.prepare('SELECT COUNT(*) AS n FROM jobs').get().n) return;
+  const dest = join(dirname(path), 'backups', `applied_jobs-pre-migration-${backupStamp()}.db`);
+  mkdirSync(dirname(dest), { recursive: true });
+  db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
 }
 
 /** Idempotent, additive migrations for databases created by older schemas. */
@@ -1479,6 +1500,14 @@ export class Database {
   }
 
   /** @param {string} [jobId] */
+  /** Submitted (or submitted-unverified) applications, for matching replies (P1-7). */
+  listSubmittedJobs() {
+    return this.db.prepare(
+      `SELECT id, company, title, url, applied_at, status FROM jobs
+       WHERE applied = 1 OR status IN ('submitted', 'submit_unverified')`,
+    ).all();
+  }
+
   listEvents(jobId) {
     if (jobId) {
       return this.db.prepare(

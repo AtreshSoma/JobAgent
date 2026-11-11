@@ -115,6 +115,7 @@ export function renderWorkspace() {
   const data = state.workspace;
   if (!data) return;
   renderMetrics(data.metrics, data.weekly);
+  renderConversion(data.conversion, data.metrics);
   const board = $('wsBoard');
   const focusedId = document.activeElement?.closest?.('.ws-card')?.dataset.id;
   board.textContent = '';
@@ -220,6 +221,37 @@ export function renderMetrics(m, weekly = null) {
     el('span', { 'aria-hidden': 'true', text: ' · ' }),
     el('span', { text: `Offer rate ${rateText(m.rates.offer, 'interviews')}` }),
     el('span', { class: 'ws-rates-note', text: ' · from outcomes you recorded' })));
+}
+
+const DIM_LABELS = { source: 'Where you found it', ats: 'Application system', scoreBand: 'Fit score', tier: 'Tier' };
+
+/** One conversion cell, in words: "2 of 9 (22%)" or "3 sent; too few to tell". Pure. */
+export function conversionText(cell, minCell = 5) {
+  if (cell.tooFew) return `${cell.submitted} sent; too few to tell (needs ${minCell})`;
+  return `${cell.interviews} of ${cell.submitted} reached an interview (${cell.interviewRate}%)`;
+}
+
+/** "What gets interviews" (P2-9), under the numbers, once anything was submitted. */
+export function renderConversion(conversion, metrics) {
+  const host = $('wsMetrics');
+  if (!host || !conversion || !metrics?.submitted) return;
+  const details = el('details', { class: 'ws-conversion', 'data-key': 'ws-conversion' });
+  details.append(el('summary', { text: 'What gets interviews' }));
+  details.append(el('p', { class: 'faint', text: 'From the outcomes you recorded. A group with fewer than '
+    + `${conversion.minCell} applications shows no percentage, so one lucky reply never looks like a pattern.` }));
+  for (const [dim, label] of Object.entries(DIM_LABELS)) {
+    const rows = conversion[dim] ?? [];
+    if (!rows.length) continue;
+    const table = el('table', { class: 'mini ws-conv-table' });
+    table.append(el('caption', { text: label }));
+    const body = el('tbody');
+    for (const cell of rows) {
+      body.append(el('tr', {}, el('th', { scope: 'row', text: cell.key }), el('td', { text: conversionText(cell, conversion.minCell) })));
+    }
+    table.append(body);
+    details.append(table);
+  }
+  host.append(details);
 }
 
 const shortDay = (day) => {

@@ -177,6 +177,7 @@ describe('the dialog as shipped', () => {
   });
 
   it('is announced in the changelog', () => {
-    expect(JSON.stringify(CHANGELOG[0])).toMatch(/Email list/);
+    // Announced in the release that shipped it (2026-11-10), not necessarily the newest one.
+    expect(CHANGELOG.some((release) => /Email list/.test(JSON.stringify(release)))).toBe(true);
   });
 });

@@ -175,14 +175,17 @@
   /* Light failed harder than dark: #7d8899 was 3.59:1 on --surface and only
      3.34:1 on --bg. 4.93:1 / 4.60:1 — AA on both surfaces it actually sits on. */
   --text-faint: #68717f;
-  --accent: #1668d6;
+  --accent: #1360c7;
   --accent-hover: #0f57ba;
   --accent-ink: #ffffff;
-  --accent-soft: rgba(22, 104, 214, .1);
-  --good: #0f8f5c;
-  --good-soft: rgba(15, 143, 92, .1);
-  --warn: #9a6300;
-  --warn-soft: rgba(154, 99, 0, .12);
+  --accent-soft: rgba(19, 96, 199, .1);
+  /* AA on its own tinted chip, not just on white (axe, 2026-11-11): the old
+     #0f8f5c was 3.64:1 on --good-soft, #9a6300 4.3:1 on --warn-soft, and
+     #1668d6 4.39:1 on --surface-3. These are 5.3, 5.09 and 4.97. */
+  --good: #0a7049;
+  --good-soft: rgba(10, 112, 73, .1);
+  --warn: #8a5800;
+  --warn-soft: rgba(138, 88, 0, .12);
   /* Text ON the warm fill, and warm text on a warm tint: both clear 4.5:1. */
   --on-warn: #ffffff;
   --warn-text: #6f4600;
@@ -235,14 +238,14 @@
     /* Light failed harder than dark: #7d8899 was 3.59:1 on --surface and only
        3.34:1 on --bg. 4.93:1 / 4.60:1 — AA on both surfaces it actually sits on. */
     --text-faint: #68717f;
-    --accent: #1668d6;
+    --accent: #1360c7;
     --accent-hover: #0f57ba;
     --accent-ink: #ffffff;
-    --accent-soft: rgba(22, 104, 214, .1);
-    --good: #0f8f5c;
-    --good-soft: rgba(15, 143, 92, .1);
-    --warn: #9a6300;
-    --warn-soft: rgba(154, 99, 0, .12);
+    --accent-soft: rgba(19, 96, 199, .1);
+    --good: #0a7049;
+    --good-soft: rgba(10, 112, 73, .1);
+    --warn: #8a5800;
+    --warn-soft: rgba(138, 88, 0, .12);
     --on-warn: #ffffff;
     --warn-text: #6f4600;
     --bad: #c8332e;
@@ -3433,3 +3436,38 @@ button.linklike:hover { background: none; text-decoration: underline; }
   #dlgEmail .dlg-foot { flex-wrap: wrap; }
   #dlgEmail .dlg-foot button { flex: 1 1 100%; justify-content: center; }
 }
+
+/* Rewrite suggestions (P1-2). Insertions and deletions are marked by
+   underline and strike-through, not by colour alone. */
+.rw-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 10px; }
+.rw-item { border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 10px 12px; background: var(--surface); }
+.rw-item.refused { border-style: dashed; }
+.rw-role { font-size: var(--fs-sm); margin-bottom: 4px; }
+.rw-diff { margin: 0 0 6px; line-height: 1.5; }
+.rw-diff ins { text-decoration: underline; text-decoration-thickness: 2px; background: var(--good-soft); color: inherit; }
+.rw-diff del { text-decoration: line-through; background: var(--bad-soft); color: var(--text-dim); }
+.rw-evidence { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: var(--fs-sm); margin-bottom: 6px; }
+.rw-actions button[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.rw-decision, .rw-refused { margin: 6px 0 0; font-size: var(--fs-sm); }
+.rw-refused { color: var(--text-dim); }
+
+/* Refine requests and document versions (P2-2). */
+.rw-refine { margin: 8px 0; display: grid; gap: 4px; }
+.rw-ask { min-width: 0; flex: 1 1 auto; }
+.rw-declined { font-size: var(--fs-sm); color: var(--text-dim); margin: 2px 0 0; }
+.ver-list { margin: 4px 0 8px; padding-left: 20px; display: grid; gap: 4px; }
+.ver-diff { margin-top: 8px; }
+
+/* Email replies (P1-7). */
+.inbox-list { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 10px; }
+.inbox-item { border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 10px 12px; display: grid; gap: 4px; }
+.inbox-evidence { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--line); color: var(--text-dim); }
+.inbox-draft { display: grid; gap: 6px; }
+.inbox-draft-text { width: 100%; font: inherit; }
+.inbox-gaps { margin: 0; padding-left: 18px; }
+
+/* What gets interviews (P2-9). */
+.ws-conversion { margin-top: 8px; }
+.ws-conv-table { margin: 6px 0; }
+.ws-conv-table caption { text-align: left; font-weight: 600; padding: 4px 0; }
+.ws-conv-table th { text-align: left; font-weight: 500; padding-right: 12px; }
