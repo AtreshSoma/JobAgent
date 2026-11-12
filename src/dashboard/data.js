@@ -672,6 +672,10 @@ export const BOARD_VIEWS = Object.freeze({
   // holds both. `blocked` stays as it was: "Unblock applications" counts it.
   needs_you: (r) => VIEW_BLOCKED.has(r.appStatus) || r.appStatus === APP_STATUS.SUBMIT_UNVERIFIED,
   submitted: (r) => r.appStatus === APP_STATUS.SUBMITTED,
+  // Archived jobs had no tab: they were reachable only through the status
+  // dropdown, so archiving looked like deleting, with no visible way back. This
+  // is the one view that shows CLOSED rows, so it is left out of OPEN_ONLY_VIEWS.
+  archived: (r) => r.appStatus === APP_STATUS.ARCHIVED,
 });
 
 /**
@@ -686,7 +690,7 @@ const BOARD_VIEW_ENTRIES = Object.entries(BOARD_VIEWS);
  * row, so a request scoped to one of them may read the cheap open-only base set
  * (see openBoardRows) instead of the whole table.
  *
- * Every view above qualifies today: each either tests `!CLOSED_SET.has(...)`
+ * Every view above except `archived` qualifies: each either tests `!CLOSED_SET.has(...)`
  * directly or matches only specific non-closed statuses. That is a property of
  * the predicates, not a promise about them — so `dashboardFilters` has a test
  * that drives every listed view against the full cartesian product of the fields
@@ -694,7 +698,9 @@ const BOARD_VIEW_ENTRIES = Object.entries(BOARD_VIEWS);
  * combination matches. Add a view that can surface a closed row and either keep
  * it out of this set or that test will catch it.
  */
-export const OPEN_ONLY_VIEWS = new Set(Object.keys(BOARD_VIEWS));
+/** Views that exist to show CLOSED rows. Every view is in exactly one of these two sets. */
+export const CLOSED_ROW_VIEWS = new Set(['archived']);
+export const OPEN_ONLY_VIEWS = new Set(Object.keys(BOARD_VIEWS).filter((key) => !CLOSED_ROW_VIEWS.has(key)));
 
 /** Count rows per board view (each equals what clicking that tab shows). */
 export function countViews(rows = []) {
@@ -2731,12 +2737,70 @@ export function systemNotices(rows = [], config = null, { browserAvailable = nul
         message: labels.length === 1
           ? `Replace 1 template value before applying: ${shown}.`
           : `Replace ${labels.length} template values before applying: ${shown}.`,
-        fix: 'Applications stay on hold until these are your real, truthful values. '
-          + 'They are highlighted in Settings → Application profile.',
+        fix: 'Applications stay on hold until these are real. Each line below says where to fix it: the '
+          + 'Application profile, your saved search profile, or the cover-letter settings.',
+        // Per field: what it says now and WHERE the fix sticks. The old notice
+        // said only "Settings → Application profile", which cannot edit work
+        // authorization or the cover letter, so following it changed nothing
+        // and Prepare kept refusing with no visible reason.
+        items: placeholderFixes(found.placeholders, { profileId: config.profile?.id ?? null }),
       });
     }
   }
   return notices;
+}
+
+/** Candidate fields the Application profile dialog edits (src/config/profileStore.js PROFILE_FIELDS). */
+const APPLICATION_PROFILE_PATH = /^(identity\.(fullName|preferredName|links\.linkedin)|contact\.(email|phone)|location\.(city|state|zip))$/;
+
+/**
+ * Where each template value is actually fixed.
+ *
+ * `findPlaceholders` reports candidate fields as living in config/candidate.json,
+ * but that file is regenerated from the active search profile on every
+ * activation: an edit made there is overwritten. So each field is pointed at the
+ * place that keeps it, a screen wherever one exists: the Application profile
+ * fields, the Saved answer it is filled from (src/config/answerFallbacks.js), or
+ * the master resume. Only a fact with no screen at all names a file.
+ *
+ * @param {Array<{path: string, label: string, value: string, file: string}>} placeholders
+ * @param {{profileId?: string|null}} [options]
+ * @returns {Array<{label: string, value: string, where: string, how: string}>}
+ */
+export function placeholderFixes(placeholders = [], { profileId = null } = {}) {
+  const id = profileId || '<profile-id>';
+  const profileFile = `config/profiles/${id}.json`;
+  const activate = `\`npm run profiles activate ${id}\``;
+  return placeholders.map(({ path = '', label, value, file }) => {
+    let where;
+    let how;
+    if (file === 'config/candidate.json' && APPLICATION_PROFILE_PATH.test(path)) {
+      where = 'Application profile';
+      how = 'Open the account menu, choose Application profile, and fill in this field.';
+    } else if (file === 'config/candidate.json' && path.startsWith('workAuthorization.')) {
+      // Filled from this answer at load time (src/config/answerFallbacks.js).
+      where = 'Application profile → Saved answers';
+      how = 'Answer "work_authorization" with your real status. This value is filled from it.';
+    } else if (file === 'config/candidate.json') {
+      // Work history and education: what the resume already states.
+      where = 'Master resume';
+      how = `Use "Fill from my resume" in this notice, or edit the background section of ${profileFile} and run ${activate}.`;
+    } else if (file === 'config/screening_answers.json') {
+      where = 'Application profile → Saved answers';
+      how = 'Open the account menu, choose Application profile, and replace this answer.';
+    } else if (path === 'yearsOfExperience') {
+      where = 'Application profile → Saved answers';
+      how = 'Answer "years_experience", for example 8 years. This value is filled from it.';
+    } else if (path === 'template.sponsorshipNote') {
+      // Built from the stated status when sponsorship is required.
+      where = 'Application profile → Saved answers';
+      how = 'Answer "work_authorization" with your real status. The sentence is written from it.';
+    } else {
+      where = file;
+      how = `Set ${path} in ${file} to your real value.`;
+    }
+    return { label, value: String(value ?? ''), where, how };
+  });
 }
 
 /**

@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
 import { openDialog, placeToasts } from './dialogs.js';
-import { autofillBlockedReason, BROWSER_MISSING } from './today.js';
+import { autofillBlockedReason, BROWSER_MISSING, placeholderList, prepareBlockedNotice } from './today.js';
 import { rewritesSection } from './rewrites.js';
 import { versionsSection } from './versions.js';
 
@@ -408,11 +408,22 @@ export function detailSections(job) {
   // down — Shortlist sat in both. It moves into "More actions", so it is
   // still reachable from the same place as every other decision.
   const offered = new Set([...next.querySelectorAll('[data-action="decide"]')].map((b) => b.dataset.decision));
+  // THE WAY BACK, NAMED AND IN VIEW. Undoing a decision was a generic "Clear"
+  // under More actions, so "how do I unarchive this?" or "how do I take it off
+  // my shortlist?" had no visible answer (Reject looked like the only way out,
+  // and it is a different decision). The job's current decision is replaced by
+  // the button that undoes it; with no decision there is nothing to undo.
+  //
   // A submitted application is a record, not a candidate to sort: rejecting
   // it only skewed the counts while the row still read "Submitted".
+  const current = job.userDecision ?? null;
   const decisions = ['submitted', 'submit_unverified'].includes(job.appStatus) ? [] : [['shortlisted', '★ Shortlist', true], ['rejected', '✕ Reject', true],
-    ['archived', 'Archive', false], ['clear', 'Clear', false]];
+    ['archived', 'Archive', false], ['clear', UNDO_LABEL[current], true]];
   for (const [decision, label, visible] of decisions) {
+    if (decision === current) continue;
+    // "Do this next" already offers the undo for a rejected/archived job, under
+    // the same name; a second copy hidden in More actions is only noise.
+    if (decision === 'clear' && (!UNDO_LABEL[current] || offered.has('clear'))) continue;
     (visible && !offered.has(decision) ? actions : more).append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
     }));
@@ -892,7 +903,7 @@ export function actionPlan(job) {
   if (job.appStatus === 'rejected' || job.appStatus === 'archived') {
     return {
       text: `You ${job.appStatus} this job, so nothing will be filled or sent. Restore it if you changed your mind.`,
-      buttons: [el('button', { class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'clear', text: '↺ Restore' })],
+      buttons: [el('button', { class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'clear', text: `↺ ${UNDO_LABEL[job.appStatus] ?? 'Restore'}` })],
     };
   }
   if (job.linkState === 'closed') {
@@ -1044,9 +1055,46 @@ export function pageLabel(tailoring) {
   return null;
 }
 
+/** The button that undoes each decision, in the words of what it undoes. */
+export const UNDO_LABEL = Object.freeze({
+  shortlisted: 'Remove from shortlist',
+  archived: 'Unarchive',
+  rejected: 'Undo reject',
+});
+
+/** Hover text on a Prepare control while template text blocks it. */
+const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. The box below lists each value and where to fix it.';
+
+/**
+ * Why this job cannot be prepared, shown where Prepare is clicked and kept
+ * there until fixed. A refused Prepare used to leave only a passing toast and
+ * "Prepared 0 packet(s)", so it looked as if the click did nothing.
+ */
+export function prepareProblemBox(jobId) {
+  const blocked = prepareBlockedNotice();
+  if (blocked) {
+    return el('div', { class: 'attention prepare-problem', role: 'status' },
+      el('span', { class: 'mark', text: '!' }),
+      el('div', {},
+        el('b', { text: 'Prepare is off: your profile still holds template text.' }),
+        el('div', { text: 'Replace each value below with your real, truthful one. This box clears once they are all fixed.' }),
+        blocked.items?.length ? placeholderList(blocked.items) : null));
+  }
+  const failure = state.prepareFailures?.get(jobId);
+  if (failure) {
+    return el('div', { class: 'attention prepare-problem', role: 'status' },
+      el('span', { class: 'mark', text: '!' }),
+      el('div', {},
+        el('b', { text: 'The last Prepare of this job failed.' }),
+        el('div', { text: failure })));
+  }
+  return null;
+}
+
 /** The resume review card: status, what changed, and one-click preview. */
 export function resumeCard(job) {
   const card = el('div', { class: 'resume-card' });
+  const blocked = Boolean(prepareBlockedNotice());
   const head = el('div', { class: 'rc-head' });
   head.append(el('span', { class: 'rc-title', text: 'Tailored resume' }));
 
@@ -1056,8 +1104,12 @@ export function resumeCard(job) {
     head.append(el('span', { class: 'chip', text: 'not prepared' }));
     card.append(head);
     card.append(el('div', { class: 'muted', text: 'No tailored resume yet. Prepare this job to generate one from your master resume.' }));
+    card.append(prepareProblemBox(job.id) ?? '');
     card.append(el('div', { class: 'actions' },
-      el('button', { class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare resume' }),
+      el('button', {
+        class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare resume',
+        disabled: blocked, title: blocked ? PREPARE_BLOCKED_TITLE : null,
+      }),
       el('button', {
         class: 'small ghost', 'data-action': 'open-master',
         title: 'View, edit, or replace the master resume every tailored version is built from.',
@@ -1109,9 +1161,11 @@ export function resumeCard(job) {
   }));
   links.append(el('button', {
     class: 'small', 'data-action': 'prepare-one', 'data-id': job.id,
-    title: 'Regenerate the tailored resume and refresh this audit', text: '↻ Re-tailor',
+    title: blocked ? PREPARE_BLOCKED_TITLE : 'Regenerate the tailored resume and refresh this audit', text: '↻ Re-tailor',
+    disabled: blocked,
   }));
   card.append(links);
+  card.append(prepareProblemBox(job.id) ?? '');
 
   if (packet?.resumeWarning) {
     card.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }),

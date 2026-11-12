@@ -24,6 +24,8 @@ export async function handleBoardRoutes(ctx, req, res, { url, path }) {
   }
   // The Today queue: the ten next actions + setup notices (see todayQueue).
   if (req.method === 'GET' && path === '/api/today') {
+    // A template value fixed by hand must clear its notice without a restart.
+    ctx.refreshConfigIfTemplated?.();
     const today = todayQueue(ctx.db, { now: ctx.nowDate(), config: ctx.config, browserAvailable: await ctx.browserAvailableCached() });
     const restart = restartNotice(ctx.codeChangedSinceStart());
     if (restart) today.systemNotices = [restart, ...(today.systemNotices ?? [])];

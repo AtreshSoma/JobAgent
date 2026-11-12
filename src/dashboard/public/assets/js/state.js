@@ -38,6 +38,10 @@ export const state = {
   roleQuery: null,
   /** Last link-check result per job id, so a re-render does not erase it. */
   linkHealth: new Map(),
+  /** Why the last Prepare of a job failed, by job id, until a later Prepare succeeds. */
+  prepareFailures: new Map(),
+  /** The template notice's items as last rendered (JSON), so a change redraws the open job. */
+  templatedItems: undefined,
   /** Rewrite suggestions per job id (GET /api/jobs/:id/rewrites), and whether the feature is on. */
   rewrites: new Map(),
   rewritesEnabled: null,

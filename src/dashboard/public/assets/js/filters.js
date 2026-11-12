@@ -60,6 +60,9 @@ export const TABS = [
   ['today', 'Priority', true],
   ['best', 'Best matches', false],
   ['shortlisted', 'Shortlisted', false],
+  // The way back from Archive: before this tab, archived jobs were only in the
+  // status dropdown, so there was no visible place to find and restore them.
+  ['archived', 'Archived', false],
   ['needs_review', 'Needs review', true],
   ['ready_apply', 'Ready to apply', true],
   ['needs_you', 'Needs you', true],

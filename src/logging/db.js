@@ -676,8 +676,13 @@ export class Database {
    * @returns {T} whatever `fn` returned
    */
   transaction(fn) {
-    if (this.db.isTransaction) return fn();
+    // `DatabaseSync#isTransaction` only exists from Node 22.16, and the engines
+    // floor is 22.13. There it is undefined, so a nested call issued a second
+    // BEGIN and threw "cannot start a transaction within a transaction". Our own
+    // flag covers that floor; isTransaction still catches a BEGIN made elsewhere.
+    if (this.db.isTransaction || this.inTransaction) return fn();
     this.db.exec('BEGIN IMMEDIATE');
+    this.inTransaction = true;
     try {
       const result = fn();
       this.db.exec('COMMIT');
@@ -685,6 +690,8 @@ export class Database {
     } catch (err) {
       try { this.db.exec('ROLLBACK'); } catch { /* already rolled back */ }
       throw err;
+    } finally {
+      this.inTransaction = false;
     }
   }
 

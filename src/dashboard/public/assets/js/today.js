@@ -182,8 +182,12 @@ export function setSystemNotices(list) {
   }
   state.systemNotices = notices;
   const unavailable = notices.some((n) => n.code === 'browser_unavailable');
-  const changed = unavailable !== state.browserUnavailable;
+  // The template notice gates Prepare, so its items are part of what the open
+  // job shows: a fixed value must drop out of that box, not wait for a click.
+  const templated = JSON.stringify(notices.find((n) => n.code === 'profile_placeholders')?.items ?? null);
+  const changed = unavailable !== state.browserUnavailable || templated !== state.templatedItems;
   state.browserUnavailable = unavailable;
+  state.templatedItems = templated;
   renderNotices();
   renderSetupChecklist();
   if (changed) {
@@ -224,12 +228,39 @@ export function renderNotices() {
       el('span', { class: 'notice-mark', 'aria-hidden': 'true', text: '!' }),
       el('div', { class: 'notice-body' },
         el('b', { text: notice.message }),
-        notice.fix ? fixLine(notice.fix) : null),
+        notice.fix ? fixLine(notice.fix) : null,
+        notice.items?.length ? placeholderList(notice.items) : null),
       NOTICE_ACTION[notice.code] ? el('div', { class: 'notice-actions' },
         ...NOTICE_ACTION[notice.code].map(([action, label], i) => el('button', {
           type: 'button', class: i === 0 ? 'small primary' : 'small', 'data-action': action, text: label,
         }))) : null));
   }
+}
+
+/**
+ * The template-text notice while it blocks Prepare, else null.
+ *
+ * Prepare refuses a profile that still holds template text (preparePacket's
+ * placeholder guard). The click used to start a run that failed in the
+ * background and left only "Prepared 0 packet(s)", so it looked like nothing
+ * happened. Controls read this to stay off and to say what to fix instead.
+ */
+export function prepareBlockedNotice() {
+  return (state.systemNotices ?? []).find((n) => n.code === 'profile_placeholders') ?? null;
+}
+
+/** One line per template value: the field, what it still says, and where to fix it. */
+export function placeholderList(items = []) {
+  const list = el('ul', { class: 'notice-items' });
+  for (const item of items) {
+    list.append(el('li', {},
+      el('b', { text: item.label }),
+      ` still says “${item.value}”. Fix it in `,
+      el('b', { text: item.where }),
+      '.',
+      fixLine(item.how)));
+  }
+  return list;
 }
 
 /** Notice code -> the dialog that resolves it. */
