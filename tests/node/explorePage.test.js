@@ -92,8 +92,7 @@ describe('Explore JobAgent: files', () => {
     expect(link).toMatch(/title="[^"]+"/);
     expect(link).toContain('rel="noopener"');
     expect(header).toMatch(new RegExp(`<a role="menuitem" class="btn only-narrow" href="${PAGE}"[^>]*>Explore JobAgent</a>`));
-    // A Windows checkout is CRLF (.gitattributes text=auto), which would hide
-    // the "\n" anchor below; compare as LF on every platform.
+    // Line endings are normalised: Windows checkouts use CRLF.
     const css = readFileSync(join(PUBLIC, 'assets', 'css', 'app.css'), 'utf8').replace(/\r\n/g, '\n');
     // Hidden in the same small-phone block that hides the theme button.
     const narrow = css.slice(css.indexOf('@media (max-width: 480px) {\n  .theme-toggle { display: none; }'));
