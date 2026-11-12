@@ -516,6 +516,12 @@ export async function preparePacketsForJobs({ config, db, logger, jobIds = [], d
       failed.push({ jobId, error: 'already submitted — not re-preparing' });
       continue;
     }
+    // An unconfirmed submission is still a possible submission. Re-preparing
+    // reset it to "prepared", which erased the marker the duplicate guard reads.
+    if (row.status === 'submit_unverified') {
+      failed.push({ jobId, error: 'reported submitted but not confirmed — confirm or deny it before preparing again' });
+      continue;
+    }
     const job = {
       id: row.id, source: row.source, company: row.company, title: row.title,
       location: row.location, url: row.url, jdText: row.jd_text ?? '',
@@ -713,6 +719,10 @@ export function recordAssistResult(db, jobId, result) {
     // extension tab) can report AFTER the user pressed "Mark submitted";
     // writing its submit_unverified over applied=1 would un-submit the job.
     const existing = db.getJob?.(jobId);
+    // Never CREATE a job row from a run result. A store that does not hold
+    // this job (a late report after a profile switch, a stale extension tab)
+    // is the wrong store, and an upsert planted a stub row in it.
+    if (typeof db.getJob === 'function' && !existing) return;
     if (existing && (Number(existing.applied) === 1 || existing.status === 'submitted')) return;
     const patch = {
       id: jobId,
@@ -749,7 +759,16 @@ export function recordAssistResult(db, jobId, result) {
       patch.applied = 0;
       patch.status = LIFECYCLE.SUBMIT_UNVERIFIED;
     }
-    db.upsertJob(patch);
+    // Through the state machine, so the move is validated and leaves a
+    // status_changed event (retractSubmissionReport reads those to know where
+    // an unverified submission came from). Test doubles without it upsert.
+    if (typeof db.setJobStatus === 'function') {
+      const { id: _id, status, ...fields } = patch;
+      const reason = String(result.note ?? result.blockers?.[0] ?? '').slice(0, 200);
+      db.setJobStatus(jobId, status, { actor: 'assist', reason, patch: fields });
+    } else {
+      db.upsertJob(patch);
+    }
     // Persist the run's phase trail (Queued -> Precheck -> ... -> terminal) as
     // an audit event, so "where exactly did the last fill get to?" is
     // answerable from the job's history — and a resumed run appends a fresh
@@ -769,13 +788,10 @@ export function recordAssistResult(db, jobId, result) {
       }
     }
   } catch (err) {
-    // ANY submitted-claim write that fails must be loud — whether it was the
-    // verified applied=1 record or the defensive downgrade to
-    // submit_unverified, silently losing it invites a double-application (or
-    // an unverified submit the human is never asked to confirm). Everything
-    // else stays best-effort (the job may not be persisted in some flows).
-    if (result.submitted === true) {
-      throw new Error(`failed to record submitted application for ${jobId}: ${err.message}`, { cause: err });
-    }
+    // A result that cannot be stored must be loud. Swallowing it left the job
+    // showing its old status (often "ready to auto-fill") after a run that
+    // filled, blocked or submitted it, with nothing on screen to say so.
+    const what = result.submitted === true ? 'submitted application' : `auto-fill result (${result.status})`;
+    throw new Error(`failed to record ${what} for ${jobId}: ${err.message}`, { cause: err });
   }
 }

@@ -141,9 +141,47 @@ export function isDistinctRequisition(kept, job) {
   const idA = String(kept.sourceJobId ?? '').trim();
   const idB = String(job.sourceJobId ?? '').trim();
   if (!idA || !idB || idA === idB) return false;
-  if (String(kept.source ?? '') !== String(job.source ?? '')) return false;
+  const sameSource = String(kept.source ?? '') === String(job.source ?? '');
+  // Two requisitions that differ only by SHIFT (a day-shift and a night-shift
+  // ICU nurse) share nearly every word, and are still two openings.
+  const shiftA = shiftOf(kept.jdText);
+  const shiftB = shiftOf(job.jdText);
+  if (sameSource && shiftA && shiftB && shiftA !== shiftB) return true;
+  // Ids from two different sources are not comparable (one posting carries
+  // both), and an aggregator's copy is often a rewritten or cut-down version
+  // of the employer's, so across sources the copies always merge.
+  if (!sameSource) return false;
   if ((kept.jdText?.length ?? 0) < MIN_JD_CHARS || (job.jdText?.length ?? 0) < MIN_JD_CHARS) return false;
   return jdSimilarity(kept.jdText, job.jdText) < SAME_ROLE_SIMILARITY;
+}
+
+/** The shift a posting states ("Shift: Nights", "day shift"), or null. */
+export function shiftOf(text) {
+  const t = String(text ?? '').toLowerCase();
+  const m = /\bshift\s*[:-]\s*(days?|nights?|evenings?|weekends?|overnights?|rotating)\b/.exec(t)
+    ?? /\b(days?|nights?|evenings?|weekends?|overnights?|rotating)\s+shifts?\b/.exec(t);
+  return m ? m[1].replace(/s$/, '') : null;
+}
+
+/** Title words that are spelled several ways for the same thing. */
+const TITLE_ABBREVIATIONS = [
+  [/\bsr\b/g, 'senior'], [/\bjr\b/g, 'junior'], [/\bmgr\b/g, 'manager'], [/\bassoc\b/g, 'associate'],
+  [/\beng\b/g, 'engineer'], [/\bdev\b/g, 'developer'], [/\bmgmt\b/g, 'management'], [/\bvp\b/g, 'vice president'],
+];
+
+/** Legal-form words that are not part of a company's identity. */
+const COMPANY_SUFFIX = /\s+(?:inc|incorporated|llc|l\s?l\s?c|ltd|limited|corp|corporation|co|company|plc|gmbh|ag|sa|lp|llp|pllc)$/;
+
+function normalizeTitleForKey(title) {
+  let t = normalizeLoose(title);
+  for (const [re, word] of TITLE_ABBREVIATIONS) t = t.replace(re, word);
+  return t.replace(/\s+/g, ' ').trim();
+}
+
+function normalizeCompanyForKey(company) {
+  let c = normalizeLoose(company);
+  for (let i = 0; i < 2; i += 1) c = c.replace(COMPANY_SUFFIX, '');
+  return c.trim();
 }
 
 /** Query params that are pure tracking noise — never part of a job's identity. */
@@ -184,8 +222,10 @@ export function urlKeyFor(job = {}) {
  * makeJobId), so this does not cause database primary-key collisions.
  */
 export function keyFor(job = {}) {
-  const company = normalizeLoose(job.company);
-  const title = normalizeLoose(job.title);
+  // "Sr. Accountant" and "Senior Accountant" at "Acme Corp" and "Acme
+  // Corporation" are one posting, not two.
+  const company = normalizeCompanyForKey(job.company);
+  const title = normalizeTitleForKey(job.title);
   if (company && title) return `${company}::${title}`;
   // With either half missing, company+title no longer identifies a role: two
   // unrelated employers' "Data Engineer" postings (aggregators often drop the

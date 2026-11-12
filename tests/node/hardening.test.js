@@ -247,9 +247,10 @@ describe('recordAssistResult truthfulness', () => {
     const broken = { upsertJob: () => { throw new Error('SQLITE_BUSY'); } };
     expect(() => recordAssistResult(broken, 'j1', { status: 'submitted', submitted: true, filled: [], blockers: [] }))
       .toThrow(/failed to record submitted application/);
-    // Non-submit outcomes stay best-effort (no throw).
+    // Every outcome is loud now: a lost "ready" or "blocked" left the job
+    // showing its old status with nothing on screen to say so (audit AF-12).
     expect(() => recordAssistResult(broken, 'j1', { status: 'ready_for_submit', submitted: false, filled: [], blockers: [] }))
-      .not.toThrow();
+      .toThrow(/failed to record auto-fill result \(ready_for_submit\)/);
   });
 });
 

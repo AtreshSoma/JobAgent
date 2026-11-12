@@ -3,6 +3,7 @@
 import { $, el, toast, withBusy } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
+import { shiftViewCount } from './analytics.js';
 import { statusLabel } from './board.js';
 import { DECISION_REASONS, reasonLabel, renderDetail, verdictLabel } from './detail.js';
 import { confirmAction, openDialog } from './dialogs.js';
@@ -169,6 +170,8 @@ export async function batchApprove() {
   if (!ids.length) return;
   try {
     const result = await postJson('/api/approve-batch', { jobIds: ids });
+    const moved = result.approved.filter((id) => state.known.get(id)?.appStatus === 'needs_review').length;
+    shiftViewCount('needs_review', 'ready_apply', moved);
     const failed = result.failed.length;
     toast(`Approved ${result.approved.length}${failed ? `, ${failed} skipped (no packet yet)` : ''}`,
       failed ? '' : 'good');
@@ -206,24 +209,22 @@ export async function batchDecide(decision) {
 /**
  * A toast that carries an Undo button for `wasDecision` (job id -> prior value).
  *
- * Restoring is grouped by prior value so N jobs cost one request per DISTINCT
- * previous decision — typically one or two — rather than one per job.
+ * Undo asks the server to reverse each job's latest decision, so the restored
+ * value and reason come from the event log, not from what this page loaded.
  */
 export function offerUndo(message, wasDecision, { reasonFor = null } = {}) {
   if (!wasDecision.size) { toast(message, 'good'); return; }
-  const groups = new Map();
-  for (const [id, was] of wasDecision) {
-    if (!groups.has(was)) groups.set(was, []);
-    groups.get(was).push(id);
-  }
   const node = el('div', { class: 'toast good undo-toast', role: 'group', 'aria-label': message },
     el('span', { class: 'undo-msg', text: message }));
   const button = el('button', { class: 'small', type: 'button', text: '↩ Undo' });
   button.addEventListener('click', async () => {
     button.disabled = true;
     try {
-      for (const [was, list] of groups) {
-        await postJson('/api/decide-batch', { jobIds: list, decision: was });
+      // The server restores each job's previous decision AND its reason from
+      // the job's own event log. Restoring from the rows loaded in this page
+      // turned an unloaded "shortlisted" into "cleared".
+      for (const id of wasDecision.keys()) {
+        await postJson(`/api/jobs/${encodeURIComponent(id)}/undo-decision`, {});
       }
       node.remove();
       toast(`Restored ${wasDecision.size} job(s)`, 'good');

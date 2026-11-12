@@ -312,6 +312,7 @@ export const ACTIONS = {
   decide: (target) => decide(target.dataset.id, target.dataset.decision),
   approve: (target) => simpleAction(target.dataset.id, 'approve', 'Packet approved'),
   'reject-packet': (target) => simpleAction(target.dataset.id, 'reject-packet', 'Packet rejected'),
+  unapprove: (target) => simpleAction(target.dataset.id, 'unapprove', 'Approval taken back: the packet is waiting for your review again'),
   assist: (target) => simpleAction(target.dataset.id, 'assist', 'Browser opening — it stops before Submit'),
   'autofill-one': (target) => autofillOne(target.dataset.id),
   'prepare-one': (target) => prepareOne(target.dataset.id),

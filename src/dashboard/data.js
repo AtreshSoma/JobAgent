@@ -23,6 +23,7 @@ import { join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import { APPROVAL_STATUS, approve, reject, latestApprovalsByJob } from '../apply/approvalQueue.js';
+import { APPROVAL_EVENT } from '../apply/approvalDigest.js';
 import { jsonList } from '../utils/json.js';
 import { isWithinLast24Hours, isWithinLastHours, formatPostedRelative, ageInDays } from '../utils/dates.js';
 import { EMPLOYMENT_LABELS } from '../scoring/employmentClassifier.js';
@@ -1885,10 +1886,20 @@ export function undoDecision(db, jobId) {
  * Approve a job's prepared packet for assisted filling (human action).
  * @returns {{ id: string, approvalId: string, status: string }}
  */
-export function approveJobPacket(db, jobId) {
+export function approveJobPacket(db, jobId, { digest = null } = {}) {
   const approval = db.getApprovalByJob?.(jobId);
   if (!approval) throw httpError(409, `no prepared packet to approve for job ${jobId}, run Prepare first`);
+  // Approving is a decision about something not yet sent. A job already
+  // submitted (or reported submitted) has nothing left to approve, and
+  // re-approving it is how a second fill of the same application starts.
+  const job = db.getJob?.(jobId);
+  if (job && (Number(job.applied) === 1 || ['submitted', 'submit_unverified'].includes(job.status))) {
+    throw httpError(409, 'this application was already submitted (or reported submitted), so there is nothing to approve');
+  }
   const r = approve(db, approval.id);
+  // The approval's audit record, with a digest of what was approved (see
+  // src/apply/approvalDigest.js) so a later fill can tell if it changed.
+  insertApprovalEvent(db, jobId, APPROVAL_EVENT, 'packet approved', { approvalId: approval.id, ...(digest ? { digest } : {}) });
   noteUserMutation();
   return { id: jobId, approvalId: approval.id, status: r.status };
 }
@@ -1901,8 +1912,59 @@ export function rejectJobPacket(db, jobId) {
   const approval = db.getApprovalByJob?.(jobId);
   if (!approval) throw httpError(409, `no prepared packet to reject for job ${jobId}`);
   const r = reject(db, approval.id);
+  insertApprovalEvent(db, jobId, 'packet_rejected', 'packet rejected', { approvalId: approval.id });
   noteUserMutation();
   return { id: jobId, approvalId: approval.id, status: r.status };
+}
+
+/**
+ * Take back an approval (human action). Allowed until the application is
+ * being filled or was submitted; the packet returns to "needs review".
+ * @returns {{ id: string, approvalId: string, status: string }}
+ */
+export function unapproveJobPacket(db, jobId) {
+  const approval = db.getApprovalByJob?.(jobId);
+  if (!approval || approval.approval_status !== APPROVAL_STATUS.APPROVED) {
+    throw httpError(409, 'this packet is not approved, so there is nothing to take back');
+  }
+  const job = db.getJob?.(jobId);
+  if (job && (Number(job.applied) === 1 || ['submitted', 'submit_unverified', 'assist_started'].includes(job.status))) {
+    throw httpError(409, job.status === 'assist_started'
+      ? 'auto-fill is running for this job; cancel it first'
+      : 'this application was already submitted (or reported submitted), so its approval stays');
+  }
+  db.updateApprovalStatus(approval.id, { approval_status: APPROVAL_STATUS.PENDING, approved_by_user: 0, approved_at: null });
+  insertApprovalEvent(db, jobId, 'packet_unapproved', 'approval taken back', { approvalId: approval.id });
+  noteUserMutation();
+  return { id: jobId, approvalId: approval.id, status: APPROVAL_STATUS.PENDING };
+}
+
+/**
+ * Take back an approval because what it covered has changed since. The packet
+ * returns to "needs review" so the person sees it and approves it again.
+ *
+ * @param {object} db
+ * @param {string} jobId
+ * @param {string[]} changes human names of what changed (approvalDigest.digestChanges)
+ * @returns {boolean} true when an approval was withdrawn
+ */
+export function withdrawApproval(db, jobId, changes = []) {
+  const approval = db.getApprovalByJob?.(jobId);
+  if (!approval || approval.approval_status !== APPROVAL_STATUS.APPROVED) return false;
+  db.updateApprovalStatus(approval.id, {
+    approval_status: APPROVAL_STATUS.PENDING, approved_by_user: 0, approved_at: null,
+  });
+  insertApprovalEvent(db, jobId, 'approval_withdrawn', `approval withdrawn: ${changes.join(', ')} changed since you approved`, { changes });
+  noteUserMutation();
+  return true;
+}
+
+/** Best-effort audit event for an approval decision (never fails the action). */
+function insertApprovalEvent(db, jobId, type, message, metadata) {
+  if (typeof db.insertEvent !== 'function') return;
+  try {
+    db.insertEvent({ id: randomUUID(), job_id: jobId, event_type: type, message, metadata });
+  } catch { /* the decision itself is already stored */ }
 }
 
 /** Timestamped note line appended to a job's notes. */

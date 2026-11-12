@@ -200,15 +200,26 @@ export function helpText() {
   return `${lines.join('\n')}\n`;
 }
 
-/** Parse `--key=value` / `--flag` / positional args into an object. */
+/**
+ * Options that always take a value, so `--port 4747` means the same as
+ * `--port=4747`. Without this the space form became a flag plus a stray
+ * positional, and the dashboard silently started on 4646 instead.
+ */
+const VALUE_OPTIONS = new Set(['port', 'mode']);
+
+/** Parse `--key=value` / `--key value` (VALUE_OPTIONS) / `--flag` / positional args into an object. */
 export function parseArgs(argv = []) {
   const out = { flags: new Set(), options: {}, positionals: [] };
-  for (const arg of argv) {
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
     if (arg.startsWith('--')) {
       const body = arg.slice(2);
       const eq = body.indexOf('=');
-      if (eq === -1) out.flags.add(body);
-      else out.options[body.slice(0, eq)] = body.slice(eq + 1);
+      if (eq !== -1) out.options[body.slice(0, eq)] = body.slice(eq + 1);
+      else if (VALUE_OPTIONS.has(body) && i + 1 < argv.length && !argv[i + 1].startsWith('--')) {
+        out.options[body] = argv[i + 1];
+        i += 1;
+      } else out.flags.add(body);
     } else {
       out.positionals.push(arg);
     }

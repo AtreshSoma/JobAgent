@@ -36,9 +36,10 @@ import {
 import { fillFields, requiredFieldsSatisfied, verifyFilledFields } from './fieldResolver.js';
 import {
   scanFields, resolveFormScope, detectValidationErrors, unfilledRequiredControls, applicationFields,
+  shadowFormControlCount,
 } from './domScanner.js';
 import { fillScannedFields, isSensitiveChoiceLabel } from './fieldFiller.js';
-import { findAdvanceControl, findSubmitControl, clickAndSettle } from './navigator.js';
+import { findAdvanceControl, findSubmitControl, clickAndSettle, APPLY_START_RE } from './navigator.js';
 import { uploadFiles } from './uploadRunner.js';
 import { detectBlocker, visibleText } from './guards.js';
 import {
@@ -363,6 +364,10 @@ export async function assistApply({
         return false;
       }
       const beforeUrl = currentUrlOf(page) ?? url;
+      // What the page said BEFORE the click. A confirmation phrase that was
+      // already on screen ("Once your application is submitted, you cannot
+      // edit it") is not evidence that this click submitted anything.
+      const baseline = await submitBaseline(page, scope);
       // Write-ahead duplicate guard: if the process dies after the click but
       // before confirmation inspection, a future run must not click Submit a
       // second time. `submitting` means the attempt is write-ahead protected;
@@ -398,7 +403,7 @@ export async function assistApply({
         blockers: [],
         submissionEvidence: ['explicit per-run auto-submit authorization', 'submit control clicked'],
       }, 'submit control clicked; checking confirmation evidence');
-      const verification = await verifySubmission({ page, url, beforeUrl, inspectPage });
+      const verification = await verifySubmission({ page, url, beforeUrl, inspectPage, baseline, strict: true });
       result.submitVerification = verification;
       if (verification.verified) {
         result.submitted = true;
@@ -735,7 +740,12 @@ export async function assistApply({
       const advance = await findAdvanceControl(scope, {
         allowApplyStart: scanned.length === 0 && result.filled.length === 0,
       });
-      if (!advance) {
+      // A page with nothing of the application on it and no way forward is
+      // reported as exactly that further down ("no application form found",
+      // "sign-in required"). Reporting the resume input missing first sent
+      // people looking for a broken upload on what was the job description.
+      const nothingHere = scanned.length === 0 && result.filled.length === 0 && uploadedTypes.size === 0;
+      if (!advance && !nothingHere) {
         if (pendingRequiredBlocker) stepBlockers.push(pendingRequiredBlocker);
         for (const blocker of pendingUploadBlockers) {
           stepBlockers.push(blocker);
@@ -788,7 +798,24 @@ export async function assistApply({
       // "Apply now"/"Start application" counts as an advance ONLY on a
       // fieldless landing page — on a filled quick-apply form that button IS
       // the submit, and clicking it would bypass the submit gate.
-      if (!advance || runStep === maxSteps - 1) {
+      // The step budget ran out with a way forward still on the page: more
+      // pages remain. That is not "filled and ready", and it is never a final
+      // page the submit gate may act on.
+      if (advance && runStep === maxSteps - 1) {
+        result.status = LIFECYCLE.ASSIST_BLOCKED;
+        result.blockers = [...baseBlockers, `step limit reached: ${maxSteps} pages filled and the form continues ("${advance.text ?? 'Next'}"). Finish the remaining pages in the open window`];
+        result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: stepNumber,
+          lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: result.blockers,
+        }, 'step budget exhausted with pages remaining');
+        return result;
+      }
+      if (!advance) {
         // Never call a page "filled and ready" when no application form was
         // ever found: that told the user to review and Submit a form the run
         // had not reached (Workday's start dialog, a posting with no Apply).
@@ -796,9 +823,12 @@ export async function assistApply({
           result.status = LIFECYCLE.ASSIST_BLOCKED;
           const pageWords = visibleText(nav?.html ?? '');
           const signIn = /\b(sign\s*in|log\s*in|create\s+(?:an\s+)?account)\b/i.test(pageWords);
-          result.blockers = [...baseBlockers, signIn
-            ? 'sign-in required: this site asks you to sign in or create an account before the application form. Do that in the open window, then retry auto-fill'
-            : 'no application form found: open the posting, continue to the application form, then retry auto-fill'];
+          const hidden = await shadowFormControlCount(scope);
+          result.blockers = [...baseBlockers, hidden > 0
+            ? `form not readable: ${hidden} field(s) on this page sit inside components the assistant cannot read. Fill this application yourself in the open window`
+            : signIn
+              ? 'sign-in required: this site asks you to sign in or create an account before the application form. Do that in the open window, then retry auto-fill'
+              : 'no application form found: open the posting, continue to the application form, then retry auto-fill'];
           result.sessionLeftOpen = !headless;
           await checkpoint(APPLICATION_PHASE.BLOCKED, {
             currentStep: stepNumber,
@@ -812,6 +842,24 @@ export async function assistApply({
         }
         if (await tryAutoSubmit(scope)) {
           result.sessionLeftOpen = !headless; // leave the confirmation page visible
+          return result;
+        }
+        // "Ready" means every required control the live form shows is filled,
+        // checked the same way the auto-submit gate checks it.
+        const blankRequired = await unfilledRequiredControls(scope);
+        if (Array.isArray(blankRequired) && blankRequired.length) {
+          result.status = LIFECYCLE.ASSIST_BLOCKED;
+          result.requiredFieldsFilled = false;
+          result.blockers = [...baseBlockers, ...blankRequired.map((l) => `required field is empty: ${l}`)];
+          result.sessionLeftOpen = !headless;
+          await checkpoint(APPLICATION_PHASE.BLOCKED, {
+            currentStep: stepNumber,
+            lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+            completedFields: checkpointFields,
+            unresolvedQuestions,
+            uploadVerification: up.uploaded ?? [],
+            blockers: result.blockers,
+          }, `${blankRequired.length} required field(s) still empty`);
           return result;
         }
         result.status = LIFECYCLE.READY_FOR_SUBMIT;
@@ -835,6 +883,8 @@ export async function assistApply({
         uploadVerification: up.uploaded ?? [],
         blockers: [],
       }, `step ${stepNumber}: ${advance.text ?? advance.selector ?? 'next'}`);
+      const beforeStep = await stepFingerprint(page, scope);
+      const confirmationBefore = await submitBaseline(page, scope);
       const clicked = await clickAndSettle(scope, advance, deps);
       if (!clicked) {
         if (await tryAutoSubmit(scope)) {
@@ -886,6 +936,38 @@ export async function assistApply({
           uploadVerification: up.uploaded ?? [],
           blockers: result.blockers,
         }, 'validation errors after advancing');
+        return result;
+      }
+      // An "Apply now" that the run took for the way IN may have been the
+      // final submit of a quick-apply form it could not read. If a thank-you
+      // message appeared that was not there before, say so and stop: the job
+      // may have been submitted, and only the human can tell.
+      if (APPLY_START_RE.test(advance.text ?? '') && !confirmationBefore.confirmation
+        && SUBMIT_CONFIRMATION_RE.test(visibleText(afterAdvance.html ?? ''))) {
+        result.status = LIFECYCLE.SUBMIT_UNVERIFIED;
+        result.submitted = false;
+        result.blockers = [...baseBlockers];
+        result.note = `Clicking "${advance.text}" showed a confirmation message, so this may already have been submitted. `
+          + 'Check the open window and your email, then record it. NOT recorded as submitted.';
+        result.sessionLeftOpen = !headless;
+        return result;
+      }
+      // A click that changed nothing did not advance. ATSes that reject a step
+      // with markup this run does not recognise look exactly like this, and
+      // treating it as progress re-filled the same page and reported it ready.
+      const afterStep = await stepFingerprint(page, afterScope);
+      if (beforeStep && afterStep && beforeStep === afterStep) {
+        result.status = LIFECYCLE.ASSIST_BLOCKED;
+        result.blockers = [...baseBlockers, `could not advance: the page did not change after clicking "${advance.text ?? 'Next'}". Check the open window for a message on this step`];
+        result.sessionLeftOpen = !headless;
+        await checkpoint(APPLICATION_PHASE.BLOCKED, {
+          currentStep: stepNumber,
+          lastUrl: afterAdvance.url ?? currentUrlOf(page) ?? resumeUrl,
+          completedFields: checkpointFields,
+          unresolvedQuestions,
+          uploadVerification: up.uploaded ?? [],
+          blockers: result.blockers,
+        }, 'advance click did not change the page');
         return result;
       }
       result.advancedSteps = (result.advancedSteps ?? 0) + 1;
@@ -1296,7 +1378,7 @@ export function submissionFailureSignal({ status = null, html = '' } = {}) {
  *
  * @returns {Promise<{ verified: boolean, signals: string[] }>}
  */
-async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
+async function verifySubmission({ page, url, beforeUrl, inspectPage, baseline = null, strict = false }) {
   let after;
   try { after = await inspectPage(page, url); } catch { after = null; }
   if (!after) return { verified: false, signals: ['post-submit inspection failed'], lastUrl: currentUrlOf(page) ?? beforeUrl };
@@ -1334,13 +1416,79 @@ async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
   // Matched against visible text, not raw HTML: "thank you for applying" ships
   // inside the JavaScript bundle of many ATSes as the template for a page the
   // applicant has not reached yet.
-  if (SUBMIT_CONFIRMATION_RE.test(visibleText(html))) signals.push('confirmation message');
+  const phrase = SUBMIT_CONFIRMATION_RE.test(visibleText(html));
+  if (phrase && !(strict && baseline?.confirmation)) signals.push('confirmation message');
   const urlChanged = Boolean(after.url && beforeUrl && after.url !== beforeUrl);
   if (urlChanged) signals.push('page navigated');
   if (formGone) signals.push('form gone');
+  const destination = strict && after.url ? postSubmitDestination([beforeUrl].filter(Boolean), after.url) : null;
+  if (destination) signals.push(`post-submit page: ${destination}`);
 
-  const verified = signals.includes('confirmation message') || (urlChanged && formGone);
+  if (!strict) {
+    const verified = signals.includes('confirmation message') || (urlChanged && formGone);
+    return { verified, signals, lastUrl: after.url ?? currentUrlOf(page) ?? beforeUrl };
+  }
+  // STRICT (the auto-submit click). A phrase alone is not proof: it must be
+  // new, and the page must have moved on (form gone or URL changed). Errors the
+  // form shows after the click veto everything.
+  let formErrors;
+  try { formErrors = await detectValidationErrors(await resolveFormScope(page, { timeoutMs: 500 })); } catch { formErrors = []; }
+  if (formErrors.length) {
+    return { verified: false, signals: [...signals, `form errors after submit: ${formErrors.slice(0, 2).join('; ')}`], lastUrl: after.url ?? currentUrlOf(page) ?? beforeUrl };
+  }
+  const verified = Boolean(destination)
+    || (signals.includes('confirmation message') && (formGone || urlChanged))
+    || (urlChanged && formGone);
   return { verified, signals, lastUrl: after.url ?? currentUrlOf(page) ?? beforeUrl };
+}
+
+/**
+ * What the page shows before a click that might submit: whether a
+ * confirmation phrase is already visible. `confirmation: false` when the page
+ * cannot be read (unit doubles), which keeps the old behaviour there.
+ */
+async function submitBaseline(page, scope) {
+  let html;
+  try { html = typeof page?.content === 'function' ? await page.content() : ''; } catch { html = ''; }
+  try {
+    if (scope && scope !== page && typeof scope.content === 'function') html += await scope.content();
+  } catch { /* the page alone is enough */ }
+  return { confirmation: SUBMIT_CONFIRMATION_RE.test(visibleText(html)) };
+}
+
+/**
+ * A short fingerprint of the step a form is on: URL, headings and the labels
+ * of its application fields. Equal before and after an advance click means
+ * the click changed nothing. Null when the page cannot be read.
+ */
+async function stepFingerprint(page, scope) {
+  if (!scope || typeof scope.evaluate !== 'function') return null;
+  try {
+    const shape = await scope.evaluate(() => {
+      const visible = (el) => {
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) return false;
+        const st = window.getComputedStyle(el);
+        return st.display !== 'none' && st.visibility !== 'hidden';
+      };
+      const text = (el) => (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const headings = Array.from(document.querySelectorAll('h1, h2, h3, legend, [role="heading"]'))
+        .filter(visible).map(text).filter(Boolean).slice(0, 12).join('|');
+      // A start dialog opening over the posting is progress even though the
+      // URL, headings and fields behind it did not change.
+      const dialogs = Array.from(document.querySelectorAll('dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]'))
+        .filter(visible).map((d) => text(d).slice(0, 200)).join('|');
+      const controls = Array.from(document.querySelectorAll('button, [role="button"], a[href], input:not([type="hidden"]), select, textarea'))
+        .filter(visible).length;
+      return `fp:${headings}\n${dialogs}\n${controls}`;
+    });
+    // Page doubles answer evaluate() with something else: unobservable.
+    if (typeof shape !== 'string' || !shape.startsWith('fp:')) return null;
+    const fields = applicationFields(await scanFields(scope)).map((f) => `${f.kind}:${f.label}`).join('|');
+    return `${currentUrlOf(page) ?? ''}\n${shape}\n${fields}`;
+  } catch {
+    return null;
+  }
 }
 
 /** True when an assist error means the HUMAN closed the browser/tab/window. */

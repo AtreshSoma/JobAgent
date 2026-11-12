@@ -27,7 +27,7 @@
      three-step hierarchy still reads as a hierarchy. */
   --text: #e8eef6;
   --text-dim: #9aa8ba;
-  --text-faint: #78889c;
+  --text-faint: #8797ac;
 
   /* accents */
   --accent: #4d9fff;
@@ -184,14 +184,14 @@
   /* AA on its own tinted chip, not just on white (axe, 2026-11-11): the old
      #0f8f5c was 3.64:1 on --good-soft, #9a6300 4.3:1 on --warn-soft, and
      #1668d6 4.39:1 on --surface-3. These are 5.3, 5.09 and 4.97. */
-  --good: #0a7049;
+  --good: #07623f;
   --good-soft: rgba(10, 112, 73, .1);
   --warn: #8a5800;
   --warn-soft: rgba(138, 88, 0, .12);
   /* Text ON the warm fill, and warm text on a warm tint: both clear 4.5:1. */
   --on-warn: #ffffff;
   --warn-text: #6f4600;
-  --bad: #c8332e;
+  --bad: #ad2a25;
   --bad-soft: rgba(200, 51, 46, .1);
   --chip: #e6ebf2;
   --line-strong: #a9b5c6;
@@ -244,13 +244,13 @@
     --accent-hover: #0f57ba;
     --accent-ink: #ffffff;
     --accent-soft: rgba(19, 96, 199, .1);
-    --good: #0a7049;
+    --good: #07623f;
     --good-soft: rgba(10, 112, 73, .1);
     --warn: #8a5800;
     --warn-soft: rgba(138, 88, 0, .12);
     --on-warn: #ffffff;
     --warn-text: #6f4600;
-    --bad: #c8332e;
+    --bad: #ad2a25;
     --bad-soft: rgba(200, 51, 46, .1);
     --chip: #e6ebf2;
     --line-strong: #a9b5c6;
@@ -1122,6 +1122,9 @@ button.stat:hover { background: none; border-color: transparent; }
   }
   .tabs::-webkit-scrollbar, .health::-webkit-scrollbar { display: none; }
   .tabs .tab, .health .stat { flex: none; }
+  /* Something that needs you (unverified submits) leads the strip: scrolled
+     past the edge at 390px, it was the one fact nobody saw. */
+  .health .stat.bad { order: -1; }
   .statusbar .runbox { width: 100%; min-width: 0; }
   .statusbar .run-main { min-width: 0; flex: 1 1 auto; }
   .statusbar .spacer { display: none; }

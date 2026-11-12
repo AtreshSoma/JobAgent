@@ -346,7 +346,9 @@ export function workspaceCard(item) {
     foot.append(el('button', {
       type: 'button', class: 'small ghost ws-move', 'data-action': 'ws-move-menu', 'data-id': item.id,
       // A closed card can only be corrected (Undo), not moved on.
-      'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': `Update status of ${item.title}`,
+      // Name starts with the visible word (WCAG 2.5.3, label in name).
+      'aria-haspopup': 'menu', 'aria-expanded': 'false',
+      'aria-label': `${item.allowedOutcomes?.length ? 'Move' : 'Change'}: update the status of ${item.title}`,
       text: item.allowedOutcomes?.length ? 'Move' : 'Change',
     }));
   }

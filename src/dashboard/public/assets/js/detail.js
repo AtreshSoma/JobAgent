@@ -82,10 +82,21 @@ export async function selectJob(id, { focusRow = false, user = false, defer = 0 
  * @param {string} id
  * @param {string[]} [keys] rail sections to reveal, first one present wins
  */
-/** What focus may be handed to unasked: the primary action first, never a statement of fact. */
-const AUTO_FOCUSABLE = ['button.primary:not([disabled]):not([data-confirms])',
-  'button:not([disabled]):not([data-confirms])', 'a[href]'];
-const firstAutoFocusable = (root) => AUTO_FOCUSABLE.map((sel) => root?.querySelector(sel)).find(Boolean) ?? null;
+/**
+ * What focus may be handed to unasked: the primary action first, never a
+ * statement of fact (data-confirms) and never a button that opens a browser
+ * and starts filling (data-launches). After "Approve only", focus landed on
+ * "Fill in browser", so a second Enter meant for the first click started an
+ * application nobody chose to start.
+ */
+const NOT_AUTO = ':not([disabled]):not([data-confirms]):not([data-launches])';
+const AUTO_FOCUSABLE = [`button.primary${NOT_AUTO}`, `button${NOT_AUTO}`, 'a[href]'];
+// When the person ASKED to be taken to the next step ("See what stopped it"),
+// its launch button may take focus: that click was a choice, not a redraw.
+const NOT_CONFIRM = ':not([disabled]):not([data-confirms])';
+const ASKED_FOCUSABLE = [`button.primary${NOT_CONFIRM}`, `button${NOT_CONFIRM}`, 'a[href]'];
+const firstAutoFocusable = (root, { asked = false } = {}) => (asked ? ASKED_FOCUSABLE : AUTO_FOCUSABLE)
+  .map((sel) => root?.querySelector(sel)).find(Boolean) ?? null;
 
 export async function revealInDetail(id, keys = ['attention', 'next']) {
   await selectJob(id, { user: true });
@@ -106,7 +117,7 @@ export async function revealInDetail(id, keys = ['attention', 'next']) {
   section.classList.add('is-spotlit');
   setTimeout(() => section.classList.remove('is-spotlit'), 1600);
   const nextSection = host.querySelector('[data-section="next"]');
-  const way = firstAutoFocusable(nextSection);
+  const way = firstAutoFocusable(nextSection, { asked: true });
   if (way) way.focus({ preventScroll: true });
   else if (nextSection) { nextSection.tabIndex = -1; nextSection.focus({ preventScroll: true }); }
 }
@@ -397,8 +408,11 @@ export function detailSections(job) {
   // down — Shortlist sat in both. It moves into "More actions", so it is
   // still reachable from the same place as every other decision.
   const offered = new Set([...next.querySelectorAll('[data-action="decide"]')].map((b) => b.dataset.decision));
-  for (const [decision, label, visible] of [['shortlisted', '★ Shortlist', true], ['rejected', '✕ Reject', true],
-    ['archived', 'Archive', false], ['clear', 'Clear', false]]) {
+  // A submitted application is a record, not a candidate to sort: rejecting
+  // it only skewed the counts while the row still read "Submitted".
+  const decisions = ['submitted', 'submit_unverified'].includes(job.appStatus) ? [] : [['shortlisted', '★ Shortlist', true], ['rejected', '✕ Reject', true],
+    ['archived', 'Archive', false], ['clear', 'Clear', false]];
+  for (const [decision, label, visible] of decisions) {
     (visible && !offered.has(decision) ? actions : more).append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
     }));
@@ -819,7 +833,7 @@ export function nextBestAction(job) {
 export const autofillButton = (id, label = 'Auto-fill application') => {
   const blocked = autofillBlockedReason();
   return el('button', {
-    class: 'small primary', 'data-action': 'autofill-one', 'data-id': id,
+    class: 'small primary', 'data-action': 'autofill-one', 'data-id': id, 'data-launches': '',
     disabled: Boolean(blocked),
     title: blocked ?? 'Prepare a packet if needed, approve it, open the posting, fill everything it can — and stop before Submit.',
     text: label,
@@ -872,9 +886,35 @@ export function actionPlan(job) {
       ],
     };
   }
-  if (job.appStatus === 'needs_review') {
+  // Closed, filtered, rejected, archived and unread jobs come FIRST: the fit
+  // branches below would otherwise offer "Auto-fill application" on a job the
+  // person rejected, or that the employer closed.
+  if (job.appStatus === 'rejected' || job.appStatus === 'archived') {
     return {
-      text: 'Packet is prepared. Review the tailored resume, then auto-fill opens the application and stops for your review.',
+      text: `You ${job.appStatus} this job, so nothing will be filled or sent. Restore it if you changed your mind.`,
+      buttons: [el('button', { class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'clear', text: '↺ Restore' })],
+    };
+  }
+  if (job.linkState === 'closed') {
+    return { text: 'The employer has closed this posting, so there is nothing to apply to.', buttons: [openPosting()] };
+  }
+  if (job.appStatus === 'discarded') {
+    return {
+      text: `Filtered out${job.discardReason ? `: ${job.discardReason}` : ''}. Nothing is filled or sent for a filtered job.`,
+      buttons: [openPosting()],
+    };
+  }
+  if (job.appStatus === 'needs_description') {
+    return {
+      text: 'Not judged yet: only a summary was read, so the fit shown is not a verdict. Open the posting, or fetch the description from More actions.',
+      buttons: [openPosting()],
+    };
+  }
+  if (job.appStatus === 'needs_review') {
+    const open = job.packet?.needsUser?.length ?? 0;
+    return {
+      text: 'Packet is prepared. Review the tailored resume, then auto-fill opens the application and stops for your review.'
+        + (open ? ` ${open} question${open === 1 ? '' : 's'} still need${open === 1 ? 's' : ''} your answer (listed under "Questions left for you") before it can finish.` : ''),
       buttons: [
         el('button', { class: 'small primary', 'data-action': 'preview-resume', 'data-id': job.id, text: 'Review resume' }),
         autofillButton(job.id),
@@ -886,9 +926,11 @@ export function actionPlan(job) {
     return {
       text: 'Approved. Open it in a browser — it fills the form and stops before Submit.',
       buttons: [el('button', {
-        class: 'small primary', 'data-action': 'assist', 'data-id': job.id, text: '▶ Fill in browser',
+        class: 'small primary', 'data-action': 'assist', 'data-id': job.id, 'data-launches': '', text: '▶ Fill in browser',
         disabled: Boolean(autofillBlockedReason()), title: autofillBlockedReason(),
-      }), el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': job.id, text: 'View resume' })],
+      }), el('button', { class: 'small', 'data-action': 'preview-resume', 'data-id': job.id, text: 'View resume' }),
+      // Approving is reversible until the application is filled.
+      el('button', { class: 'small ghost', 'data-action': 'unapprove', 'data-id': job.id, text: 'Unapprove' })],
     };
   }
   if (job.appStatus === 'ready_for_submit') {

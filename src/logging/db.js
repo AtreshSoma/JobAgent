@@ -541,6 +541,16 @@ export const SCHEMA_VERSION = MIGRATIONS[MIGRATIONS.length - 1].version;
  */
 export function applyVersionedMigrations(db) {
   const from = Number(db.prepare('PRAGMA user_version').get().user_version) || 0;
+  // A store written by NEWER code has columns and meanings this code does not
+  // know. Writing to it (an older checkout, a restored newer backup) would
+  // silently produce rows the newer code misreads, so refuse instead.
+  const latest = MIGRATIONS[MIGRATIONS.length - 1].version;
+  if (from > latest) {
+    throw Object.assign(new Error(
+      `this job database is from a newer JobAgent (schema ${from}; this version understands up to ${latest}). `
+      + 'Update JobAgent, or open a backup made by this version.',
+    ), { code: 'SCHEMA_TOO_NEW' });
+  }
   let current = from;
   for (const step of MIGRATIONS) {
     if (current >= step.version) continue;
@@ -1229,6 +1239,15 @@ export class Database {
    * @returns {{id: string, from: string|null, to: string}}
    * @throws {Error} statusCode 404 for an unknown id, 409 for an illegal move
    */
+  /**
+   * Ids of every job in one lifecycle status (startup recovery).
+   * @param {string} status
+   * @returns {string[]}
+   */
+  jobIdsWithStatus(status) {
+    return this.prepareCached('SELECT id FROM jobs WHERE status = ?').all(status).map((r) => r.id);
+  }
+
   setJobStatus(id, to, { reason = '', patch = {}, actor = 'system' } = {}) {
     return this.transaction(() => {
       const current = this.prepareCached('SELECT status FROM jobs WHERE id = ?').get(id);
@@ -1511,10 +1530,10 @@ export class Database {
   listEvents(jobId) {
     if (jobId) {
       return this.db.prepare(
-        'SELECT * FROM application_events WHERE job_id = ? ORDER BY created_at',
+        'SELECT * FROM application_events WHERE job_id = ? ORDER BY created_at, rowid',
       ).all(jobId);
     }
-    return this.db.prepare('SELECT * FROM application_events ORDER BY created_at').all();
+    return this.db.prepare('SELECT * FROM application_events ORDER BY created_at, rowid').all();
   }
 
   /** @param {Record<string, any>} row */

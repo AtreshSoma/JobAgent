@@ -100,6 +100,20 @@ export function renderHealth(stats) {
   renderHealthProfileFlag();
 }
 
+/**
+ * Move `n` jobs between two tab counts right away. /api/stats is throttled to
+ * once a minute (it reads the whole store), so after approving ten packets the
+ * "Needs review" tab kept saying 10 over an empty list until the next recount.
+ * The recount still follows and corrects anything this guessed wrong.
+ */
+export function shiftViewCount(from, to, n = 1) {
+  const views = state.stats?.views;
+  if (!views || !(n > 0)) return;
+  if (from && Number.isFinite(views[from])) views[from] = Math.max(0, views[from] - n);
+  if (to && Number.isFinite(views[to])) views[to] += n;
+  renderTabs();
+}
+
 export function renderTabs() {
   // When filters are active the board response carries counts computed against
   // those same filters, so a badge never promises rows the tab would not show.

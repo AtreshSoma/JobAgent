@@ -49,7 +49,7 @@ export async function handleBatchRoutes(ctx, req, res, { path }) {
     const approved = [];
     const failed = [];
     for (const jobId of ids) {
-      try { approveJobPacket(ctx.db, jobId); approved.push(jobId); }
+      try { approveJobPacket(ctx.db, jobId, { digest: ctx.approvalDigestFor?.(jobId) ?? null }); approved.push(jobId); }
       catch (err) { failed.push({ jobId, error: err.message }); }
     }
     ctx.refreshTracker();
