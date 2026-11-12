@@ -81,6 +81,7 @@ import { approveJobPacket, buildMasterResume, setDuringBulkRun, noteUserMutation
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import { runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult, preparePacketsForJobs } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { createCodeFreshness } from './codeFreshness.js';
 import { rescoreStale } from '../pipeline/index.js';
 import { sweepPostings } from '../search/postingLiveness.js';
 import { reconcileStalePackets } from '../apply/packetHygiene.js';
@@ -1844,8 +1845,11 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
    * every read sees the live value: db and config are reassigned when the
    * active profile changes or config reloads.
    */
+  // Is this server older than the code on disk? (see codeFreshness.js)
+  const codeChangedSinceStart = deps.codeFreshness ?? createCodeFreshness();
   const ctx = {
     get backupState() { return backupState; },
+    get codeChangedSinceStart() { return codeChangedSinceStart; },
     get runBackup() { return runBackup; },
     get autoApplyEligibility() { return autoApplyEligibility; },
     get browserAvailableCached() { return browserAvailableCached; },

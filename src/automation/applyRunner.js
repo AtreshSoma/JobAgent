@@ -528,6 +528,11 @@ export async function assistApply({
       // fields and run every fill/scan/upload/navigate against it; falls back to
       // the page when the form is top-level (or for unit-test fakes).
       const scope = await resolveFormScope(page);
+      // A page with neither application fields nor a way forward is still
+      // drawing (Oracle's cookie banner can render and hold still before the
+      // posting and its "Apply Now" exist). Look again for a bounded while
+      // instead of deciding on a half-drawn page.
+      await waitForFormOrWayIn(scope, deps.formWaitMs ?? 10000);
       await checkpoint(APPLICATION_PHASE.FILLING, {
         currentStep: stepNumber,
         lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
@@ -784,6 +789,27 @@ export async function assistApply({
       // fieldless landing page — on a filled quick-apply form that button IS
       // the submit, and clicking it would bypass the submit gate.
       if (!advance || runStep === maxSteps - 1) {
+        // Never call a page "filled and ready" when no application form was
+        // ever found: that told the user to review and Submit a form the run
+        // had not reached (Workday's start dialog, a posting with no Apply).
+        if (scanned.length === 0 && result.filled.length === 0 && uploadedTypes.size === 0) {
+          result.status = LIFECYCLE.ASSIST_BLOCKED;
+          const pageWords = visibleText(nav?.html ?? '');
+          const signIn = /\b(sign\s*in|log\s*in|create\s+(?:an\s+)?account)\b/i.test(pageWords);
+          result.blockers = [...baseBlockers, signIn
+            ? 'sign-in required: this site asks you to sign in or create an account before the application form. Do that in the open window, then retry auto-fill'
+            : 'no application form found: open the posting, continue to the application form, then retry auto-fill'];
+          result.sessionLeftOpen = !headless;
+          await checkpoint(APPLICATION_PHASE.BLOCKED, {
+            currentStep: stepNumber,
+            lastUrl: nav.url ?? currentUrlOf(page) ?? resumeUrl,
+            completedFields: checkpointFields,
+            unresolvedQuestions,
+            uploadVerification: up.uploaded ?? [],
+            blockers: result.blockers,
+          }, 'no application form found');
+          return result;
+        }
         if (await tryAutoSubmit(scope)) {
           result.sessionLeftOpen = !headless; // leave the confirmation page visible
           return result;
@@ -1014,6 +1040,9 @@ export function watchForHumanSubmission({
   let navigated = false;
   let baselineHit = false;
   const timers = [];
+  const trail = [];
+  const remember = (u) => { if (u && trail.at(-1) !== u) trail.push(u); if (trail.length > 50) trail.shift(); };
+  try { remember(page.url?.()); } catch { /* fakes */ }
 
   const stop = () => {
     if (stopped) return;
@@ -1025,10 +1054,19 @@ export function watchForHumanSubmission({
 
   const check = async () => {
     if (stopped || checking) return;
-    if (baselineHit && !navigated) return;
     checking = true;
     try {
       if (page.isClosed?.()) { stop(); return; }
+      let here = null;
+      try { here = page.url?.() ?? null; } catch { here = null; }
+      const destination = postSubmitDestination(trail, here);
+      remember(here);
+      if (destination) {
+        stop();
+        await onConfirmed?.({ verified: true, signals: [`post-submit page: ${destination}`], lastUrl: here });
+        return;
+      }
+      if (baselineHit && !navigated) return;
       const verification = await verifySubmission({ page, url, beforeUrl: null, inspectPage });
       if (!stopped && verification.verified && verification.signals.includes('confirmation message')) {
         stop();
@@ -1048,6 +1086,7 @@ export function watchForHumanSubmission({
       if (frame && typeof page.mainFrame === 'function' && frame !== page.mainFrame()) return;
     } catch { return; }
     navigated = true;
+    try { remember(frame?.url?.() ?? page.url?.()); } catch { /* ignore */ }
     // Give the new document a moment to render its confirmation text.
     const t = setTimeout(check, 250);
     t.unref?.();
@@ -1137,13 +1176,59 @@ async function safeCount(page, selector) {
 export const SUBMIT_CONFIRMATION_RE = new RegExp([
   'thank you for applying',
   'thanks for applying',
-  'thank you for your application',
+  'thank you for your (?:job )?application',
+  'application (?:was |has been )?successfully (?:submitted|received|sent)',
+  'you(?:\'|’)?ve successfully applied',
+  'you have successfully applied',
   'application (?:was |has been |is )?(?:received|submitted|complete|sent)',
   'successfully (?:submitted|applied)',
   'submission (?:was |has been )?(?:received|complete|successful)',
   "we(?:'|’)?ve received your application",
   'your application has been sent',
 ].join('|'), 'i');
+
+/**
+ * Where an ATS sends you AFTER a successful submit, when it shows no "thank
+ * you" text. Oracle Recruiting Cloud is the case that went unrecorded
+ * (2026-11-12): Submit on /job/<id>/apply/section/N lands on /my-profile,
+ * "My Applications", with no confirmation phrase, so the hand-off watcher —
+ * which only trusted that phrase — never noticed the human had applied.
+ *
+ * `from` must have been seen in THIS window before `to`: arriving at "My
+ * Applications" from the application form is the evidence, not the page on
+ * its own. It is still recorded only as "submitted — please confirm".
+ */
+export const POST_SUBMIT_PAGES = Object.freeze([
+  {
+    name: 'Oracle Recruiting "My Applications"',
+    from: /\/CandidateExperience\/.*\/job\/[^/?#]+\/apply\/(?!email\b)/i,
+    to: /\/CandidateExperience\/[^?#]*\/my-profile\b/i,
+  },
+  {
+    name: 'Greenhouse confirmation',
+    from: /greenhouse\.io\/[^?#]*\/jobs\/\d+(?![^?#]*\/confirmation)/i,
+    to: /greenhouse\.io\/[^?#]*\/jobs\/\d+\/confirmation\b/i,
+  },
+  {
+    name: 'Lever thank-you page',
+    from: /jobs\.lever\.co\/[^/]+\/[^/?#]+\/apply\b/i,
+    to: /jobs\.lever\.co\/[^/]+\/[^/?#]+\/thanks\b/i,
+  },
+]);
+
+/**
+ * The post-submit page this window reached from its application form, if any.
+ * @param {string[]} trail main-frame URLs seen, oldest first
+ * @param {string} current the URL now
+ * @returns {string|null} the page's name
+ */
+export function postSubmitDestination(trail = [], current = '') {
+  for (const rule of POST_SUBMIT_PAGES) {
+    if (!rule.to.test(current ?? '')) continue;
+    if (trail.some((u) => u !== current && rule.from.test(u ?? ''))) return rule.name;
+  }
+  return null;
+}
 
 /** Current page URL, or null when the page object cannot report one. */
 function currentUrlOf(page) {
@@ -1262,4 +1347,26 @@ async function verifySubmission({ page, url, beforeUrl, inspectPage }) {
 export function isBrowserClosedError(err) {
   return /target (page|context|browser).*(closed|crashed)|browser has been closed|page.*has been closed|context.*has been closed|target closed/i
     .test(String(err?.message ?? err ?? ''));
+}
+
+
+/**
+ * Wait (bounded) until a page shows application fields, a control that
+ * moves forward, or its final Submit. Returns at once when either is already there, and on fakes
+ * that cannot evaluate.
+ * @param {object} scope Playwright page or frame
+ * @param {number} timeoutMs
+ * @returns {Promise<boolean>} true when something to act on appeared
+ */
+async function waitForFormOrWayIn(scope, timeoutMs) {
+  if (!scope || typeof scope.evaluate !== 'function' || !(timeoutMs > 0)) return true;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    if (applicationFields(await scanFields(scope)).length > 0) return true;
+    if (await findAdvanceControl(scope, { allowApplyStart: true })) return true;
+    // A final page may hold only its Submit (never clicked here) — it is drawn.
+    if (await findSubmitControl(scope)) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 400));
+  }
 }

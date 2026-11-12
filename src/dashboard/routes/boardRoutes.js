@@ -13,6 +13,7 @@ import { applicationsWorkspace, boardPage, buildDocuments, buildReports, dashboa
 import { randomUUID } from 'node:crypto';
 import { MAX_JOBS_PAGE, RUNS_DEFAULT_LIMIT, RUNS_MAX_LIMIT, readBody, runSummary, sendJson } from '../httpHelpers.js';
 import { NOT_HANDLED } from './notHandled.js';
+import { restartNotice } from '../codeFreshness.js';
 
 export async function handleBoardRoutes(ctx, req, res, { url, path }) {
   if (req.method === 'GET' && path === '/api/stats') {
@@ -23,7 +24,10 @@ export async function handleBoardRoutes(ctx, req, res, { url, path }) {
   }
   // The Today queue: the ten next actions + setup notices (see todayQueue).
   if (req.method === 'GET' && path === '/api/today') {
-    return sendJson(res, 200, todayQueue(ctx.db, { now: ctx.nowDate(), config: ctx.config, browserAvailable: await ctx.browserAvailableCached() }));
+    const today = todayQueue(ctx.db, { now: ctx.nowDate(), config: ctx.config, browserAvailable: await ctx.browserAvailableCached() });
+    const restart = restartNotice(ctx.codeChangedSinceStart());
+    if (restart) today.systemNotices = [restart, ...(today.systemNotices ?? [])];
+    return sendJson(res, 200, today);
   }
   // The Applications workspace: every application as a card in its stage,
   // with recorded outcomes, follow-ups and the numbers they add up to.

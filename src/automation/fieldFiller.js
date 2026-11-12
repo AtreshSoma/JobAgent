@@ -297,6 +297,17 @@ export async function applyValue(page, field, value, { requiresSponsorship } = {
       if ((await safeCount(page, field.selector)) !== 1) return { ok: false, action: 'checkbox', error: 'selector not unique' };
       const on = AFFIRMATIVE.has(String(resolvedValue ?? '').trim().toLowerCase());
       const loc = page.locator(field.selector).first();
+      if (field.styled && typeof loc.evaluate === 'function') {
+        // A styled checkbox's real input is invisible and its drawn box sits
+        // on top, so a pointer click (even forced) lands on the drawing and
+        // Playwright reports "did not change its state". Toggling the input
+        // itself fires the click/input/change events the widget listens to.
+        await loc.evaluate((node, want) => { if (node.checked !== want) node.click(); }, on);
+        if (typeof loc.isChecked === 'function' && (await loc.isChecked()) !== on) {
+          return { ok: false, action: 'checkbox', error: 'the styled checkbox did not take the change' };
+        }
+        return { ok: true, action: on ? 'check' : 'uncheck' };
+      }
       if (on) { await (loc.check?.() ?? loc.click()); }
       else if (loc.uncheck) { await loc.uncheck(); }
       return { ok: true, action: on ? 'check' : 'uncheck' };

@@ -10,7 +10,7 @@
 import { markApplicationUserSubmitted, markApplicationVerified } from '../../apply/applicationState.js';
 import { loadPacket } from '../../cli/commands.js';
 import { sanitizeErrorMessage } from '../../utils/failureRca.js';
-import { applyDecision, approveJobPacket, jobDetail, markSubmittedByHuman, noteUserMutation, recordOutcome, rejectJobPacket, setJobNote, undoDecision, undoOutcome, updateFollowUp } from '../data.js';
+import { applyDecision, approveJobPacket, jobDetail, markSubmittedByHuman, noteUserMutation, recordOutcome, rejectJobPacket, retractSubmissionReport, setJobNote, undoDecision, undoOutcome, updateFollowUp } from '../data.js';
 import { checkJobLink } from '../linkHealth.js';
 import { isAggregatorUrl, isSafeObservedApplicationUrl, readBody, sendJson } from '../httpHelpers.js';
 import { NOT_HANDLED } from './notHandled.js';
@@ -113,6 +113,12 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
     }
     if (req.method === 'POST' && action === 'reject-packet') {
       const result = rejectJobPacket(ctx.db, jobId);
+      ctx.refreshTracker();
+      return sendJson(res, 200, result);
+    }
+    // "No, it didn't go through" on an unconfirmed submission.
+    if (req.method === 'POST' && action === 'not-submitted') {
+      const result = retractSubmissionReport(ctx.db, jobId);
       ctx.refreshTracker();
       return sendJson(res, 200, result);
     }

@@ -126,6 +126,7 @@ export const ACTIONS = {
     if (set.has(key)) set.delete(key); else set.add(key);
     applyViewPrefs({ hidden: set });
   },
+  'open-learn': () => window.open('/learn/', '_blank', 'noopener'),
   'open-reports': openReports,
   'open-data-quality': openDataQuality,
   'save-freshness': saveFreshness,
@@ -336,6 +337,8 @@ export const ACTIONS = {
   },
   'submit-link': submitLink,
   'open-submit-dialog': (target) => openSubmitDialog(target.dataset.id),
+  'confirm-went-through': (target) => settleUnverified(target.dataset.id, true),
+  'not-submitted': (target) => settleUnverified(target.dataset.id, false),
   'set-view': (target) => setView(target.dataset.view, { nav: true }),
   'today-review': (target) => selectJob(target.dataset.id, { user: true }),
   'today-act': (target) => todayAct(target),
@@ -370,6 +373,7 @@ export const BUSY_ACTIONS = new Set([
   'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
   'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
+  'confirm-went-through', 'not-submitted',
   'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',
   'save-person', 'confirm-alt', 'person-add-anyway', 'remove-person',
 ]);
@@ -576,6 +580,26 @@ export async function submitLink() {
     }
     scheduleRefresh();
   } catch (err) { msg.className = 'st-blocked'; msg.textContent = err.message; }
+}
+
+/**
+ * Settle an unconfirmed submission without the dialog. "I submitted it
+ * myself" with no number lands here, and offering only that same button
+ * again went in a circle: nothing but a confirmation number could finish it.
+ * "Yes" is your confirmation; "No" takes it back to finishing it.
+ */
+export async function settleUnverified(id, wentThrough) {
+  try {
+    if (wentThrough) {
+      await postJson(`/api/jobs/${encodeURIComponent(id)}/mark-submitted`, { verified: true });
+      toast('Recorded as submitted.', 'good');
+    } else {
+      await postJson(`/api/jobs/${encodeURIComponent(id)}/not-submitted`, {});
+      toast('Not counted as submitted. Finish it in the browser, then retry auto-fill or record it.');
+    }
+    if (state.selectedId === id) await loadDetail(id);
+    scheduleRefresh(0);
+  } catch (err) { toast(err.message, 'bad'); }
 }
 
 export async function confirmSubmitted() {

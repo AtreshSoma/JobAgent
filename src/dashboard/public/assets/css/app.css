@@ -999,6 +999,10 @@ dialog { background: var(--surface); }
 /* Pipeline health, as plain facts. */
 .health {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: nowrap;
+  /* The containing block for its .sr-only labels: without it they were placed
+     against the page and escaped this strip's clipping, widening a 390px
+     phone layout to 487px (a sideways scroll on every view). */
+  position: relative;
   min-width: 0; overflow: hidden;
   font-size: var(--fs-sm); color: var(--text-faint);
 }
@@ -2091,6 +2095,20 @@ button.rs-open.prepared:hover { background: var(--accent-soft); }
 .detail-panel > .rail-sec[data-section="stepper"] { border-top: 0; margin-top: var(--s3); padding-top: 0; }
 .detail-panel > .rail-sec > h3:first-child { margin-top: 0; }
 .detail-panel .actions { margin-top: 0; }
+/* A card's "See what stopped it" lands here: one soft wash that fades, so
+   the eye finds the reason without a flashing border. */
+.rail-sec { scroll-margin-top: var(--s3); border-radius: var(--r-md); }
+/* Where a job is parked when it is off the progress line. */
+.offramp { display: flex; align-items: center; gap: var(--s2); color: var(--text); font-weight: 600; }
+.offramp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.offramp-dot.warn { background: var(--warn); }
+.offramp-dot.bad { background: var(--bad); }
+.rail-sec.is-spotlit { animation: spotlit 1.4s var(--ease-out); }
+@keyframes spotlit {
+  0% { background-color: var(--accent-soft); box-shadow: 0 0 0 6px var(--accent-soft); }
+  100% { background-color: transparent; box-shadow: 0 0 0 6px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .rail-sec.is-spotlit { animation: none; } }
 .rail-label {
   display: block; font-size: var(--fs-md); color: var(--text); font-weight: 650;
   margin: var(--s4) 0 var(--s2);

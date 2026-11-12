@@ -123,6 +123,9 @@ const ALWAYS_REACHABLE = Object.freeze([LIFECYCLE.FAILED]);
  */
 const HUMAN_REACHABLE = Object.freeze([LIFECYCLE.SUBMITTED, LIFECYCLE.SUBMIT_UNVERIFIED]);
 
+/** Where a human may send an unverified submission they say did not land. */
+const HUMAN_UNSUBMIT = Object.freeze([LIFECYCLE.ASSIST_BLOCKED, LIFECYCLE.READY_FOR_SUBMIT]);
+
 /**
  * May `from` legally become `to`?
  *
@@ -138,6 +141,10 @@ export function canTransition(from, to, { actor = 'system' } = {}) {
   if (from === to) return true;                 // idempotent re-write
   if (ALWAYS_REACHABLE.includes(to)) return true;
   if (actor === 'human' && HUMAN_REACHABLE.includes(to) && from !== LIFECYCLE.SUBMITTED) return true;
+  // "No, it didn't go through": only the person can take an unverified
+  // submission back to finishing it — never the pipeline (a retry from an
+  // unconfirmed submit is how a double application happens).
+  if (actor === 'human' && from === LIFECYCLE.SUBMIT_UNVERIFIED && HUMAN_UNSUBMIT.includes(to)) return true;
   return (TRANSITIONS[from] ?? []).includes(to);
 }
 

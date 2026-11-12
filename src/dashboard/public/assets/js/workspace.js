@@ -3,7 +3,7 @@
 import { $, el, fmt, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
-import { cssEscape, loadDetail, selectJob } from './detail.js';
+import { cssEscape, loadDetail, revealInDetail, selectJob } from './detail.js';
 import { autofillOne, scheduleRefresh } from './mutations.js';
 import { openSubmitDialog } from './actions.js';
 import { autofillBlockedReason, scheduleTodayReload } from './today.js';
@@ -427,7 +427,9 @@ export async function workspaceAct(target) {
     case 'submit': openSubmitDialog(id); break;
     case 'outcome': openMoveMenu(target); break;
     case 'followup': await openApplicationDetail(id); break;
-    default: await selectJob(id, { user: true });
+    // "See what stopped it", "Check the error", "Confirm it went through",
+    // "Review resume": open the job at the part the button names.
+    default: await revealInDetail(id);
   }
 }
 

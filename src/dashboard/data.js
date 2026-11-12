@@ -204,12 +204,13 @@ function explainStatusRaw(job = {}, appStatus = '', approval = null) {
       // "auto-submit clicked Submit" is simply false.
       if (/^you appear to have submitted/i.test(String(job.submitted_confirmation ?? ''))) {
         return 'You appear to have submitted this yourself: a confirmation page was seen in the window Job Agent '
-          + 'left open. Use "Mark submitted" to record it (add the confirmation number if you have one). '
-          + 'It is NOT counted as submitted until you confirm.';
+          + `left open. ${CONFIRM_HOW}`;
       }
-      return 'Auto-submit clicked Submit, but no confirmation page could be detected. Check your email '
-        + '(or the ATS) for a confirmation: if the application went through, use "Mark submitted"; if not, '
-        + 'open the posting and finish it manually. It is NOT counted as submitted until you confirm.';
+      // Neutral on purpose: this row may be your own report ("I submitted it
+      // myself" without a number) or an unverified click. It used to say
+      // "Auto-submit clicked Submit" to people who had pressed Submit
+      // themselves. jobDetail words it precisely from the job's history.
+      return `Reported as submitted, but not confirmed yet. ${CONFIRM_HOW}`;
     case APP_STATUS.BLOCKED:
       if (blockers.length) return `Assisted fill stopped: ${blockers.join('; ')}`;
       return 'An assisted-fill attempt stopped at an application wall (login, CAPTCHA, an account step, '
@@ -273,6 +274,11 @@ export function classifyAttention(job = {}, appStatus = '') {
   if (/login|sign[ -]?in|account required|authenticate|\bmfa\b/.test(reason)) return {
     kind: 'sign_in', label: 'Needs sign-in', summary: 'Sign in on the employer site, then retry Auto-fill.', retryable: true,
   };
+  if (/no application form found/.test(reason)) return {
+    kind: 'form_step', label: 'Continue to form',
+    summary: 'Auto-fill opened the posting but could not reach its application form. Open the posting, get to the form, then retry Auto-fill.',
+    retryable: true,
+  };
   if (/upload input not found|no upload selector resolved/.test(reason)) return {
     kind: 'form_step', label: 'Continue to form', summary: 'The resume field was not on the current page. Continue to the application form and retry Auto-fill.', retryable: true,
   };
@@ -287,12 +293,42 @@ export function classifyAttention(job = {}, appStatus = '') {
     summary: aggregator ? 'Use the employer Apply link, then save that direct URL here.' : 'The site restricts automated access; opening it manually may still work.',
     retryable: false,
   };
+  // Say WHAT the form wanted, in its own words. Both used to fall through to
+  // "Needs your help — open the application to complete the step…", which
+  // hid "You need to agree to the terms and conditions" behind a fold.
+  const raw = jsonList(job.assist_blockers).map(String);
+  const asked = raw.map((b) => b.match(/^(?:required field needs user|screening needs user):\s*(.+)$/i)?.[1]).filter(Boolean);
+  if (asked.length) {
+    const more = asked.length > 1 ? ` (and ${asked.length - 1} more)` : '';
+    return {
+      kind: 'question', label: 'Answer a question',
+      // The reason only: "Do this next" right below says what to do.
+      summary: `The form needs your answer to "${clip(asked[0])}"${more}.`,
+      retryable: true,
+    };
+  }
+  const said = raw.map((b) => b.match(/^form validation:\s*(.+)$/i)?.[1]).filter(Boolean);
+  if (said.length) return {
+    kind: 'form_check', label: 'Finish a form step',
+    summary: `The form said: "${clip(said[0])}"`,
+    retryable: true,
+  };
   if (appStatus === APP_STATUS.FAILED) return {
     kind: 'retry', label: 'Retry needed', summary: 'Review the recorded error, then retry Auto-fill.', retryable: true,
   };
   return {
     kind: 'needs_help', label: 'Needs your help', summary: 'Open the application to complete the step the assistant could not safely answer.', retryable: true,
   };
+}
+
+/** How an unverified submission is settled, in the buttons' own words. */
+const CONFIRM_HOW = 'If it went through, choose "Yes, it went through" (add the confirmation number if you have one); '
+  + 'if it didn\'t, choose "No, it didn\'t". It is NOT counted as submitted until you confirm.';
+
+/** One blocker phrase, short enough for a card. */
+function clip(text, max = 120) {
+  const t = String(text ?? '').replace(/\s+/g, ' ').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
 /** An Error carrying the HTTP status the server should reply with. */
@@ -1710,11 +1746,23 @@ export function jobDetail(db, jobId, deps = {}) {
 
   // The free-text half of the decision reason lives on the decision event
   // (events are newest first here), not in a column of its own.
+  // Who put an unverified submission here? Your own "I submitted it myself"
+  // is logged as a human status change; say so instead of the neutral text.
+  // (A new value, not a write into `row`: board rows are cached and shared.)
+  let statusReason = row.statusReason;
+  if (row.appStatus === APP_STATUS.SUBMIT_UNVERIFIED) {
+    const reported = events.find((e) => e.type === 'status_changed' && e.metadata?.to === 'submit_unverified');
+    if (reported?.metadata?.actor === 'human') {
+      statusReason = `You reported submitting this yourself${reported.at ? ` (${String(reported.at).slice(0, 10)})` : ''}, `
+        + `without a confirmation number. ${CONFIRM_HOW}`;
+    }
+  }
+
   const decisionEvent = job.user_decision ? events.find((e) => e.type === 'user_decision') : null;
   const decisionReasonNote = decisionEvent?.metadata?.reasonNote ?? null;
 
   return {
-    ...row, decisionReasonNote, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError,
+    ...row, statusReason, decisionReasonNote, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError,
     // The workspace card for this job (outcome, history, follow-up), or null
     // when it is not an application yet.
     application: (() => {
@@ -1892,6 +1940,42 @@ function appendNote(existing, label, at, note) {
  * @returns {{ id: string, appStatus: string, appliedAt: string|null, reportedAt: string,
  *             verified: boolean, confirmationNumber: string|null, alreadySubmitted?: true }}
  */
+/**
+ * "No, it didn't go through": take an unverified submission back to where it
+ * came from, so it can be finished. Only from submit_unverified, only by the
+ * person (see lifecycle HUMAN_UNSUBMIT), and never from a confirmed one.
+ *
+ * @param {object} db
+ * @param {string} jobId
+ * @returns {{ id: string, from: string, to: string }}
+ */
+export function retractSubmissionReport(db, jobId) {
+  const job = db.getJob(jobId);
+  if (!job) throw httpError(404, `unknown job id: ${jobId}`);
+  if (Number(job.applied) === 1 || job.status !== 'submit_unverified') {
+    throw httpError(409, 'only an unconfirmed submission can be marked as not gone through');
+  }
+  const events = db.listEvents?.(jobId) ?? [];
+  let came = null;
+  for (let i = events.length - 1; i >= 0 && !came; i -= 1) {
+    const e = events[i];
+    if (e.event_type !== 'status_changed') continue;
+    let meta = e.metadata;
+    if (typeof meta === 'string') { try { meta = JSON.parse(meta); } catch { meta = null; } }
+    if (meta?.to === 'submit_unverified') came = meta.from;
+  }
+  const to = came === 'ready_for_submit' ? 'ready_for_submit' : 'assist_blocked';
+  const patch = { submitted_confirmation: null };
+  // Back to "needs you" with the reason it now holds, unless the earlier
+  // blocker is still on the row (it is, after "I submitted it myself").
+  if (to === 'assist_blocked' && jsonList(job.assist_blockers).length === 0) {
+    patch.assist_blockers = JSON.stringify(['submission not confirmed: you said it did not go through — finish it in the browser, then retry auto-fill or record it']);
+  }
+  db.setJobStatus(jobId, to, { reason: 'the user said it did not go through', patch, actor: 'human' });
+  noteUserMutation();
+  return { id: jobId, from: 'submit_unverified', to };
+}
+
 export function markSubmittedByHuman(db, jobId, details = {}) {
   const job = db.getJob(jobId);
   if (!job) throw httpError(404, `unknown job id: ${jobId}`);
@@ -2450,7 +2534,10 @@ function todayAction(row) {
       return { rank: 1, kind: 'submit', label: 'Review the filled form and click Submit' };
     case APP_STATUS.BLOCKED: {
       const blockers = (row.assistBlockers ?? []).join(' ');
-      return QUESTION_BLOCKER_RE.test(blockers) || row.attention?.kind === 'needs_help'
+      // A form that refused a step (unticked terms, a bad date) is not a
+      // question for the profile: the button opens the job at the reason.
+      if (row.attention?.kind === 'form_check') return { rank: 2, kind: 'review', label: 'See what stopped it' };
+      return QUESTION_BLOCKER_RE.test(blockers) || ['needs_help', 'question'].includes(row.attention?.kind)
         ? { rank: 2, kind: 'answer', label: 'Answer the question that stopped auto-fill' }
         : { rank: 2, kind: 'review', label: row.attention?.summary ?? 'Finish the step auto-fill could not' };
     }

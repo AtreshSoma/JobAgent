@@ -80,6 +80,19 @@ function collectFields() {
     const type = (el.getAttribute('type') || '').toLowerCase();
     const hint = [el.name, el.id, el.getAttribute('placeholder'), el.getAttribute('aria-label')].join(' ');
     if (type === 'search' || el.closest('[role="search"], search')) return 'search';
+    // Bot traps: a text box no person can see or reach (Oracle Recruiting's
+    // "honey-pot" sits in a zero-height, overflow-hidden row, aria-hidden and
+    // tabindex=-1). Typing into one flags the application as a bot.
+    if (el.tagName === 'INPUT' && !['checkbox', 'radio', 'file'].includes(type)) {
+      const trapHint = [el.name, el.id, el.className, el.getAttribute('autocomplete')].join(' ');
+      if (/honey.?pot|bot.?trap|\bhp[_-]|leave.?(?:this.?)?(?:field.?)?(?:blank|empty)/i.test(trapHint)) return 'honeypot';
+      if (el.closest('[aria-hidden="true"]') && el.tabIndex === -1) return 'honeypot';
+      for (let up = el.parentElement, depth = 0; up && depth < 4; up = up.parentElement, depth += 1) {
+        const st = window.getComputedStyle(up);
+        const r = up.getBoundingClientRect();
+        if (st.overflow !== 'visible' && (r.height < 2 || r.width < 2)) return 'honeypot';
+      }
+    }
     if (el.closest('header, nav, [role="banner"], [role="navigation"]') && SEARCHY.test(hint)) return 'search';
     if (el.closest('[id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], [id*="onetrust" i], [class*="gdpr" i]')) {
       return 'consent-banner';
@@ -110,7 +123,17 @@ function collectFields() {
     // uploadRunner ever touches them.
     if (['hidden', 'submit', 'button', 'image', 'reset', 'password'].includes(rawType)) continue;
     if (el.disabled || el.readOnly) continue;
-    if (!isVisible(el)) continue;
+    // A STYLED checkbox/radio hides the real input (opacity 0, clipped, 0×0)
+    // and draws its own box on the label. Oracle Recruiting's "I have read the
+    // Important Privacy Information" is one: skipping it as invisible meant the
+    // run never reported the required question, clicked Next, and only learnt
+    // of it from "You need to agree to the terms and conditions."
+    const styledChoice = (rawType === 'checkbox' || rawType === 'radio') && !isVisible(el)
+      && (() => {
+        const lab = (el.id && document.querySelector(`label[for="${cssEscape(el.id)}"]`)) || el.closest('label');
+        return Boolean(lab && isVisible(lab) && lab.textContent.trim());
+      })();
+    if (!isVisible(el) && !styledChoice) continue;
 
     if (rawType === 'file') {
       // ATS file inputs frequently carry no id/name (e.g. inside a labelled
@@ -153,7 +176,17 @@ function collectFields() {
 
     if (rawType === 'checkbox') {
       const sel = selectorFor(el);
-      if (sel) out.push({ kind: 'checkbox', type: 'checkbox', selector: sel, label: labelFor(el), name: el.name || '', required: el.required === true, options: [] });
+      const label = labelFor(el);
+      // Custom widgets mark "required" with aria-required or a trailing "*"
+      // on the label rather than the native attribute.
+      const required = el.required === true || el.getAttribute('aria-required') === 'true'
+        || /\*\s*$/.test(label);
+      if (sel) {
+        out.push({
+          kind: 'checkbox', type: 'checkbox', selector: sel, label: label.replace(/\s*\*\s*$/, ''),
+          name: el.name || '', required, options: [], ...(styledChoice ? { styled: true } : {}),
+        });
+      }
       continue;
     }
 
@@ -345,9 +378,21 @@ export async function detectValidationErrors(scope) {
       }
       const errorSel = '[role="alert"], .field-error, .error-message, .help-block.error, '
         + '.field_with_errors, .invalid-feedback, [data-automation-id*="error"]';
+      // A screen-reader announcement is not a form error. Workday keeps a
+      // visually hidden role="alert" that says "<Job title> page is loaded";
+      // read as an error, it stopped every Workday run before "Apply".
+      const screenReaderOnly = (el) => {
+        const r = el.getBoundingClientRect();
+        const st = window.getComputedStyle(el);
+        return r.width <= 2 || r.height <= 2 || /rect\(0(px)?,?\s*0(px)?/.test(st.clip)
+          || /inset\(\s*50%/.test(st.clipPath);
+      };
+      const ANNOUNCEMENT = /^(?:.*\bpage is loaded|loading\b.*|.*\bhas loaded|\d+ results?\b.*)$/i;
       for (const el of document.querySelectorAll(errorSel)) {
         const text = (el.textContent || '').trim();
-        if (visible(el) && text && text.length <= 200) out.add(text);
+        if (!visible(el) || !text || text.length > 200) continue;
+        if (el.matches('[role="alert"]') && (screenReaderOnly(el) || ANNOUNCEMENT.test(text))) continue;
+        out.add(text);
       }
       return [...out].slice(0, 10);
     });

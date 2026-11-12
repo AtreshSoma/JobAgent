@@ -4,7 +4,7 @@ import { $, el } from './dom.js';
 import { state } from './state.js';
 import { api, apiOptional } from './api.js';
 import { statusLabel } from './board.js';
-import { fitLabel, markCurrentRow, renderDetail, selectJob } from './detail.js';
+import { fitLabel, markCurrentRow, renderDetail, revealInDetail } from './detail.js';
 import { autofillOne, decide, prepareOne, simpleAction } from './mutations.js';
 import { syncSelectionBar } from './selection.js';
 import { openHealth, openProfile } from './profile.js';
@@ -412,7 +412,7 @@ export async function todayAct(target) {
     // A closed posting: archiving is the whole next step (with the usual Undo).
     case 'archive': await decide(id, 'archived'); break;
     case 'followup': await openApplicationDetail(id); break;
-    default: await selectJob(id, { user: true });
+    default: await revealInDetail(id);
   }
   scheduleTodayReload(600);
 }

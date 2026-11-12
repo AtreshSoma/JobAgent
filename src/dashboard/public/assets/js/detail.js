@@ -70,6 +70,47 @@ export async function selectJob(id, { focusRow = false, user = false, defer = 0 
   await loadDetail(id);
 }
 
+/**
+ * Open a job AND show the part of its detail a card's button promised.
+ *
+ * "See what stopped it" used to call selectJob alone. When that job was
+ * already open (the board selects it, and the rail shows it beside the
+ * board), nothing on screen changed, so the button read as broken. Now the
+ * reason is scrolled into view, briefly marked, and the way out — "Retry
+ * auto-fill", "Mark it submitted"… — takes focus so Enter acts on it.
+ *
+ * @param {string} id
+ * @param {string[]} [keys] rail sections to reveal, first one present wins
+ */
+/** What focus may be handed to unasked: the primary action first, never a statement of fact. */
+const AUTO_FOCUSABLE = ['button.primary:not([disabled]):not([data-confirms])',
+  'button:not([disabled]):not([data-confirms])', 'a[href]'];
+const firstAutoFocusable = (root) => AUTO_FOCUSABLE.map((sel) => root?.querySelector(sel)).find(Boolean) ?? null;
+
+export async function revealInDetail(id, keys = ['attention', 'next']) {
+  await selectJob(id, { user: true });
+  if (state.selectedId !== id) return;
+  const host = $('detail');
+  const section = keys.map((key) => host?.querySelector(`[data-section="${key}"]`)).find(Boolean);
+  if (!section) return;
+  // Scroll the rail (or the sheet), never the window: scrollIntoView also
+  // moved the page, sliding the section's heading under the sticky top bar.
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  const scroller = railScroller();
+  if (scroller?.contains(section)) {
+    const top = section.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop - 12;
+    scroller.scrollTo({ top: Math.max(0, top), behavior: reduce ? 'auto' : 'smooth' });
+  }
+  section.classList.remove('is-spotlit');
+  void section.offsetWidth; // restart the cue on a second click
+  section.classList.add('is-spotlit');
+  setTimeout(() => section.classList.remove('is-spotlit'), 1600);
+  const nextSection = host.querySelector('[data-section="next"]');
+  const way = firstAutoFocusable(nextSection);
+  if (way) way.focus({ preventScroll: true });
+  else if (nextSection) { nextSection.tabIndex = -1; nextSection.focus({ preventScroll: true }); }
+}
+
 export async function loadDetail(id) {
   const host = $('detail');
   let job;
@@ -167,7 +208,16 @@ export function renderDetail(job) {
 
 /** A section is left untouched while the user is working inside it. */
 export function keepSection(node, key) {
-  return node.contains(document.activeElement) || (key === 'notes' && note.isDirty());
+  if (key === 'notes' && note.isDirty()) return true;
+  const active = document.activeElement;
+  if (!active || !node.contains(active)) return false;
+  // Kept only while you are IN something: typing, choosing, or inside an open
+  // menu. A button that merely holds focus after you pressed it is not state —
+  // keeping its section for that left "Do this next" showing the OLD step
+  // after "I submitted it myself" changed the job (the dialog hands focus back
+  // to the button that opened it).
+  return active.matches('input, textarea, select, [contenteditable=""], [contenteditable="true"]')
+    || Boolean(active.closest('details[open]'));
 }
 
 /** Re-apply the open/closed state of keyed <details> to their replacement. */
@@ -181,6 +231,8 @@ export function reconcileDetail(panel, sections) {
   const scroller = railScroller();
   const top = scroller?.scrollTop ?? 0;
   const old = new Map([...panel.children].map((node) => [node.dataset.section, node]));
+  const focused = document.activeElement;
+  let refocus = null;
   let anchor = null;
   for (const node of sections) {
     const key = node.dataset.section;
@@ -190,7 +242,11 @@ export function reconcileDetail(panel, sections) {
     // A kept node is never MOVED: detaching an element, even to reinsert it a
     // moment later, blurs whatever inside it had focus.
     if (prev && keepSection(prev, key)) placed = prev;
-    else if (prev) { carryOpenDetails(prev, node); prev.replaceWith(node); }
+    else if (prev) {
+      if (prev.contains(focused)) refocus = node;
+      carryOpenDetails(prev, node);
+      prev.replaceWith(node);
+    }
     else if (anchor) anchor.after(node);
     else panel.prepend(node);
     anchor = placed;
@@ -198,6 +254,13 @@ export function reconcileDetail(panel, sections) {
   for (const [key, prev] of old) if (!keepSection(prev, key)) prev.remove();
   if (!old.has('notes') && !note.isDirty()) note.saved = state.detailJob?.notes ?? note.saved;
   if (scroller) scroller.scrollTop = top;
+  // Focus was on a button in a section that was just redrawn: hand it to the
+  // same section's new first action, never drop it to <body>.
+  if (refocus && refocus.isConnected) {
+    const next = firstAutoFocusable(refocus);
+    if (next) next.focus({ preventScroll: true });
+    else { refocus.tabIndex = -1; refocus.focus({ preventScroll: true }); }
+  }
 }
 
 /** The grade's own label is the verdict; `fit` is only the fallback. */
@@ -549,12 +612,29 @@ export function keywordList(list = [], tone = '') {
   return wrap;
 }
 
+const OFF_RAMP_WORDS = Object.freeze({
+  blocked: ['Paused — waiting on you', 'warn'],
+  failed: ['Stopped by an error', 'bad'],
+  cancelled: ['Paused — you stopped the run', ''],
+  skipped: ['Skipped', ''],
+  rejected: ['Rejected', ''],
+  archived: ['Archived', ''],
+  discarded: ['Discarded', ''],
+  date_unconfirmed: ['Posting date not confirmed yet', 'warn'],
+  submit_unverified: ['Submitted? Not confirmed yet', 'warn'],
+  needs_description: ['Waiting for the job description', ''],
+});
+
 export function stepper(progress) {
   if (!progress) return el('div');
   const labels = ['Found', 'Scored', 'Shortlist', 'Prepared', 'Approved', 'Ready', 'Submitted'];
   if (progress.offRamp) {
-    return el('div', { class: 'muted' }, 'Off the happy path: ',
-      el('b', { class: 'st-blocked', text: progress.stage.replace(/_/g, ' ') }));
+    // Plain words for where the job is parked. "Off the happy path: blocked"
+    // in alarm red read as a crash for what is usually one question to answer.
+    const [words, tone] = OFF_RAMP_WORDS[progress.stage] ?? [progress.stage.replace(/_/g, ' '), ''];
+    return el('div', { class: 'offramp' },
+      el('span', { class: `offramp-dot ${tone}`.trim(), 'aria-hidden': 'true' }),
+      el('span', { text: words }));
   }
   const wrap = el('div');
   const bars = el('div', { class: 'stepper' });
@@ -762,6 +842,10 @@ export function actionPlan(job) {
   const markSubmitted = () => el('button', {
     class: 'small primary', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'I submitted it myself',
   });
+  // The same record, offered beside a retry rather than as the main step.
+  const submittedMyself = () => el('button', {
+    class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: '✓ I submitted it myself',
+  });
 
   if (job.appStatus === 'submitted') {
     // The automation's part is done; the application is not. What the
@@ -775,9 +859,17 @@ export function actionPlan(job) {
     return {
       // The server's explanation knows whether this was our click or the
       // human's own submit; fall back to the generic wording only without it.
-      text: job.statusReason || ('Auto-submit clicked Submit but no confirmation was detected. Check the ATS or your email. '
-        + 'This is NOT counted as applied until you confirm.'),
-      buttons: [markSubmitted(), openPosting()],
+      text: 'Did it go through? Check your email or the employer\'s site for a confirmation.',
+      // Three ways out. This used to offer only "I submitted it myself" again,
+      // which without a confirmation number changed nothing: a loop.
+      buttons: [
+        // data-confirms: a statement of fact, so focus is never moved onto it
+        // for you — one stray Enter must not record a submission.
+        el('button', { class: 'small primary', 'data-action': 'confirm-went-through', 'data-confirms': '', 'data-id': job.id, text: '✓ Yes, it went through' }),
+        el('button', { class: 'small', 'data-action': 'open-submit-dialog', 'data-id': job.id, text: 'Add confirmation number…' }),
+        el('button', { class: 'small ghost', 'data-action': 'not-submitted', 'data-confirms': '', 'data-id': job.id, text: 'No, it didn\'t' }),
+        openPosting(),
+      ],
     };
   }
   if (job.appStatus === 'needs_review') {
@@ -813,7 +905,7 @@ export function actionPlan(job) {
           + 'employer site, then save that direct URL here.',
         buttons: [openPosting(), el('button', {
           class: 'small', 'data-action': 'open-link-dialog', 'data-id': job.id, text: 'Save direct URL',
-        })],
+        }), submittedMyself()],
       };
     }
     if (['dead_link', 'restricted_link'].includes(kind)) {
@@ -835,10 +927,19 @@ export function actionPlan(job) {
     }
     // Most stalls are a question the profile cannot answer or a field it
     // leaves blank — so the two places that fix them sit next to the retry.
+    // "Needs attention" right above already says WHAT stopped it; repeating
+    // that sentence here word for word made the panel read twice. This box
+    // says what to DO.
+    // Finishing the form by hand in the window we left open is the step this
+    // panel asks for, so recording that must be right here. It used to exist
+    // only on "ready to submit": a person who completed and submitted a
+    // stopped application had no way to say so, and the job stayed "Needs
+    // your help" (2026-11-12, Oracle).
     return {
-      text: job.attention?.summary
-        || 'The assistant stopped because this step needs you. Complete it in the browser, then retry auto-fill.',
-      buttons: [openPosting(), autofillButton(job.id, '↻ Retry auto-fill'), ...setupLinks()],
+      text: job.statusReason
+        ? 'Sort out that step — in the open browser window, or in your Application profile if a question had no answer — then retry auto-fill. Finished and submitted it yourself? Record it.'
+        : 'The assistant stopped because this step needs you. Complete it in the browser, then retry auto-fill — or record it if you submitted it yourself.',
+      buttons: [autofillButton(job.id, '↻ Retry auto-fill'), submittedMyself(), openPosting(), ...setupLinks()],
     };
   }
   if (job.sponsorshipGated) {
