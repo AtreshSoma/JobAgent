@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { proposeRewrites } from '../../src/resume/rewrites.js';
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 
 const ROLE = 'Data Engineer, Acme Corp | 2021 - Present';
 const UNITS = [
@@ -43,13 +43,13 @@ afterAll(async () => {
   await dash?.stop();
 });
 
-describe('rewrite suggestions (real browser)', { timeout: 60_000 }, () => {
+describe('rewrite suggestions (real browser)', { timeout: 120_000 }, () => {
   it('shows a marked diff, refuses what the resume cannot back, and records Accept', async (ctx) => {
     if (!available) return ctx.skip();
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.getByRole('button', { name: 'Jobs', exact: true }).click();
     await page.getByRole('row', { name: /Globex.*Senior Data Engineer/ }).click();
 

@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 
 import { conversionBreakdown, scoreBand } from '../../src/domain/applicationOutcome.js';
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 
 const item = (source, score, reached, extra = {}) => ({ appStatus: 'submitted', source, atsPlatform: source, score, tier: score >= 85 ? 'Priority' : 'Apply', reached, ...extra });
 
@@ -33,7 +33,7 @@ describe('conversion breakdown (P2-9)', () => {
   });
 });
 
-describe('What gets interviews, in a real browser', { timeout: 60_000 }, () => {
+describe('What gets interviews, in a real browser', { timeout: 120_000 }, () => {
   let dash; let browser; let available = true;
   beforeAll(async () => {
     try { browser = await launchBrowser(); } catch (err) { available = browserUnavailable(err); return; }
@@ -53,7 +53,7 @@ describe('What gets interviews, in a real browser', { timeout: 60_000 }, () => {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.locator('[data-action="set-view"][data-view="applications"]').first().click();
     await page.getByText('What gets interviews').click();
     const table = page.locator('.ws-conv-table').filter({ has: page.locator('caption', { hasText: 'Where you found it' }) });

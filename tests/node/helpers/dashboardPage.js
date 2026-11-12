@@ -64,15 +64,32 @@ export function editJson(root, relPath, mutate) {
   writeFileSync(file, `${JSON.stringify(doc, null, 2)}\n`);
 }
 
+/**
+ * How long the FIRST load may take: the page fetches every front-end module and
+ * makes its first request. Generous on purpose: on a busy CI runner, with
+ * several test files each driving its own Chromium, this took over 15 s on
+ * Windows / Node 22 (2026-11-11) while the same page loads in under 1 s alone.
+ * Only this wait is long; every later step keeps the test's own short timeout,
+ * so a real bug still fails fast.
+ */
+export const FIRST_LOAD_TIMEOUT_MS = 45_000;
+
+/**
+ * Wait until the page says "Connected". That appears only after the page's
+ * scripts have run (and attached their click handlers) and the first request
+ * came back. The menu EXISTS in the HTML long before that, and a click on it in
+ * between is silently lost.
+ */
+export async function waitUntilConnected(page) {
+  await page.locator('#conn.ok').waitFor({ timeout: FIRST_LOAD_TIMEOUT_MS });
+}
+
 /** A page on the dashboard, with the board loaded. */
 export async function openDashboard(browser, url) {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   await page.goto(`${url}/`);
-  // "Connected" appears only after the page's scripts have run (and attached their
-  // click handlers) and the first request came back. The menu EXISTS in the HTML
-  // long before that, and a click on it in between is silently lost.
-  await page.waitForSelector('#conn.ok');
+  await waitUntilConnected(page);
   return { page, context };
 }
 

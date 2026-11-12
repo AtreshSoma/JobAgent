@@ -10,7 +10,7 @@ import { tmpdir } from 'node:os';
 import { startDashboard } from '../../src/dashboard/server.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser } from './helpers/dashboardPage.js';
+import { launchBrowser, waitUntilConnected } from './helpers/dashboardPage.js';
 
 let root; let db; let dash;
 beforeAll(async () => {
@@ -46,7 +46,7 @@ describe('backups API (P1-6)', () => {
   });
 });
 
-describe('System health shows backups (real browser)', { timeout: 60_000 }, () => {
+describe('System health shows backups (real browser)', { timeout: 120_000 }, () => {
   it('shows the last backup and backs up on "Back up now"', async (ctx) => {
     let browser;
     try { browser = await launchBrowser(); } catch (err) { browserUnavailable(err); return ctx.skip(); }
@@ -54,7 +54,7 @@ describe('System health shows backups (real browser)', { timeout: 60_000 }, () =
       const page = await (await browser.newContext()).newPage();
       page.setDefaultTimeout(15_000);
       await page.goto(dash.url);
-      await page.locator('#conn.ok').waitFor();
+      await waitUntilConnected(page);
       await page.locator('[data-action="toggle-activity-menu"]').click();
       await page.getByRole('menuitem', { name: 'System health' }).click();
       const status = page.locator('#backupStatus');

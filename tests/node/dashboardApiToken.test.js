@@ -125,9 +125,9 @@ describe('token storage', () => {
   });
 });
 
-describe('unlocking in a real browser (P1-5)', { timeout: 60_000 }, () => {
+describe('unlocking in a real browser (P1-5)', { timeout: 120_000 }, () => {
   it('shows the locked page, then the working app after the launcher link', async (ctx) => {
-    const { launchBrowser } = await import('./helpers/dashboardPage.js');
+    const { launchBrowser, waitUntilConnected } = await import('./helpers/dashboardPage.js');
     const { browserUnavailable } = await import('./helpers/browser.js');
     let browser;
     try { browser = await launchBrowser(); } catch (err) { browserUnavailable(err); return ctx.skip(); }
@@ -140,7 +140,7 @@ describe('unlocking in a real browser (P1-5)', { timeout: 60_000 }, () => {
       await page.goto(dash.unlockUrl);
       // The token leaves the address bar, and the app's own API calls succeed.
       expect(new URL(page.url()).search).toBe('');
-      await page.locator('#conn.ok').waitFor();
+      await waitUntilConnected(page);
       expect(await page.locator('#conn').textContent()).toBe('Connected');
     } finally {
       await browser.close();

@@ -9,7 +9,7 @@ import { cosine, rerank } from '../../src/scoring/semanticRerank.js';
 import { embedSettings } from '../../src/llm/embeddings.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 
 const BULLETS = [
   { id: 'u1', kind: 'bullet', role: 'R', text: 'Built Spark pipelines' },
@@ -51,7 +51,7 @@ describe('semantic rerank (P2-1)', () => {
   });
 });
 
-describe('the window (real browser)', { timeout: 60_000 }, () => {
+describe('the window (real browser)', { timeout: 120_000 }, () => {
   let dash; let browser; let available = true;
   beforeAll(async () => {
     try { browser = await launchBrowser(); } catch (err) { available = browserUnavailable(err); return; }
@@ -68,7 +68,7 @@ describe('the window (real browser)', { timeout: 60_000 }, () => {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.locator('[data-action="toggle-activity-menu"]').click();
     await page.getByRole('menuitem', { name: 'Rank top matches by meaning' }).click();
     await page.getByRole('button', { name: 'Rank top 50' }).click();

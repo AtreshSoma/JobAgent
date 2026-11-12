@@ -15,7 +15,7 @@ import { normalizeJob } from '../../src/search/normalize.js';
 import { letterModeFor, setLetterMode } from '../../src/apply/letterMode.js';
 import { loadTestConfig } from './helpers/testConfig.js';
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 import * as F from './fixtures/jobs.js';
 
 const base = loadTestConfig({ loadEnv: false, env: {} });
@@ -78,7 +78,7 @@ describe('per-job cover-letter choice', () => {
   });
 });
 
-describe('the switch in a real browser', { timeout: 60_000 }, () => {
+describe('the switch in a real browser', { timeout: 120_000 }, () => {
   let dash; let browser; let available = true;
   beforeAll(async () => {
     try { browser = await launchBrowser(); } catch (err) { available = browserUnavailable(err); return; }
@@ -98,7 +98,7 @@ describe('the switch in a real browser', { timeout: 60_000 }, () => {
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.getByRole('button', { name: 'Jobs', exact: true }).click();
     await page.getByRole('row', { name: /Globex.*Senior Data Engineer/ }).click();
     const section = page.locator('.cl-grounding');

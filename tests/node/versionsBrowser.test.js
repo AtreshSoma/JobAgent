@@ -11,7 +11,7 @@ import { execFileSync } from 'node:child_process';
 import { recordVersion } from '../../src/apply/documentVersions.js';
 import { refineRewrites } from '../../src/resume/rewrites.js';
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 
 const ROLE = 'Data Engineer, Acme Corp | 2021 - Present';
 const UNITS = [{ id: 'u2', kind: 'bullet', role: ROLE, text: 'Developed Power BI semantic models for 12 finance teams.' }];
@@ -49,13 +49,13 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await browser?.close(); await dash?.stop(); });
 
-describe('document versions and refine (real browser)', { timeout: 60_000 }, () => {
+describe('document versions and refine (real browser)', { timeout: 120_000 }, () => {
   it('compares two versions, restores one, and shows a declined refine request', async (ctx) => {
     if (!available) return ctx.skip();
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.getByRole('button', { name: 'Jobs', exact: true }).click();
     await page.getByRole('row', { name: /Globex.*Senior Data Engineer/ }).click();
 

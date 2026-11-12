@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 import { startFakeImap } from './helpers/fakeImap.js';
 
 let dash; let browser; let imap; let available = true;
@@ -32,13 +32,13 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await browser?.close(); await dash?.stop(); await imap?.close(); });
 
-describe('Email replies (real browser)', { timeout: 60_000 }, () => {
+describe('Email replies (real browser)', { timeout: 120_000 }, () => {
   it('shows the evidence and records the outcome only on Record', async (ctx) => {
     if (!available) return ctx.skip();
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.locator('[data-action="toggle-activity-menu"]').click();
     await page.getByRole('menuitem', { name: 'Email replies' }).click();
     const dialog = page.locator('#dlgInbox');

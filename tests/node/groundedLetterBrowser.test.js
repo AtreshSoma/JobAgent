@@ -8,7 +8,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 
 let dash; let browser; let available = true;
 beforeAll(async () => {
@@ -36,13 +36,13 @@ beforeAll(async () => {
 }, 60_000);
 afterAll(async () => { await browser?.close(); await dash?.stop(); });
 
-describe('cover letter grounding in the packet (real browser)', { timeout: 60_000 }, () => {
+describe('cover letter grounding in the packet (real browser)', { timeout: 120_000 }, () => {
   it('shows the grounded paragraphs, their backing and what was left out', async (ctx) => {
     if (!available) return ctx.skip();
     const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
     page.setDefaultTimeout(15_000);
     await page.goto(dash.url);
-    await page.locator('#conn.ok').waitFor();
+    await waitUntilConnected(page);
     await page.getByRole('button', { name: 'Jobs', exact: true }).click();
     await page.getByRole('row', { name: /Globex.*Senior Data Engineer/ }).click();
     const section = page.locator('.cl-grounding');

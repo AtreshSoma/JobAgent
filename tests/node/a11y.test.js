@@ -14,7 +14,7 @@ import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { browserUnavailable } from './helpers/browser.js';
-import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 
 const require = createRequire(import.meta.url);
 const AXE_PATH = require.resolve('axe-core/axe.min.js');
@@ -70,7 +70,7 @@ async function withPage(fn, { theme } = {}) {
   page.setDefaultTimeout(20_000);
   try {
     await page.goto(`${dash.url}/`);
-    await page.waitForSelector('#conn.ok');
+    await waitUntilConnected(page);
     await page.addScriptTag({ path: AXE_PATH });
     return await fn(page);
   } finally {
@@ -107,7 +107,7 @@ async function openMenuItem(page, toggleAction, itemName) {
   await page.getByRole('menuitem', { name: itemName }).click();
 }
 
-describe('accessibility (axe, WCAG 2.2 A/AA)', { timeout: 60_000 }, () => {
+describe('accessibility (axe, WCAG 2.2 A/AA)', { timeout: 120_000 }, () => {
   for (const theme of ['dark', 'light']) {
     for (const [view, label] of [['today', 'Today'], ['board', 'Jobs'], ['applications', 'Applications']]) {
       it(`the ${label} view in the ${theme} theme`, async (ctx) => {
