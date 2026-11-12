@@ -29,7 +29,7 @@ export function renderBoardStatus() {
   else if (boardStatus.updatedAt) {
     const secs = Math.round((Date.now() - boardStatus.updatedAt) / 1000);
     parts.push(secs < 5 ? 'Updated just now'
-      : secs < 60 ? `Updated ${secs} s ago` : `Updated ${Math.floor(secs / 60)} min ago`);
+      : secs < 60 ? `Updated ${secs}s ago` : `Updated ${Math.floor(secs / 60)}m ago`);
   }
   if (state.stats?.stale) parts.push('Showing cached numbers — recalculating');
   node.textContent = parts.join(' · ');

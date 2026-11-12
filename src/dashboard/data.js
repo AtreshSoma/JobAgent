@@ -2728,10 +2728,11 @@ export function systemNotices(rows = [], config = null, { browserAvailable = nul
       notices.push({
         code: 'profile_placeholders',
         severity: 'error',
-        message: `${labels.length} profile value(s) are still template text: ${shown}. `
-          + 'Applications will not be prepared until they are real.',
-        fix: 'Open Settings → Application profile (or edit the search profile) and replace each highlighted field '
-          + 'with your real, truthful value.',
+        message: labels.length === 1
+          ? `Replace 1 template value before applying: ${shown}.`
+          : `Replace ${labels.length} template values before applying: ${shown}.`,
+        fix: 'Applications stay on hold until these are your real, truthful values. '
+          + 'They are highlighted in Settings → Application profile.',
       });
     }
   }

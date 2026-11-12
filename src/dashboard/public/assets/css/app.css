@@ -94,6 +94,8 @@
      a pure-black shadow reads as a grey smudge; carrying the background's own
      hue into it keeps one consistent light source across both themes. */
   --shadow-sm: 0 1px 3px rgba(2, 5, 12, .5);
+  /* The shadow a docked bar (the sticky pager) casts up over the list. */
+  --dock-shade: rgba(2, 5, 12, .85);
   --shadow: 0 8px 24px rgba(2, 5, 12, .55);
   --shadow-lg: 0 24px 60px rgba(2, 5, 12, .7);
 
@@ -215,6 +217,7 @@
   --ambient-a: rgba(22, 104, 214, .06);
   --ambient-b: rgba(14, 134, 168, .04);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
+  --dock-shade: rgba(16, 24, 40, .14);
   --shadow: 0 8px 24px rgba(16, 24, 40, .12);
   --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
   --sig-b: #2f8fd6;
@@ -274,6 +277,7 @@
     --ambient-a: rgba(22, 104, 214, .06);
     --ambient-b: rgba(14, 134, 168, .04);
     --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
+    --dock-shade: rgba(16, 24, 40, .14);
     --shadow: 0 8px 24px rgba(16, 24, 40, .12);
     --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
     --sig-b: #2f8fd6;
@@ -1026,11 +1030,15 @@ button.stat:hover { background: none; border-color: transparent; }
 .stat .l { font-size: var(--fs-sm); color: var(--text-dim); }
 .stat.attn b, .stat.attn .l { color: var(--warn-text); }
 .stat.bad b, .stat.bad .l { color: var(--bad); }
+/* A tinted fill, like a .chip.warn — not a 1px outline. The outline drew the
+   exact shape of the focus ring, so "216 undated" looked stuck in focus. */
 .stat.attn, .stat.bad {
-  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
-  border-radius: var(--r-full); padding: 1px 9px; color: var(--warn-text);
+  border: 0; border-radius: var(--r-full); padding: 2px 9px;
+  color: var(--warn-text); background: var(--warn-soft);
 }
-.stat.bad { color: var(--bad); }
+.stat.bad { color: var(--bad); background: var(--bad-soft); }
+button.stat.attn:hover { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+button.stat.bad:hover { background: color-mix(in srgb, var(--bad) 22%, transparent); }
 .stat.attn + .stat::before, .stat.bad + .stat::before,
 .stat + .stat.attn::before, .stat + .stat.bad::before { display: none; }
 
@@ -1725,8 +1733,13 @@ td.check { width: 34px; }
 .pagerbar {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
   position: sticky; bottom: 0; z-index: 3;
-  background: color-mix(in srgb, var(--bg) 97%, transparent);
+  /* Opaque, not 97%: at 97% the rows scrolling underneath ghosted through the
+     counts and the First/Prev buttons, so the pager read as overlapping text.
+     A soft upward shadow says "docked over the list" instead of a hard seam. */
+  background: var(--bg);
   border-top: 1px solid var(--line-soft);
+  box-shadow: 0 -10px 18px -12px var(--dock-shade);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   margin-top: -1px;
 }
 /* Phones: neither the header nor the pager sticks. Together they held 41% of
@@ -3188,14 +3201,17 @@ a.btn.iconbtn:active { transform: scale(.97); }
 .chip.signal.good { color: var(--good); background: var(--good-soft); }
 
 /* Board rows: fit meter, skills line, freshness, sponsorship gate, status. */
-.fitmeter { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; font-size: var(--fs-xs); color: var(--text-dim); }
-.fitmeter-n { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
-.fitmeter-bar { display: block; width: 40px; height: 4px; border-radius: var(--r-full); background: var(--chip); overflow: hidden; }
+/* Centred in the grade badge's own 28px column: the score left-aligned under
+   a centred letter, with a 40px bar overhanging both, read as three loose
+   pieces instead of one grade. */
+.fitmeter { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 28px; margin-top: 5px; font-size: var(--fs-xs); color: var(--text-dim); }
+.fitmeter-n { font-weight: 650; color: var(--text-dim); font-variant-numeric: tabular-nums; line-height: 1; }
+.fitmeter-bar { display: block; width: 28px; height: 3px; border-radius: var(--r-full); background: var(--chip); overflow: hidden; }
 .fitmeter-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--text-faint); }
 .fitmeter.strong .fitmeter-bar > i, .fitcard-score.strong .fitmeter-bar > i { background: var(--good); }
 .fitmeter.medium .fitmeter-bar > i, .fitcard-score.medium .fitmeter-bar > i { background: var(--accent); }
 .fitmeter.weak .fitmeter-bar > i, .fitcard-score.weak .fitmeter-bar > i { background: var(--warn); }
-.fitmeter.none { font-style: italic; color: var(--text-faint); }
+.fitmeter.none { font-style: italic; color: var(--text-faint); width: auto; align-items: flex-start; }
 .skillline {
   margin-top: 3px; font-size: var(--fs-sm); color: var(--text-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
