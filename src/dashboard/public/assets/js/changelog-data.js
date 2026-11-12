@@ -19,6 +19,25 @@ export const CHANGELOG_GROUPS = Object.freeze([
 
 export const CHANGELOG = Object.freeze([
   {
+    version: 'v0.2.1',
+    date: '2026-11-12',
+    summary: 'Your saved answers now fill your work authorization and cover-letter details, and a refused Prepare says why.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      improved: [
+        'Your work authorization and the cover letter\'s years of experience and sponsorship sentence now come from your Saved answers (work_authorization, years_experience). There is nothing to edit by hand, and a value you wrote yourself is never replaced.',
+        'When something is still example text, Prepare resume is turned off and the job\'s Tailored resume box lists each value and the answer that fixes it. The box clears as soon as you save that answer.',
+        'A Prepare that fails for any other reason now keeps its reason in that job\'s Tailored resume box until you prepare it again.',
+        'Archived jobs have their own Archived tab on the Jobs page.',
+        'A job you decided on shows the way back in plain view: Unarchive, Remove from shortlist, or Undo reject. To undo several at once, select them and choose Clear decision.',
+      ],
+      fixed: [
+        'Prepare no longer refuses every job when your Saved answers are filled in but older copies of the same facts still held example text.',
+        'Find jobs no longer stops with "cannot start a transaction within a transaction" on Node 22.13.',
+      ],
+    },
+  },
+  {
     version: 'v0.2.0',
     date: '2026-11-11',
     summary: 'Writing help that only uses your own resume, daily backups, email replies, and a locked-down dashboard.',
