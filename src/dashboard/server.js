@@ -86,7 +86,7 @@ import { sweepPostings } from '../search/postingLiveness.js';
 import { reconcileStalePackets } from '../apply/packetHygiene.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { loadConfig } from '../config/loadConfig.js';
-import { isPlaceholderValue } from '../config/placeholders.js';
+import { findPlaceholders, isPlaceholderValue } from '../config/placeholders.js';
 import { runEnrichment } from '../search/enrich.js';
 import { PROFILE_FIELDS, readProfile, readScreeningAnswers } from '../config/profileStore.js';
 import { recordUnansweredQuestions, suggestAnswerId, suggestPatterns, summarizeQuestionQueue } from '../apply/questionQueue.js';
@@ -415,6 +415,29 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return `Saved, but the config could not be reloaded (${message}). `
         + 'Restart the dashboard before the next auto-apply run.';
     }
+  }
+
+  /**
+   * Pick up a template value fixed BY HAND while the dashboard is running.
+   *
+   * Work authorization and the cover-letter fields have no form, so the fix is
+   * an edit to the profile / cover_letter.json (plus `npm run profiles
+   * activate` from a terminal). The server kept the config it loaded at boot,
+   * so after a correct fix the notice still listed the field and Prepare still
+   * refused. Only runs while the loaded config is templated, and reloads only
+   * when the files on disk actually differ, so the normal path costs nothing.
+   *
+   * @returns {string|null} reloadConfig's warning, or null
+   */
+  function refreshConfigIfTemplated() {
+    if (!config?.root) return null;
+    let live;
+    try { live = findPlaceholders(config); } catch { return null; }
+    if (live.ok) return null;
+    let fresh;
+    try { fresh = (deps.loadConfigImpl ?? loadConfig)({ root: config.root, loadEnv: false }); } catch { return null; }
+    const key = (found) => JSON.stringify(found.placeholders.map((p) => [p.file, p.path, p.value]));
+    return key(findPlaceholders(fresh)) === key(live) ? null : reloadConfig();
   }
 
   /**
@@ -1868,6 +1891,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     get readResumePreview() { return readResumePreview; },
     get refreshTracker() { return refreshTracker; },
     get reloadConfig() { return reloadConfig; },
+    get refreshConfigIfTemplated() { return refreshConfigIfTemplated; },
     get replaceMasterResume() { return replaceMasterResume; },
     get requireConfigRoot() { return requireConfigRoot; },
     get restoreMasterResume() { return restoreMasterResume; },

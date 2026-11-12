@@ -9,7 +9,7 @@ import { formIsDirty, isEdited, restoreForm, saveOnlyOnPurpose, snapshotForm, wi
 import {
   parseAnswerError, validateAnswerText, validateEmail, validatePatterns, validatePhone, validateRequired, validateYears,
 } from './validate.js';
-import { setSystemNotices } from './today.js';
+import { scheduleTodayReload, setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';
 
 /* ─────────────────── application profile + question queue ─────────────────── */
@@ -507,6 +507,8 @@ export async function saveProfileDetails() {
       ? `Saved — ${result.changed.length} field(s) changed. New applications use these values.`
       : 'No changes to save.', 'good');
     await renderProfile({ committed: '[data-path]' });
+    // A saved value can clear a template notice and turn Prepare back on.
+    scheduleTodayReload();
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
   }
@@ -582,6 +584,10 @@ export async function saveAllAnswers({ removeId = null } = {}) {
     // Every answer row was just written, so those take the stored value; an
     // unsaved details edit or queued-question answer is still the person's.
     await renderProfile({ committed: '[data-a-answer], [data-a-patterns]' });
+    // Work authorization and the cover letter's facts are filled from these
+    // answers (src/config/answerFallbacks.js): saving one can clear the template
+    // notice and turn Prepare back on, so the page must hear about it now.
+    scheduleTodayReload();
   } catch (err) {
     // The server names the answer it refused (`answer "<id>": why`). Put the
     // reason ON that answer, keep what was typed, and move the cursor there.

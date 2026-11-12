@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
 import { openDialog, placeToasts } from './dialogs.js';
-import { autofillBlockedReason, BROWSER_MISSING } from './today.js';
+import { autofillBlockedReason, BROWSER_MISSING, placeholderList, prepareBlockedNotice } from './today.js';
 import { rewritesSection } from './rewrites.js';
 import { versionsSection } from './versions.js';
 
@@ -901,9 +901,39 @@ export function pageLabel(tailoring) {
   return null;
 }
 
+/** Hover text on a Prepare control while template text blocks it. */
+const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. The box below lists each value and where to fix it.';
+
+/**
+ * Why this job cannot be prepared, shown where Prepare is clicked and kept
+ * there until fixed. A refused Prepare used to leave only a passing toast and
+ * "Prepared 0 packet(s)", so it looked as if the click did nothing.
+ */
+export function prepareProblemBox(jobId) {
+  const blocked = prepareBlockedNotice();
+  if (blocked) {
+    return el('div', { class: 'attention prepare-problem', role: 'status' },
+      el('span', { class: 'mark', text: '!' }),
+      el('div', {},
+        el('b', { text: 'Prepare is off: your profile still holds template text.' }),
+        el('div', { text: 'Replace each value below with your real, truthful one. This box clears once they are all fixed.' }),
+        blocked.items?.length ? placeholderList(blocked.items) : null));
+  }
+  const failure = state.prepareFailures?.get(jobId);
+  if (failure) {
+    return el('div', { class: 'attention prepare-problem', role: 'status' },
+      el('span', { class: 'mark', text: '!' }),
+      el('div', {},
+        el('b', { text: 'The last Prepare of this job failed.' }),
+        el('div', { text: failure })));
+  }
+  return null;
+}
+
 /** The resume review card: status, what changed, and one-click preview. */
 export function resumeCard(job) {
   const card = el('div', { class: 'resume-card' });
+  const blocked = Boolean(prepareBlockedNotice());
   const head = el('div', { class: 'rc-head' });
   head.append(el('span', { class: 'rc-title', text: 'Tailored resume' }));
 
@@ -913,8 +943,12 @@ export function resumeCard(job) {
     head.append(el('span', { class: 'chip', text: 'not prepared' }));
     card.append(head);
     card.append(el('div', { class: 'muted', text: 'No tailored resume yet. Prepare this job to generate one from your master resume.' }));
+    card.append(prepareProblemBox(job.id) ?? '');
     card.append(el('div', { class: 'actions' },
-      el('button', { class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare resume' }),
+      el('button', {
+        class: 'small primary', 'data-action': 'prepare-one', 'data-id': job.id, text: 'Prepare resume',
+        disabled: blocked, title: blocked ? PREPARE_BLOCKED_TITLE : null,
+      }),
       el('button', {
         class: 'small ghost', 'data-action': 'open-master',
         title: 'View, edit, or replace the master resume every tailored version is built from.',
@@ -966,9 +1000,11 @@ export function resumeCard(job) {
   }));
   links.append(el('button', {
     class: 'small', 'data-action': 'prepare-one', 'data-id': job.id,
-    title: 'Regenerate the tailored resume and refresh this audit', text: '↻ Re-tailor',
+    title: blocked ? PREPARE_BLOCKED_TITLE : 'Regenerate the tailored resume and refresh this audit', text: '↻ Re-tailor',
+    disabled: blocked,
   }));
   card.append(links);
+  card.append(prepareProblemBox(job.id) ?? '');
 
   if (packet?.resumeWarning) {
     card.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }),

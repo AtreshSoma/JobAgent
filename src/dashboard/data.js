@@ -2581,12 +2581,70 @@ export function systemNotices(rows = [], config = null, { browserAvailable = nul
         severity: 'error',
         message: `${labels.length} profile value(s) are still template text: ${shown}. `
           + 'Applications will not be prepared until they are real.',
-        fix: 'Open Settings → Application profile (or edit the search profile) and replace each highlighted field '
-          + 'with your real, truthful value.',
+        fix: 'Replace each value below with your real, truthful one. Each line says where: the Application '
+          + 'profile, your saved search profile, or the cover-letter settings.',
+        // Per field: what it says now and WHERE the fix sticks. The old notice
+        // said only "Settings → Application profile", which cannot edit work
+        // authorization or the cover letter, so following it changed nothing
+        // and Prepare kept refusing with no visible reason.
+        items: placeholderFixes(found.placeholders, { profileId: config.profile?.id ?? null }),
       });
     }
   }
   return notices;
+}
+
+/** Candidate fields the Application profile dialog edits (src/config/profileStore.js PROFILE_FIELDS). */
+const APPLICATION_PROFILE_PATH = /^(identity\.(fullName|preferredName|links\.linkedin)|contact\.(email|phone)|location\.(city|state|zip))$/;
+
+/**
+ * Where each template value is actually fixed.
+ *
+ * `findPlaceholders` reports candidate fields as living in config/candidate.json,
+ * but that file is regenerated from the active search profile on every
+ * activation: an edit made there is overwritten. So each field is pointed at the
+ * place that keeps it, a screen wherever one exists: the Application profile
+ * fields, the Saved answer it is filled from (src/config/answerFallbacks.js), or
+ * the master resume. Only a fact with no screen at all names a file.
+ *
+ * @param {Array<{path: string, label: string, value: string, file: string}>} placeholders
+ * @param {{profileId?: string|null}} [options]
+ * @returns {Array<{label: string, value: string, where: string, how: string}>}
+ */
+export function placeholderFixes(placeholders = [], { profileId = null } = {}) {
+  const id = profileId || '<profile-id>';
+  const profileFile = `config/profiles/${id}.json`;
+  const activate = `\`npm run profiles activate ${id}\``;
+  return placeholders.map(({ path = '', label, value, file }) => {
+    let where;
+    let how;
+    if (file === 'config/candidate.json' && APPLICATION_PROFILE_PATH.test(path)) {
+      where = 'Application profile';
+      how = 'Open the account menu, choose Application profile, and fill in this field.';
+    } else if (file === 'config/candidate.json' && path.startsWith('workAuthorization.')) {
+      // Filled from this answer at load time (src/config/answerFallbacks.js).
+      where = 'Application profile → Saved answers';
+      how = 'Answer "work_authorization" with your real status. This value is filled from it.';
+    } else if (file === 'config/candidate.json') {
+      // Work history and education: what the resume already states.
+      where = 'Master resume';
+      how = `Use "Fill from my resume" in this notice, or edit the background section of ${profileFile} and run ${activate}.`;
+    } else if (file === 'config/screening_answers.json') {
+      where = 'Application profile → Saved answers';
+      how = 'Open the account menu, choose Application profile, and replace this answer.';
+    } else if (path === 'yearsOfExperience') {
+      where = 'Application profile → Saved answers';
+      how = 'Answer "years_experience", for example 8 years. This value is filled from it.';
+    } else if (path === 'template.sponsorshipNote') {
+      // Built from the stated status when sponsorship is required.
+      where = 'Application profile → Saved answers';
+      how = 'Answer "work_authorization" with your real status. The sentence is written from it.';
+    } else {
+      where = file;
+      how = `Set ${path} in ${file} to your real value.`;
+    }
+    return { label, value: String(value ?? ''), where, how };
+  });
 }
 
 /**

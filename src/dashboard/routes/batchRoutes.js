@@ -62,6 +62,9 @@ export async function handleBatchRoutes(ctx, req, res, { path }) {
     if (ctx.runState.running) {
       return sendJson(res, 409, { error: `busy: ${ctx.runState.phase} is in progress` });
     }
+    // Prepare refuses template values; judge the files as they are now, not as
+    // they were at boot, or a value fixed by hand is still refused.
+    ctx.refreshConfigIfTemplated?.();
     const prepareLock = ctx.takeRunLock('prepare-selected');
     // Reset the FULL run state, including runId/rca/progress. Leaving the
      // previous run's `progress` in place made the header report stale

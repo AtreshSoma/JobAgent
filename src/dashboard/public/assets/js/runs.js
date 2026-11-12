@@ -306,6 +306,8 @@ export async function pollRun() {
   }
   if (gen !== pollGen) return;
   applyRunGate(status);
+  // While a run is going, lastResult is still the PREVIOUS run's.
+  if (!status.running) recordPrepareOutcome(status.lastResult);
   const finished = !status.running && wasRunning;
   if (wasDown || finished) refreshAll({ force: true });
   // An auto-fill run is what adds questions to the profile's queue.
@@ -313,6 +315,20 @@ export async function pollRun() {
   wasRunning = status.running;
   const delay = document.hidden ? HIDDEN_POLL_MS : status.running ? 1500 : 5000;
   pollTimer = setTimeout(pollRun, delay);
+}
+
+/**
+ * Remember which jobs a Prepare run could not prepare, and why.
+ *
+ * The run summary said only "Prepared 0 packet(s)": the reason (a refused
+ * profile, another person's resume, a closed posting) was in the server log,
+ * so a failed Prepare looked like nothing happened. Kept per job until a later
+ * Prepare of that job succeeds, and shown in its Tailored resume box.
+ */
+export function recordPrepareOutcome(result) {
+  if (result?.phase !== 'prepare-selected') return;
+  for (const { jobId } of result.prepared ?? []) state.prepareFailures.delete(jobId);
+  for (const { jobId, error } of result.failed ?? []) state.prepareFailures.set(jobId, String(error ?? 'unknown error'));
 }
 
 export let lastFullRefreshAt = Date.now();

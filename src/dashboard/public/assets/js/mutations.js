@@ -6,7 +6,7 @@ import { postJson } from './api.js';
 import { loadSections, loadStats } from './analytics.js';
 import { captureRowFocus, loadBoard, restoreRowFocus, rowFor, scheduleBoardReload } from './board.js';
 import { cssEscape, isAggregatorUrl, loadDetail, renderDetail, selectJob } from './detail.js';
-import { autofillBlockedReason, loadToday, scheduleTodayReload } from './today.js';
+import { autofillBlockedReason, loadToday, prepareBlockedNotice, scheduleTodayReload } from './today.js';
 import { offerUndo } from './selection.js';
 import { pollRun } from './runs.js';
 import { loadWorkspace, scheduleWorkspaceReload } from './workspace.js';
@@ -135,6 +135,8 @@ export async function autofillOne(id) {
 
 export async function prepareOne(id) {
   if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
+  if (prepareBlockedNotice()) { toast('Prepare is off until the template values in the notice at the top of the page are replaced.', 'bad'); return; }
+  state.prepareFailures.delete(id);
   try {
     await postJson('/api/prepare-batch', { jobIds: [id] });
     toast('Preparing the tailored resume + packet…');
