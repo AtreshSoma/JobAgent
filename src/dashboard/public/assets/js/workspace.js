@@ -3,7 +3,7 @@
 import { $, el, fmt, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
-import { cssEscape, loadDetail, selectJob } from './detail.js';
+import { cssEscape, loadDetail, revealInDetail, selectJob } from './detail.js';
 import { autofillOne, scheduleRefresh } from './mutations.js';
 import { openSubmitDialog } from './actions.js';
 import { autofillBlockedReason, scheduleTodayReload } from './today.js';
@@ -346,7 +346,9 @@ export function workspaceCard(item) {
     foot.append(el('button', {
       type: 'button', class: 'small ghost ws-move', 'data-action': 'ws-move-menu', 'data-id': item.id,
       // A closed card can only be corrected (Undo), not moved on.
-      'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': `Update status of ${item.title}`,
+      // Name starts with the visible word (WCAG 2.5.3, label in name).
+      'aria-haspopup': 'menu', 'aria-expanded': 'false',
+      'aria-label': `${item.allowedOutcomes?.length ? 'Move' : 'Change'}: update the status of ${item.title}`,
       text: item.allowedOutcomes?.length ? 'Move' : 'Change',
     }));
   }
@@ -427,7 +429,9 @@ export async function workspaceAct(target) {
     case 'submit': openSubmitDialog(id); break;
     case 'outcome': openMoveMenu(target); break;
     case 'followup': await openApplicationDetail(id); break;
-    default: await selectJob(id, { user: true });
+    // "See what stopped it", "Check the error", "Confirm it went through",
+    // "Review resume": open the job at the part the button names.
+    default: await revealInDetail(id);
   }
 }
 

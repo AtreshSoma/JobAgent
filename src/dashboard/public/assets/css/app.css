@@ -27,7 +27,7 @@
      three-step hierarchy still reads as a hierarchy. */
   --text: #e8eef6;
   --text-dim: #9aa8ba;
-  --text-faint: #78889c;
+  --text-faint: #8797ac;
 
   /* accents */
   --accent: #4d9fff;
@@ -94,6 +94,8 @@
      a pure-black shadow reads as a grey smudge; carrying the background's own
      hue into it keeps one consistent light source across both themes. */
   --shadow-sm: 0 1px 3px rgba(2, 5, 12, .5);
+  /* The shadow a docked bar (the sticky pager) casts up over the list. */
+  --dock-shade: rgba(2, 5, 12, .85);
   --shadow: 0 8px 24px rgba(2, 5, 12, .55);
   --shadow-lg: 0 24px 60px rgba(2, 5, 12, .7);
 
@@ -184,14 +186,14 @@
   /* AA on its own tinted chip, not just on white (axe, 2026-11-11): the old
      #0f8f5c was 3.64:1 on --good-soft, #9a6300 4.3:1 on --warn-soft, and
      #1668d6 4.39:1 on --surface-3. These are 5.3, 5.09 and 4.97. */
-  --good: #0a7049;
+  --good: #07623f;
   --good-soft: rgba(10, 112, 73, .1);
   --warn: #8a5800;
   --warn-soft: rgba(138, 88, 0, .12);
   /* Text ON the warm fill, and warm text on a warm tint: both clear 4.5:1. */
   --on-warn: #ffffff;
   --warn-text: #6f4600;
-  --bad: #c8332e;
+  --bad: #ad2a25;
   --bad-soft: rgba(200, 51, 46, .1);
   --chip: #e6ebf2;
   --line-strong: #a9b5c6;
@@ -215,6 +217,7 @@
   --ambient-a: rgba(22, 104, 214, .06);
   --ambient-b: rgba(14, 134, 168, .04);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
+  --dock-shade: rgba(16, 24, 40, .14);
   --shadow: 0 8px 24px rgba(16, 24, 40, .12);
   --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
   --sig-b: #2f8fd6;
@@ -244,13 +247,13 @@
     --accent-hover: #0f57ba;
     --accent-ink: #ffffff;
     --accent-soft: rgba(19, 96, 199, .1);
-    --good: #0a7049;
+    --good: #07623f;
     --good-soft: rgba(10, 112, 73, .1);
     --warn: #8a5800;
     --warn-soft: rgba(138, 88, 0, .12);
     --on-warn: #ffffff;
     --warn-text: #6f4600;
-    --bad: #c8332e;
+    --bad: #ad2a25;
     --bad-soft: rgba(200, 51, 46, .1);
     --chip: #e6ebf2;
     --line-strong: #a9b5c6;
@@ -274,6 +277,7 @@
     --ambient-a: rgba(22, 104, 214, .06);
     --ambient-b: rgba(14, 134, 168, .04);
     --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
+    --dock-shade: rgba(16, 24, 40, .14);
     --shadow: 0 8px 24px rgba(16, 24, 40, .12);
     --shadow-lg: 0 24px 60px rgba(16, 24, 40, .2);
     --sig-b: #2f8fd6;
@@ -551,6 +555,8 @@ button.icon { padding: 4px 7px; }
 @media (max-width: 480px) {
   .theme-toggle { display: none; }
   .only-narrow { display: flex !important; }
+  /* The Explore link steps out with it; its twin is in the Profile menu too. */
+  .explore-link { display: none; }
   .actions-sep { display: none; }
 }
 .spacer { flex: 1 1 auto; }
@@ -999,6 +1005,10 @@ dialog { background: var(--surface); }
 /* Pipeline health, as plain facts. */
 .health {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: nowrap;
+  /* The containing block for its .sr-only labels: without it they were placed
+     against the page and escaped this strip's clipping, widening a 390px
+     phone layout to 487px (a sideways scroll on every view). */
+  position: relative;
   min-width: 0; overflow: hidden;
   font-size: var(--fs-sm); color: var(--text-faint);
 }
@@ -1020,11 +1030,15 @@ button.stat:hover { background: none; border-color: transparent; }
 .stat .l { font-size: var(--fs-sm); color: var(--text-dim); }
 .stat.attn b, .stat.attn .l { color: var(--warn-text); }
 .stat.bad b, .stat.bad .l { color: var(--bad); }
+/* A tinted fill, like a .chip.warn — not a 1px outline. The outline drew the
+   exact shape of the focus ring, so "216 undated" looked stuck in focus. */
 .stat.attn, .stat.bad {
-  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
-  border-radius: var(--r-full); padding: 1px 9px; color: var(--warn-text);
+  border: 0; border-radius: var(--r-full); padding: 2px 9px;
+  color: var(--warn-text); background: var(--warn-soft);
 }
-.stat.bad { color: var(--bad); }
+.stat.bad { color: var(--bad); background: var(--bad-soft); }
+button.stat.attn:hover { background: color-mix(in srgb, var(--warn) 22%, transparent); }
+button.stat.bad:hover { background: color-mix(in srgb, var(--bad) 22%, transparent); }
 .stat.attn + .stat::before, .stat.bad + .stat::before,
 .stat + .stat.attn::before, .stat + .stat.bad::before { display: none; }
 
@@ -1118,6 +1132,9 @@ button.stat:hover { background: none; border-color: transparent; }
   }
   .tabs::-webkit-scrollbar, .health::-webkit-scrollbar { display: none; }
   .tabs .tab, .health .stat { flex: none; }
+  /* Something that needs you (unverified submits) leads the strip: scrolled
+     past the edge at 390px, it was the one fact nobody saw. */
+  .health .stat.bad { order: -1; }
   .statusbar .runbox { width: 100%; min-width: 0; }
   .statusbar .run-main { min-width: 0; flex: 1 1 auto; }
   .statusbar .spacer { display: none; }
@@ -1716,8 +1733,13 @@ td.check { width: 34px; }
 .pagerbar {
   display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
   position: sticky; bottom: 0; z-index: 3;
-  background: color-mix(in srgb, var(--bg) 97%, transparent);
+  /* Opaque, not 97%: at 97% the rows scrolling underneath ghosted through the
+     counts and the First/Prev buttons, so the pager read as overlapping text.
+     A soft upward shadow says "docked over the list" instead of a hard seam. */
+  background: var(--bg);
   border-top: 1px solid var(--line-soft);
+  box-shadow: 0 -10px 18px -12px var(--dock-shade);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   margin-top: -1px;
 }
 /* Phones: neither the header nor the pager sticks. Together they held 41% of
@@ -2091,6 +2113,20 @@ button.rs-open.prepared:hover { background: var(--accent-soft); }
 .detail-panel > .rail-sec[data-section="stepper"] { border-top: 0; margin-top: var(--s3); padding-top: 0; }
 .detail-panel > .rail-sec > h3:first-child { margin-top: 0; }
 .detail-panel .actions { margin-top: 0; }
+/* A card's "See what stopped it" lands here: one soft wash that fades, so
+   the eye finds the reason without a flashing border. */
+.rail-sec { scroll-margin-top: var(--s3); border-radius: var(--r-md); }
+/* Where a job is parked when it is off the progress line. */
+.offramp { display: flex; align-items: center; gap: var(--s2); color: var(--text); font-weight: 600; }
+.offramp-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.offramp-dot.warn { background: var(--warn); }
+.offramp-dot.bad { background: var(--bad); }
+.rail-sec.is-spotlit { animation: spotlit 1.4s var(--ease-out); }
+@keyframes spotlit {
+  0% { background-color: var(--accent-soft); box-shadow: 0 0 0 6px var(--accent-soft); }
+  100% { background-color: transparent; box-shadow: 0 0 0 6px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .rail-sec.is-spotlit { animation: none; } }
 .rail-label {
   display: block; font-size: var(--fs-md); color: var(--text); font-weight: 650;
   margin: var(--s4) 0 var(--s2);
@@ -3035,6 +3071,11 @@ code.jobid {
    global anchor colour + underline made "Open PDF ↗" read as body copy. */
 a.btn { text-decoration: none; color: var(--text); }
 a.btn:hover { color: var(--text); }
+/* An icon-only LINK (the header's Explore link) is as quiet as the icon
+   buttons beside it; without this the rule above made it the brightest. */
+a.btn.iconbtn { color: var(--text-dim); }
+a.btn.iconbtn:hover { color: var(--text); }
+a.btn.iconbtn:active { transform: scale(.97); }
 
 /* ─────────────────── next actions ───────────────────
    One promoted action, then a scannable ranked list, then tool notices. The
@@ -3164,14 +3205,17 @@ a.btn:hover { color: var(--text); }
 .chip.signal.good { color: var(--good); background: var(--good-soft); }
 
 /* Board rows: fit meter, skills line, freshness, sponsorship gate, status. */
-.fitmeter { display: flex; flex-direction: column; gap: 3px; margin-top: 5px; font-size: var(--fs-xs); color: var(--text-dim); }
-.fitmeter-n { font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; line-height: 1; }
-.fitmeter-bar { display: block; width: 40px; height: 4px; border-radius: var(--r-full); background: var(--chip); overflow: hidden; }
+/* Centred in the grade badge's own 28px column: the score left-aligned under
+   a centred letter, with a 40px bar overhanging both, read as three loose
+   pieces instead of one grade. */
+.fitmeter { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 28px; margin-top: 5px; font-size: var(--fs-xs); color: var(--text-dim); }
+.fitmeter-n { font-weight: 650; color: var(--text-dim); font-variant-numeric: tabular-nums; line-height: 1; }
+.fitmeter-bar { display: block; width: 28px; height: 3px; border-radius: var(--r-full); background: var(--chip); overflow: hidden; }
 .fitmeter-bar > i { display: block; height: 100%; border-radius: inherit; background: var(--text-faint); }
 .fitmeter.strong .fitmeter-bar > i, .fitcard-score.strong .fitmeter-bar > i { background: var(--good); }
 .fitmeter.medium .fitmeter-bar > i, .fitcard-score.medium .fitmeter-bar > i { background: var(--accent); }
 .fitmeter.weak .fitmeter-bar > i, .fitcard-score.weak .fitmeter-bar > i { background: var(--warn); }
-.fitmeter.none { font-style: italic; color: var(--text-faint); }
+.fitmeter.none { font-style: italic; color: var(--text-faint); width: auto; align-items: flex-start; }
 .skillline {
   margin-top: 3px; font-size: var(--fs-sm); color: var(--text-dim);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

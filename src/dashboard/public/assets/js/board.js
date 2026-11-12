@@ -29,7 +29,7 @@ export function renderBoardStatus() {
   else if (boardStatus.updatedAt) {
     const secs = Math.round((Date.now() - boardStatus.updatedAt) / 1000);
     parts.push(secs < 5 ? 'Updated just now'
-      : secs < 60 ? `Updated ${secs} s ago` : `Updated ${Math.floor(secs / 60)} min ago`);
+      : secs < 60 ? `Updated ${secs}s ago` : `Updated ${Math.floor(secs / 60)}m ago`);
   }
   if (state.stats?.stale) parts.push('Showing cached numbers — recalculating');
   node.textContent = parts.join(' · ');
@@ -415,9 +415,11 @@ export function nameCellFor(job) {
       title: aggregator
         ? `${title}\n\nOpens ${hostLabel(job.url)} — an aggregator listing, not the employer's own application form.`
         : title,
-      'aria-label': `${title} at ${job.company || 'company on posting'} — opens the posting in a new tab`,
-      text: shown,
-    });
+      // The accessible name is the VISIBLE text plus a hidden note, never a
+      // different string: a full title in aria-label behind a shortened one on
+      // screen failed WCAG 2.5.3 (label in name) for every long title. The
+      // full title stays in the tooltip.
+    }, shown, el('span', { class: 'sr-only', text: ` at ${job.company || 'company on posting'} (opens the posting in a new tab)` }));
     cell.append(link);
     if (aggregator) {
       // Sits on the META line, not on a line of its own under the role. It

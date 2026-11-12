@@ -18,7 +18,7 @@
  *
  * The browser extension keeps its own shared key and is unaffected.
  */
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -73,6 +73,20 @@ export function resolveApiToken({ deps = {}, root = null, env = process.env } = 
   if (typeof deps.apiToken === 'string' && deps.apiToken) return deps.apiToken;
   if (String(env.JOB_AGENT_DASHBOARD_AUTH ?? '').toLowerCase() === 'off') return null;
   return root ? loadOrCreateToken(root) : newToken();
+}
+
+/**
+ * Proof that a server holds the access token, without the token being sent:
+ * HMAC-SHA256 of a caller-chosen challenge, keyed by the token. The launcher
+ * asks for this before it sends the token anywhere, so a program squatting on
+ * the dashboard's port cannot collect it.
+ *
+ * @param {string} token
+ * @param {string} challenge
+ * @returns {string} hex digest
+ */
+export function instanceProof(token, challenge) {
+  return createHmac('sha256', String(token)).update(`jobagent-instance:${String(challenge)}`).digest('hex');
 }
 
 /** Constant-time comparison that does not leak the token's length either. */

@@ -64,7 +64,10 @@ export async function syncInbox({ db, root, env = process.env, now = new Date(),
   if (!settings.enabled) throw Object.assign(new Error(settings.reason), { statusCode: 409 });
   const jobs = db.listSubmittedJobs();
   const known = knownMessageIds(db);
-  const llm = llmSettings(env, { root });
+  // Classifying a reply with the LLM sends part of a real email to the
+  // provider, which LLM_ASSIST alone never promised. It needs its own switch.
+  const inboxLlm = String(env.INBOX_LLM ?? 'off').trim().toLowerCase() === 'on';
+  const llm = inboxLlm ? llmSettings(env, { root }) : null;
   const client = deps.client ?? new ImapReadOnlyClient({ host: settings.host, port: settings.port, secure: settings.secure, connectImpl: deps.connectImpl });
   const stats = { read: 0, matched: 0, suggested: 0, skippedKnown: 0 };
   await client.connect();

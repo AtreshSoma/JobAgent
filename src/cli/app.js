@@ -28,11 +28,12 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 
 import { ui } from './ui.js';
 import { quickPreflight } from './preflight.js';
 import { masterResumeFile } from '../profile/workspace.js';
-import { readToken, TOKEN_HEADER, unlockUrl } from '../dashboard/apiToken.js';
+import { instanceProof, readToken, TOKEN_HEADER, tokensMatch, unlockUrl } from '../dashboard/apiToken.js';
 
 /** Parse and validate a user-facing dashboard port. */
 export function parseDashboardPort(value, fallback = 4646) {
@@ -87,18 +88,67 @@ export async function findFreePort(start, tries = 20) {
  * @param {string|null} [options.token] the dashboard's access token, when known
  * @returns {Promise<string|null>} the dashboard URL, or null
  */
-export async function probeRunningDashboard(port, { timeoutMs = 1000, fetchImpl = fetch, token = null } = {}) {
+export async function probeRunningDashboard(port, options = {}) {
+  const found = await identifyRunningDashboard(port, options);
+  return found?.url ?? null;
+}
+
+/**
+ * Who is listening on the dashboard port?
+ *
+ * The access token is sent ONLY to a server that first proves it holds the
+ * token (instanceProof over a fresh random challenge). Sending it to whatever
+ * answered /api/run/status with the right JSON shape handed it to any program
+ * that bound the port first, and the launcher then opened /?token=… there.
+ *
+ * @param {number} port
+ * @param {object} [options]
+ * @param {number} [options.timeoutMs=1000]
+ * @param {typeof fetch} [options.fetchImpl]
+ * @param {string|null} [options.token] this install's access token, when known
+ * @returns {Promise<{url: string, proven: boolean}|null>} `proven` is true only
+ *   when the server answered the challenge with this install's token
+ */
+export async function identifyRunningDashboard(port, { timeoutMs = 1000, fetchImpl = fetch, token = null } = {}) {
   const url = `http://127.0.0.1:${port}`;
+  const get = (path, headers = {}) => fetchImpl(`${url}${path}`, { signal: AbortSignal.timeout(timeoutMs), headers });
+  const statusShape = (body) => body && typeof body === 'object'
+    && typeof body.running === 'boolean' && 'phase' in body && 'cancelRequested' in body;
   try {
-    // A running dashboard requires its access token (P1-5); send it when known.
-    const headers = token ? { [TOKEN_HEADER]: token } : {};
-    const res = await fetchImpl(`${url}/api/run/status`, { signal: AbortSignal.timeout(timeoutMs), headers });
+    if (token) {
+      const challenge = randomBytes(32).toString('hex');
+      let proven = false;
+      try {
+        const res = await get(`/api/instance?challenge=${challenge}`);
+        if (res.ok) {
+          /** @type {any} */
+          const body = await res.json();
+          proven = body?.app === 'job-agent' && typeof body.proof === 'string'
+            && tokensMatch(body.proof, instanceProof(token, challenge));
+        }
+      } catch { proven = false; }
+      if (proven) {
+        const res = await get('/api/run/status', { [TOKEN_HEADER]: token });
+        if (!res.ok) return null;
+        return statusShape(await res.json()) ? { url, proven: true } : null;
+      }
+      // Not proven: never send the token. An older JobAgent (no /api/instance)
+      // answers a token-less status request with its "locked" message.
+      const res = await get('/api/run/status');
+      if (res.status === 401) {
+        /** @type {any} */
+        const body = await res.json().catch(() => null);
+        return /^locked\b/.test(String(body?.error ?? '')) ? { url, proven: false } : null;
+      }
+      if (!res.ok) return null;
+      return statusShape(await res.json()) ? { url, proven: false } : null;
+    }
+    // No token on this install (auth off): the status shape is all there is.
+    const res = await get('/api/run/status');
     if (!res.ok) return null;
     /** @type {any} */
     const body = await res.json();
-    const looksLikeUs = body && typeof body === 'object'
-      && typeof body.running === 'boolean' && 'phase' in body && 'cancelRequested' in body;
-    return looksLikeUs ? url : null;
+    return statusShape(body) ? { url, proven: true } : null;
   } catch {
     // Refused, timed out, not JSON: nothing of ours is there.
     return null;
@@ -266,7 +316,18 @@ export async function runApp({ parsed, env, deps = {} }) {
   // port. Checked before the database is opened: a second instance must not
   // touch the store the first one is serving.
   const existingToken = readToken(config.root);
-  const existingUrl = await (deps.probeRunningDashboard ?? probeRunningDashboard)(requestedPort, { token: existingToken });
+  const found = deps.probeRunningDashboard
+    ? await deps.probeRunningDashboard(requestedPort, { token: existingToken }).then((u) => (u ? { url: u, proven: true } : null))
+    : await identifyRunningDashboard(requestedPort, { token: existingToken });
+  const existingUrl = found?.url ?? null;
+  if (existingUrl && !found.proven) {
+    // Something that looks like JobAgent holds the port but could not prove it
+    // is THIS install. Do not hand it the access key, and do not start a second
+    // server against the same database either.
+    ui.warn(`Something is already running at ${existingUrl} that could not prove it is your JobAgent, so your access key was not sent to it.`);
+    ui.note('If it is an older JobAgent window, close it (Ctrl+C) and start again. Otherwise free the port or choose another with --port=NNNN.');
+    return { ok: false, url: existingUrl, port: requestedPort, alreadyRunning: true, unproven: true, problems: ['dashboard port held by an unproven server'] };
+  }
   if (existingUrl) {
     ui.success(`Job Agent is already running at ${ui.c.bold(existingUrl)}`);
     if (!noOpen) {

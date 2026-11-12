@@ -77,10 +77,12 @@ import { gzipSync } from 'node:zlib';
 import { buildRca, sanitizeErrorMessage, inferScope } from '../utils/failureRca.js';
 import { assertInsideDirectory, isInsideDirectory } from '../utils/pathSafe.js';
 
-import { approveJobPacket, buildMasterResume, setDuringBulkRun, noteUserMutation, setBrowserAvailability } from './data.js';
+import { approveJobPacket, buildMasterResume, setDuringBulkRun, noteUserMutation, setBrowserAvailability, withdrawApproval } from './data.js';
+import { approvalDigest, approvedDigest, digestChanges } from '../apply/approvalDigest.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import { runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult, preparePacketsForJobs } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
+import { createCodeFreshness } from './codeFreshness.js';
 import { rescoreStale } from '../pipeline/index.js';
 import { sweepPostings } from '../search/postingLiveness.js';
 import { reconcileStalePackets } from '../apply/packetHygiene.js';
@@ -116,7 +118,7 @@ import { createDesktopSink, createNotifier } from '../utils/notifier.js';
 import { handleInboxRoutes } from './routes/inboxRoutes.js';
 import { freezeVersions } from '../apply/documentVersions.js';
 import { backupAll, maybeAutoBackup } from '../logging/backup.js';
-import { lockedPage, resolveApiToken, sessionCookie, tokenFromRequest, tokensMatch, unlockUrl } from './apiToken.js';
+import { instanceProof, lockedPage, resolveApiToken, sessionCookie, tokenFromRequest, tokensMatch, unlockUrl } from './apiToken.js';
 
 /** API route modules, tried in order (see src/dashboard/routes/). */
 const API_ROUTE_MODULES = [
@@ -792,6 +794,60 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     return Boolean(jobRow) && (Number(jobRow.applied) === 1
       || jobRow.status === LIFECYCLE.SUBMITTED
       || jobRow.status === LIFECYCLE.SUBMIT_UNVERIFIED);
+  }
+
+  /**
+   * Digest of what approving this job's packet would cover (see
+   * src/apply/approvalDigest.js). Null when the packet cannot be read; an
+   * approval without a digest is simply not compared later.
+   */
+  function approvalDigestFor(jobId) {
+    try {
+      const approval = db.getApprovalByJob?.(jobId);
+      if (!approval) return null;
+      const packet = deps.loadPacketImpl ? deps.loadPacketImpl(approval) : loadPacket(approval);
+      return packet ? approvalDigest(packet, config) : null;
+    } catch { return null; }
+  }
+
+  /**
+   * Has anything the approval covered changed since? When it has, the approval
+   * is withdrawn (the packet goes back to "needs review") and the reason is
+   * returned; null when unchanged or when the approval recorded no digest.
+   */
+  function approvalDriftReason(jobId, packet) {
+    const approved = approvedDigest(db, jobId);
+    if (!approved) return null;
+    const changes = digestChanges(approved, approvalDigest(packet, config));
+    if (!changes.length) return null;
+    withdrawApproval(db, jobId, changes);
+    return `changed since you approved it: ${changes.join(', ')}. Review the packet and approve it again`;
+  }
+
+  /**
+   * A job still marked "being filled" when the dashboard starts was being
+   * filled by a process that is gone (closed, crashed, restarted). Say so,
+   * as a resumable cancelled run, instead of leaving it looking approved.
+   */
+  function recoverInterruptedFills() {
+    let ids = [];
+    try { ids = db.jobIdsWithStatus?.(LIFECYCLE.ASSIST_STARTED) ?? []; } catch { ids = []; }
+    for (const id of ids) {
+      try {
+        db.setJobStatus(id, LIFECYCLE.CANCELLED, {
+          actor: 'assist',
+          reason: 'interrupted: JobAgent stopped while auto-fill was running. Retry auto-fill to continue from the last step',
+          patch: { assist_blockers: JSON.stringify(['interrupted: JobAgent stopped while auto-fill was running. Retry auto-fill to continue from the last step']) },
+        });
+      } catch (err) { logger?.warn?.(`could not recover interrupted fill for ${id}: ${sanitizeErrorMessage(err.message)}`); }
+    }
+    if (ids.length) logger?.info?.(`${ids.length} auto-fill run(s) were interrupted by a restart and are marked cancelled`);
+  }
+
+  /** Mark a job as being filled now; best effort, never blocks a run. */
+  function markAssistStarted(runDb, jobId) {
+    try { runDb.setJobStatus?.(jobId, LIFECYCLE.ASSIST_STARTED, { actor: 'assist', reason: 'auto-fill started' }); }
+    catch (err) { logger?.warn?.(`could not mark ${jobId} as being filled: ${sanitizeErrorMessage(err.message)}`); }
   }
 
   /**
@@ -1486,6 +1542,12 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       err.statusCode = 409;
       throw err;
     }
+    const decided = db.getJob?.(jobId)?.user_decision;
+    if (decided === 'rejected' || decided === 'archived') {
+      const err = new Error(`you ${decided} this job, so it is not filled. Restore it first if you want to apply`);
+      err.statusCode = 409;
+      throw err;
+    }
     const approval = db.getApprovalByJob?.(jobId);
     if (!approval || approval.approval_status !== APPROVAL_STATUS.APPROVED) {
       const err = new Error('packet is not human-approved, approve it first');
@@ -1510,8 +1572,19 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       err.statusCode = 409;
       throw err;
     }
+    const drift = approvalDriftReason(jobId, loaded);
+    if (drift) {
+      const err = new Error(`Not filled: ${drift}.`);
+      err.statusCode = 409;
+      throw err;
+    }
     const packet = reconcilePacket(loaded, jobId);
     const runId = randomUUID();
+    // The store this run belongs to. A profile switch rebinds `db`; the
+    // hand-off watcher can report up to 45 minutes later and must write to
+    // the person whose application it watched.
+    const runDb = db;
+    markAssistStarted(runDb, jobId);
     Object.assign(runState, {
       running: true, phase: `assist:${jobId}`, startedAt: new Date().toISOString(),
       finishedAt: null, lastError: null, cancelRequested: false,
@@ -1529,12 +1602,12 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             // Same hand-off watch the batch path wires: a human who submits in
             // the window we leave open is recorded (as submit_unverified until
             // they confirm), instead of the job silently staying "ready".
-            onHumanSubmitted: (update) => { recordAssistResult(db, jobId, update); refreshTracker(); },
+            onHumanSubmitted: (update) => { recordAssistResult(runDb, jobId, update); refreshTracker(); },
             ...deps,
             shouldCancel: () => runState.cancelRequested,
           },
         });
-        recordAssistResult(db, jobId, result);
+        recordAssistResult(runDb, jobId, result);
         refreshTracker();
         runState.lastResult = {
           phase: 'assist', jobId, status: result.status,
@@ -1722,8 +1795,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           if (skipped.some((s) => s.jobId === jobId)) continue;
           let approval = db.getApprovalByJob?.(jobId);
           if (!approval) { skipped.push({ jobId, reason: 'no packet could be prepared' }); continue; }
+          // A packet the person REJECTED is a decision, not a pending review:
+          // pressing Auto-fill on a batch is not a reason to overturn it.
+          if (approval.approval_status === APPROVAL_STATUS.REJECTED) {
+            skipped.push({ jobId, reason: 'you rejected this packet; approve it (or prepare it again) before auto-fill' });
+            continue;
+          }
           if (approval.approval_status !== APPROVAL_STATUS.APPROVED) {
-            approveJobPacket(db, jobId);
+            approveJobPacket(db, jobId, { digest: approvalDigestFor(jobId) });
             approval = db.getApprovalByJob(jobId);
           }
           const loaded = deps.loadPacketImpl ? deps.loadPacketImpl(approval) : loadPacket(approval);
@@ -1751,7 +1830,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           }
           // Re-checked at the moment of filling: an approval or packet that
           // changed while earlier jobs were running was not what was reviewed.
-          const liveSkip = liveSkipReason(jobId) ?? (autoSubmit
+          const liveSkip = liveSkipReason(jobId) ?? approvalDriftReason(jobId, packet) ?? (autoSubmit
             ? (() => {
               const problem = autoSubmitReviewProblem({
                 job: db.getJob?.(jobId), approval: db.getApprovalByJob?.(jobId),
@@ -1770,6 +1849,8 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
           }
           runState.phase = `auto-apply (${done + 1}/${queue.length}), ${jobId}`;
           runState.progress.currentJobId = jobId;
+          const runDb = db;
+          markAssistStarted(runDb, jobId);
           const progressItem = runState.progress.items.find((x) => x.jobId === jobId);
           if (progressItem) progressItem.status = 'opening';
           try {
@@ -1779,12 +1860,12 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
               deps: {
                 // A confirmation page the human reaches in the handed-over
                 // window is recorded as submit_unverified with its evidence.
-                onHumanSubmitted: (update) => { recordAssistResult(db, jobId, update); refreshTracker(); },
+                onHumanSubmitted: (update) => { recordAssistResult(runDb, jobId, update); refreshTracker(); },
                 ...deps,
                 shouldCancel: () => runState.cancelRequested,
               },
             });
-            recordAssistResult(db, jobId, result);
+            recordAssistResult(runDb, jobId, result);
             captureUnansweredQuestions(jobId, result);
             if (result.submitted === true) {
               dailyCount += 1;
@@ -1867,10 +1948,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
    * every read sees the live value: db and config are reassigned when the
    * active profile changes or config reloads.
    */
+  // Is this server older than the code on disk? (see codeFreshness.js)
+  const codeChangedSinceStart = deps.codeFreshness ?? createCodeFreshness();
   const ctx = {
     get backupState() { return backupState; },
+    get codeChangedSinceStart() { return codeChangedSinceStart; },
     get runBackup() { return runBackup; },
     get autoApplyEligibility() { return autoApplyEligibility; },
+    get approvalDigestFor() { return approvalDigestFor; },
     get browserAvailableCached() { return browserAvailableCached; },
     get config() { return config; },
     get db() { return db; },
@@ -1953,6 +2038,28 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       });
     }
 
+    // ── Instance proof ─────────────────────────────────────────────────────
+    // Lets the launcher confirm it is talking to THIS install before it sends
+    // the access token (see instanceProof). Answers only a challenge; reveals
+    // nothing that could be replayed.
+    if (readOnly && path === '/api/instance') {
+      const challenge = String(url.searchParams.get('challenge') ?? '');
+      if (!/^[a-f0-9]{32,128}$/i.test(challenge)) return sendJson(res, 400, { error: 'challenge must be 32-128 hex characters' });
+      return sendJson(res, 200, { app: 'job-agent', proof: apiToken ? instanceProof(apiToken, challenge) : null });
+    }
+
+    // ── Explore JobAgent ───────────────────────────────────────────────────
+    // The product overview and technical deep dive is a static page under
+    // /assets/explore/, served by serveStatic like any other asset. This is
+    // only the short address for it. It sits above the token check for the
+    // same reason static assets are exempt from it: the page is the app's own
+    // public code and shows no personal data.
+    if (readOnly && (path === '/explore' || path === '/explore/')) {
+      res.writeHead(302, { location: '/assets/explore/index.html' });
+      res.end();
+      return;
+    }
+
     // ── Access token (P1-5) ────────────────────────────────────────────────
     // Everything above stops web pages; this stops other programs and other
     // user accounts on the same computer. The launcher opens /?token=…, which
@@ -2008,6 +2115,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   scheduleFollowUpAlerts();
   scheduleEnrichment();
   reconcilePackets();
+  recoverInterruptedFills();
 
   return {
     server, runState, inFlight, flushTracker, browserAvailableCached, closeWorkspaceDbs, apiToken,

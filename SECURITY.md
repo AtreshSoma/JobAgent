@@ -31,9 +31,14 @@ hosted for other people.
 - The optional browser extension talks only to `127.0.0.1`, injects nothing into
   pages until you click it, and needs a 32+ byte shared key
   (`JOB_AGENT_EXTENSION_KEY`).
-- The optional LLM assist is off by default. When on, it receives only the public
-  job description and title, and every phrase it returns must appear verbatim in
-  that posting.
+- The optional LLM assist is off by default. Requirement extraction, the only
+  thing `LLM_ASSIST=on` does by itself, receives only the public job description
+  and title, and every phrase it returns must appear verbatim in that posting.
+  Features with their own switch send more: resume rewrites, refine and grounded
+  cover letters send resume bullets; drafting a reply sends resume bullets and the
+  email being answered; `INBOX_LLM=on` sends up to 6,000 characters of an email
+  body to classify it. Contact details, EEO answers and salary expectations are
+  not sent. A local provider (Ollama, LM Studio) keeps all of it on your computer.
 - Nothing is submitted to an employer unless you opt in for that run; the
   default mode is `DRY_RUN`.
 

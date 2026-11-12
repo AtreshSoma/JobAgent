@@ -91,6 +91,22 @@ export function freezeVersions(folder, { reason = 'submitted', now = new Date() 
 }
 
 /**
+ * Undo a freeze: the person said the submission did not go through, so the
+ * documents were not sent after all and may be changed again.
+ * @returns {boolean} true when a freeze was removed
+ */
+export function unfreezeVersions(folder) {
+  if (!folder) return false;
+  const manifest = readManifest(folder);
+  if (!manifest.frozenAt) return false;
+  for (const v of manifest.versions) delete v.frozen;
+  delete manifest.frozenAt;
+  delete manifest.frozenBecause;
+  writeManifest(folder, manifest);
+  return true;
+}
+
+/**
  * Put version `n` back as the current documents, recorded as a new version.
  * @param {string} folder
  * @param {number} n

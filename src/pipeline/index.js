@@ -30,7 +30,7 @@ import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.
 import { sourceKind } from '../search/sources.js';
 import { createSourceTimings } from '../search/sourceTimings.js';
 import { createDetailCache } from '../search/detailBudget.js';
-import { applyExclusions } from '../scoring/exclusionFilter.js';
+import { applyExclusions, candidateNeedsSponsorship } from '../scoring/exclusionFilter.js';
 import { profileVocabularyFor, classifyTitleFit } from '../scoring/profileFit.js';
 import { postedPay } from '../scoring/searchConstraints.js';
 import { postedOnAgrees, locationFromExternalPath } from '../search/adapters/workday.js';
@@ -474,8 +474,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     });
     reportRows.push(row);
 
-    const neverRead = job.rawMetadata?.summaryOnly === true;
-    const unread = tier === TIERS.DISCARD && neverRead && titleVerdict !== 'reject';
+    const unread = isUnjudgeable(job, tier, titleVerdict);
     // ONE write per job. The unread case below used to write the scored verdict
     // and then immediately overwrite it; the final fields are decided first.
     const verdict = {
@@ -497,7 +496,9 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       ...payFields(job),
       ...(unread ? {
         status: 'needs_description',
-        discard_reason: 'not judged: the description was never fetched (summary only)',
+        discard_reason: job.rawMetadata?.summaryOnly === true
+          ? 'not judged: the description was never fetched (summary only)'
+          : 'not judged: the posting has no description to judge fit by',
         tier: null,
       } : {}),
     };
@@ -618,7 +619,9 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   // Order every actionable list freshest-first (last-24h > sponsorship > score >
   // direct ATS) so queues, artifacts, and console summaries surface the newest,
   // most-feasible roles at the top.
-  const rankByFreshness = compareJobsForQueue(now);
+  const rankByFreshness = compareJobsForQueue(now, {
+    ignoreSponsorship: candidateNeedsSponsorship(config.candidate) === false,
+  });
   scoredJobs.sort(rankByFreshness);
   scored.sort(rankByFreshness);
   queued.sort(rankByFreshness);
@@ -987,6 +990,29 @@ function defaultWrite(dir, path, text) {
   writeFileAtomic(path, text, 'utf8');
 }
 /** Statuses owned by discovery/scoring — the only ones the guard applies to. */
+/**
+ * A description that says nothing: empty, or a pointer elsewhere ("See our
+ * website for details", "N/A"). With no skills to find, the reachable score is
+ * about 50, so a perfect role read as a weak one (audit 2026-11-11: an ICU
+ * nurse post with an empty description scored 50, Near miss, 40 points below
+ * the same post with its text). A SHORT but real description is still judged.
+ */
+const PLACEHOLDER_DESCRIPTION = /^(?:n\/?a|tbd|tba|none|-+|\.+)$|\b(?:see|visit|view|refer\s+to)\b[^.]{0,40}\b(?:website|site|link|posting|careers?\s+page|url)\b/i;
+
+/**
+ * Should this verdict be recorded as "not judged yet" instead? Only a low
+ * verdict (Near miss or Discard) on a posting never read in full, or whose
+ * description is empty or a placeholder, and never one whose TITLE already
+ * rules it out.
+ */
+export function isUnjudgeable(job, tier, titleVerdict) {
+  if (titleVerdict === 'reject') return false;
+  if (tier !== TIERS.DISCARD && tier !== TIERS.NEAR_MISS) return false;
+  if (job?.rawMetadata?.summaryOnly === true) return true;
+  const text = String(job?.jdText ?? '').trim();
+  return text === '' || (text.length < 80 && PLACEHOLDER_DESCRIPTION.test(text));
+}
+
 const DISCOVERY_STATUSES = new Set(['discarded', 'scored', 'unknown_date_review', 'needs_description']);
 
 /**
@@ -1407,7 +1433,7 @@ export function rescoreStale({ db, config, now = new Date(), fingerprint, limit 
       const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel });
       const titleVerdict = vocab ? classifyTitleFit(job.title, vocab).verdict : null;
       const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
-      const unread = tier === TIERS.DISCARD && job.rawMetadata.summaryOnly && titleVerdict !== 'reject';
+      const unread = isUnjudgeable(job, tier, titleVerdict);
       if (unread) out.unread += 1;
       else if (tier === TIERS.DISCARD && !keepBelow) out.discarded += 1;
       fields = {
@@ -1419,7 +1445,9 @@ export function rescoreStale({ db, config, now = new Date(), fingerprint, limit 
         discard_reason: tier === TIERS.DISCARD && !keepBelow ? 'below near-miss threshold' : null,
         ...(unread ? {
           status: 'needs_description',
-          discard_reason: 'not judged: the description was never fetched (summary only)',
+          discard_reason: job.rawMetadata?.summaryOnly
+            ? 'not judged: the description was never fetched (summary only)'
+            : 'not judged: the posting has no description to judge fit by',
           tier: null,
         } : {}),
       };
