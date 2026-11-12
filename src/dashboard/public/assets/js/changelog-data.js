@@ -20,10 +20,12 @@ export const CHANGELOG_GROUPS = Object.freeze([
 export const CHANGELOG = Object.freeze([
   {
     date: '2026-11-12',
-    summary: 'Auto-fill completes far more of each application, asks you only what it cannot answer, and never acts on an approval you did not give.',
+    summary: 'Auto-fill completes far more of each application, asks you only what it cannot answer, and never acts on an approval you did not give. And Explore JobAgent shows how all of it works.',
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       new: [
+        'Explore JobAgent, the compass icon in the header: follow one example posting from discovery to your Submit, and clear each of the two signals yourself.',
+        'How it works, inside Explore: a system map you can follow line by line, a score lab that shows how a score is reached, and where each part lives in the code.',
         'Unapprove, in a job\'s detail: take an approval back before anything is filled.',
         '"I submitted it myself" on a job whose auto-fill stopped, and then "Yes, it went through" or "No, it didn\'t" to settle it. No puts the job back so you can try again.',
         'See what stopped it, on Today and in a job\'s detail, goes straight to the reason an auto-fill stopped.',

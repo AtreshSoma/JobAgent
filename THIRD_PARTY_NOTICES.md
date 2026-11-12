@@ -10,10 +10,12 @@ copyrights and licenses. The root license does not relicense those components.
 | --- | --- | --- |
 | `src/dashboard/public/assets/fonts/alex-brush.woff2` | Copyright 2011 The Alex Brush Project Authors | [SIL OFL 1.1](src/dashboard/public/assets/fonts/AlexBrush-OFL.txt) |
 | `src/dashboard/public/assets/fonts/PlayfairDisplay-BoldItalic.woff2` | Copyright 2017 The Playfair Display Project Authors; Reserved Font Name: Playfair Display | [SIL OFL 1.1](src/dashboard/public/assets/fonts/PlayfairDisplay-OFL.txt) |
+| `src/dashboard/public/assets/fonts/archivo-variable.woff2` | Copyright 2020 The Archivo Project Authors | [SIL OFL 1.1](src/dashboard/public/assets/fonts/Archivo-OFL.txt) |
 
 Font names and copyright statements were checked against the bundled WOFF2
-metadata. Upstream projects: [Alex Brush](https://github.com/googlefonts/alex-brush)
-and [Playfair Display](https://github.com/clauseggers/Playfair-Display).
+metadata. Upstream projects: [Alex Brush](https://github.com/googlefonts/alex-brush),
+[Playfair Display](https://github.com/clauseggers/Playfair-Display)
+and [Archivo](https://github.com/Omnibus-Type/Archivo) (latin subset of the variable font, from `@fontsource-variable/archivo` 5.3.0).
 Keep the corresponding OFL notice with each redistributed font. OFL fonts
 remain under OFL; using them does not change the license of the application
 or of screenshots made with them. See the [OFL FAQ](https://openfontlicense.org/ofl-faq/).

@@ -551,6 +551,8 @@ button.icon { padding: 4px 7px; }
 @media (max-width: 480px) {
   .theme-toggle { display: none; }
   .only-narrow { display: flex !important; }
+  /* The Explore link steps out with it; its twin is in the Profile menu too. */
+  .explore-link { display: none; }
   .actions-sep { display: none; }
 }
 .spacer { flex: 1 1 auto; }
@@ -3052,6 +3054,11 @@ code.jobid {
    global anchor colour + underline made "Open PDF ↗" read as body copy. */
 a.btn { text-decoration: none; color: var(--text); }
 a.btn:hover { color: var(--text); }
+/* An icon-only LINK (the header's Explore link) is as quiet as the icon
+   buttons beside it; without this the rule above made it the brightest. */
+a.btn.iconbtn { color: var(--text-dim); }
+a.btn.iconbtn:hover { color: var(--text); }
+a.btn.iconbtn:active { transform: scale(.97); }
 
 /* ─────────────────── next actions ───────────────────
    One promoted action, then a scannable ranked list, then tool notices. The

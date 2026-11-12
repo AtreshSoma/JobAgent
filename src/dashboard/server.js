@@ -2024,6 +2024,18 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       return sendJson(res, 200, { app: 'job-agent', proof: apiToken ? instanceProof(apiToken, challenge) : null });
     }
 
+    // ── Explore JobAgent ───────────────────────────────────────────────────
+    // The product overview and technical deep dive is a static page under
+    // /assets/explore/, served by serveStatic like any other asset. This is
+    // only the short address for it. It sits above the token check for the
+    // same reason static assets are exempt from it: the page is the app's own
+    // public code and shows no personal data.
+    if (readOnly && (path === '/explore' || path === '/explore/')) {
+      res.writeHead(302, { location: '/assets/explore/index.html' });
+      res.end();
+      return;
+    }
+
     // ── Access token (P1-5) ────────────────────────────────────────────────
     // Everything above stops web pages; this stops other programs and other
     // user accounts on the same computer. The launcher opens /?token=…, which
