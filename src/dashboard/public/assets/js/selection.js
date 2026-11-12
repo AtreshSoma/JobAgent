@@ -199,7 +199,9 @@ export async function batchDecide(decision) {
     scheduleRefresh(0);
     const done = new Set(result.updated);
     const closes = decision === 'rejected' || decision === 'archived';
-    offerUndo(`Marked ${result.updated.length} as ${decision}`,
+    offerUndo(decision === 'clear'
+      ? `Cleared the decision on ${result.updated.length} job(s)`
+      : `Marked ${result.updated.length} as ${decision}`,
       new Map([...before].filter(([id]) => done.has(id))),
       closes ? { reasonFor: { jobIds: [...done], decision } } : {});
   } catch (err) { toast(err.message, 'bad'); }

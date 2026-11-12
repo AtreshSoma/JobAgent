@@ -187,7 +187,8 @@ export async function checkLink(id) {
  */
 export function announceDecision(id, decision, wasDecision) {
   if (decision !== 'rejected' && decision !== 'archived') {
-    toast(decision === 'clear' ? 'Decision cleared' : `Marked ${decision}`, 'good');
+    const cleared = { shortlisted: 'Removed from your shortlist', archived: 'Unarchived', rejected: 'No longer rejected' };
+    toast(decision === 'clear' ? (cleared[wasDecision] ?? 'Decision cleared') : `Marked ${decision}`, 'good');
     return;
   }
   const job = state.known.get(id);

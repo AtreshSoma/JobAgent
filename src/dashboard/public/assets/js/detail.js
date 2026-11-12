@@ -334,8 +334,16 @@ export function detailSections(job) {
   // down — Shortlist sat in both. It moves into "More actions", so it is
   // still reachable from the same place as every other decision.
   const offered = new Set([...next.querySelectorAll('[data-action="decide"]')].map((b) => b.dataset.decision));
+  // THE WAY BACK, NAMED AND IN VIEW. Undoing a decision was a generic "Clear"
+  // under More actions, so "how do I unarchive this?" or "how do I take it off
+  // my shortlist?" had no visible answer (Reject looked like the only way out,
+  // and it is a different decision). The job's current decision is replaced by
+  // the button that undoes it; with no decision there is nothing to undo.
+  const current = job.userDecision ?? null;
   for (const [decision, label, visible] of [['shortlisted', '★ Shortlist', true], ['rejected', '✕ Reject', true],
-    ['archived', 'Archive', false], ['clear', 'Clear', false]]) {
+    ['archived', 'Archive', false], ['clear', UNDO_LABEL[current], true]]) {
+    if (decision === current) continue;
+    if (decision === 'clear' && !UNDO_LABEL[current]) continue;
     (visible && !offered.has(decision) ? actions : more).append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
     }));
@@ -900,6 +908,13 @@ export function pageLabel(tailoring) {
   }
   return null;
 }
+
+/** The button that undoes each decision, in the words of what it undoes. */
+export const UNDO_LABEL = Object.freeze({
+  shortlisted: 'Remove from shortlist',
+  archived: 'Unarchive',
+  rejected: 'Undo reject',
+});
 
 /** Hover text on a Prepare control while template text blocks it. */
 const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. The box below lists each value and where to fix it.';

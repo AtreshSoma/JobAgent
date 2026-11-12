@@ -635,6 +635,10 @@ export const BOARD_VIEWS = Object.freeze({
   // holds both. `blocked` stays as it was: "Unblock applications" counts it.
   needs_you: (r) => VIEW_BLOCKED.has(r.appStatus) || r.appStatus === APP_STATUS.SUBMIT_UNVERIFIED,
   submitted: (r) => r.appStatus === APP_STATUS.SUBMITTED,
+  // Archived jobs had no tab: they were reachable only through the status
+  // dropdown, so archiving looked like deleting, with no visible way back. This
+  // is the one view that shows CLOSED rows, so it is left out of OPEN_ONLY_VIEWS.
+  archived: (r) => r.appStatus === APP_STATUS.ARCHIVED,
 });
 
 /**
@@ -649,7 +653,7 @@ const BOARD_VIEW_ENTRIES = Object.entries(BOARD_VIEWS);
  * row, so a request scoped to one of them may read the cheap open-only base set
  * (see openBoardRows) instead of the whole table.
  *
- * Every view above qualifies today: each either tests `!CLOSED_SET.has(...)`
+ * Every view above except `archived` qualifies: each either tests `!CLOSED_SET.has(...)`
  * directly or matches only specific non-closed statuses. That is a property of
  * the predicates, not a promise about them — so `dashboardFilters` has a test
  * that drives every listed view against the full cartesian product of the fields
@@ -657,7 +661,9 @@ const BOARD_VIEW_ENTRIES = Object.entries(BOARD_VIEWS);
  * combination matches. Add a view that can surface a closed row and either keep
  * it out of this set or that test will catch it.
  */
-export const OPEN_ONLY_VIEWS = new Set(Object.keys(BOARD_VIEWS));
+/** Views that exist to show CLOSED rows. Every view is in exactly one of these two sets. */
+export const CLOSED_ROW_VIEWS = new Set(['archived']);
+export const OPEN_ONLY_VIEWS = new Set(Object.keys(BOARD_VIEWS).filter((key) => !CLOSED_ROW_VIEWS.has(key)));
 
 /** Count rows per board view (each equals what clicking that tab shows). */
 export function countViews(rows = []) {
