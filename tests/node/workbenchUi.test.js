@@ -602,8 +602,11 @@ describe('run state and recovery', () => {
 
   it('groups the big counts a discovery run produces', () => {
     // "Found 14461" is materially harder to read than "Found 14,461".
-    expect(app).toContain('fmt(counters.jobs_found)');
-    expect(app).not.toMatch(/\$\{counters\.jobs_found \?\? 0\}/);
+    // The seen count is read once into `seen` (so "N new (all of them)" can
+    // compare it with the new count) and is only ever printed through fmt().
+    expect(app).toMatch(/const seen = Number\(counters\.jobs_found \?\? 0\)/);
+    expect(app).toContain('fmt(seen)');
+    expect(app).not.toMatch(/\$\{seen\}|\$\{counters\.jobs_found \?\? 0\}/);
   });
 
   it('leads the discovery summary with what was NEW, not the total seen', () => {
