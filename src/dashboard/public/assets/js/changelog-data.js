@@ -21,24 +21,6 @@ export const CHANGELOG = Object.freeze([
   {
     version: 'v0.2.1',
     date: '2026-11-12',
-    summary: 'Your saved answers now fill your work authorization and cover-letter details, and a refused Prepare says why.',
-    safety: 'Nothing is submitted without your review. That has not changed.',
-    groups: {
-      improved: [
-        'Your work authorization and the cover letter\'s years of experience and sponsorship sentence now come from your Saved answers (work_authorization, years_experience). There is nothing to edit by hand, and a value you wrote yourself is never replaced.',
-        'When something is still example text, Prepare resume is turned off and the job\'s Tailored resume box lists each value and the answer that fixes it. The box clears as soon as you save that answer.',
-        'A Prepare that fails for any other reason now keeps its reason in that job\'s Tailored resume box until you prepare it again.',
-        'Archived jobs have their own Archived tab on the Jobs page.',
-        'A job you decided on shows the way back in plain view: Unarchive, Remove from shortlist, or Undo reject. To undo several at once, select them and choose Clear decision.',
-      ],
-      fixed: [
-        'Prepare no longer refuses every job when your Saved answers are filled in but older copies of the same facts still held example text.',
-        'Find jobs no longer stops with "cannot start a transaction within a transaction" on Node 22.13.',
-      ],
-    },
-  },
-  {
-    date: '2026-11-12',
     summary: 'Auto-fill completes far more of each application, asks you only what it cannot answer, and never acts on an approval you did not give. And Explore JobAgent shows how all of it works.',
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
@@ -64,6 +46,11 @@ export const CHANGELOG = Object.freeze([
         '"Sr." and "Senior", or "Corp" and "Corporation", are now seen as the same job when spotting duplicates.',
         'Tab counts change as soon as you decide on a job, and colours and screen-reader labels pass an accessibility check.',
         'The launcher only shares your dashboard access link with a JobAgent it can confirm is yours.',
+        'Your work authorization and the cover letter\'s years of experience and sponsorship sentence now come from your Saved answers (work_authorization, years_experience). There is nothing to edit by hand, and a value you wrote yourself is never replaced.',
+        'When something is still example text, Prepare resume is turned off and the job\'s Tailored resume box lists each value and the answer that fixes it. The box clears as soon as you save that answer.',
+        'A Prepare that fails for any other reason now keeps its reason in that job\'s Tailored resume box until you prepare it again.',
+        'Archived jobs have their own Archived tab on the Jobs page.',
+        'A job you decided on shows the way back in plain view: Unarchive, Remove from shortlist, or Undo reject. To undo several at once, select them and choose Clear decision.',
       ],
       fixed: [
         'A site\'s display-language picker no longer stops auto-fill on the job description with "resume upload input not found".',
@@ -78,6 +65,8 @@ export const CHANGELOG = Object.freeze([
         'Messages meant for screen readers are no longer mistaken for form errors.',
         'A job list made by a newer version of JobAgent is left untouched instead of being changed.',
         'On a phone, the System health panel no longer runs off the edge of the screen.',
+        'Prepare no longer refuses every job when your Saved answers are filled in but older copies of the same facts still held example text.',
+        'Find jobs no longer stops with "cannot start a transaction within a transaction" on Node 22.13.',
       ],
     },
   },

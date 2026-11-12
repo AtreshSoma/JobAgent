@@ -421,7 +421,9 @@ export function detailSections(job) {
     ['archived', 'Archive', false], ['clear', UNDO_LABEL[current], true]];
   for (const [decision, label, visible] of decisions) {
     if (decision === current) continue;
-    if (decision === 'clear' && !UNDO_LABEL[current]) continue;
+    // "Do this next" already offers the undo for a rejected/archived job, under
+    // the same name; a second copy hidden in More actions is only noise.
+    if (decision === 'clear' && (!UNDO_LABEL[current] || offered.has('clear'))) continue;
     (visible && !offered.has(decision) ? actions : more).append(el('button', {
       class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': decision, text: label,
     }));
@@ -901,7 +903,7 @@ export function actionPlan(job) {
   if (job.appStatus === 'rejected' || job.appStatus === 'archived') {
     return {
       text: `You ${job.appStatus} this job, so nothing will be filled or sent. Restore it if you changed your mind.`,
-      buttons: [el('button', { class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'clear', text: '↺ Restore' })],
+      buttons: [el('button', { class: 'small', 'data-action': 'decide', 'data-id': job.id, 'data-decision': 'clear', text: `↺ ${UNDO_LABEL[job.appStatus] ?? 'Restore'}` })],
     };
   }
   if (job.linkState === 'closed') {

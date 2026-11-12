@@ -70,13 +70,12 @@ export function prettyResult(result) {
   // "not finding new jobs" while it was in fact working.
   if (result.phase === 'discover') {
     const isNew = Number(counters.jobs_new ?? 0);
-    const seen = Number(counters.jobs_found ?? 0);
     // When every posting seen was new (a first run, or a fresh database) the
     // two figures are identical, and "52,474 new · 52,474 seen" read as a
     // duplicated stat. Say it once.
-    const head = seen > 0 && seen === isNew
+    const head = Number(counters.jobs_found ?? 0) > 0 && Number(counters.jobs_found) === isNew
       ? `${fmt(isNew)} new (all of them)`
-      : `${fmt(isNew)} new · ${fmt(seen)} seen`;
+      : `${fmt(isNew)} new · ${fmt(counters.jobs_found)} seen`;
     return `${head} · scored ${fmt(counters.jobs_scored)}`;
   }
   if (result.phase === 'score') return `Re-scored ${fmt(counters.jobs_rescored ?? counters.jobs_scored)}`;
