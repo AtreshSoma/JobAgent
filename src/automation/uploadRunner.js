@@ -175,8 +175,16 @@ export function classifyFileInput(text) {
 function collectFileInputs(hints) {
   const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
   const out = [];
+  // A site's chat assistant has its own hidden "Attachment" file input. It is
+  // never a form slot, and as the page's only file input it was chosen for the
+  // resume; the widget cleared the file and the run reported "did not remain
+  // attached" (Oracle Recruiting's email step, 2026-11-13).
+  const CHAT_WIDGET = '[class*="oda-chat"], [class*="chatbot" i], [class*="chat-widget" i], [id*="chatbot" i], [id*="chat-widget" i]';
+  // `index` stays the input's position among ALL file inputs on the page: the
+  // `nth=` selector and the slot reader both count that way.
   const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
   inputs.forEach((el, index) => {
+    if (el.closest(CHAT_WIDGET)) return;
     const parts = [];
     // Rippling wraps the input in a dropzone <label> whose own text is only
     // "Drop or select (.doc / .docx / .pdf)"; the field's name ("Résumé",
