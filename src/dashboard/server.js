@@ -107,6 +107,7 @@ import { LOOPBACK_HOSTNAMES, MAX_MASTER_RESUME_BYTES, acceptsGzip, batchJobIds, 
 import { handleExtensionRoutes } from './routes/extensionRoutes.js';
 import { handleBoardRoutes } from './routes/boardRoutes.js';
 import { handleMasterResumeRoutes } from './routes/masterResumeRoutes.js';
+import { handleMaterialsRoutes } from './routes/materialsRoutes.js';
 import { handleProfileRoutes } from './routes/profileRoutes.js';
 import { handleSystemRoutes } from './routes/systemRoutes.js';
 import { handleBatchRoutes } from './routes/batchRoutes.js';
@@ -125,6 +126,7 @@ const API_ROUTE_MODULES = [
   handleInboxRoutes,
   handleBoardRoutes,
   handleMasterResumeRoutes,
+  handleMaterialsRoutes,
   handleProfileRoutes,
   handleSystemRoutes,
   handleBatchRoutes,

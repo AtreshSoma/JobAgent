@@ -1159,6 +1159,17 @@ export function resumeCard(job) {
   links.append(el('a', {
     class: 'btn small', href: `/api/jobs/${encodeURIComponent(job.id)}/resume?format=docx`, text: 'Download DOCX',
   }));
+  if (packet?.resumeTailored && job.resumeDocxPath) {
+    // Before and after, line by line: what moved, what was left out, and
+    // whether any of it mattered. Left-out lines can be kept from here.
+    const omittedCount = (packet?.tailoring?.changes ?? [])
+      .find((c) => c.type === 'fit_to_page_budget')?.evidence?.[0]?.omitted?.length ?? 0;
+    links.append(el('button', {
+      class: 'small', 'data-action': 'open-resume-diff', 'data-id': job.id,
+      title: 'See every difference from your master resume, and keep anything that was left out',
+      text: omittedCount ? `Compare · ${omittedCount} left out` : 'Compare with master',
+    }));
+  }
   links.append(el('button', {
     class: 'small', 'data-action': 'prepare-one', 'data-id': job.id,
     title: blocked ? PREPARE_BLOCKED_TITLE : 'Regenerate the tailored resume and refresh this audit', text: '↻ Re-tailor',
@@ -1211,15 +1222,21 @@ export function packetSection(packet, jobId = null) {
       wrap.append(el('h3', { text: `Left out to fit the page limit (${trimmed.length})` }));
       wrap.append(el('div', {
         class: 'evidence-note',
-        text: 'Whole bullets from your oldest roles, chosen as the least relevant to this '
-          + 'posting. Nothing was shortened or reworded. Every role kept its dates and at '
-          + 'least one bullet.',
+        text: 'Whole bullets with the least relevance to this posting and no measured result, '
+          + 'oldest roles first. Nothing was shortened or reworded, and your current role\'s '
+          + 'evidence for required skills is never left out.',
       }));
       const omitted = el('ul', { class: 'change-list' });
       for (const entry of trimmed.slice(0, 8)) {
         omitted.append(el('li', { class: 'muted', text: entry.text }));
       }
       wrap.append(omitted);
+      if (jobId) {
+        wrap.append(el('button', {
+          type: 'button', class: 'small', 'data-action': 'open-resume-diff', 'data-id': jobId,
+          text: 'Compare and keep lines',
+        }));
+      }
     }
 
     if ((packet.tailoring.gaps ?? []).length) {
@@ -1300,27 +1317,51 @@ export function resumeChangeLabel(change = {}) {
     : label;
 }
 
-/** How the cover letter was written (P1-3): template, or grounded in the resume. */
+/**
+ * The job's cover letter: where its words came from, how it reads, and one
+ * click to read or edit it. When no letter was written for the job, a draft
+ * from the master cover letter is one click away instead.
+ */
 export function coverLetterSection(packet, jobId = null) {
   const grounding = packet.coverLetterGrounding;
-  if (!packet.coverLetterGenerated || !grounding) return null;
   const wrap = el('div', { class: 'cl-grounding' });
-  wrap.append(el('h3', { text: 'Cover letter' }));
+  if (!packet.coverLetterGenerated || !grounding) {
+    if (!jobId) return null;
+    wrap.append(el('h3', { text: 'Cover letter' }));
+    wrap.append(el('p', { class: 'muted', text: 'None was written for this job when it was prepared.' }));
+    wrap.append(el('div', { class: 'row-gap' },
+      el('button', { type: 'button', class: 'small', 'data-action': 'open-job-letter', 'data-id': jobId, text: 'Draft one' }),
+      el('button', { type: 'button', class: 'small ghost', 'data-action': 'open-master-letter', text: 'Master cover letter' })));
+    return wrap;
+  }
+  const head = el('div', { class: 'cl-head' }, el('h3', { text: 'Cover letter' }));
+  const q = grounding.quality;
+  if (q?.label) {
+    const tone = q.label === 'Strong' ? 'good' : q.label === 'Good' ? 'info' : 'warn';
+    head.append(el('span', { class: `chip ${tone}`, title: (q.issues ?? []).map((i) => i.message).join('\n') || 'No issues found', text: `${q.label} · ${q.words} words` }));
+  }
+  wrap.append(head);
+  const from = {
+    grounded: `Written from your resume: each of its ${grounding.paragraphs?.length ?? 0} paragraphs uses only lines it cites.`,
+    master: `Tailored from your master cover letter${grounding.master?.depth ? ` (${grounding.master.depth} length for this match)` : ''}.`,
+  }[grounding.mode] ?? (grounding.fallbackReason
+    ? `Written from the basic template, because ${grounding.fallbackReason}.`
+    : 'Written from the basic template. A master cover letter gives every job a fuller, more personal letter.');
+  wrap.append(el('p', { text: from }));
   if (grounding.mode === 'grounded') {
-    wrap.append(el('p', { text: `Written from your resume: each of its ${grounding.paragraphs?.length ?? 0} paragraphs uses only lines it cites.` }));
     const ul = el('ul', { class: 'change-list' });
     for (const p of grounding.paragraphs ?? []) {
       ul.append(el('li', {}, el('span', { text: p.text }), el('span', { class: 'faint', text: ` (backed by ${p.evidence.length} resume line(s))` })));
     }
     wrap.append(ul);
-  } else {
-    wrap.append(el('p', { text: grounding.fallbackReason
-      ? `Written from your cover-letter template, because ${grounding.fallbackReason}.`
-      : 'Written from your cover-letter template.' }));
   }
   if (grounding.dropped?.length) {
     wrap.append(el('p', { class: 'muted', text: `${grounding.dropped.length} suggested paragraph(s) were left out because your resume does not back them.` }));
   }
+  const actions = el('div', { class: 'row-gap' });
+  if (jobId) actions.append(el('button', { type: 'button', class: 'small', 'data-action': 'open-job-letter', 'data-id': jobId, text: 'Read and edit' }));
+  if (grounding.mode !== 'master') actions.append(el('button', { type: 'button', class: 'small ghost', 'data-action': 'open-master-letter', text: 'Master cover letter' }));
+  wrap.append(actions);
   if (packet.coverLetterDocxPath) {
     wrap.append(el('p', { class: 'faint', text: `Also saved as a Word document: ${String(packet.coverLetterDocxPath).split(/[\\/]/).pop()}` }));
   }

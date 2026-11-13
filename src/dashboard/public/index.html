@@ -91,23 +91,26 @@
         aria-label="Activity, data quality and reports" title="Activity, data quality and reports">
         <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></svg>
       </button>
+      <!-- What HAPPENED, and what you can take away. No section labels: two
+           groups and a rule say it. Optional tools (ranking by meaning, email
+           replies) are listed only once they are set up or have something to
+           show (GET /api/features); an item that could only open "this is
+           off" was clutter. -->
       <div class="menu-pop" id="activityMenu" role="menu" aria-label="Activity, data quality and reports">
-        <div class="menu-label" role="presentation">Activity</div>
         <button role="menuitem" data-action="open-runs">Run history</button>
         <button role="menuitem" data-action="open-data-quality"
-          title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Discovery and data quality</button>
+          title="How long jobs stay on your board, reading missing descriptions, and why jobs were filtered out.">Data quality</button>
         <button role="menuitem" data-action="open-health">System health</button>
-        <button role="menuitem" data-action="open-rerank"
-          title="Your top matches ranked by how close they are in meaning to your resume, next to their fit score.">Rank top matches by meaning</button>
-        <button role="menuitem" data-action="open-inbox"
+        <button role="menuitem" data-action="open-rerank" data-feature="rerank" hidden
+          title="Your top matches ranked by how close they are in meaning to your resume, next to their fit score.">Rank by meaning</button>
+        <button role="menuitem" data-action="open-inbox" data-feature="inbox" hidden
           title="Replies from employers about applications you submitted, read from your inbox without changing it.">Email replies</button>
         <hr role="separator">
-        <div class="menu-label" role="presentation">Reports and exports</div>
-        <button role="menuitem" data-action="open-reports">View reports</button>
-        <button role="menuitem" data-action="export-jobs">Export all jobs and scores (CSV)</button>
-        <button role="menuitem" data-action="export-tracker">Export application tracker (CSV)</button>
+        <button role="menuitem" data-action="open-reports">Reports</button>
+        <button role="menuitem" data-action="export-jobs" title="Every job with its scores, as a spreadsheet.">Export jobs <span class="mi-hint">CSV</span></button>
+        <button role="menuitem" data-action="export-tracker" title="Your applications and where each one stands, as a spreadsheet.">Export tracker <span class="mi-hint">CSV</span></button>
         <button role="menuitem" data-action="export-calendar"
-          title="Your follow-up reminders as a calendar file for Google Calendar, Outlook or Apple Calendar.">Export follow-ups to your calendar (.ics)</button>
+          title="Your follow-up reminders as a calendar file for Google Calendar, Outlook or Apple Calendar.">Export follow-ups <span class="mi-hint">ICS</span></button>
         <button role="menuitem" data-action="open-email-jobs"
           title="An email draft with links to the jobs you are viewing, or the ones you selected.">Email these jobs…</button>
       </div>
@@ -122,38 +125,36 @@
              dashboard is searching as, visible from every screen. -->
         <span class="avatar" id="profileAvatar" aria-hidden="true" hidden></span>
       </button>
+      <!-- Who you are searching as, then your materials, then two utilities.
+           People are rows: the active one is ticked, the others switch on a
+           click, and each has its own quiet remove (also the Delete key).
+           "Add profile" closes the list. No section labels: the avatars and
+           the rules carry the grouping. Filled by profiles.js. -->
       <div class="menu-pop" id="accountMenu" role="menu" aria-label="Profile, resume and preferences">
-        <!-- Switching people, one click from anywhere. Filled by profiles.js
-             and shown only when more than one profile is saved. -->
-        <div class="menu-label" role="presentation" id="profileMenuLabel" hidden>Searching as</div>
-        <div id="profileMenuItems" role="group" aria-labelledby="profileMenuLabel"></div>
+        <div id="profileMenuItems" class="pf-menu-list" role="group" aria-label="Profiles"></div>
         <button role="menuitem" class="pf-add-item" data-action="open-add-profile"
           title="Add another person's job search. Each person gets their own jobs, resume and applications.">
           <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 5v14M5 12h14"/></svg>
-          Add profile…
-        </button>
-        <!-- Its pair. Shown once there is someone besides the active person to
-             remove; the dialog it opens says what happens to their files. -->
-        <button role="menuitem" class="pf-remove-item" data-action="open-remove-profile" hidden
-          title="Remove a person's job search from this computer. Nothing is erased: their files are kept.">
-          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M5 12h14"/></svg>
-          Remove profile…
+          Add profile
         </button>
         <hr role="separator" id="profileMenuSep">
-        <div class="menu-label" role="presentation">Your materials</div>
-        <button role="menuitem" data-action="open-master"
-          title="View the master resume tailoring reads, download it to edit, or upload a new version.">Master resume</button>
-        <button role="menuitem" data-action="open-profile"
-          title="The name, contact details and links the form filler types on every application, plus how it answers the questions forms ask.">Application profile</button>
-        <button role="menuitem" data-action="open-documents">Resume library</button>
+        <div role="group" aria-label="Your materials">
+          <button role="menuitem" data-action="open-master"
+            title="The resume every tailored version is built from: view it, download it to edit, or upload a new version.">Master resume</button>
+          <button role="menuitem" data-action="open-master-letter"
+            title="Your cover letter in your own words. Each job gets a copy tailored from it.">Master cover letter</button>
+          <button role="menuitem" data-action="open-profile"
+            title="The name, contact details and links the form filler types on every application, plus how it answers the questions forms ask.">Application profile</button>
+          <button role="menuitem" data-action="open-documents"
+            title="Every resume tailored for a job, newest first.">Tailored resumes</button>
+        </div>
         <hr role="separator">
-        <div class="menu-label" role="presentation">Preferences</div>
-        <!-- The header's theme button gives way on a phone; this keeps the
-             choice one tap away there. Hidden items are skipped by the
+        <!-- The header's theme and Explore buttons give way on a phone; these
+             keep them one tap away there. Hidden items are skipped by the
              menu's arrow keys (menus.js filters on offsetParent). -->
         <button role="menuitem" class="only-narrow" data-action="toggle-theme">Switch light or dark</button>
-        <button role="menuitem" data-action="open-keys">Keyboard shortcuts</button>
         <a role="menuitem" class="btn only-narrow" href="/assets/explore/index.html" target="_blank" rel="noopener">Explore JobAgent</a>
+        <button role="menuitem" data-action="open-keys" aria-keyshortcuts="?">Keyboard shortcuts <kbd class="mi-hint">?</kbd></button>
       </div>
     </span>
 
@@ -895,6 +896,55 @@
     <span class="grow-1" id="masterMsg"></span>
     <button class="small" data-action="close-dialog">Close</button>
   </div>
+</dialog>
+
+<!-- The master cover letter: read, write, upload, check, try on a job, and go
+     back to any earlier version. The letter is the main column; the aside is
+     quiet support (quality, a try-out, history) and stacks under it on phones. -->
+<dialog id="dlgLetter" class="sheet lt-dialog" aria-labelledby="dlgLetterTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgLetterTitle">Master cover letter</h2>
+      <div class="muted subtle-sub">Written once in your words. Every job gets its own copy, tailored from it.</div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="letterBody"></div>
+  <div class="dlg-foot">
+    <input type="file" id="letterFile" accept=".docx,.txt,.md,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+    <span class="grow-1" id="letterMsg" role="status"></span>
+    <button type="button" class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<!-- One job's cover letter: read, edit, rebuild from the master, copy. -->
+<dialog id="dlgJobLetter" class="sheet lt-dialog" aria-labelledby="dlgJobLetterTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgJobLetterTitle">Cover letter</h2>
+      <div class="muted subtle-sub" id="dlgJobLetterSub"></div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="jobLetterBody"></div>
+  <div class="dlg-foot">
+    <span class="grow-1" id="jobLetterMsg" role="status"></span>
+    <button type="button" class="small" data-action="close-dialog">Close</button>
+  </div>
+</dialog>
+
+<!-- Master resume vs this job's tailored resume, line by line. Left-out lines
+     can be kept for the next tailoring. -->
+<dialog id="dlgResumeDiff" class="sheet rd-dialog" aria-labelledby="dlgResumeDiffTitle">
+  <div class="dlg-head">
+    <div>
+      <h2 id="dlgResumeDiffTitle">What changed from your master resume</h2>
+      <div class="muted subtle-sub" id="dlgResumeDiffSub"></div>
+    </div>
+    <button type="button" class="small ghost dlg-close" data-action="close-dialog" aria-label="Close"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+  <div class="dlg-body" id="resumeDiffBody"></div>
+  <div class="dlg-foot" id="resumeDiffFoot"></div>
 </dialog>
 
 <!-- The two personal config files the form filler reads, edited in place. Each

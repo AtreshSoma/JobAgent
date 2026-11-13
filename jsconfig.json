@@ -33,5 +33,10 @@
     "src/resume/claimVerifier.js",
     "src/llm/task.js",
     "src/apply/liveVerification.js",
-    "src/apply/letterMode.js"]
+    "src/apply/letterMode.js",
+    "src/apply/letterQuality.js",
+    "src/apply/letterTailor.js",
+    "src/apply/masterLetter.js",
+    "src/resume/keepBullets.js",
+    "src/resume/resumeDiff.js"]
 }

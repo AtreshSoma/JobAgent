@@ -52,6 +52,8 @@ import { composeGroundedLetter, letterSettings } from '../apply/groundedLetter.j
 import { recordVersion } from '../apply/documentVersions.js';
 import { letterModeFor } from '../apply/letterMode.js';
 import { acceptedRewritesFor } from '../resume/rewrites.js';
+import { keptBulletsFor } from '../resume/keepBullets.js';
+import { readMasterLetterText } from '../apply/masterLetter.js';
 import { LIFECYCLE, lifecycleForTier, isQueuedTier, isProtectedJobRow } from '../lifecycle.js';
 import { emptyCounters, writeAllArtifacts } from '../outputs.js';
 import { findPlaceholders } from '../config/placeholders.js';
@@ -794,6 +796,10 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
         // Rewrites the person accepted for this job (P1-2); verified against
         // the master resume, so the tailor can apply exactly these.
         acceptedRewrites: db ? acceptedRewritesFor(db, job.id) : [],
+        // Bullets the person pinned for this job: never omitted to fit.
+        keepBullets: db ? keptBulletsFor(db, job.id) : [],
+        // config.runtime.resumeMaxPages: unset = 2, 0 = never omit to fit.
+        maxPages: config?.runtime?.resumeMaxPages,
       },
       deps,
     });
@@ -869,13 +875,17 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     coverLetter: config.coverLetter,
     candidate: config.candidate,
     humanizerPatterns: config.humanizerPatterns,
+    // The person's master cover letter, when they have written one: it is the
+    // source of the letter's voice and claims (letterTailor.js).
+    masterLetter: deps.masterLetterText ?? (config.root ? readMasterLetterText(config.root) : ''),
     ...(grounded?.ok ? { compose: () => grounded.body } : {}),
   });
   if (cover.generated) {
     cover.grounding = grounded?.ok
       ? { mode: 'grounded', task: grounded.provenance?.task ?? null, model: grounded.provenance?.model ?? null,
         paragraphs: grounded.paragraphs, dropped: grounded.dropped ?? [] }
-      : { mode: 'template', fallbackReason: templateChosen ? 'you chose your template for this job' : (grounded ? grounded.reason : null), dropped: grounded?.dropped ?? [] };
+      : { mode: cover.source === 'master' ? 'master' : 'template', fallbackReason: templateChosen ? 'you chose your template for this job' : (grounded ? grounded.reason : (cover.master && !cover.master.used ? cover.master.reason : null)), dropped: grounded?.dropped ?? [], master: cover.master ?? null };
+    cover.grounding.quality = cover.quality ?? null;
   }
   let coverLetterPath = null;
   if (cover.generated) {

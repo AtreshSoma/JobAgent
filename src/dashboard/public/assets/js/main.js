@@ -33,9 +33,10 @@ import { refreshAll } from './mutations.js';
 import { loadHealthChecks, setView } from './today.js';
 import { syncSelectionBar, toggleSelect } from './selection.js';
 import { uploadMasterResume } from './master.js';
+import { uploadMasterLetter } from './letters.js';
 import { loadProfileFlag } from './profile.js';
 import { pollRun, scheduleBackgroundRefresh, setRunDetails } from './runs.js';
-import { syncBoardSearchAction } from './actions.js';
+import { loadFeatures, syncBoardSearchAction } from './actions.js';
 import { closeMainMenu } from './menus.js';
 import { installWorkspaceDrag } from './workspace.js';
 import { announcePendingSwitch, loadProfiles } from './profiles.js';
@@ -340,6 +341,9 @@ export function syncFilterSheetCount() {
 $('masterFile').addEventListener('change', (event) => {
   uploadMasterResume(event.target.files?.[0]);
 });
+$('letterFile').addEventListener('change', (event) => {
+  uploadMasterLetter(event.target.files?.[0]);
+});
 
 /* ───────────────────────────── boot ───────────────────────────── */
 
@@ -382,6 +386,7 @@ syncThemeControl();
 // Who the dashboard is searching as: the header's initials and the Profile
 // menu's switcher. Not awaited — the board must never wait on it.
 loadProfiles().then(announcePendingSwitch);
+loadFeatures();
 matchMedia('(prefers-color-scheme: light)').addEventListener?.('change', syncThemeControl);
 
 export function jobIdFromHash() {

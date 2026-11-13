@@ -79,9 +79,22 @@ _DEFAULT_PREFERRED_MARKERS = (
     "desired", "preferred qualifications", "good to have",
 )
 _QUALIFICATION_WEIGHT = {"required": 3, "preferred": 2, "unclassified": 1}
+# A role's date line. Full month names were the only form recognised, so a
+# résumé written "Jan 2020 – Present" / "Mar 2017 – Dec 2019" / "2015 – 2018"
+# had ONE detectable role (the "Present" one) and every older role's bullets
+# were counted as part of it. The page fit then treated the whole career as a
+# single role and could strip older employers down to nothing. Every common
+# form is recognised now: full and abbreviated months, MM/YYYY, and year
+# RANGES (a bare year is not enough, so "B.S., 2016" stays an education line).
+_MONTHS = (
+    r"(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|"
+    r"aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?"
+)
 _EMPLOYMENT_DATE_RE = re.compile(
-    r"\b(?:january|february|march|april|may|june|july|august|september|"
-    r"october|november|december)\s+\d{4}\b|\bpresent\b",
+    rf"\b{_MONTHS}\s*[’']?\s*\d{{2,4}}\b"
+    r"|\b(?:0?[1-9]|1[0-2])\s*/\s*(?:19|20)\d{2}\b"
+    r"|\b(?:19|20)\d{2}\s*(?:-|–|—|to|until)\s*(?:(?:19|20)\d{2}|present|current|now|today)\b"
+    r"|\bpresent\b",
     re.IGNORECASE,
 )
 
@@ -438,6 +451,11 @@ _SECTION_HEADINGS = _COMPETENCY_HEADINGS | {
     "professional experience", "work experience", "experience", "employment history",
     "education", "certifications", "projects", "selected projects", "publications",
     "awards", "additional information",
+    # Secondary experience blocks. Unrecognised, "EARLIER EXPERIENCE" read as
+    # body text inside the role above it.
+    "earlier experience", "additional experience", "other experience",
+    "relevant experience", "volunteer experience", "volunteering", "leadership",
+    "honors", "honors and awards", "licenses", "training", "languages",
 }
 
 
@@ -809,6 +827,10 @@ def _is_role_heading(paragraph) -> bool:
     text = (paragraph.text or "").strip()
     if not text or _is_section_heading(text):
         return False
+    # A bullet is content, never the anchor of a role, even when it mentions a
+    # date ("Led the March 2021 migration…"). Long prose lines are the same.
+    if _is_bullet(paragraph) or len(text) > 160:
+        return False
     return bool(_EMPLOYMENT_DATE_RE.search(text))
 
 
@@ -1152,6 +1174,28 @@ def estimate_page_count(document) -> float:
     return total / metrics["usable_height"]
 
 
+# A bullet that states a measured result: a number with a unit, a currency
+# amount, a multiplier, or a count of something. These are the lines a
+# reviewer remembers ("cut month-end close from 5 days to 2"), and the old
+# fitter dropped them as readily as filler whenever they did not repeat a term
+# from the posting.
+_IMPACT_RE = re.compile(
+    r"[$€£₹]\s?\d|\d+(?:\.\d+)?\s?(?:%|percent|x\b|×|k\b|m\b|mm\b|bn?\b|million|billion|"
+    r"thousand|hours?|days?|weeks?|months?|minutes?|seconds?|users?|customers?|clients?|"
+    r"people|engineers?|teams?|records?|rows?|tb|gb|pb|countries|states|sites|stores)"
+    r"|\b(?!(?:19|20)\d{2}\b)\d{2,}[+]?(?:,\d{3})*\b",
+    re.IGNORECASE,
+)
+
+
+def _has_impact(text: str) -> bool:
+    return bool(_IMPACT_RE.search(text or ""))
+
+
+def _norm_bullet(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+
 def _fit_to_pages(
     document,
     *,
@@ -1159,99 +1203,149 @@ def _fit_to_pages(
     keywords: Sequence[str],
     qualification_details: Dict[str, Dict[str, Any]],
     min_bullets_per_role: int = 1,
+    keep_bullets: Sequence[str] | None = None,
 ) -> tuple[Dict[str, Any] | None, List[str]]:
-    """Trim the résumé to `max_pages` by dropping the least relevant bullets.
+    """Trim the résumé to `max_pages` by omitting the LEAST VALUABLE bullets.
 
-    Which bullets go is a ranking, not a guess. Each candidate is scored by the
-    same JD-evidence relevance used to ORDER content, and dropped worst-first
-    from the OLDEST role forward — recent, on-target work is what a reviewer
-    reads, and a 2017 role's fourth bullet is what a two-page limit costs.
+    Value is not just keyword overlap. Each bullet is scored on three things a
+    reviewer actually weighs, and the lowest-value bullets go first:
+
+      - relevance: evidence for a requirement in THIS posting (required terms
+        outweigh preferred ones, which outweigh unclassified ones);
+      - impact: a measured result (a number, %, money, a count) is kept ahead
+        of an unmeasured duty;
+      - recency: the current role is read first and kept deepest.
 
     Guarantees:
       - No role, employer, date, section heading, summary, or competency line is
-        ever removed. The employment history stays complete and honest; only the
-        depth of detail on older roles changes.
-      - Every role keeps at least `min_bullets_per_role` bullet, so a heading is
-        never left standing alone.
-      - Whole bullets only. Nothing is shortened, reworded, or merged, so no
-        claim can change meaning.
+        ever removed, and whole bullets only: nothing is shortened or reworded.
+      - The current role's bullets that evidence a REQUIRED qualification are
+        never omitted, and neither is anything pinned with `keep_bullets`.
+      - The two most recent roles keep at least two bullets each (or all they
+        have); every other role keeps at least `min_bullets_per_role`.
+      - When the budget cannot be met within those rules the résumé is left
+        LONGER rather than thinner, and a limitation says so: losing a real,
+        relevant achievement costs more than a third page.
     """
     if max_pages <= 0 or estimate_page_count(document) <= max_pages:
         return None, []
 
-    roles: List[List[Any]] = []
-    current: List[Any] | None = None
+    pinned = {_norm_bullet(text) for text in (keep_bullets or []) if str(text or "").strip()}
+    roles: List[Dict[str, Any]] = []
+    current: Dict[str, Any] | None = None
+    previous_line = ""
     for paragraph in document.paragraphs:
+        text = (paragraph.text or "").strip()
         if _is_role_heading(paragraph):
-            current = []
+            # Name the role by its title line when the dates sit on their own
+            # line under it ("Senior Engineer | Contoso" then "Remote | 2020 -
+            # Present"), so an omission can say which job it came from.
+            label = f"{previous_line} | {text}" if previous_line and not _EMPLOYMENT_DATE_RE.search(previous_line) else text
+            current = {"heading": label, "bullets": []}
             roles.append(current)
+            previous_line = ""
             continue
+        if text and not _is_bullet(paragraph) and not _is_section_heading(text):
+            previous_line = text
+        elif text:
+            previous_line = ""
         if current is None:
             continue
         if _is_section_heading(paragraph.text):
             current = None
             continue
         if _is_bullet(paragraph) and (paragraph.text or "").strip():
-            current.append(paragraph)
+            current["bullets"].append(paragraph)
 
-    # Oldest role first; within a role, least JD-relevant bullet first.
-    candidates: List[Any] = []
-    for role_bullets in reversed(roles):
-        droppable = len(role_bullets) - min_bullets_per_role
-        if droppable <= 0:
-            continue
-        ranked = sorted(
-            enumerate(role_bullets),
-            key=lambda pair: (
-                _relevance_key(_matches_for_text(pair[1].text, keywords, qualification_details)),
-                -pair[0],
-            ),
+    total_roles = len(roles)
+    candidates: List[tuple] = []
+    for role_index, role in enumerate(roles):
+        bullets = role["bullets"]
+        floor = min(len(bullets), 2) if role_index < 2 else min(len(bullets), max(1, min_bullets_per_role))
+        recency = {0: 4, 1: 2, 2: 1}.get(role_index, 0)
+        scored = []
+        for position, paragraph in enumerate(bullets):
+            text = paragraph.text or ""
+            evidence = _matches_for_text(text, keywords, qualification_details)
+            relevance = _relevance_key(evidence)
+            impact = _has_impact(text)
+            # The current role's evidence for a REQUIRED qualification is what
+            # this application stands on; older required evidence is ranked
+            # high but can still go when the budget demands it.
+            protected = _norm_bullet(text) in pinned or (
+                role_index == 0 and relevance[0] >= _QUALIFICATION_WEIGHT["required"]
+            )
+            value = relevance[0] * 4 + min(relevance[1], 6) + (3 if impact else 0) + recency
+            scored.append({
+                "paragraph": paragraph, "value": value, "protected": protected, "impact": impact,
+                "terms": [item["keyword"] for item in evidence], "position": position,
+            })
+        # Only the lowest-value bullets above the role's floor are candidates.
+        droppable = sorted(
+            (item for item in scored if not item["protected"]),
+            key=lambda item: (item["value"], -item["position"]),
         )
-        candidates.extend(paragraph for _index, paragraph in ranked[:droppable])
+        removable = max(0, len(bullets) - floor)
+        for item in droppable[:removable]:
+            # Older roles go first on ties; within a role, the later bullet.
+            candidates.append((item["value"], -(total_roles - role_index), -item["position"], role, item))
+    candidates.sort(key=lambda entry: entry[:3])
 
     dropped: List[Dict[str, Any]] = []
-    for paragraph in candidates:
+    for _value, _age, _pos, role, item in candidates:
         if estimate_page_count(document) <= max_pages:
             break
+        paragraph = item["paragraph"]
         raw = paragraph.text or ""
         _remove_paragraph(paragraph)
+        reasons = []
+        reasons.append("matches no requirement in this posting" if not item["terms"]
+                       else f"only matches {', '.join(item['terms'][:3])}")
+        if not item["impact"]:
+            reasons.append("states no measured result")
         dropped.append({
             "text": raw.strip(),
             # The exact content-unit key, so the invariant can account for this
             # removal byte-for-byte even when the bullet had stray whitespace.
             "unit": f"paragraph:{raw}",
-            "reason": "lowest JD relevance in the oldest role still over budget",
+            "role": role["heading"][:160],
+            "has_metric": item["impact"],
+            "jd_terms": item["terms"],
+            "reason": "; ".join(reasons),
         })
 
+    estimated = estimate_page_count(document)
     if not dropped:
         return None, [
-            f"The résumé is longer than {max_pages} page(s) and could not be trimmed further "
-            "without leaving a role with no detail at all. Shorten bullets in the master resume."
+            f"The résumé is an estimated {estimated:.1f} pages, over the {max_pages}-page target. "
+            "Nothing was left out: every remaining bullet is recent, measured, or evidences a "
+            "requirement of this posting. Shorten wording in the master resume if length matters."
         ]
 
     limitations: List[str] = []
-    estimated = estimate_page_count(document)
     if estimated > max_pages:
         limitations.append(
-            f"Still an estimated {estimated:.1f} pages after dropping {len(dropped)} bullet(s): "
-            "every remaining role is down to its last bullet. Trim the master resume itself."
+            f"Still an estimated {estimated:.1f} pages after leaving out {len(dropped)} bullet(s). "
+            "The rest were kept on purpose (recent, measured, or required by this posting)."
         )
     return {
         "type": "fit_to_page_budget",
         "where": "PROFESSIONAL EXPERIENCE bullets",
         "before": f"content estimated at more than {max_pages} page(s)",
-        "after": f"{len(dropped)} least-relevant bullet(s) omitted; estimated {estimated:.1f} page(s)",
+        "after": f"{len(dropped)} lowest-value bullet(s) omitted; estimated {estimated:.1f} page(s)",
         "evidence": [{
             "max_pages": max_pages,
             "omitted": dropped,
             "roles_kept": len(roles),
             "min_bullets_per_role": min_bullets_per_role,
+            "pinned": len(pinned),
             "text_changed": False,
         }],
         "reason": (
-            f"a {max_pages}-page résumé is the target; whole low-relevance bullets from the "
-            "oldest roles are omitted rather than any claim being shortened or reworded, and "
-            "every role keeps its heading, dates, and at least one bullet"
+            f"a {max_pages}-page résumé is the target; the bullets omitted are the ones with the "
+            "least relevance to this posting, no measured result, and the oldest role. Nothing "
+            "was shortened or reworded, required-skill evidence is never omitted, and every "
+            "role keeps its heading, dates, and detail"
         ),
         "source": "master_resume",
     }, limitations
@@ -1951,7 +2045,7 @@ def _verify_layout_invariants(
         "section_headings_intact": bool(headings) or not omitted,
         "no_manual_page_breaks": not manual_breaks,
         "estimated_pages": round(estimated, 2),
-        "within_page_budget": estimated <= max_pages,
+        "within_page_budget": max_pages <= 0 or estimated <= max_pages,
         "roles_without_detail": orphan_roles,
     }
     if not (only_declared_removals and nothing_added and not manual_breaks):
@@ -2119,6 +2213,7 @@ def tailor_resume(
     output_name: str | None = None,
     llm_qualifications: Dict[str, Sequence[str]] | None = None,
     accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
+    keep_bullets: Sequence[str] | None = None,
 ) -> Dict[str, Any]:
     """Create a tailored resume for ``job`` and return a result dict.
 
@@ -2370,6 +2465,7 @@ def tailor_resume(
         max_pages=max_pages,
         keywords=audit["present"],
         qualification_details=qualification_details,
+        keep_bullets=keep_bullets,
     )
     if fit_change:
         changes.append(fit_change)

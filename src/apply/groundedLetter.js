@@ -17,6 +17,8 @@ import { llmSettings } from '../llm/client.js';
 import { runTask, SYSTEM_UNTRUSTED_RULE } from '../llm/task.js';
 import { profileTerms, verifyParagraph } from '../resume/claimVerifier.js';
 import { readMasterUnits, vocabularyFromScoring } from '../resume/tailorRunner.js';
+import { readMasterLetterText } from './masterLetter.js';
+import { parseLetter } from './letterTailor.js';
 
 export function letterSettings(env = process.env, { root = null } = {}) {
   const llm = llmSettings(env, { root });
@@ -37,6 +39,8 @@ const SYSTEM = [
   '   what to bring forward, not facts about the candidate: mention one only if the cited units contain it.',
   '4. Never strengthen ownership ("contributed" never becomes "led").',
   '5. No greeting, no sign-off, no placeholders: body paragraphs only. Plain, specific, no cliches.',
+  '   Units with ids like l2 are paragraphs of the person\'s OWN cover letter: keep their voice and',
+  '   reuse their wording where it fits; they are evidence like any other unit.',
   `6. ${SYSTEM_UNTRUSTED_RULE}`,
   '',
   'Respond with JSON only: {"paragraphs":[{"text":"...","evidence":["u2","u5"]}]}',
@@ -94,7 +98,15 @@ export async function composeGroundedLetter({ job, config, requirements = [], en
   } catch (err) {
     return { ok: false, reason: `could not read the master resume: ${err.message}` };
   }
-  const bullets = units.filter((u) => u.kind === 'bullet' || u.kind === 'paragraph').slice(0, 60);
+  // The person's own master cover letter joins the evidence: its paragraphs
+  // are their words about their own work, cited like resume lines.
+  const letterText = deps.masterLetterText ?? readMasterLetterText(root);
+  const letterUnits = letterText
+    ? parseLetter(letterText).body.filter((t) => !/\[[^\]]{3,}\]/.test(t))
+      .map((text, i) => ({ id: `l${i + 1}`, kind: 'paragraph', text: text.replace(/\{(?:company|title|role)\}/g, (m) => (m === '{company}' ? String(job.company ?? '') : String(job.title ?? ''))) }))
+    : [];
+  units = [...units, ...letterUnits];
+  const bullets = units.filter((u) => u.kind === 'bullet' || u.kind === 'paragraph').slice(0, 60 + letterUnits.length);
   const company = String(job.company ?? '').trim();
   const title = String(job.title ?? '').trim();
   const result = await runTask(COVER_LETTER_TASK, { company, title, requirements: requirements.slice(0, 30), bullets },

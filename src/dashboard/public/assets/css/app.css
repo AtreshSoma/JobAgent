@@ -554,7 +554,7 @@ button.icon { padding: 4px 7px; }
    in the Profile menu), so brand, two utilities and Find jobs share a line. */
 @media (max-width: 480px) {
   .theme-toggle { display: none; }
-  .only-narrow { display: flex !important; }
+  .menu-pop .only-narrow { display: flex !important; }
   /* The Explore link steps out with it; its twin is in the Profile menu too. */
   .explore-link { display: none; }
   .actions-sep { display: none; }
@@ -2590,12 +2590,14 @@ kbd {
 /* "Add profile" under the list and in the Profile menu. */
 .pf-wrap { display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; }
 .pf-wrap .pf-list { align-self: stretch; }
-.menu-pop .pf-add-item { gap: var(--s2); color: var(--accent); font-weight: 600; }
-.menu-pop .pf-add-item .ic { width: 14px; height: 14px; }
-/* Its pair is quieter: removing is the rarer, heavier act, and the dialog it
-   opens is where the red lives. */
-.menu-pop .pf-remove-item { gap: var(--s2); color: var(--text-dim); }
-.menu-pop .pf-remove-item .ic { width: 14px; height: 14px; }
+/* "Add profile" closes the people list: the avatar column carries a plus in
+   the same 26px slot, so it reads as one more row rather than a link. */
+.menu-pop .pf-add-item { gap: var(--s2); padding: 6px 8px; color: var(--text-dim); font-weight: 500; }
+.menu-pop .pf-add-item:hover, .menu-pop .pf-add-item:focus-visible { color: var(--text); }
+.menu-pop .pf-add-item .ic {
+  width: 26px; height: 26px; padding: 6px; flex: none; border-radius: 50%;
+  border: 1px dashed var(--line-strong); stroke-width: 2;
+}
 
 /* ── Remove a profile ──
    The people as one bordered list, like the Master resume list: a whole row
@@ -2702,7 +2704,35 @@ kbd {
 .pf-mi-name, .pf-mi-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-mi-name { font-weight: 600; }
 .pf-mi-sub { font-size: var(--fs-xs); color: var(--text-faint); font-weight: 500; }
-.menu-pop .pf-menuitem[aria-checked="true"] .pf-mi-sub { color: var(--accent); }
+/* The active person is ticked, not coloured: the tick and aria-checked say it. */
+.pf-mi-check { width: 16px; height: 16px; flex: none; color: var(--accent); stroke-width: 2.4; }
+/* One row per person: the switch fills it, the remove sits at its end and
+   appears on hover or keyboard focus (always shown where there is no hover). */
+.pf-mi-row { position: relative; display: flex; align-items: center; }
+.pf-mi-row .pf-menuitem { padding-right: 36px; }
+.pf-mi-row.is-active .pf-menuitem { padding-right: 10px; }
+.menu-pop .pf-mi-remove {
+  position: absolute; right: 4px; top: 50%; translate: 0 -50%;
+  width: 28px; height: 28px; padding: 0; justify-content: center; border-radius: 50%;
+  color: var(--text-faint); opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out), background-color var(--dur-fast) ease, color var(--dur-fast) ease;
+}
+.menu-pop .pf-mi-remove .ic { width: 14px; height: 14px; }
+.pf-mi-row:hover .pf-mi-remove, .pf-mi-row:focus-within .pf-mi-remove { opacity: 1; }
+.menu-pop .pf-mi-remove:hover { color: var(--bad); background: var(--bad-soft); }
+@media (hover: none) { .menu-pop .pf-mi-remove { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .menu-pop .pf-mi-remove { transition: none; } }
+/* A quiet trailing hint on a menu item: a file type, a shortcut, "opens elsewhere". */
+.menu-pop .mi-hint {
+  margin-left: auto; padding-left: var(--s3); font: 500 var(--fs-xs)/1 var(--font);
+  color: var(--text-faint); letter-spacing: .02em;
+}
+.menu-pop kbd.mi-hint {
+  padding: 2px 6px; border: 1px solid var(--line); border-radius: var(--r-xs); background: transparent;
+}
+.menu-pop .mi-ext { width: 13px; height: 13px; margin-left: auto; color: var(--text-faint); stroke-width: 2; }
+#activityMenu { min-width: 240px; }
+#accountMenu > [role="group"] { display: flex; flex-direction: column; gap: 1px; }
 
 /* The preview: collapsible, and shaped like the document it reads. */
 .mr-contents > summary {
@@ -3521,3 +3551,167 @@ button.linklike:hover { background: none; text-decoration: underline; }
 .ws-conv-table { margin: 6px 0; }
 .ws-conv-table caption { text-align: left; font-weight: 600; padding: 4px 0; }
 .ws-conv-table th { text-align: left; font-weight: 500; padding-right: 12px; }
+
+/* ── Your materials: master cover letter, a job's letter, resume comparison ──
+   Built from the dialog system above (tokens only, so both themes follow).
+   The letter is the subject, set like a page: one comfortable measure, real
+   paragraph spacing, nothing boxed inside a box. Quality, the try-out and
+   history sit in a quiet aside that stacks under the letter on narrow screens. */
+.lt-dialog { width: min(1000px, 96vw); }
+.lt-dialog .dlg-body, .rd-dialog .dlg-body { overflow: auto; min-height: 0; }
+.st-warn { color: var(--warn-text); }
+
+.lt-bar {
+  display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap;
+  padding: var(--s1) 0 var(--s3); border-bottom: 1px solid var(--line-soft); margin-bottom: var(--s4);
+}
+.lt-bar-meta { flex: 1 1 220px; min-width: 0; }
+.lt-bar-name { font-weight: 650; font-size: var(--fs-lg); }
+.lt-bar-facts { font-size: var(--fs-sm); color: var(--text-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.lt-bar-actions { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+
+.lt-layout { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: var(--s5); align-items: start; }
+.lt-main { min-width: 0; }
+.lt-aside { display: flex; flex-direction: column; gap: var(--s4); position: sticky; top: 0; }
+@media (max-width: 860px) {
+  .lt-layout { grid-template-columns: minmax(0, 1fr); }
+  .lt-aside { position: static; }
+}
+
+/* The letter, set like a page. */
+.lt-paper {
+  max-width: 68ch; font-size: var(--fs-lg); line-height: 1.7; color: var(--text);
+  text-wrap: pretty; overflow-wrap: anywhere;
+}
+.lt-paper p { margin: 0 0 1.05em; }
+.lt-paper p:last-child { margin-bottom: 0; }
+.lt-token {
+  display: inline-block; padding: 0 7px; margin: 0 1px; line-height: 1.5;
+  border-radius: var(--r-full); font-size: var(--fs-sm); font-weight: 600;
+  color: var(--accent); background: var(--accent-soft);
+}
+.lt-prompt {
+  color: var(--warn-text); background: var(--warn-soft); border-radius: var(--r-xs);
+  padding: 0 4px; box-decoration-break: clone; -webkit-box-decoration-break: clone;
+}
+
+/* Editing: the same measure as reading, so nothing jumps between the two. */
+.lt-editor { display: flex; flex-direction: column; gap: var(--s2); }
+.lt-tools { display: flex; align-items: center; gap: var(--s1); font-size: var(--fs-sm); }
+.lt-tools .faint { margin-right: var(--s1); }
+dialog textarea.lt-textarea {
+  min-height: 46vh; resize: vertical; margin: 0;
+  font-size: var(--fs-lg); line-height: 1.65; padding: var(--s3) var(--s4);
+  transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+}
+dialog textarea.lt-textarea:focus-visible {
+  outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+dialog textarea.lt-textarea[readonly] { color: var(--text-dim); }
+.lt-edit-foot { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; padding-top: var(--s1); font-variant-numeric: tabular-nums; }
+#dlgJobLetter .lt-main { display: flex; flex-direction: column; gap: var(--s2); }
+
+/* Quality: a label, the facts, then only what is worth a look. */
+.lt-quality { display: flex; flex-direction: column; gap: var(--s2); }
+.lt-q-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+.lt-q-title { font-weight: 650; font-size: var(--fs-md); }
+.lt-q-facts { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.lt-q-ok { margin: 0; font-size: var(--fs-sm); color: var(--text-dim); }
+.lt-issues { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+.lt-issue { display: flex; flex-direction: column; gap: 2px; font-size: var(--fs-sm); line-height: 1.45; color: var(--text); }
+.lt-issue-level { font-size: var(--fs-xs); color: var(--text-faint); font-weight: 650; }
+.lt-issue.is-block .lt-issue-level { color: var(--bad); }
+.lt-issue.is-warn .lt-issue-level { color: var(--warn-text); }
+.lt-quality + .lt-side-sec, .lt-side-sec + .lt-side-sec, #letterQuality + .lt-side-sec, #jobLetterQuality + .lt-side-sec {
+  border-top: 1px solid var(--line-soft); padding-top: var(--s4);
+}
+.lt-side-sec > h3 { margin: 0 0 var(--s2); font-size: var(--fs-md); }
+.lt-side-sec > p { margin: 0 0 var(--s2); font-size: var(--fs-sm); line-height: 1.45; }
+.lt-try { display: flex; gap: var(--s2); }
+.lt-try select { flex: 1 1 auto; min-width: 0; }
+
+/* History: whole rows are the target. */
+.lt-versions { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.lt-version-btn {
+  width: 100%; display: flex; justify-content: space-between; gap: var(--s2);
+  padding: 7px var(--s2); min-height: 36px; border-radius: var(--r-sm);
+  background: transparent; border: 1px solid transparent; color: var(--text); font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums; text-align: left;
+}
+.lt-version-btn:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.lt-version-btn[aria-current="true"] { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.lt-v-words { color: var(--text-faint); flex: none; }
+
+.lt-banner {
+  display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap;
+  padding: var(--s2) var(--s3); margin-bottom: var(--s4); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 4%, transparent); border: 1px solid var(--line-soft);
+  font-size: var(--fs-sm);
+}
+.lt-version .lt-quality { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--line-soft); }
+
+/* Empty: one sentence of why, then three ways in. */
+.lt-empty { max-width: 56ch; margin: var(--s6) auto; text-align: center; padding: 0 var(--s2); }
+.lt-empty h3 { margin: 0 0 var(--s2); font-size: var(--fs-xl); }
+.lt-empty p { margin: 0 0 var(--s4); color: var(--text-dim); line-height: 1.6; text-wrap: pretty; }
+.lt-empty-actions { display: flex; gap: var(--s2); justify-content: center; flex-wrap: wrap; margin-bottom: var(--s3); }
+.lt-empty-note { font-size: var(--fs-sm); }
+
+/* A job's letter in the detail rail. */
+.cl-head { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; }
+.cl-head h3 { margin-right: auto; }
+
+/* ── master vs tailored resume ── */
+.rd-dialog { width: min(980px, 96vw); }
+.rd-stats { display: flex; flex-wrap: wrap; gap: var(--s5); margin: 0 0 var(--s4); }
+.rd-stat { display: flex; flex-direction: column-reverse; }
+.rd-stat dt { font-size: var(--fs-sm); color: var(--text-dim); }
+.rd-stat dd { margin: 0; font-size: var(--fs-2xl); font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.15; }
+.rd-stat.is-omitted dd { color: var(--warn-text); }
+.rd-call { margin-bottom: var(--s4); }
+.rd-filter { margin-bottom: var(--s3); }
+.rd-list { list-style: none; margin: 0; padding: 0; }
+.rd-section {
+  font-size: var(--fs-xs); font-weight: 650; color: var(--text-faint); letter-spacing: .04em;
+  padding: var(--s4) 0 var(--s1);
+}
+.rd-row {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr) auto; gap: var(--s3); align-items: start;
+  padding: var(--s2) 0; border-top: 1px solid var(--line-soft); font-size: var(--fs-md); line-height: 1.5;
+}
+.rd-tag { font-size: var(--fs-xs); font-weight: 650; color: var(--text-faint); padding-top: 2px; }
+.rd-row.is-omitted .rd-tag { color: var(--warn-text); }
+.rd-row.is-added .rd-tag, .rd-row.is-reworded .rd-tag { color: var(--accent); }
+.rd-row.is-same .rd-text { color: var(--text-dim); }
+.rd-row.is-omitted .rd-text > span:first-child { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--warn) 60%, transparent); }
+.rd-row.is-omitted.is-kept .rd-text > span:first-child { text-decoration: none; }
+.rd-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.rd-text del { color: var(--text-faint); }
+.rd-text ins { text-decoration: none; }
+.rd-why { font-size: var(--fs-sm); color: var(--text-dim); }
+.rd-flags { display: flex; flex-wrap: wrap; gap: 4px; }
+.rd-keep { min-width: 64px; justify-content: center; }
+.rd-empty { padding: var(--s4) 0; }
+@media (max-width: 560px) {
+  .rd-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .rd-tag { grid-column: 1 / -1; padding-top: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  dialog textarea.lt-textarea { transition: none; }
+}
+
+/* Phones: the header menus anchor to the right edge of the whole actions
+   group, not to their small icon button, so a 300px menu never runs off the
+   left of a 390px screen. */
+@media (max-width: 720px) {
+  .actions-group { position: relative; }
+  .actions-group > .utilmenu { position: static; }
+  .actions-group > .utilmenu > .menu-pop {
+    right: 0; left: auto; width: min(320px, calc(100vw - 24px)); min-width: 0;
+  }
+}
+/* Touch-only devices have no keyboard to need shortcuts for. */
+@media (hover: none) and (pointer: coarse) {
+  #accountMenu [data-action="open-keys"] { display: none; }
+}

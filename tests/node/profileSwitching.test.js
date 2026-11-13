@@ -197,7 +197,7 @@ describe('the switcher in the interface', () => {
     expect(initials('Cher')).toBe('C');
   });
 
-  it('puts a "Searching as" radio group in the Profile menu and initials on its button', () => {
+  it('lists the people as a radio group at the top of the Profile menu, with initials on its button', () => {
     const start = html.indexOf('id="accountMenu"');
     const end = html.indexOf('</div>\n    </span>', start);
     // Guard the slice itself: a -1 here would make every assertion below
@@ -205,12 +205,15 @@ describe('the switcher in the interface', () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     const menu = html.slice(start, end);
-    expect(menu).toContain('id="profileMenuLabel"');
-    expect(menu).toContain('id="profileMenuItems" role="group" aria-labelledby="profileMenuLabel"');
+    expect(menu).toContain('id="profileMenuItems" class="pf-menu-list" role="group" aria-label="Profiles"');
+    // Minimal: no uppercase section labels, the rules carry the grouping.
+    expect(menu).not.toContain('class="menu-label"');
     expect(html).toContain('<span class="avatar" id="profileAvatar" aria-hidden="true" hidden></span>');
     const profiles = read('assets/js/profiles.js');
     expect(profiles).toContain("role: 'menuitemradio'");
     expect(profiles).toContain("'aria-checked': String(p.active)");
+    // The active person is ticked, not described in coloured text.
+    expect(profiles).toContain('p.active ? checkIcon() : null');
   });
 
   it('says why an empty profile cannot be switched to, in words', () => {
@@ -226,12 +229,16 @@ describe('the switcher in the interface', () => {
     expect(read('assets/js/master.js')).toContain('announceSwitch(result.activated.label');
   });
 
-  it('puts "Remove profile…" beside "Add profile…", shown only when someone can be removed', () => {
+  it('removes a person from their own row (button or Delete key), never the active one', () => {
     const html = read('index.html');
     const profiles = read('assets/js/profiles.js');
-    expect(html).toMatch(/class="pf-add-item"[\s\S]*?class="pf-remove-item" data-action="open-remove-profile" hidden/);
-    expect(profiles).toContain("remove.hidden = rows.filter((p) => !p.active).length === 0;");
-    // The Master resume list's trash button opens the same dialog.
+    // No separate "Remove profile…" item that then asks "who?".
+    expect(html).not.toContain('open-remove-profile');
+    expect(profiles).toMatch(/if \(!p\.active\) \{\s*row\.append\(el\('button', \{\s*type: 'button', class: 'pf-mi-remove'/);
+    expect(profiles).toContain("'data-action': 'delete-search-profile', 'data-profile-id': p.id");
+    expect(profiles).toContain("'aria-label': `Remove ${p.display}…`");
+    expect(profiles).toMatch(/event\.key !== 'Delete' && event\.key !== 'Backspace'[\s\S]*openRemoveProfile\(item\.dataset\.profileId\)/);
+    // Both open the same confirm dialog, preselected on that person.
     expect(read('assets/js/actions.js')).toContain("'delete-search-profile': (target) => openRemoveProfile(target?.dataset?.profileId)");
   });
 

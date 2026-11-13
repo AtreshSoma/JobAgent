@@ -99,7 +99,7 @@ def _run(request: dict) -> dict:
         keywords,
         request.get("patterns") or {},
         add_summary_line=add_summary_line,
-        max_pages=int(request.get("max_pages") or 2),
+        max_pages=int(request.get("max_pages") if request.get("max_pages") is not None else 2),
         required_markers=ats_config.get("requiredMarkers"),
         preferred_markers=ats_config.get("preferredMarkers"),
         evidence_aliases=evidence_aliases,
@@ -112,6 +112,8 @@ def _run(request: dict) -> dict:
         # Bullets a person accepted after each rewrite was verified against
         # cited master-resume evidence (src/resume/rewrites.js).
         accepted_rewrites=request.get("accepted_rewrites") or None,
+        # Bullets the person pinned for this job: never omitted to fit the page.
+        keep_bullets=request.get("keep_bullets") or None,
     )
 
     pdf_path = None

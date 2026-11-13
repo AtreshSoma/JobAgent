@@ -25,6 +25,9 @@ export const CHANGELOG = Object.freeze([
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       new: [
+        'Master cover letter, under Your materials: write your letter once (start from a draft built from your profile, upload a .docx, .txt or .md file, or write it here), see how it reads, try it on any job, and go back to any earlier version.',
+        'Read and edit each job\'s cover letter in its detail, or rebuild it from your master letter. A job that has no letter can get a draft to copy.',
+        'Compare with master, on a tailored resume: every line that moved, was reordered, reworded or left out, with left-out results flagged. Keep a line and the next tailoring includes it.',
         'Explore JobAgent, the compass icon in the header: one example posting, told in chapters that hold and turn over like pages as you scroll. Copies merge, the score adds up, your resume is reordered, the form fills and stops, and the two signals wait for you. At the end you can run the whole line yourself.',
         'Under the hood, inside Explore: a system map you can follow line by line, a score lab that shows how a score is reached, and where each part lives in the code.',
         'Unapprove, in a job\'s detail: take an approval back before anything is filled.',
@@ -33,6 +36,11 @@ export const CHANGELOG = Object.freeze([
         'A notice when JobAgent was updated after it started, so you know to restart it before trying auto-fill again.',
       ],
       improved: [
+        'The Profile and Activity menus are simpler: no section labels, shorter names, and each person is one row. The active person is ticked, the others switch with a click, and the small remove button on a row (or the Delete key) removes that person after you confirm. Add profile closes the list.',
+        'Rank by meaning and Email replies appear in the Activity menu only once they are set up.',
+        'Cover letters are written from your own master letter: they name the company and role, lead with the paragraphs that fit the posting, add results from your profile only when the letter has few, and run longer for stronger matches.',
+        'Every cover letter gets a quality check for length, repetition, stock phrases and leftover placeholders.',
+        'Fitting a resume to two pages now keeps measured results, your current role\'s evidence for required skills and at least two bullets in each of your two latest roles, and says why each left-out line went.',
         'Auto-fill reads more application forms: dropdown menus drawn by the site (Rippling and others), questions printed above a box, styled checkboxes and radio buttons, and Apply buttons that open the form on the same page or in a new tab.',
         'A question auto-fill cannot answer is shown in the form\'s own words, with the choices the form offers, instead of "Search", "Select" or a code.',
         'Fields the site has already filled, such as the phone country code, are left as they are and no longer reported as questions.',
@@ -53,6 +61,8 @@ export const CHANGELOG = Object.freeze([
         'A job you decided on shows the way back in plain view: Unarchive, Remove from shortlist, or Undo reject. To undo several at once, select them and choose Clear decision.',
       ],
       fixed: [
+        'On small phones the Profile menu fits the screen, and Switch light or dark and Explore JobAgent are in it again.',
+        'Resumes that write dates as "Jan 2020", "03/2018" or "2016 - 2019" no longer have older roles counted as part of the current one, which could leave earlier jobs with almost no detail.',
         'A site\'s display-language picker no longer stops auto-fill on the job description with "resume upload input not found".',
         'A resume or cover letter is no longer reported as "did not remain attached" when the form shows it attached.',
         'Your details no longer go into someone else\'s fields, such as a reference, an emergency contact or a previous employer. Loosely matched or sensitive questions are left for you.',

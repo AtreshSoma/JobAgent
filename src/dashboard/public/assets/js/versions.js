@@ -9,7 +9,7 @@ import { api, postJson } from './api.js';
 import { railSection } from './detail.js';
 import { wordDiff } from './rewrites.js';
 
-const CAUSE = { generated: 'Prepared', restored: 'Restored' };
+const CAUSE = { generated: 'Prepared', restored: 'Restored', edited: 'Edited by you' };
 
 function when(iso) {
   const d = new Date(iso);

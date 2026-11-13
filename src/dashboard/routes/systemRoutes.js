@@ -21,6 +21,7 @@ import { buildIcs, openFollowUps } from '../../reports/calendar.js';
 import { embedSettings } from '../../llm/embeddings.js';
 import { readRerank, rerank } from '../../scoring/semanticRerank.js';
 import { readUsage } from '../../llm/usage.js';
+import { inboxSettings, pendingSuggestions } from '../../inbox/sync.js';
 
 export async function handleSystemRoutes(ctx, req, res, { path }) {
   if (req.method === 'GET' && path === '/api/data-quality') {
@@ -101,6 +102,22 @@ export async function handleSystemRoutes(ctx, req, res, { path }) {
     });
     res.end(csv);
     return;
+  }
+  // Which optional tools are set up. The Activity menu lists a tool only when
+  // it is configured or already has something to show: a menu item that can
+  // only open "this is off" is clutter, not a feature.
+  if (req.method === 'GET' && path === '/api/features') {
+    const root = ctx.config?.root;
+    let inbox;
+    try {
+      const settings = ctx.deps.inboxSettings ?? inboxSettings(ctx.deps.inboxEnv ?? process.env, { root, secrets: ctx.deps.secrets });
+      inbox = Boolean(settings.enabled) || pendingSuggestions(ctx.db).length > 0;
+    } catch { inbox = false; }
+    let rerankOn;
+    try {
+      rerankOn = embedSettings(ctx.deps.rerankEnv ?? process.env, { root }).enabled || Boolean(readRerank(root));
+    } catch { rerankOn = false; }
+    return sendJson(res, 200, { inbox, rerank: rerankOn });
   }
   // Rank the top matches by meaning (P2-1): a second number, never the score.
   if (req.method === 'GET' && path === '/api/rerank') {

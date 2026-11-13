@@ -122,7 +122,8 @@ describe('header: three menus and a theme toggle', () => {
     for (const [pop, action] of [['activityMenu', 'toggle-activity-menu'], ['accountMenu', 'toggle-account-menu']]) {
       expect(js('menus.js')).toContain(`${pop}: '${action}'`);
       // The handler toggles its own menu (the Profile one also fetches the profile list on a cold start).
-      expect(js('actions.js')).toMatch(new RegExp(`'${action}': \\(\\) => \\{?\\s*toggleMenu\\(\\$\\('${pop}'\\)\\)`));
+      // (The Activity one first settles which optional tools it lists.)
+      expect(js('actions.js')).toMatch(new RegExp(`'${action}': (?:async )?\\(\\) => \\{?[\\s\\S]{0,400}?toggleMenu\\((?:\\$\\('${pop}'\\)|pop)\\)`));
       expect(header).toContain(`data-action="${action}" aria-haspopup="true"`);
     }
     expect(js('actions.js')).toMatch(/KEEP_MENU_OPEN = \[[\s\S]*'toggle-activity-menu', 'toggle-account-menu', 'toggle-bulk-menu'/);
@@ -138,7 +139,10 @@ describe('header: three menus and a theme toggle', () => {
   });
 
   it('gives the theme button up on small phones, keeping its twin in the menu', () => {
-    expect(css).toMatch(/@media \(max-width: 480px\) \{\s*\.theme-toggle \{ display: none; \}\s*\.only-narrow \{ display: flex !important; \}/);
+    // `.menu-pop .only-narrow`, not `.only-narrow`: the base rule hiding it is
+    // also !important and comes LATER, so an equally specific selector here
+    // lost and the twins never appeared on a phone.
+    expect(css).toMatch(/@media \(max-width: 480px\) \{\s*\.theme-toggle \{ display: none; \}\s*\.menu-pop \.only-narrow \{ display: flex !important; \}/);
   });
 });
 

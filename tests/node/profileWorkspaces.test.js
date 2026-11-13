@@ -224,7 +224,9 @@ describe('the Add / Edit profile form', () => {
   it('is reachable from the Profile menu even with one person', () => {
     const menu = html.slice(html.indexOf('id="accountMenu"'), html.indexOf('id="profileMenuSep"'));
     expect(menu).toContain('data-action="open-add-profile"');
-    expect(read('assets/js/profiles.js')).toContain('const show = rows.length > 0;');
+    // The add row is static markup under the people list, so it is there
+    // whether one person or several are listed.
+    expect(menu).toMatch(/id="profileMenuItems"[^>]*><\/div>\s*<button role="menuitem" class="pf-add-item"/);
   });
 
   it('reloads into the new person when the workspace changes, keeping "Switch back"', () => {

@@ -29,6 +29,22 @@ import { rewriteActions } from './rewrites.js';
 import { versionActions } from './versions.js';
 import { inboxActions } from './inbox.js';
 import { rerankActions } from './rerank.js';
+import { LETTER_BUSY_ACTIONS, letterActions } from './letters.js';
+
+/**
+ * Which optional tools are set up (GET /api/features). Fetched once; items
+ * marked data-feature stay hidden unless their tool is ready, and stay hidden
+ * if the answer never comes.
+ */
+let features = null;
+export function loadFeatures() {
+  features ??= api('/api/features')
+    .then((on) => {
+      for (const node of document.querySelectorAll('[data-feature]')) node.hidden = !on?.[node.dataset.feature];
+    })
+    .catch(() => { features = null; });
+  return features;
+}
 
 /* ────────────────────── event delegation ────────────────────── */
 
@@ -42,6 +58,8 @@ export const ACTIONS = {
   ...inboxActions,
   // Rank top matches by meaning (P2-1).
   ...rerankActions,
+  // Your materials: master cover letter, a job's letter, resume comparison.
+  ...letterActions,
   // Applications workspace. None of these approves or submits: outcomes and
   // follow-ups are validated server-side and only ever follow a submission.
   'set-apps-layout': (target) => setAppsLayout(target.dataset.layout),
@@ -76,7 +94,13 @@ export const ACTIONS = {
     applyRunGate(state.lastRunStatus);
   },
   'toggle-menu': () => toggleMenu($('mainMenu')),
-  'toggle-activity-menu': () => toggleMenu($('activityMenu')),
+  'toggle-activity-menu': async () => {
+    const pop = $('activityMenu');
+    // Optional tools appear only once they are set up; settle that BEFORE the
+    // menu opens so its items never shift under the pointer.
+    if (pop.dataset.open !== 'true') await loadFeatures();
+    toggleMenu(pop);
+  },
   'toggle-account-menu': () => {
     toggleMenu($('accountMenu'));
     // Opened before the profile list arrived (a cold start): fetch it now.
@@ -157,7 +181,6 @@ export const ACTIONS = {
   },
   'delete-search-profile': (target) => openRemoveProfile(target?.dataset?.profileId),
   'open-add-profile': () => openAddProfile(),
-  'open-remove-profile': () => openRemoveProfile(),
   'remove-person': () => removePerson(),
   'open-edit-profile': (target) => openEditProfile(target?.dataset?.profileId).catch((err) => toast(err.message, 'bad')),
   'save-person': () => savePerson(),
@@ -377,6 +400,7 @@ export const BUSY_ACTIONS = new Set([
   'confirm-went-through', 'not-submitted',
   'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',
   'save-person', 'confirm-alt', 'person-add-anyway', 'remove-person',
+  ...LETTER_BUSY_ACTIONS,
 ]);
 
 /** Run one ACTIONS entry, busy-guarded when it mutates. */

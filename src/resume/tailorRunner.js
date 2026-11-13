@@ -114,6 +114,19 @@ export function vocabularyFromScoring(scoring = {}) {
 }
 
 /**
+ * The page budget the tailor works to. Unset means the two-page default; 0
+ * means never omit a bullet to fit; anything else is clamped to 1 to 6.
+ * @param {unknown} value
+ * @returns {number}
+ */
+export function pageBudget(value) {
+  if (value === undefined || value === null || value === '') return 2;
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n)) return 2;
+  return n <= 0 ? 0 : Math.min(6, n);
+}
+
+/**
  * Run the Python tailor for one job.
  *
  * @param {object} args
@@ -225,11 +238,17 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     export_pdf: options.exportPdf === true && pdfEngine(deps.env ?? process.env) !== 'chromium',
     // Hard length target. The tailor omits whole low-relevance bullets from the
     // oldest roles to hit it; it never shortens or rewrites a claim.
-    max_pages: Number(options.maxPages) > 0 ? Number(options.maxPages) : 2,
+    // 0 (config.runtime.resumeMaxPages) means "never omit anything to fit".
+    max_pages: pageBudget(options.maxPages),
     // Bullets a person accepted after each rewrite was verified against cited
     // master-resume evidence (src/resume/rewrites.js). Empty = no rewriting.
     ...(Array.isArray(options.acceptedRewrites) && options.acceptedRewrites.length
       ? { accepted_rewrites: options.acceptedRewrites }
+      : {}),
+    // Bullets the person pinned for this job ("Keep it" in the comparison):
+    // the page fit never omits them.
+    ...(Array.isArray(options.keepBullets) && options.keepBullets.length
+      ? { keep_bullets: options.keepBullets.map(String) }
       : {}),
   };
 

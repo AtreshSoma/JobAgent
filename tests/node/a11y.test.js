@@ -48,7 +48,8 @@ beforeAll(async () => {
     available = browserUnavailable(err);
     return;
   }
-  dash = await startTestDashboard();
+  // The inbox is set up here, so its menu item is listed (it is hidden until configured).
+  dash = await startTestDashboard({ deps: { inboxSettings: { enabled: true, reason: null } } });
   seed(dash.db);
 }, HOOK_TIMEOUT);
 
@@ -149,6 +150,7 @@ describe('accessibility (axe, WCAG 2.2 A/AA)', { timeout: 120_000 }, () => {
     ['Application profile', 'toggle-account-menu', 'Application profile', 'dlgProfile'],
     ['Add profile', 'toggle-account-menu', 'Add profile', null],
     ['Keyboard shortcuts', 'toggle-account-menu', 'Keyboard shortcuts', null],
+    ['Master cover letter', 'toggle-account-menu', 'Master cover letter', null],
     ['Run history', 'toggle-activity-menu', 'Run history', null],
     ['System health', 'toggle-activity-menu', 'System health', null],
     ['Email these jobs', 'toggle-activity-menu', 'Email these jobs', 'dlgEmail'],

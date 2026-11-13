@@ -15,6 +15,7 @@ import { formIsDirty, markClean, saveOnlyOnPurpose, withLabel } from './forms.js
 import { validateEmail, validateFullName, validateRoles } from './validate.js';
 import { scheduleRefresh } from './mutations.js';
 import { displayName, initials } from './format.js';
+import { closeMainMenu } from './menus.js';
 
 /** The name to show for a listing row, falling back to its label without the " — search" suffix. */
 export function profileName(p) {
@@ -81,28 +82,33 @@ export function renderProfileMenu(listing) {
   const host = $('profileMenuItems');
   if (!host) return;
   const rows = describeProfiles(listing);
-  // Always shown once there is a profile: "Add profile…" sits under the people,
-  // so adding the second person is as findable as switching to them.
-  const show = rows.length > 0;
-  host.replaceChildren();
-  $('profileMenuLabel').hidden = !show;
-  if (show) {
-    for (const p of rows) {
-      host.append(el('button', {
-        type: 'button', role: 'menuitemradio', class: 'pf-menuitem',
-        'aria-checked': String(p.active), 'data-action': 'activate-search-profile', 'data-profile-id': p.id,
-        disabled: !p.ready && !p.active,
-        title: p.ready ? '' : 'This profile has no job titles yet, so it cannot search',
-      },
-      el('span', { class: 'pf-avatar', 'aria-hidden': 'true', text: initials(p.display) || '?' }),
-      el('span', { class: 'pf-mi-text' },
-        el('span', { class: 'pf-mi-name', text: p.display }),
-        el('span', { class: 'pf-mi-sub', text: p.active ? 'Active' : profileSubline(p) }))));
+  // One row per person, the active one first-class and ticked. Each other
+  // person carries a quiet remove button (and the Delete key does the same),
+  // so removing lives WITH the person instead of as a separate menu item that
+  // then asks "who?". Removing opens the same confirm dialog, preselected.
+  host.replaceChildren(...rows.map((p) => {
+    const row = el('div', { class: `pf-mi-row${p.active ? ' is-active' : ''}`, role: 'none' });
+    row.append(el('button', {
+      type: 'button', role: 'menuitemradio', class: 'pf-menuitem',
+      'aria-checked': String(p.active), 'data-action': 'activate-search-profile', 'data-profile-id': p.id,
+      disabled: !p.ready && !p.active,
+      ...(p.active ? {} : { 'aria-keyshortcuts': 'Delete' }),
+      title: p.ready ? (p.active ? `Searching as ${p.display}` : `Switch to ${p.display}`) : 'This profile has no job titles yet, so it cannot search',
+    },
+    el('span', { class: 'pf-avatar', 'aria-hidden': 'true', text: initials(p.display) || '?' }),
+    el('span', { class: 'pf-mi-text' },
+      el('span', { class: 'pf-mi-name', text: p.display }),
+      el('span', { class: 'pf-mi-sub', text: profileSubline(p) })),
+    p.active ? checkIcon() : null));
+    if (!p.active) {
+      row.append(el('button', {
+        type: 'button', class: 'pf-mi-remove', tabindex: '-1',
+        'data-action': 'delete-search-profile', 'data-profile-id': p.id,
+        'aria-label': `Remove ${p.display}…`, title: `Remove ${p.display}…`,
+      }, removeIcon()));
     }
-  }
-  // "Remove profile…" once there is someone besides the active person.
-  const remove = document.querySelector('.pf-remove-item');
-  if (remove) remove.hidden = rows.filter((p) => !p.active).length === 0;
+    return row;
+  }));
   const active = rows.find((p) => p.active);
   // Who the empty states and titles speak to ("No jobs yet for Morgan").
   document.body.dataset.person = active?.display ?? '';
@@ -599,3 +605,29 @@ export function addAnyway() {
   form.allowDuplicate = true;
   return savePerson();
 }
+
+/** The tick on the active person's row. */
+function checkIcon() {
+  const svg = el('svg', { class: 'ic pf-mi-check', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' });
+  svg.append(el('path', { d: 'm5 12.5 4.5 4.5L19 7.5' }));
+  return svg;
+}
+
+/** The quiet remove on every other person's row. */
+function removeIcon() {
+  const svg = el('svg', { class: 'ic', viewBox: '0 0 24 24', 'aria-hidden': 'true', focusable: 'false' });
+  svg.append(el('path', { d: 'M7 7l10 10M17 7 7 17' }));
+  return svg;
+}
+
+/* Delete (or Backspace) on another person's row removes them, through the
+   same confirm dialog as the row's remove button. Keyboard users get the
+   action without a second stop on every row. */
+$('accountMenu')?.addEventListener('keydown', (event) => {
+  if (event.key !== 'Delete' && event.key !== 'Backspace') return;
+  const item = event.target.closest?.('.pf-menuitem[aria-checked="false"]');
+  if (!item) return;
+  event.preventDefault();
+  closeMainMenu();
+  openRemoveProfile(item.dataset.profileId);
+});

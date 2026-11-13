@@ -70,7 +70,7 @@ describe('the window (real browser)', { timeout: 120_000 }, () => {
     await page.goto(dash.url);
     await waitUntilConnected(page);
     await page.locator('[data-action="toggle-activity-menu"]').click();
-    await page.getByRole('menuitem', { name: 'Rank top matches by meaning' }).click();
+    await page.getByRole('menuitem', { name: 'Rank by meaning' }).click();
     await page.getByRole('button', { name: 'Rank top 50' }).click();
     const rows = page.locator('.rerank-table tbody tr');
     await rows.first().waitFor();
