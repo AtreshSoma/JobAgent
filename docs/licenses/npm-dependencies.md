@@ -1,6 +1,6 @@
 # npm dependency license inventory
 
-Snapshot: 2026-11-11. Declared metadata from `package-lock.json`, including optional platform packages. Dependencies retain these licenses; this inventory does not replace their full notices. Regenerate with `npm run licenses`.
+Snapshot: 2026-11-13. Declared metadata from `package-lock.json`, including optional platform packages. Dependencies retain these licenses; this inventory does not replace their full notices. Regenerate with `npm run licenses`.
 
 | Package path | Version | Declared license | Scope |
 | --- | --- | --- | --- |
@@ -61,7 +61,7 @@ Snapshot: 2026-11-11. Declared metadata from `package-lock.json`, including opti
 | @types/esrecurse | 4.3.1 | MIT | Development |
 | @types/estree | 1.0.9 | MIT | Development |
 | @types/json-schema | 7.0.15 | MIT | Development |
-| @types/node | 22.20.4 | MIT | Development |
+| @types/node | 22.20.5 | MIT | Development |
 | @vitest/coverage-v8 | 4.1.12 | MIT | Development |
 | @vitest/expect | 4.1.12 | MIT | Development |
 | @vitest/mocker | 4.1.12 | MIT | Development |
@@ -144,7 +144,7 @@ Snapshot: 2026-11-11. Declared metadata from `package-lock.json`, including opti
 | get-intrinsic | 1.3.0 | MIT | Runtime / optional |
 | get-proto | 1.0.1 | MIT | Runtime / optional |
 | glob-parent | 6.0.2 | ISC | Development |
-| globals | 17.12.0 | MIT | Development |
+| globals | 17.14.0 | MIT | Development |
 | gopd | 1.2.0 | MIT | Runtime / optional |
 | has-flag | 4.0.0 | MIT | Development |
 | has-symbols | 1.1.0 | MIT | Runtime / optional |
@@ -218,7 +218,7 @@ Snapshot: 2026-11-11. Declared metadata from `package-lock.json`, including opti
 | pathe | 2.0.3 | MIT | Development |
 | picocolors | 1.1.1 | ISC | Development |
 | picomatch | 4.0.7 | MIT | Development |
-| pino | 10.3.1 | MIT | Runtime / optional |
+| pino | 10.4.0 | MIT | Runtime / optional |
 | pino-abstract-transport | 3.0.0 | MIT | Runtime / optional |
 | pino-std-serializers | 7.1.0 | MIT | Runtime / optional |
 | pkce-challenge | 5.0.1 | MIT | Runtime / optional |
@@ -235,7 +235,7 @@ Snapshot: 2026-11-11. Declared metadata from `package-lock.json`, including opti
 | quick-format-unescaped | 4.0.4 | MIT | Runtime / optional |
 | range-parser | 1.3.0 | MIT | Runtime / optional |
 | raw-body | 3.0.2 | MIT | Runtime / optional |
-| real-require | 0.2.0 | MIT | Runtime / optional |
+| real-require | 1.0.0 | MIT | Runtime / optional |
 | require-from-string | 2.0.2 | MIT | Runtime / optional |
 | rolldown | 1.2.18 | MIT | Development |
 | router | 2.2.0 | MIT | Runtime / optional |
@@ -261,7 +261,6 @@ Snapshot: 2026-11-11. Declared metadata from `package-lock.json`, including opti
 | std-env | 4.2.0 | MIT | Development |
 | supports-color | 7.2.0 | MIT | Development |
 | thread-stream | 4.2.0 | MIT | Runtime / optional |
-| thread-stream/node_modules/real-require | 1.0.0 | MIT | Runtime / optional |
 | tinybench | 2.9.0 | MIT | Development |
 | tinyexec | 1.2.4 | MIT | Development |
 | tinyglobby | 0.2.17 | MIT | Development |
