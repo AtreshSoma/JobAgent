@@ -99,7 +99,7 @@ Snapshot: 2026-11-13. Declared metadata from `package-lock.json`, including opti
 | deep-is | 0.1.4 | MIT | Development |
 | depd | 2.0.0 | MIT | Runtime / optional |
 | detect-libc | 2.1.2 | Apache-2.0 | Development |
-| dotenv | 17.4.2 | BSD-2-Clause | Runtime / optional |
+| dotenv | 18.0.10 | BSD-2-Clause | Runtime / optional |
 | dunder-proto | 1.0.1 | MIT | Runtime / optional |
 | ee-first | 1.1.1 | MIT | Runtime / optional |
 | encodeurl | 2.0.1 | MIT | Runtime / optional |
