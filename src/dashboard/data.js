@@ -45,6 +45,13 @@ import { findPlaceholders } from '../config/placeholders.js';
 import { csvCell } from '../reports/csv.js';
 import { masterResumeFile, workspacePaths } from '../profile/workspace.js';
 import { letterModeFor } from '../apply/letterMode.js';
+import { displayCompany } from '../utils/companyName.js';
+import { extractHiddenClauses } from '../scoring/hiddenClauses.js';
+import { applicationAccess, openQuestionsFor, signInGroups } from '../apply/autofillReadiness.js';
+import { loadQuestionQueue } from '../apply/questionQueue.js';
+import { evidenceFor, masterResumeLines } from '../resume/evidenceMap.js';
+import { employerHistory } from './employerHistory.js';
+import { preferenceProposals } from './preferenceProposals.js';
 
 // The status vocabulary and the pure per-row rules moved to src/domain so the
 // tracker, reports and CLI can use them without importing this whole data
@@ -558,6 +565,25 @@ function allBoardRows(db, now, scope = discoveryScope()) {
  *
  * Falls back to the full set when the db has no such method (test stubs).
  */
+/**
+ * How many jobs the Jobs list's "All jobs" tab holds — the same predicate as
+ * that tab, over the same cached rows — so another surface (Data quality)
+ * can quote the number without disagreeing with it (BUG-10).
+ */
+export function activeJobCount(db, now = new Date()) {
+  let n = 0;
+  for (const row of openBoardRows(db, now)) if (BOARD_VIEWS.all(row)) n += 1;
+  return n;
+}
+
+/**
+ * Memoize any per-database derived value on the shared data key: recomputed
+ * after a write or user mutation, otherwise served from memory.
+ */
+export function cachedForData(db, kind, now, compute) {
+  return cached(db, `ext:${kind}`, now, compute);
+}
+
 function openBoardRows(db, now, scope = discoveryScope()) {
   if (typeof db.listOpenJobsSummary !== 'function') return allBoardRows(db, now, scope);
   return cachedRows(db, `openRows:${scope.key}`, now, () => {
@@ -614,6 +640,18 @@ export const CLOSED_STATUSES = Object.freeze([
 const CLOSED_SET = new Set(CLOSED_STATUSES);
 
 /**
+ * Jobs already applied to (or deliberately passed on). Not "closed" — they are
+ * the Applications record — but no longer a DISCOVERY decision. The Jobs list
+ * promises "every open job that matches your search", and with these left in,
+ * its top slots were permanently held by jobs already applied to (BUG-08).
+ * Hidden from the default Jobs list (`hideApplied`) and its "All jobs" count.
+ */
+export const APPLIED_STATUSES = Object.freeze([
+  APP_STATUS.SUBMITTED, APP_STATUS.SUBMIT_UNVERIFIED, APP_STATUS.SKIPPED,
+]);
+const APPLIED_SET = new Set(APPLIED_STATUSES);
+
+/**
  * When was this job's packet prepared? Prefers the true prepared_at stamp;
  * legacy rows (prepared before the column existed) fall back to updated_at
  * ONLY while the row still sits in `prepared` (any later action bumps
@@ -651,7 +689,8 @@ const VIEW_UNTRIAGED = new Set([APP_STATUS.SCORED, APP_STATUS.DISCOVERED]);
 const VIEW_BLOCKED = new Set([APP_STATUS.BLOCKED, APP_STATUS.FAILED, APP_STATUS.CANCELLED]);
 
 export const BOARD_VIEWS = Object.freeze({
-  all: (r) => !CLOSED_SET.has(r.appStatus),
+  // "All jobs" on the Jobs list: open AND still a decision to make.
+  all: (r) => !CLOSED_SET.has(r.appStatus) && !APPLIED_SET.has(r.appStatus),
   today: (r) => VIEW_TODAY_ACTIONABLE.has(r.appStatus)
     || (r.postedLast24h && r.fit === 'strong' && VIEW_UNTRIAGED.has(r.appStatus))
     || (r.sponsorshipGated && !CLOSED_SET.has(r.appStatus)),
@@ -744,7 +783,8 @@ function boardRow(job, approval, now) {
   const attention = classifyAttention(job, appStatus);
   return {
     id: job.id,
-    company: job.company,
+    // Rows stored before names were cleaned still hold board tokens.
+    company: job.company == null ? job.company : displayCompany(job.company),
     // Historical provider rows can be incomplete. Never render a blank role
     // name (which also produces unusable checkbox/button accessible names).
     title: String(job.title ?? '').trim() || 'Title not identified',
@@ -1609,6 +1649,11 @@ function boardPageRows(db, filters = {}) {
   // request (e.g. the Blocked/Submitted tabs, or a "rejected" status filter).
   if (willHideClosed) {
     rows = rows.filter((r) => !CLOSED_SET.has(r.appStatus));
+    // The Jobs list (not Applications) also leaves out what was already applied
+    // to; the "All jobs" tab count (BOARD_VIEWS.all) says the same.
+    if (filters.hideApplied === true || filters.hideApplied === 'true') {
+      rows = rows.filter((r) => !APPLIED_SET.has(r.appStatus));
+    }
   }
 
   /*
@@ -1770,6 +1815,30 @@ export function jobDetail(db, jobId, deps = {}) {
 
   return {
     ...row, statusReason, decisionReasonNote, jdText: job.jd_text ?? null, packet, events, applicationState, applicationStateError,
+    // Buried conditions (onsite ramp-up, travel, on-call, W2-only…), each with
+    // the sentence it came from. Read-only facts about the posting.
+    clauses: extractHiddenClauses(job.jd_text ?? ''),
+    // Before a browser opens: does this employer need an account, and which
+    // of this job's form questions has nobody answered yet?
+    access: applicationAccess(row),
+    // What the store already knows about this employer: how its other
+    // postings answered the sponsorship question, and whether this title is
+    // reposted again and again. Shown only; it changes no score or gate.
+    history: (() => { try { return employerHistory(db, job); } catch { return null; } })(),
+    // Each skill the posting asks for, with the master resume's own line that
+    // proves it (quotes only; an unproven skill has no lines).
+    evidence: (() => {
+      const root = deps.root ?? deps.config?.root ?? null;
+      if (!root) return null;
+      const lines = masterResumeLines(root);
+      if (!lines.length) return null;
+      return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines);
+    })(),
+    openQuestions: (() => {
+      const root = deps.root ?? deps.config?.root ?? null;
+      if (!root) return [];
+      try { return openQuestionsFor(loadQuestionQueue(root), jobId); } catch { return []; }
+    })(),
     // The workspace card for this job (outcome, history, follow-up), or null
     // when it is not an application yet.
     application: (() => {
@@ -2218,6 +2287,9 @@ function workspaceItem(row, events, { today, timeZone, history = false }) {
     followUp,
     awaitingDays: stage === 'applied' && appliedDay ? daysBetween(appliedDay, today) : null,
     sameCompany: 0,
+    // Needs an employer account (Workday, Oracle, iCIMS…) or none (Greenhouse…).
+    access: applicationAccess(row).kind,
+    attentionKind: row.attention?.kind ?? null,
   };
   item.nextAction = workspaceNextAction(row, stage, followUp);
   if (history) {
@@ -2248,6 +2320,8 @@ export function applicationsWorkspace(db, { now = new Date(), config = null } = 
   const timeZone = candidateTimeZone(config);
   return {
     generatedAt: now.toISOString(), today, stages: WORKSPACE_STAGES, items, metrics: applicationMetrics(items),
+    // "Sign in once, retry all": stopped fills grouped by employer portal.
+    signInGroups: signInGroups(items.map((i) => ({ ...i, attention: { kind: i.attentionKind } }))),
     conversion: conversionBreakdown(items),
     weekly: weeklySummary({ items, eventsByJob: events, today, dayOf: (iso) => dayOf(iso, timeZone) }),
   };
@@ -2584,6 +2658,16 @@ export function dashboardSections(db, { now = new Date(), limit = 8 } = {}) {
 /** Most items the Today queue returns. */
 export const TODAY_LIMIT = 10;
 
+/**
+ * Unsubmitted work on a posting older than this sinks to an "Aging" group at
+ * the bottom of Today (BUG-09). Shortlisted and prepared rows are exempt from
+ * automatic retirement, so without it a job shortlisted 78 days ago sat at #2,
+ * above roles posted this week. A filled form waiting for Submit, or an
+ * unconfirmed submission, is never demoted: those are minutes from done.
+ */
+export const TODAY_AGING_DAYS = 21;
+const AGING_EXEMPT = new Set([APP_STATUS.SUBMIT_UNVERIFIED, APP_STATUS.READY_FOR_SUBMIT]);
+
 /** Longest `reason` string in a Today item. */
 const TODAY_REASON_MAX = 240;
 
@@ -2882,7 +2966,13 @@ export function todayQueue(db, {
       continue;
     }
     const action = todayAction(row);
-    if (action) candidates.push({ row, action });
+    if (action) {
+      const age = ageInDays(row.postedAt, now);
+      if (age !== null && age > TODAY_AGING_DAYS && !AGING_EXEMPT.has(row.appStatus)) {
+        // Below every fresh action, above housekeeping; same order within.
+        candidates.push({ row, action: { ...action, rank: 8.5 + action.rank / 100, aging: age } });
+      } else candidates.push({ row, action });
+    }
     else {
       const extra = todayTopUp(row);
       if (extra) topUp.push({ row, action: extra });
@@ -2914,6 +3004,8 @@ export function todayQueue(db, {
       : action.closed ? todayReason(row, action) : withCaveat(todayReason(row, action), staleCaveat(row, now, config)),
     nextAction: { kind: action.kind, label: action.label },
     followUp: action.followUp ?? null,
+    // Days since posting when the item was demoted for its age, else null.
+    aging: action.aging ?? null,
     // Display-only signals, so a card can SAY whether a posting is aging,
     // held for a sponsorship check, unread, or closed instead of implying it.
     fit: row.fit ?? null,
@@ -2921,7 +3013,21 @@ export function todayQueue(db, {
     sponsorshipGated: row.sponsorshipGated === true,
     linkState: row.linkState ?? null,
   }));
-  return { generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config, { browserAvailable }) };
+  return {
+    generatedAt: now.toISOString(), items, systemNotices: systemNotices(rows, config, { browserAvailable }),
+    signInGroups: signInGroups(rows),
+    // Patterns in what the person turns down, as proposals they can take or leave.
+    proposals: (() => {
+      try {
+        const decided = db.db?.prepare?.(`SELECT id, company, user_decision, decision_reason, decided_at, status
+          FROM jobs WHERE user_decision IN ('rejected', 'archived')`).all() ?? [];
+        if (!decided.length) return [];
+        const open = rows.filter((r) => !r.userDecision)
+          .map((r) => ({ id: r.id, company: r.company, user_decision: null, status: r.appStatus }));
+        return preferenceProposals([...decided, ...open], { now });
+      } catch { return []; }
+    })(),
+  };
 }
 
 /** Columns for the rich CSV/spreadsheet export, in order. */

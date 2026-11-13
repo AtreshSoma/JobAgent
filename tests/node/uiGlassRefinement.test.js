@@ -76,19 +76,29 @@ describe('the bulk-action bar keeps every safeguard', () => {
     expect(js('actions.js')).toMatch(/'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare'/);
   });
 
-  it('docks on the table header with no layout shift, and floats above the thumb on phones', () => {
+  it('is a toolbar docked above the column headers, always present (no layout shift), and above the thumb on phones', () => {
+    // Above the table, in flow, sticking under the top bar; the headers stick
+    // beneath it, so names and sorting stay visible while rows are selected
+    // (audit 2026-11-13: floating over the rows it blended into them).
     const board = html.slice(html.indexOf('id="boardwrap"'), html.indexOf('<table id="board"'));
     expect(board).toContain('<div id="selbar" role="toolbar"');
-    expect(css).toMatch(/#selbar \{\s*position: sticky; top: var\(--topbar-h, 51px\); z-index: 4; height: 0;/);
+    expect(board).toContain('class="selbar-idle"');
+    expect(css).toMatch(/#selbar \{\s*position: sticky; top: var\(--topbar-h, 51px\); z-index: 4;\s*height: var\(--tbar-h\);/);
+    expect(css).toMatch(/thead th \{[^}]*top: calc\(var\(--topbar-h, 51px\) \+ var\(--tbar-h\)\)/);
     expect(css).toMatch(/thead th \{[^}]*height: 40px/);
-    expect(css).toMatch(/@media \(max-width: 860px\) \{\s*#selbar \{\s*position: fixed;/);
+    // The pipeline is one stepper, in the order the work happens.
+    const pipeline = bar.slice(bar.indexOf('selbar-pipeline'));
+    expect(pipeline.indexOf('batch-prepare')).toBeLessThan(pipeline.indexOf('batch-approve'));
+    expect(pipeline.indexOf('batch-approve')).toBeLessThan(pipeline.indexOf('batch-autofill'));
+    expect(css).toMatch(/@media \(max-width: 860px\) \{\s*#selbar, #selbar\[data-open="true"\] \{\s*position: fixed;/);
     expect(css).toContain('body:has(#selbar[data-open="true"]) .layout { padding-bottom: 84px; }');
   });
 
-  it('never lets its closed wrapper intercept taps meant for the page beneath', () => {
-    const wrapper = css.slice(css.indexOf('#selbar {\n  position: sticky'), css.indexOf('}', css.indexOf('#selbar {\n  position: sticky')));
-    expect(wrapper).toContain('pointer-events: none;');
+  it('keeps the actions inert until something is selected, and the phone wrapper out of the way', () => {
+    expect(css).toMatch(/#selbar \.selbar-inner \{[^}]*visibility: hidden; transform: translateY\(-2px\); pointer-events: none;/);
     expect(css).toMatch(/#selbar\[data-open="true"\] \.selbar-inner \{[^}]*pointer-events: auto;/);
+    const phone = css.slice(css.indexOf('#selbar, #selbar[data-open="true"] {'));
+    expect(phone.slice(0, phone.indexOf('}'))).toContain('pointer-events: none;');
   });
 
   it('folds secondary actions into an overflow menu when the bar is narrow', () => {

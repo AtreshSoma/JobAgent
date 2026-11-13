@@ -214,6 +214,11 @@ function buildExplanation(scoreResult, tier, { sponsorshipGated }) {
       ? `Pay: ${pay.matched?.[0] ?? 'below target'} (${pay.points} pts).`
       : `Pay: ${pay.matched?.[0] ?? 'meets target'}.`);
   }
+  // Track (people manager vs IC) is penalty-only as well.
+  const track = breakdown?.trackFit;
+  if (track && track.points < 0) {
+    parts.push(`Track: ${track.matched?.[0] ?? 'different track'} (${track.points} pts).`);
+  }
   // Eligibility is penalty-only too, and the reason matters more than the
   // points: "requires 10+ years" is what a reader needs before applying.
   const eligibility = scoreResult.eligibility;

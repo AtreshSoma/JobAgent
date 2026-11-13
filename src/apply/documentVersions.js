@@ -126,6 +126,9 @@ export function restoreVersion(folder, n, current, { now = new Date() } = {}) {
   }
   // A PDF that was not part of the version no longer matches the DOCX.
   if (!version.files.resumePdf && current?.resumePdf) rmSync(current.resumePdf, { force: true });
+  // Likewise a Word letter newer than the restored text: leaving it would put
+  // two different letters on disk under one name (the caller may regenerate it).
+  if (version.files.letter && !version.files.letterDocx && current?.letterDocx) rmSync(current.letterDocx, { force: true });
   return recordVersion(folder, { cause: 'restored', files: current, task: version.task, now });
 }
 

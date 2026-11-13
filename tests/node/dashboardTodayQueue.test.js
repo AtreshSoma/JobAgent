@@ -36,7 +36,7 @@ describe('A1 — GET /api/today contract (todayQueue)', () => {
     const db = openDatabase({ path: ':memory:' });
     seed(db);
     const today = todayQueue(db, { now: NOW });
-    expect(Object.keys(today).sort()).toEqual(['generatedAt', 'items', 'systemNotices']);
+    expect(Object.keys(today).sort()).toEqual(['generatedAt', 'items', 'proposals', 'signInGroups', 'systemNotices']);
     expect(today.items.map((i) => i.id)).toEqual([
       'unverified', 'ready', 'question', 'review', 'approved', 'failed', 'short', 'fresh',
     ]);
@@ -45,7 +45,7 @@ describe('A1 — GET /api/today contract (todayQueue)', () => {
     ]);
     for (const item of today.items) {
       expect(Object.keys(item).sort()).toEqual([
-        'appStatus', 'company', 'fit', 'followUp', 'grade', 'id', 'linkState', 'location', 'nextAction', 'postedAt',
+        'aging', 'appStatus', 'company', 'fit', 'followUp', 'grade', 'id', 'linkState', 'location', 'nextAction', 'postedAt',
         'reason', 'score', 'sponsorshipGated', 'statusLabel', 'tier', 'title',
       ]);
       expect(Object.keys(item.nextAction).sort()).toEqual(['kind', 'label']);

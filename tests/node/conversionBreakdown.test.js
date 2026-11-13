@@ -61,3 +61,20 @@ describe('What gets interviews, in a real browser', { timeout: 120_000 }, () => 
     expect(await table.getByRole('row', { name: /lever/ }).textContent()).toContain('1 sent; too few to tell (needs 5)');
   });
 });
+
+describe('conversion by apply speed (audit Backlog #16)', async () => {
+  const { applySpeedBand } = await import('../../src/domain/applicationOutcome.js');
+  it('bands the time from posting to applying', () => {
+    const p = '2026-11-01T00:00:00Z';
+    expect(applySpeedBand(p, '2026-11-01T10:00:00Z')).toBe('within a day');
+    expect(applySpeedBand(p, '2026-11-03T00:00:00Z')).toBe('1-3 days');
+    expect(applySpeedBand(p, '2026-11-06T00:00:00Z')).toBe('4-7 days');
+    expect(applySpeedBand(p, '2026-11-20T00:00:00Z')).toBe('over a week');
+    expect(applySpeedBand(null, '2026-11-20T00:00:00Z')).toBeNull();
+    expect(applySpeedBand('2026-11-20T00:00:00Z', p)).toBeNull();
+  });
+  it('is one of the breakdown dimensions', () => {
+    const items = [{ appStatus: 'submitted', postedAt: '2026-11-01T00:00:00Z', appliedAt: '2026-11-01T05:00:00Z', reached: null }];
+    expect(conversionBreakdown(items).applySpeed[0].key).toBe('within a day');
+  });
+});

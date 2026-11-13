@@ -89,19 +89,24 @@ export async function handleBatchRoutes(ctx, req, res, { path }) {
         // Mirror the outcome onto the progress items so the UI can show which
         // specific jobs were prepared and which failed.
         if (ctx.runState.progress?.items) {
+          // Each item is labelled from an explicit outcome. Anything the
+          // helper reported in no list is "skipped", never assumed prepared.
           const failedById = new Map((r.failed ?? []).map((f) => [f.jobId, f.error]));
+          const cancelledIds = new Set((r.cancelled ?? []).map((c) => c.jobId));
+          const preparedIds = new Set((r.prepared ?? []).map((p) => p.jobId));
           for (const item of ctx.runState.progress.items) {
             const failure = failedById.get(item.jobId);
-            Object.assign(item, failure
-              ? { status: 'failed', error: failure }
-              : { status: 'prepared' });
+            if (failure) Object.assign(item, { status: 'failed', error: failure });
+            else if (cancelledIds.has(item.jobId)) Object.assign(item, { status: 'cancelled', error: null });
+            else if (preparedIds.has(item.jobId)) Object.assign(item, { status: 'prepared' });
+            else Object.assign(item, { status: 'skipped' });
           }
           ctx.runState.progress.completed = ctx.runState.progress.items.length;
         }
         ctx.runState.lastResult = {
           phase: 'prepare-selected',
           counters: { jobs_prepared: r.prepared.length },
-          prepared: r.prepared, failed: r.failed,
+          prepared: r.prepared, failed: r.failed, cancelled: r.cancelled ?? [],
         };
       } catch (err) {
         ctx.runState.lastError = `prepare-selected failed: ${err.message}`;

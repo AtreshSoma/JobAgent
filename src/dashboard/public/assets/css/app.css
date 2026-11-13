@@ -105,7 +105,9 @@
      nobody could see, and one that every new panel extended by inventing its
      own. Every size in this file is one of these. Theme-independent, so they
      live here only. */
-  --fs-xs: 11px;    /* labels, uppercase eyebrows, badges */
+  /* 12px floor for anything that carries meaning (audit 2026-11-13): at 11px,
+     nine kinds of badge, chip and meter label turned a busy row to confetti. */
+  --fs-xs: 12px;    /* labels, uppercase eyebrows, badges */
   --fs-sm: 12px;    /* secondary text, meta lines, small buttons */
   --fs-md: 13px;    /* controls and dense body text */
   --fs-lg: 14px;    /* body */
@@ -776,11 +778,12 @@ button.icon { padding: 4px 7px; }
 .run-row .who { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .run-row .num { color: var(--text-dim); font-variant-numeric: tabular-nums; flex: none; }
 .run-row .state { flex: none; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: .4px; }
-.run-row .state.done { color: var(--good); }
+.run-row .state.done, .run-row .state.prepared { color: var(--good); }
 .run-row .state.running { color: var(--accent); }
 .run-row .state.partial, .run-row .state.skipped { color: var(--warn); }
-.run-row .state.failed, .run-row .state.cancelled { color: var(--bad); }
-.run-row .state.queued { color: var(--text-faint); }
+.run-row .state.failed { color: var(--bad); }
+/* Stopped by the person before it started: nothing broke, so not red. */
+.run-row .state.queued, .run-row .state.cancelled { color: var(--text-faint); }
 
 /* One failure = the cause, what the provider said, what to do, and what it
    cost. Only the last of those used to be shown. */
@@ -1609,7 +1612,7 @@ button.stat.bad:hover { background: color-mix(in srgb, var(--bad) 22%, transpare
 }
 table { width: 100%; border-collapse: collapse; }
 th, td {
-  text-align: left; padding: 10px 11px;
+  text-align: left; padding: 8px 11px;
   border-bottom: 1px solid var(--line-soft); vertical-align: middle;
 }
 
@@ -1690,7 +1693,7 @@ th, td {
 thead th {
   color: var(--text-faint); font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0;
   background: var(--surface); height: 40px; padding-top: 0; padding-bottom: 0;
-  position: sticky; top: var(--topbar-h, 51px); z-index: 2; white-space: nowrap;
+  position: sticky; top: calc(var(--topbar-h, 51px) + var(--tbar-h)); z-index: 2; white-space: nowrap;
   box-shadow: inset 0 -1px 0 var(--line);
 }
 thead th.sortable { cursor: pointer; user-select: none; transition: color var(--dur-fast) ease; }
@@ -2162,6 +2165,62 @@ dialog.detail-sheet[open] { display: flex; flex-direction: column; animation: sh
 .detail-head { display: flex; gap: var(--s3); align-items: flex-start; }
 .detail-head h2 { margin: 0; font-size: var(--fs-xl); line-height: 1.35; }
 .chiprow { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+
+/* Requirement -> resume evidence, quoted from the master resume. */
+.fitcard-evidence { margin-top: var(--s3); }
+.fitcard-evidence summary { cursor: pointer; color: var(--text-dim); font-size: var(--fs-sm); font-weight: 600; }
+.evidence { list-style: none; margin: var(--s2) 0; padding: 0; display: grid; gap: var(--s2); }
+.ev { display: grid; gap: 3px; padding-left: 12px; border-left: 2px solid var(--line); font-size: var(--fs-sm); }
+.ev.ok { border-left-color: var(--good); }
+.ev.none { border-left-color: var(--warn); }
+.ev-term { font-size: var(--fs-sm); }
+.ev-line { color: var(--text-dim); line-height: 1.5; quotes: '“' '”'; }
+
+/* Auto-fill readiness: two plain lines, each with a status dot. */
+.readiness { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
+.readiness .rd { display: grid; grid-template-columns: 8px 1fr; column-gap: 10px; row-gap: 2px; align-items: baseline; font-size: var(--fs-md); }
+.readiness .rd::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--text-faint); grid-row: 1; transform: translateY(-1px); }
+.readiness .rd > * { grid-column: 2; }
+.readiness .rd-instant::before { background: var(--good); }
+.readiness .rd-portal::before { background: var(--warn); }
+.readiness .rd .muted { font-size: var(--fs-sm); line-height: 1.5; }
+.readiness .rd button { justify-self: start; margin-top: 4px; }
+
+/* "Sign in once, retry all": stopped fills grouped by employer portal. */
+.signin-strip {
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, var(--line)); background: var(--warn-soft);
+  border-radius: var(--r-md); padding: var(--s3) var(--s4); margin: 0 0 var(--s4);
+}
+.signin-head h3 { margin: 0; font-size: var(--fs-md); }
+.signin-head p { margin: 4px 0 var(--s2); font-size: var(--fs-sm); max-width: 72ch; }
+.signin-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.signin-row { display: flex; align-items: center; gap: var(--s3); justify-content: space-between; min-width: 0; }
+.signin-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-md); }
+.signin-row button { flex: none; }
+.today-signin { list-style: none; }
+/* Proposals are suggestions, not warnings: the calm surface, not amber. */
+.proposal-strip { border-color: var(--line); background: var(--surface-2); margin-top: var(--s4); }
+.proposal-strip .signin-who { white-space: normal; }
+
+/* Conditions buried in the posting: amber tags under the header, each opening
+   onto the sentence it came from. Hard constraints (clearance, citizenship,
+   fully onsite) read in the stronger tone. */
+.clauses { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.clause details { display: contents; }
+.clause summary {
+  list-style: none; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 24px; padding: 0 10px; border-radius: var(--r-full);
+  font-size: var(--fs-sm); font-weight: 560; color: var(--warn); background: var(--warn-soft);
+}
+.clause summary::-webkit-details-marker { display: none; }
+.clause summary::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.clause.k-clearance summary, .clause.k-citizenship summary, .clause.k-onsite_full summary { color: var(--bad); background: var(--bad-soft); }
+.clause details[open] { display: block; }
+.clause:has(details[open]) { flex-basis: 100%; }
+.clause-quote {
+  display: block; margin: 6px 0 2px; padding: 6px 10px; border-left: 2px solid currentColor;
+  color: var(--text-dim); font-size: var(--fs-sm); line-height: 1.5; quotes: '“' '”';
+}
 
 .stepper { display: flex; gap: 3px; margin: var(--s3) 0 var(--s1); }
 .stepper .s { flex: 1; height: 6px; border-radius: 3px; background: var(--chip); }
@@ -2946,50 +3005,98 @@ kbd {
 }
 @keyframes toastin { from { opacity: 0; transform: translateY(6px); } }
 
-/* ── the bulk-action bar ──
-   Desktop: a 0px-tall sticky strip at the top of the board whose inner bar
-   lies exactly over the 40px header row, starting after the select-all
-   column. It sticks wherever the header sticks, so the actions stay beside
-   the rows they act on through a 7,000px board. */
+/* ── the table toolbar (bulk actions) ──
+   A 44px row docked above the column headers, ALWAYS present, so ticking a box
+   never moves a row. At rest it says what selecting does, in faint text. With
+   rows ticked it becomes the action bar: tinted with the accent and marked by
+   an accent rail, so it reads as a different layer from the rows it acts on.
+   It used to float over the rows, where it blended into them and could cover
+   the focused row (WCAG 2.2 focus-not-obscured).
+
+   Order follows the work: count + Clear, then the decisions (Shortlist,
+   Reject, Archive, Compare), then the apply pipeline as ONE stepper,
+   Prepare > Approve > Auto-fill, with the step the selection is ready for
+   filled (selection.js sets `.primary`). It sticks under the top bar; the
+   column headers stick beneath it (--tbar-h), so names and sorting stay. */
+:root { --tbar-h: 44px; }
 #selbar {
-  position: sticky; top: var(--topbar-h, 51px); z-index: 4; height: 0;
-  /* The wrapper never takes the pointer, only the bar inside it when open. On
-     phones the wrapper is a fixed, 52px-tall box: closed, it sat invisibly over
-     the bottom of the screen and swallowed taps meant for the pager and footer. */
-  pointer-events: none;
-}
-#selbar .selbar-inner {
-  position: absolute; top: 0; left: 44px; right: 0; height: 40px;
+  position: sticky; top: var(--topbar-h, 51px); z-index: 4;
+  height: var(--tbar-h);
   container: selbar / inline-size;
-  display: flex; align-items: center; gap: 2px; padding: 0 6px 0 4px;
-  /* Opaque, tinted: it replaces the header row it sits on, so the column
-     names must not show through it. */
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  border-top-left-radius: calc(var(--r-md) - 1px); border-top-right-radius: calc(var(--r-md) - 1px);
+  transition: background-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+#selbar[data-open="true"] {
   background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface);
-  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--accent) 35%, var(--line));
-  border-top-right-radius: calc(var(--r-md) - 1px);
-  /* Hidden by default: invisible, inert to the pointer, out of the tab order
-     and the accessibility tree (visibility), and it fades out faster than it
-     fades in — the system answering, not deliberating. */
-  opacity: 0; visibility: hidden; transform: translateY(-3px); pointer-events: none;
+  border-bottom-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+/* Resting hint. Hidden (not just transparent) once rows are ticked. */
+.selbar-idle {
+  position: absolute; inset: 0; margin: 0; padding: 0 var(--s4);
+  display: flex; align-items: center; gap: 10px;
+  font-size: var(--fs-sm); color: var(--text-faint); white-space: nowrap; overflow: hidden;
+  transition: opacity var(--dur-fast) ease;
+}
+.selbar-idle .ic { width: 16px; height: 16px; flex: none; color: var(--text-faint); }
+.selbar-keys { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.selbar-keys kbd { font-size: var(--fs-xs); }
+#selbar[data-open="true"] .selbar-idle { opacity: 0; visibility: hidden; }
+#selbar .selbar-inner {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; gap: 4px; padding: 0 var(--s2) 0 var(--s4);
+  /* Hidden at rest: invisible, inert, out of the tab order and the
+     accessibility tree. Only opacity and transform move; it leaves faster
+     than it arrives. */
+  opacity: 0; visibility: hidden; transform: translateY(-2px); pointer-events: none;
   transition: opacity var(--dur-fast) ease, transform var(--dur-fast) var(--ease-out), visibility 0s linear var(--dur-fast);
 }
 #selbar[data-open="true"] .selbar-inner {
   opacity: 1; visibility: visible; transform: none; pointer-events: auto;
   transition: opacity var(--dur) var(--ease-out), transform var(--dur) var(--ease-out), visibility 0s;
 }
-.selbar-count { padding: 0 6px 0 2px; white-space: nowrap; font-size: var(--fs-md); }
-#selCount { color: var(--accent); font-weight: 650; font-variant-numeric: tabular-nums; }
-.selbar-sep { width: 1px; height: 18px; background: color-mix(in srgb, var(--accent) 25%, var(--line)); margin: 0 4px; flex: none; }
+/* The count is the anchor of the bar: a solid accent pill, tabular figures. */
+.selbar-count { flex: none; white-space: nowrap; }
+#selCount {
+  display: inline-flex; align-items: center; height: 24px; padding: 0 10px; border-radius: var(--r-full);
+  background: var(--accent); color: var(--accent-ink);
+  font-size: var(--fs-sm); font-weight: 650; font-variant-numeric: tabular-nums;
+}
+.selbar-sep { width: 1px; height: 20px; background: color-mix(in srgb, var(--accent) 30%, var(--line)); margin: 0 6px; flex: none; }
 .selbar-group { display: flex; align-items: center; gap: 2px; }
-.selbar-pipeline { gap: 6px; margin-left: 4px; }
-.selbar-inner button.small { height: var(--h-sm); }
+.selbar-inner button.small { height: 30px; }
 .selbar-inner button.ghost { color: var(--text-dim); }
-.selbar-inner button.ghost:hover { color: var(--text); }
-/* Reject is the one action here that closes jobs: red only when you reach
-   for it, so it never shouts from a resting bar. It is undoable, and the
-   undo toast asks why. */
-.selbar-inner [data-decision="rejected"]:hover { color: var(--bad); background: var(--bad-soft); }
-.selbar-more .iconbtn { width: var(--h-sm); height: var(--h-sm); }
+.selbar-inner button.ghost:hover:not(:disabled) { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
+.selbar-inner button:active:not(:disabled) { transform: scale(.97); }
+/* Each decision carries its meaning in its icon colour, quietly at rest:
+   a star for keeping, red for turning down. Labels stay neutral and
+   readable; nothing relies on colour alone. */
+.selbar-inner [data-decision="shortlisted"] .ic { color: var(--warn-text); }
+.selbar-inner [data-decision="rejected"] .ic { color: var(--bad); }
+.selbar-inner [data-decision="rejected"]:hover:not(:disabled) { color: var(--bad); background: var(--bad-soft); }
+
+/* The apply pipeline: one connected stepper in the order the work happens.
+   The filled step is the one the selection is ready for. */
+.selbar-pipeline {
+  margin-left: auto; gap: 0; padding: 3px; flex: none;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-md);
+}
+.selbar-pipeline button.small {
+  height: 28px; padding: 0 12px; border: 0; background: transparent;
+  color: var(--text); font-weight: 560; border-radius: calc(var(--r-md) - 4px);
+}
+.selbar-pipeline button.small:hover:not(:disabled):not(.primary) { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.selbar-pipeline button.small:disabled { color: var(--text-faint); background: transparent; }
+.selbar-pipeline button.small.primary { background: var(--accent); color: var(--accent-ink); font-weight: 650; }
+.selbar-pipeline button.small.primary:hover { background: var(--accent-hover); }
+.step-sep {
+  width: 14px; height: 14px; flex: none; margin: 0 1px; background-color: var(--text-faint);
+  -webkit-mask: var(--ic-chev-r) center / 10px no-repeat; mask: var(--ic-chev-r) center / 10px no-repeat;
+}
+.selbar-more { margin-left: 4px; }
+.selbar-more .iconbtn { width: 30px; height: 30px; }
 .selbar-more .menu-pop { min-width: 220px; }
 /* The overflow menu only exists once the bar is too narrow for everything.
    In it, the step that is already the bar's primary button is not repeated. */
@@ -3004,7 +3111,8 @@ kbd {
   .selbar-clear .lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .selbar-clear { width: var(--h-sm); padding: 0; justify-content: center; }
   .selbar-wide { display: none; }
-  .selbar-pipeline button:not(.primary) { display: none; }
+  .selbar-pipeline button:not(.primary), .step-sep { display: none; }
+  .selbar-keys { display: none; }
   .selbar-more { display: inline-block; }
   .selbar-sep { display: none; }
 }
@@ -3016,12 +3124,17 @@ kbd {
 /* Phones (cards, no header row to dock on): a floating glass bar above the
    thumb, with room reserved beneath the last card so it never sits on one. */
 @media (max-width: 860px) {
-  #selbar {
+  #selbar, #selbar[data-open="true"] {
     position: fixed; top: auto; height: auto; z-index: 40;
     left: var(--s3); right: var(--s3); bottom: calc(var(--s3) + env(safe-area-inset-bottom, 0px));
+    /* Only the bar inside is a surface here; the wrapper is a positioner
+       that must not catch taps meant for the cards beneath it. */
+    background: none; border: 0; box-shadow: none; border-radius: 0; pointer-events: none;
   }
+  #selbar .selbar-idle { display: none; }
+  #selbar .selbar-pipeline { margin-left: auto; }
   #selbar .selbar-inner {
-    position: static; inset: auto; height: 52px; padding: 0 8px 0 10px;
+    position: static; inset: auto; width: auto; max-width: none; height: 52px; padding: 0 8px 0 10px;
     border-radius: var(--r-lg); border: 1px solid var(--glass-line);
     background: var(--glass-strong);
     box-shadow: inset 0 1px 0 var(--glass-hi), var(--shadow-lg);
@@ -3209,8 +3322,12 @@ a.btn.iconbtn:active { transform: scale(.97); }
 .view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s3); margin: 0 0 var(--s3); }
 .view-head h2 { margin: 0; font-size: var(--fs-2xl); font-weight: 700; letter-spacing: -.02em; }
 .view-sub { margin: 2px 0 0; font-size: var(--fs-md); }
-.scopebar { margin: 0 0 var(--s3); }
-.scopebar .tabs { width: max-content; }
+/* The refresh status shares the stage-tab row (it used to take a line of its
+   own above the table); the filter chips row collapses when no filter is on. */
+.scopebar { margin: 0 0 var(--s3); display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+.boardbar:has(> .activefilters:empty) { display: none; }
+.scopebar .tabs { width: max-content; max-width: 100%; min-width: 0; flex: 0 1 auto; }
+@media (max-width: 720px) { .scopebar .boardstatus { display: none; } }
 .stat-link { margin-left: var(--s1); }
 .stat-link .l { color: var(--accent); }
 .health .stat .l + b { margin-left: 2px; }
@@ -3313,6 +3430,12 @@ tr.job { transition: background-color .12s ease; }
 :root { --ws-ease: cubic-bezier(.23, 1, .32, 1); --ws-col-min: 196px; }
 
 .view-head .layoutswitch { flex: none; }
+/* Jobs: the highlighted "Jobs" pill in the top bar already names the view,
+   and the heading + subtitle cost ~68px above the first row on a laptop
+   (audit 2026-11-13). Kept for screen readers as the region's heading. */
+#boardView[data-view="board"] > .view-head {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; margin: 0;
+}
 /* Applications read every search, so the role-search banner is not theirs. */
 #boardView[data-view="applications"] .mode-banner { display: none; }
 /* The Board layout replaces the stage tabs, filters, table and pager. */
@@ -3372,6 +3495,13 @@ tr.job { transition: background-color .12s ease; }
 }
 .ws-col[data-stage="attention"] .ws-count:not(:empty) { background: var(--warn-soft); color: var(--warn-text); }
 .ws-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s2); }
+/* A column holding 20+ cards scrolls inside itself (audit 2026-11-13): it
+   used to grow ~2,800px and push "After you apply" off the screen, which also
+   made dragging a card between the two bands impossible. Phones keep one
+   long page, where an inner scroller would trap the thumb. */
+@media (min-width: 861px) {
+  .ws-list { max-height: max(240px, calc((100vh - var(--topbar-h, 51px) - 220px) / 2)); overflow-y: auto; overscroll-behavior: contain; padding-right: 2px; }
+}
 .ws-col-empty {
   padding: var(--s3); border: 1px dashed var(--line); border-radius: var(--r-md);
   font-size: var(--fs-sm); color: var(--text-faint); text-align: center; line-height: 1.45;
@@ -3715,3 +3845,30 @@ dialog textarea.lt-textarea[readonly] { color: var(--text-dim); }
 @media (hover: none) and (pointer: coarse) {
   #accountMenu [data-action="open-keys"] { display: none; }
 }
+
+/* ── command palette (⌘K) ──
+   Top-anchored like Raycast and Linear, so results grow downward without the
+   box jumping. No entrance animation: opened many times a day, it must feel
+   instant, and keyboard-initiated UI never animates. */
+dialog.palette {
+  width: min(640px, calc(100vw - 32px)); max-height: min(520px, 70vh); margin: 12vh auto auto; padding: 0;
+  border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: var(--shadow-lg);
+  background: var(--surface); color: var(--text); overflow: hidden;
+}
+dialog.palette[open] { animation: none; display: flex; }
+dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
+.pal-panel { display: flex; flex-direction: column; width: 100%; min-height: 0; }
+.pal-input {
+  font: inherit; font-size: var(--fs-lg, 15px); padding: 14px 16px; border: 0; border-bottom: 1px solid var(--line);
+  background: transparent; color: var(--text); outline: none; border-radius: 0;
+}
+.pal-list { list-style: none; margin: 0; padding: 6px; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+.pal-group { padding: 8px 10px 4px; font-size: var(--fs-xs); font-weight: 600; color: var(--text-faint); }
+.pal-item {
+  display: flex; align-items: baseline; gap: 10px; padding: 8px 10px; border-radius: var(--r-sm);
+  cursor: pointer; font-size: var(--fs-md);
+}
+.pal-item[aria-selected="true"] { background: var(--accent-soft); color: var(--text); }
+.pal-detail { color: var(--text-dim); font-size: var(--fs-sm); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-empty { padding: 14px 10px; color: var(--text-dim); font-size: var(--fs-md); }
+.pal-foot { margin: 0; padding: 8px 14px; border-top: 1px solid var(--line-soft); font-size: var(--fs-xs); }

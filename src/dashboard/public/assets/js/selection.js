@@ -109,9 +109,8 @@ $('selbar').addEventListener('keydown', (event) => {
  * some may not be loaded — fetch those rather than silently treating them as
  * unknown (the old build reported them as "closed or needs a direct link").
  */
-export async function selectedJobs() {
-  const ids = [...state.selected];
-  const missing = ids.filter((id) => !state.known.has(id));
+export async function selectedJobs(ids = [...state.selected], { fresh = false } = {}) {
+  const missing = fresh ? ids : ids.filter((id) => !state.known.has(id));
   if (missing.length) {
     const fetched = await Promise.allSettled(
       missing.map((id) => api(`/api/jobs/${encodeURIComponent(id)}`)),
@@ -123,10 +122,15 @@ export async function selectedJobs() {
   return ids.map((id) => state.known.get(id)).filter(Boolean);
 }
 
-export async function batchAutofill() {
+/**
+ * Auto-fill the ticked jobs, or `ids` when given ("Retry all N at this
+ * employer" after signing in once). Same confirmation, same server path; it
+ * always stops before the final Submit button.
+ */
+export async function batchAutofill({ ids = null } = {}) {
   if (autofillBlockedReason()) { toast(autofillBlockedReason(), 'bad'); return; }
   if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
-  const jobs = await selectedJobs();
+  const jobs = ids ? await selectedJobs(ids, { fresh: true }) : await selectedJobs();
   if (!jobs.length) return;
 
   const CLOSED = new Set(['submitted', 'rejected', 'archived', 'discarded']);
@@ -191,8 +195,7 @@ export async function batchApprove() {
  * this, because the selection routinely mixes already-shortlisted rows with
  * untouched ones, and clearing would silently discard the shortlist too.
  */
-export async function batchDecide(decision) {
-  const ids = [...state.selected];
+export async function batchDecide(decision, { ids = [...state.selected] } = {}) {
   if (!ids.length) return;
   // Read the prior state BEFORE the write, from the rows already in memory.
   const before = new Map(ids.map((id) => [id, state.known.get(id)?.userDecision ?? 'clear']));

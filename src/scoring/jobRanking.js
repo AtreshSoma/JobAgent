@@ -44,6 +44,24 @@ function sourceQualityRank(source) {
 }
 
 /**
+ * Apply-window bands, highest first: under 24 hours (first movers), 1-3 days
+ * (prime), 4-7 days (open), 8-21 days, older. An undated posting sits with
+ * 8-21 days: neither rewarded nor buried for a date nobody knows.
+ * @returns {number} 4 freshest .. 0 aging
+ */
+export function freshnessBand(postedAt, now = new Date()) {
+  if (isWithinLast24Hours(postedAt, now)) return 4;
+  const t = postedAt ? new Date(postedAt).getTime() : NaN;
+  if (!Number.isFinite(t)) return 1;
+  const days = (new Date(now).getTime() - t) / 86_400_000;
+  if (days < 0) return 4; // a clock-skewed future date is "just posted"
+  if (days <= 3) return 3;
+  if (days <= 7) return 2;
+  if (days <= 21) return 1;
+  return 0;
+}
+
+/**
  * Build a comparator that orders jobs freshest-first then by the remaining keys.
  * @param {Date|string|number} [now] reference clock (injectable for tests)
  * @returns {(a: object, b: object) => number}
@@ -58,8 +76,11 @@ export function compareJobsForQueue(now = new Date(), { ignoreSponsorship = fals
     const tierB = TIER_RANK[b?.tier] ?? 0;
     if (tierA !== tierB) return tierB - tierA;
 
-    const freshA = isWithinLast24Hours(postedOf(a), now) ? 1 : 0;
-    const freshB = isWithinLast24Hours(postedOf(b), now) ? 1 : 0;
+    // Freshness in BANDS, not one 24h cliff (audit Backlog #10): with only
+    // "under a day / not", a two-day-old and a four-week-old posting with the
+    // same score tied, and the score decided between them.
+    const freshA = freshnessBand(postedOf(a), now);
+    const freshB = freshnessBand(postedOf(b), now);
     if (freshA !== freshB) return freshB - freshA;
 
     // Only a question for a candidate who needs sponsoring.

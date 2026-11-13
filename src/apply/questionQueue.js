@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { writeFileAtomic } from '../utils/fsSafe.js';
+import { workspacePaths } from '../profile/workspace.js';
 import { normalizeText, slugify } from '../utils/textNormalize.js';
 import { STOPWORDS } from './screeningQA.js';
 
@@ -60,9 +61,16 @@ const QUESTION_WORDS = new Set([
   'specify', 'choose', 'confirm', 'list', 'describe',
 ]);
 
-/** @returns {string} absolute path of the queue file for a project root */
+/**
+ * The ACTIVE PERSON's queue file. Each workspace owns one: a shared file showed
+ * one candidate's unanswered employer questions (companies, job links) in the
+ * next candidate's Application profile. The original workspace keeps the
+ * original path, data/question_queue.json.
+ *
+ * @returns {string} absolute path of the queue file for a project root
+ */
 export function questionQueuePath(root) {
-  return join(root, 'data', 'question_queue.json');
+  return join(workspacePaths(root).dataDir, 'question_queue.json');
 }
 
 /**

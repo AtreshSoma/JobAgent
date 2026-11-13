@@ -130,6 +130,7 @@ export function scoringFingerprintMaterial(config = {}) {
       likelySponsors: scoring.sponsorship?.likelySponsors ?? [],
     },
     payFitWeight: scoring.weights?.payFit ?? null,
+    trackFitWeight: scoring.weights?.trackFit ?? null,
     // The role-family taxonomy decides title accept/defer/reject, which gates
     // the near-miss tier; it is data in config/role_families.json, so it is
     // hashed rather than inlined.

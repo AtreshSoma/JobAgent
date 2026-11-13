@@ -19,6 +19,48 @@ export const CHANGELOG_GROUPS = Object.freeze([
 
 export const CHANGELOG = Object.freeze([
   {
+    version: 'v0.2.2',
+    date: '2026-11-13',
+    summary: 'Each person\'s answers stay theirs, the Jobs list shows more and hides what you already applied to, and a command palette, sign-in batching and evidence from your own resume make each step quicker.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      new: [
+        'Command palette: press Ctrl+K (⌘K on a Mac) to go to any view, run any menu command or open a loaded job by typing.',
+        'Keyboard triage on the Jobs list: J and K move between jobs, S shortlists, E archives, R rejects and P prepares the focused job, each with Undo.',
+        'Conditions buried in a posting, such as onsite for the first 90 days, travel, an on-call rotation, W2 only or a clearance, appear as tags at the top of the job. Each opens to the sentence it came from.',
+        'Auto-fill readiness in a job\'s detail: whether the employer\'s system needs an account, and which of that job\'s questions nobody has answered yet.',
+        'Sign in once, retry all: jobs stopped at an employer sign-in are grouped by employer on Today and Applications, with one button to retry each employer\'s jobs after you sign in.',
+        'Evidence from your master resume: for each skill a posting asks for, the line in your resume that shows it, or a note that none does.',
+        'This employer, from your saved postings: how the employer\'s other postings answered the sponsorship question, and whether this title keeps being reposted.',
+        'Patterns in what you turn down, on Today: after several rejections from one employer or for one reason, a suggestion you can take or leave.',
+        'Applications now show interview rates by how soon after posting you applied.',
+      ],
+      improved: [
+        'The Jobs list starts higher on the screen and shows more rows, and its column names and sorting stay visible while jobs are selected.',
+        'Bulk actions sit in a toolbar above the column names, in the order you work: shortlist, reject, archive or compare, then Prepare, Approve and Auto-fill, with the next step highlighted.',
+        'Jobs you already applied to are left off the Jobs list; they are in Applications, and Closed jobs brings them back.',
+        'Today opens the first job beside the list, sinks shortlisted or prepared jobs from postings over three weeks old into an Aging group, and lets you archive or pass on a job without opening it.',
+        'Among jobs of the same tier, postings from the last few days come before older ones, not only those from the last 24 hours.',
+        'People-manager roles score lower when your search is for individual-contributor roles, and the other way round. Your saved jobs are scored again on the next search.',
+        'Company names taken from job-board addresses are written properly, such as Shield AI instead of shieldai, including in cover letters.',
+        'Each Applications column scrolls on its own, so Before you apply and After you apply both stay in view.',
+        'Badges and labels are at least 12px, the job rows use one Tab stop instead of hundreds, and file pickers and pagination have names for screen readers.',
+        'Data quality opens instantly after the first time, and its count of active jobs matches the Jobs list.',
+        'Preparing many resumes at once starts the PDF printer once instead of once per resume.',
+      ],
+      fixed: [
+        'Saving an answer under one person no longer lets another person\'s pay, experience or other answers reach the next person\'s applications.',
+        'Unanswered questions and Rank by meaning results now belong to each person instead of being shared.',
+        'Running the dashboard twice for the same folder is refused, and a dashboard notices a person switch made in another window.',
+        'Editing the active person during a search now says nothing was saved, instead of saving part of the change.',
+        'Restoring an earlier version of a job\'s documents sends an approved packet back for review and restores the Word cover letter too.',
+        'The browser extension opens the posting in a new tab instead of replacing the dashboard, and no longer reports "ready" while required dropdowns or choices are empty.',
+        'Stopping a batch of preparations shows the jobs it never reached as cancelled, not failed.',
+        'Switching between Jobs, Applications and Today no longer leaves an unrelated job open beside the list, and switching person no longer opens the previous person\'s job.',
+      ],
+    },
+  },
+  {
     version: 'v0.2.1',
     date: '2026-11-12',
     summary: 'Auto-fill completes far more of each application, asks you only what it cannot answer, and never acts on an approval you did not give. And Explore JobAgent shows how all of it works.',

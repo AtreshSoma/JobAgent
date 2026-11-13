@@ -334,7 +334,10 @@ describe('master resume management', () => {
 
 describe('accessibility', () => {
   it('makes board rows keyboard operable', () => {
-    expect(app).toContain("tabindex: '0'");
+    // One roving tab stop for the whole board (BUG-12), moved by arrows and j/k.
+    expect(app).toContain("tabindex: '-1'");
+    expect(app).toContain('export function setRowTabStop(row)');
+    expect(app).toContain("event.key === 'j'");
     expect(app).toContain("event.key === 'Enter'");
     expect(app).toContain("event.key === 'ArrowDown'");
   });

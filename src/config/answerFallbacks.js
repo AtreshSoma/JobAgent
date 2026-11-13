@@ -27,7 +27,11 @@ function unstated(value) {
 
 /** The person's own answer for `id`, or null when missing, blank or template text. */
 export function answerFor(screeningAnswers, id) {
-  const entry = (screeningAnswers?.answers ?? []).find((a) => a?.id === id);
+  // An answer stamped as ANOTHER person's is theirs, never this person's fact
+  // (audit 2026-11-13, BUG-01). Unstamped answers predate profiles and stay usable.
+  const active = String(screeningAnswers?.profileId ?? '');
+  const entry = (screeningAnswers?.answers ?? []).find((a) => a?.id === id
+    && !(active && a?.profileId && String(a.profileId) !== active));
   const text = String(entry?.answer ?? '').trim();
   return text && !isPlaceholderValue(text) ? text : null;
 }

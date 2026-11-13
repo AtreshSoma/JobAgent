@@ -153,3 +153,18 @@ describe('loadConfig fills from Saved answers, in memory only', () => {
     expect(letter.text).not.toMatch(/YOUR |US Citizen \| Green Card/);
   });
 });
+
+describe('answerFor and whose answer it is (audit 2026-11-13, BUG-01)', () => {
+  it('never takes an answer stamped as another person\'s, and keeps unstamped ones', () => {
+    const doc = {
+      profileId: 'sam',
+      answers: [
+        { id: 'work_authorization', answer: 'Authorized; requires H-1B transfer.', profileId: 'alex' },
+        { id: 'years_experience', answer: '9+ years' },
+      ],
+    };
+    expect(answerFor(doc, 'work_authorization')).toBeNull();
+    expect(answerFor(doc, 'years_experience')).toBe('9+ years');
+    expect(answerFor({ ...doc, profileId: 'alex' }, 'work_authorization')).toMatch(/H-1B/);
+  });
+});

@@ -261,6 +261,7 @@
     </section>
     <div class="scopebar">
       <div class="tabs" id="tabs" role="tablist" aria-label="Stage"></div>
+      <span class="boardstatus" id="boardStatus"></span>
     </div>
     <!-- WHICH LIST AM I LOOKING AT?
          The board can show two entirely separate things: the personalized
@@ -439,7 +440,6 @@
          not a live region — it ticks every ten seconds. -->
     <div class="boardbar">
       <div class="activefilters" id="activeFilters"></div>
-      <span class="boardstatus" id="boardStatus"></span>
     </div>
 
     <!-- Filtering is the core loop of this page and it happened in total silence
@@ -456,21 +456,30 @@
          elements, which strips their implicit table semantics in every engine.
          Stating them keeps the board a table on a phone. -->
     <div class="boardwrap" id="boardwrap" role="tabpanel" tabindex="-1">
-      <!-- THE BULK-ACTION BAR, DOCKED ON THE TABLE'S OWN HEADER ROW.
-           It used to float at the bottom of the window, over whichever rows
-           happened to be there, and wrap into a three-line block on a phone.
-           Now, when rows are ticked, it slides over the column headers it
-           replaces (select-all stays visible beside it), sticks with them as
-           the board scrolls, and costs no layout shift: the wrapper is 0px
-           tall, so ticking the first box never moves the row under the
-           pointer. On a phone it becomes a floating bar above the thumb.
 
-           SAFETY: this is presentation only. Every button dispatches the same
+      <p id="selHint" class="sr-only"></p>
+      <!-- THE TABLE TOOLBAR (bulk actions), docked above the column headers.
+           Always present, so ticking a box never moves a row: at rest it
+           says what selecting does; with rows ticked it becomes the action
+           bar, tinted, in workflow order: count and Clear, the decisions
+           (Shortlist, Reject, Archive, Compare), then the apply pipeline as
+           one stepper (Prepare > Approve > Auto-fill) with the next step
+           filled. It sticks under the top bar with the headers sticking
+           beneath it, so names and sorting stay visible. It used to float
+           over the rows, where it blended into them and could hide the
+           focused row. On a phone it floats above the thumb.
+
+           SAFETY: presentation only. Every button dispatches the same
            action as before (batch-autofill, batch-prepare, batch-approve,
            batch-decide, compare). Auto-fill still confirms first and still
            stops before Submit; nothing here can submit an application. -->
       <div id="selbar" role="toolbar" aria-label="Bulk actions for selected jobs"
         aria-describedby="selHint" aria-orientation="horizontal" data-open="false">
+        <p class="selbar-idle" aria-hidden="true">
+          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+          Tick jobs to shortlist, compare, prepare or auto-fill them together.
+          <span class="selbar-keys"><kbd>X</kbd> ticks the focused row</span>
+        </p>
         <div class="selbar-inner">
           <span class="selbar-count"><b id="selCount">0 selected</b></span>
           <button type="button" class="small ghost selbar-clear" data-action="clear-selection"
@@ -506,11 +515,13 @@
                where the selected jobs actually are (selection.js): Approve
                when packets are waiting, Auto-fill when they are approved,
                otherwise Prepare. -->
-          <div class="selbar-group selbar-pipeline" role="group" aria-label="Apply">
+          <div class="selbar-group selbar-pipeline" role="group" aria-label="Apply, in order: prepare, approve, auto-fill">
             <button type="button" class="small" data-action="batch-prepare" data-step="prepare"
               title="Tailor a resume and build an application packet for each selected job.">Prepare</button>
+            <span class="step-sep" aria-hidden="true"></span>
             <button type="button" class="small" data-action="batch-approve" data-step="approve"
               title="Approve prepared packets.">Approve</button>
+            <span class="step-sep" aria-hidden="true"></span>
             <button type="button" id="autoApplyBtn" class="small" data-action="batch-autofill" data-step="autofill"
               title="Prepare a packet if needed, approve it, open each posting in a browser, and fill it, always stopping before Submit.">Auto-fill</button>
           </div>
@@ -534,7 +545,6 @@
           </span>
         </div>
       </div>
-      <p id="selHint" class="sr-only"></p>
       <table id="board" role="table">
         <caption class="sr-only">Discovered jobs with fit, sponsorship, resume, and application status</caption>
         <thead role="rowgroup">
@@ -558,7 +568,7 @@
     </div>
 
     <div class="pagerbar">
-      <div class="pager" id="pager"></div>
+      <nav class="pager" id="pager" aria-label="Pagination"></nav>
       <button type="button" class="small ghost" data-action="open-email-jobs"
         title="An email draft with links to the jobs you are viewing, or the ones you selected.">Email list</button>
       <!-- View preferences live with pagination, not with the filters: they
@@ -892,7 +902,7 @@
   <div class="dlg-foot">
     <!-- The file picker is driven by the visible "Replace" button so the
          control matches the rest of the UI; the input itself stays hidden. -->
-    <input type="file" id="masterFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+    <input type="file" id="masterFile" aria-label="Choose a master resume (.docx)" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
     <span class="grow-1" id="masterMsg"></span>
     <button class="small" data-action="close-dialog">Close</button>
   </div>
@@ -911,7 +921,7 @@
   </div>
   <div class="dlg-body" id="letterBody"></div>
   <div class="dlg-foot">
-    <input type="file" id="letterFile" accept=".docx,.txt,.md,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+    <input type="file" id="letterFile" aria-label="Choose a master cover letter (.docx, .txt or .md)" accept=".docx,.txt,.md,text/plain,text/markdown,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
     <span class="grow-1" id="letterMsg" role="status"></span>
     <button type="button" class="small" data-action="close-dialog">Close</button>
   </div>
@@ -1038,6 +1048,19 @@
      makes them shortcuts only for the person who wrote them. `?` is the
      conventional key for this, so it needs no advertising of its own. -->
 
+<!-- THE COMMAND PALETTE (⌘K / Ctrl+K). Every entry runs the same action as
+     its menu item or button; see assets/js/palette.js. No open animation: it
+     is opened many times a day. -->
+<dialog id="dlgPalette" class="palette" aria-label="Command palette">
+  <div class="pal-panel">
+    <input id="paletteInput" class="pal-input" type="text" autocomplete="off" spellcheck="false"
+      role="combobox" aria-expanded="true" aria-controls="paletteList" aria-autocomplete="list"
+      aria-label="Type a command or a job" placeholder="Type a command or a job…">
+    <ul id="paletteList" class="pal-list" role="listbox" aria-label="Results"></ul>
+    <p class="pal-foot faint"><kbd>↑</kbd> <kbd>↓</kbd> to move · <kbd>Enter</kbd> to run · <kbd>Esc</kbd> to close</p>
+  </div>
+</dialog>
+
 <dialog id="dlgKeys" class="narrow" aria-labelledby="dlgKeysTitle">
   <div class="dlg-head">
     <h2 id="dlgKeysTitle">Keyboard shortcuts</h2>
@@ -1045,11 +1068,14 @@
   </div>
   <div class="dlg-body">
     <dl class="keys">
+      <dt><kbd>⌘</kbd> <kbd>K</kbd> or <kbd>Ctrl</kbd> <kbd>K</kbd></dt><dd>Command palette: go anywhere, run any command, open a job</dd>
       <dt><kbd>/</kbd></dt><dd>Jump to search</dd>
       <dt><kbd>?</kbd></dt><dd>Show this list</dd>
       <dt><kbd>Esc</kbd></dt><dd>Close a dialog or menu; clear the search box</dd>
       <dt class="keys-sec" aria-hidden="true"></dt><dd class="keys-sec">On the job board</dd>
-      <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd>Move between jobs</dd>
+      <dt><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>J</kbd> <kbd>K</kbd></dt><dd>Move between jobs (<kbd>Home</kbd> <kbd>End</kbd>: first or last on the page)</dd>
+      <dt><kbd>S</kbd> <kbd>E</kbd> <kbd>R</kbd></dt><dd>Shortlist, archive or reject the focused job (with Undo)</dd>
+      <dt><kbd>P</kbd></dt><dd>Prepare the focused job's tailored resume</dd>
       <dt><kbd>Enter</kbd></dt><dd>Open the selected job in the detail rail</dd>
       <dt><kbd>Space</kbd></dt><dd>Open the selected job</dd>
       <dt><kbd>X</kbd></dt><dd>Tick or untick the row for a bulk action</dd>
@@ -1075,7 +1101,7 @@
   <form method="dialog" class="dlg-form" data-submit="save-person" novalidate>
   <div class="dlg-body">
     <div class="person-resume" id="personResumeRow">
-      <input type="file" id="personResumeFile" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+      <input type="file" id="personResumeFile" aria-label="Choose this person's resume (.docx)" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
       <button type="button" class="small" data-action="person-pick-resume">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v4h14v-4"/></svg>
         Fill in from their resume

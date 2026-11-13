@@ -76,14 +76,27 @@ export async function handleExtensionRoutes(ctx, req, res, { path }) {
       // nothing but still "recorded", and a submitted (or unverified-submit)
       // job could be flipped back to assist_started / ready_for_submit —
       // un-submitting an application and re-opening it for a second fill.
-      const current = ctx.db.getJob?.(jobId);
-      if (!current) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
-      if (ctx.isSubmittedOrUnverified(current)) {
-        return sendJson(res, 409, { error: 'this job is already submitted (or awaiting submit verification) — result not recorded' });
-      }
-      const approvalRow = ctx.db.getApprovalByJob?.(jobId);
-      if (!approvalRow || approvalRow.approval_status !== APPROVAL_STATUS.APPROVED) {
-        return sendJson(res, 409, { error: 'this job\'s packet is not human-approved — approve it before using the extension' });
+      // The checks below and the write at the end run in ONE immediate
+      // transaction (RISK-02): another process (a CLI run, a second window)
+      // rejecting the packet or recording a submission between the check and
+      // the write could otherwise be overwritten with a fill result.
+      const refuse = (status, error) => Object.assign(new Error(error), { refusal: { status, error } });
+      const checkStillAllowed = () => {
+        const job = ctx.db.getJob?.(jobId);
+        if (!job) throw refuse(404, `unknown job id: ${jobId}`);
+        if (ctx.isSubmittedOrUnverified(job)) {
+          throw refuse(409, 'this job is already submitted (or awaiting submit verification) — result not recorded');
+        }
+        const approval = ctx.db.getApprovalByJob?.(jobId);
+        if (!approval || approval.approval_status !== APPROVAL_STATUS.APPROVED) {
+          throw refuse(409, 'this job\'s packet is not human-approved — approve it before using the extension');
+        }
+        return job;
+      };
+      let current;
+      try { current = checkStillAllowed(); } catch (err) {
+        if (err.refusal) return sendJson(res, err.refusal.status, { error: err.refusal.error });
+        throw err;
       }
       const filled = Array.isArray(body.filled) ? body.filled.slice(0, 120).map((x) => ({
         field: String(x?.field ?? '').slice(0, 80),
@@ -107,14 +120,23 @@ export async function handleExtensionRoutes(ctx, req, res, { path }) {
       // Once a user follows an aggregator's Apply link, remember the verified
       // employer URL. Future extension runs open the useful direct page
       // instead of bouncing through LinkedIn/Indeed again.
-      if (body.contextVerified === true && isSafeObservedApplicationUrl(body.observedUrl)) {
-        if (isAggregatorUrl(current.url)) {
-          ctx.db.upsertJob({ id: jobId, url: String(body.observedUrl).slice(0, 2048) });
+      const write = () => {
+        checkStillAllowed(); // re-checked under the write lock
+        if (body.contextVerified === true && isSafeObservedApplicationUrl(body.observedUrl)) {
+          if (isAggregatorUrl(current.url)) {
+            ctx.db.upsertJob({ id: jobId, url: String(body.observedUrl).slice(0, 2048) });
+          }
         }
+        recordAssistResult(ctx.db, jobId, {
+          status, submitted: false, filled, blockers, phases,
+        });
+      };
+      try {
+        if (typeof ctx.db.transaction === 'function') ctx.db.transaction(write); else write();
+      } catch (err) {
+        if (err.refusal) return sendJson(res, err.refusal.status, { error: err.refusal.error });
+        throw err;
       }
-      recordAssistResult(ctx.db, jobId, {
-        status, submitted: false, filled, blockers, phases,
-      });
       ctx.refreshTracker();
       return sendJson(res, 200, {
         recorded: true, status, formDetected, startedApplication, readyForReview,

@@ -105,7 +105,11 @@ function loadPacketFile(path) {
   try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; }
 }
 
-function sendBackToReview(ctx, jobId) {
+/**
+ * A changed document invalidates an approval: the person approved OTHER words.
+ * Returns true when an approved packet went back to review.
+ */
+export function sendBackToReview(ctx, jobId) {
   const approval = ctx.db.getApprovalByJob?.(jobId);
   if (approval?.approval_status === APPROVAL_STATUS.APPROVED) {
     ctx.db.updateApprovalStatus(approval.id, { approval_status: APPROVAL_STATUS.PENDING, approved_by_user: 0, approved_at: null });

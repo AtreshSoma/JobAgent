@@ -34,6 +34,7 @@ import { ui } from './ui.js';
 import { quickPreflight } from './preflight.js';
 import { masterResumeFile } from '../profile/workspace.js';
 import { instanceProof, readToken, TOKEN_HEADER, tokensMatch, unlockUrl } from '../dashboard/apiToken.js';
+import { readLiveLock, writeLock } from '../dashboard/instanceLock.js';
 
 /** Parse and validate a user-facing dashboard port. */
 export function parseDashboardPort(value, fallback = 4646) {
@@ -316,9 +317,15 @@ export async function runApp({ parsed, env, deps = {} }) {
   // port. Checked before the database is opened: a second instance must not
   // touch the store the first one is serving.
   const existingToken = readToken(config.root);
-  const found = deps.probeRunningDashboard
-    ? await deps.probeRunningDashboard(requestedPort, { token: existingToken }).then((u) => (u ? { url: u, proven: true } : null))
-    : await identifyRunningDashboard(requestedPort, { token: existingToken });
+  const probe = (p) => (deps.probeRunningDashboard
+    ? deps.probeRunningDashboard(p, { token: existingToken }).then((u) => (u ? { url: u, proven: true } : null))
+    : identifyRunningDashboard(p, { token: existingToken }));
+  // The workspace lock names the port a running dashboard ACTUALLY holds:
+  // probing only the requested port missed one started on another port
+  // (`npm run dashboard -- --port=4747`) and started a split-brain second.
+  const holder = (deps.readLiveLock ?? readLiveLock)(config.root);
+  let found = holder && holder.port !== requestedPort ? await probe(holder.port) : null;
+  if (!found) found = await probe(requestedPort);
   const existingUrl = found?.url ?? null;
   if (existingUrl && !found.proven) {
     // Something that looks like JobAgent holds the port but could not prove it
@@ -354,6 +361,7 @@ export async function runApp({ parsed, env, deps = {} }) {
   let signalWait = null;
   let port;
   let reachedShutdown = false;
+  let releaseLock = null;
 
   try {
     // 2. Database (opens + applies schema/index migrations idempotently).
@@ -369,6 +377,7 @@ export async function runApp({ parsed, env, deps = {} }) {
 
     // 4. Serve + readiness.
     dash = await startDashboardImpl({ config, db, logger, port });
+    releaseLock = (deps.writeLock ?? writeLock)(config.root, { port: dash.port ?? port });
     uninstallSafetyNet = installSafetyNetImpl({ runState: dash.runState, logger });
     await (deps.waitForReady ?? waitForReady)(dash.url, { token: dash.apiToken });
 
@@ -404,6 +413,7 @@ export async function runApp({ parsed, env, deps = {} }) {
       try { await dash.close(); } catch (err) { cleanupError ??= err; }
     }
     try { uninstallSafetyNet?.(); } catch (err) { cleanupError ??= err; }
+    try { releaseLock?.(); } catch { /* best effort: a stale lock is ignored once its pid is gone */ }
     if (db) {
       try { db.close(); } catch (err) { cleanupError ??= err; }
     }

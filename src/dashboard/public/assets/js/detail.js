@@ -71,6 +71,38 @@ export async function selectJob(id, { focusRow = false, user = false, defer = 0 
 }
 
 /**
+ * Close the rail's job: nothing selected, the placeholder back, no #job= hash.
+ */
+export function clearDetail() {
+  flushNote();
+  clearTimeout(selectTimer);
+  state.selectedId = null;
+  markCurrentRow(null);
+  if (location.hash.startsWith('#job=')) history.replaceState(null, '', location.pathname + location.search);
+  const host = $('detail');
+  if (!host || host.querySelector(':scope > .panel.empty')) return;
+  host.textContent = '';
+  host.append(el('div', { class: 'panel empty' },
+    el('div', { class: 'big', text: 'Select a job' }),
+    'Its grade, fit breakdown, sponsorship, tailored resume, and next best action appear here.'));
+}
+
+/**
+ * Keep the rail in step with the list the person is looking at (BUG-11).
+ * Switching Jobs -> Applications left an unrelated discovery job open beside
+ * a list that did not contain it. The open job stays only when the new list
+ * shows it; otherwise the list's first item opens on a wide layout (an empty
+ * rail is a third of the screen doing nothing), and a phone shows nothing.
+ *
+ * @param {string[]} ids the list's job ids, in order
+ */
+export function syncDetailToList(ids = []) {
+  if (state.selectedId && ids.includes(state.selectedId)) return;
+  if (ids.length && !isSheetLayout()) selectJob(ids[0]);
+  else if (state.selectedId) clearDetail();
+}
+
+/**
  * Open a job AND show the part of its detail a card's button promised.
  *
  * "See what stopped it" used to call selectJob alone. When that job was
@@ -279,6 +311,79 @@ export function verdictLabel(job) {
   return job.grade?.label ?? fitLabel(job.fit);
 }
 
+const MONTH = (iso) => {
+  const t = Date.parse(iso ?? '');
+  return Number.isFinite(t) ? new Date(t).toLocaleDateString(undefined, { month: 'short', year: 'numeric' }) : null;
+};
+
+/**
+ * Employer history (sponsorship answers on other postings; reposts), or null.
+ * Counts, never a verdict on this posting: the person weighs it.
+ */
+export function historyCard(job) {
+  const h = job.history;
+  if (!h) return null;
+  const lines = el('ul', { class: 'readiness' });
+  const e = h.employer;
+  if (e && (e.sponsorYes || e.sponsorNo)) {
+    const kind = e.verdict === 'unlikely' ? 'portal' : e.verdict === 'likely' ? 'instant' : 'unknown';
+    const said = [e.sponsorYes ? `${e.sponsorYes} said they sponsor` : null, e.sponsorNo ? `${e.sponsorNo} said sponsorship is not available` : null]
+      .filter(Boolean).join(', ');
+    lines.append(el('li', { class: `rd rd-${kind}` },
+      el('b', { text: e.verdict === 'unlikely' ? 'Other postings say no sponsorship' : e.verdict === 'likely' ? 'Other postings say they sponsor' : 'Mixed answers on sponsorship' }),
+      el('span', { class: 'muted', text: `Of ${e.postings} postings from this employer in your store, ${said}. This posting's own wording decides; this is context.` })));
+  }
+  if (h.repost) {
+    const since = MONTH(h.repost.since);
+    lines.append(el('li', { class: 'rd rd-portal' },
+      el('b', { text: `Posted ${h.repost.count} times${since ? ` since ${since}` : ''}` }),
+      el('span', { class: 'muted', text: `The same title at this employer keeps reappearing over ${h.repost.spanDays} days — often an evergreen or reposted requisition rather than one open seat.` })));
+  }
+  return lines.children.length ? lines : null;
+}
+
+const PLATFORM_NAMES = {
+  greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', smartrecruiters: 'SmartRecruiters', jobvite: 'Jobvite',
+  rippling: 'Rippling', workday: 'Workday', oraclerecruiting: 'Oracle Recruiting', oracle: 'Oracle Recruiting',
+  icims: 'iCIMS', taleo: 'Taleo', successfactors: 'SuccessFactors',
+};
+
+/** Access (account or not) and open questions, as two plain lines. */
+export function readinessCard(job) {
+  const a = job.access ?? { kind: 'unknown', label: 'Application system not identified' };
+  const name = PLATFORM_NAMES[a.platform] ?? null;
+  const access = a.kind === 'instant'
+    ? `${name ?? 'This system'} needs no account — Auto-fill can start straight away.`
+    : a.kind === 'portal'
+      ? `${name ?? 'This employer'} needs a candidate account. The first fill stops at sign-in; sign in once in that window and it is remembered.`
+      : 'The application system is not identified yet; Auto-fill will find out when it opens the posting.';
+  const questions = job.openQuestions ?? [];
+  const wrap = el('ul', { class: 'readiness' });
+  wrap.append(el('li', { class: `rd rd-${a.kind}` }, el('b', { text: a.label }), el('span', { class: 'muted', text: access })));
+  const q = el('li', { class: `rd ${questions.length ? 'rd-portal' : 'rd-instant'}` },
+    el('b', { text: questions.length ? `${questions.length} unanswered question${questions.length === 1 ? '' : 's'}` : 'No unanswered questions' }));
+  if (questions.length) {
+    q.append(el('span', { class: 'muted', text: questions.slice(0, 3).map((x) => `“${x.label}”`).join(', ') + (questions.length > 3 ? '…' : '') }),
+      el('button', { type: 'button', class: 'small', 'data-action': 'open-profile', text: 'Answer them' }));
+  } else {
+    q.append(el('span', { class: 'muted', text: 'None recorded for this job. Questions a form asks that your answers cannot cover are saved here.' }));
+  }
+  wrap.append(q);
+  return wrap;
+}
+
+/** The posting's buried conditions as small expandable tags. */
+export function clauseStrip(clauses) {
+  const list = el('ul', { class: 'clauses', 'aria-label': 'Conditions stated in this posting' });
+  for (const c of clauses) {
+    list.append(el('li', { class: `clause k-${c.kind}` },
+      el('details', { 'data-key': `clause-${c.kind}` },
+        el('summary', { text: c.label }),
+        el('q', { class: 'clause-quote', text: c.quote }))));
+  }
+  return list;
+}
+
 export function detailSections(job) {
   const out = [];
 
@@ -347,6 +452,10 @@ export function detailSections(job) {
   headMain.append(chips);
   head.append(headMain);
   out.push(railSection('head', head));
+  // Conditions the posting buries (a 90-day onsite ramp-up under "Hybrid",
+  // 50% travel, an on-call rotation): stated up top, each opening onto the
+  // sentence it came from so it can be checked, not trusted.
+  if (job.clauses?.length) out.push(railSection('clauses', clauseStrip(job.clauses)));
   out.push(railSection('stepper', stepper(job.progress)));
 
   // attention
@@ -370,6 +479,15 @@ export function detailSections(job) {
   // next best action
   const next = nextBestAction(job);
   out.push(railSection('next', el('h3', { text: 'Do this next' }), next));
+
+  const history = historyCard(job);
+  if (history) out.push(railSection('history', el('h3', { text: 'This employer, from your saved postings' }), history));
+
+  // Before a browser opens: will this need an employer account, and which of
+  // the form's questions is nobody ready to answer?
+  if (job.access && !['submitted', 'rejected', 'archived', 'discarded'].includes(job.appStatus)) {
+    out.push(railSection('readiness', el('h3', { text: 'Auto-fill readiness' }), readinessCard(job)));
+  }
 
   // After a submission, what the employer did and when to chase it. Right
   // under the next step, because once applied this IS the next step.
@@ -731,7 +849,30 @@ export function fitCard(job) {
       el('div', {},
         el('h4', { text: `Asked for, not evidenced in your resume (${missing.length})` }), keywordList(missing, 'bad'))));
   }
+  const evidence = (job.evidence ?? []).filter((e) => !String(job.title ?? '').toLowerCase().includes(String(e.term).toLowerCase()));
+  if (!unread && evidence.length) card.append(evidenceList(evidence));
   return card;
+}
+
+/**
+ * Where each asked-for skill is proven in the master resume, quoted. An
+ * unproven skill says so and points at the master resume: if the person has
+ * that experience, writing it there (truthfully, in their words) is the fix.
+ */
+export function evidenceList(evidence) {
+  const proven = evidence.filter((e) => e.lines.length).length;
+  const list = el('ul', { class: 'evidence' });
+  for (const e of evidence) {
+    const item = el('li', { class: e.lines.length ? 'ev ok' : 'ev none' }, el('b', { class: 'ev-term', text: e.term }));
+    if (e.lines.length) for (const line of e.lines) item.append(el('q', { class: 'ev-line', text: line }));
+    else item.append(el('span', { class: 'ev-line muted', text: 'No line in your master resume mentions this. If you have done it, add it there in your own words.' }));
+    list.append(item);
+  }
+  const unproven = evidence.length - proven;
+  const details = el('details', { class: 'fitcard-evidence', 'data-key': 'evidence' },
+    el('summary', { text: `Evidence from your master resume (${proven} of ${evidence.length} proven)` }), list);
+  if (unproven) details.append(el('button', { type: 'button', class: 'small', 'data-action': 'open-master', text: 'Open master resume' }));
+  return details;
 }
 
 /** Local calendar day, `offset` days from today, as YYYY-MM-DD. */

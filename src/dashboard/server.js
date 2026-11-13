@@ -249,7 +249,23 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     dbPath = next;
     // The session logger records against the database it was given.
     if (logger && typeof logger === 'object' && 'db' in logger) logger.db = handle;
+    closeIdleWorkspaceDbs();
     return true;
+  }
+  /**
+   * Close the handles of workspaces nobody is using (RISK-01). Every person
+   * ever switched to kept an open handle (and its WAL files) until shutdown.
+   * Only when nothing runs in the background — a sweep that started on the
+   * previous person's database must finish on it — and never the boot handle,
+   * which belongs to the caller.
+   */
+  function closeIdleWorkspaceDbs() {
+    if (runState.running || inFlight.size) return;
+    for (const [path, handle] of workspaceDbs) {
+      if (handle === bootDb || handle === db) continue;
+      try { handle.close(); } catch { /* best effort */ }
+      workspaceDbs.delete(path);
+    }
   }
   /** The handle for one workspace's database, opening it on first use. */
   function dbForWorkspace(workspaceId) {
@@ -406,6 +422,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     try {
       const loader = deps.loadConfigImpl ?? loadConfig;
       config = loader({ root, loadEnv: false });
+      // This process's own write is now loaded; only a LATER change by another
+      // process should trigger followExternalChanges.
+      if (dbPath) seenActivation = activationStamp(root);
       // A new profile / scoring / gate changes what the board SHOWS without
       // writing a row, so the data-keyed caches must be told.
       noteUserMutation();
@@ -443,6 +462,39 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     const key = (found) => JSON.stringify(found.placeholders.map((p) => [p.file, p.path, p.value]));
     return key(findPlaceholders(fresh)) === key(live) ? null : reloadConfig();
   }
+
+  /**
+   * FOLLOW CHANGES MADE BY ANOTHER PROCESS (audit BUG-03).
+   *
+   * `config` and `db` are cached in memory. When something else switches the
+   * active profile or rewrites the profile-derived config (a second dashboard
+   * on another port, `npm run profiles`), this server kept querying the old
+   * person's database against the new person's files. The activation pointer
+   * and the regenerated config files are stat()ed per API request (cheap) and
+   * a change rebinds the workspace and reloads config — never mid-run, where a
+   * run must finish on the database it started with.
+   */
+  const activationFiles = (root) => [
+    join(root, 'config', 'profiles', '_active.json'),
+    join(root, 'config', 'candidate.json'),
+    join(root, 'config', 'scoring.json'),
+    join(root, 'config', 'screening_answers.json'),
+  ];
+  const activationStamp = (root) => activationFiles(root)
+    .map((f) => { try { return statSync(f).mtimeMs; } catch { return 0; } }).join(':');
+  let seenActivation = bootConfig?.root ? activationStamp(bootConfig.root) : '';
+  function followExternalChanges() {
+    const root = config?.root;
+    if (!root || !dbPath) return false;
+    const stamp = activationStamp(root);
+    if (stamp === seenActivation) return false;
+    if (runState.running) return false; // re-checked on the next request after the run
+    seenActivation = stamp;
+    const switched = useActiveWorkspace();
+    reloadConfig();
+    return switched;
+  }
+
 
   /**
    * Re-judge the rows the previous profile scored, off the request path.
@@ -883,12 +935,19 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
    *
    * @returns {string|null} the CSV path, or null when skipped
    */
-  function writeTrackerNow() {
-    const root = config?.root;
+  // The database and root the pending tracker write belongs to, captured when
+  // it was scheduled (RISK-03): a profile switch inside the 400 ms debounce
+  // otherwise wrote the NEW person's jobs into the tracker the old change was for,
+  // and left the old person's tracker stale.
+  let trackerTarget = null;
+  function writeTrackerNow(target = trackerTarget ?? { db, root: config?.root }) {
+    const root = target?.root;
     if (!root) return null;
     try {
       const writeImpl = deps.writeJobTrackerImpl ?? writeJobTracker;
-      return writeImpl(db, root).path;
+      const path = writeImpl(target.db ?? db, root).path;
+      if (target === trackerTarget) trackerTarget = null;
+      return path;
     } catch (err) {
       logger?.warn?.(`tracker refresh failed: ${err.message}`);
       return null;
@@ -913,6 +972,14 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
   const TRACKER_DEBOUNCE_MS = deps.trackerDebounceMs ?? 400;
   function refreshTracker() {
     if (!config?.root) return;
+    // A switch since the last schedule: flush the previous person's write
+    // now, against THEIR database, before scheduling this one.
+    if (trackerTarget && trackerTarget.db !== db && trackerDirty) {
+      if (trackerTimer) { clearTimeout(trackerTimer); trackerTimer = null; }
+      trackerDirty = false;
+      writeTrackerNow(trackerTarget);
+    }
+    trackerTarget = { db, root: config.root };
     trackerDirty = true;
     if (trackerTimer) return;
     trackerTimer = setTimeout(() => {
@@ -1789,6 +1856,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
             deps: { ...deps, shouldCancel: () => runState.cancelRequested },
           });
           for (const f of prep.failed ?? []) skipped.push({ jobId: f.jobId, reason: f.error });
+          for (const c of prep.cancelled ?? []) skipped.push({ jobId: c.jobId, reason: c.reason });
         }
 
         // 2+3. Approve (the click is the approval) and fill, one at a time.
@@ -1997,6 +2065,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     get takeRunLock() { return takeRunLock; },
     get track() { return track; },
     get useActiveWorkspace() { return useActiveWorkspace; },
+    get followExternalChanges() { return followExternalChanges; },
   };
 
   async function route(req, res) {
@@ -2039,6 +2108,8 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         error: 'forbidden: send JSON (content-type: application/json) or the X-Job-Agent: 1 header',
       });
     }
+
+    if (path.startsWith('/api/') && path !== '/api/instance') followExternalChanges();
 
     // ── Instance proof ─────────────────────────────────────────────────────
     // Lets the launcher confirm it is talking to THIS install before it sends
@@ -2187,6 +2258,8 @@ export function startDashboard({ config, db, logger, port = 4646, deps = {} } = 
           // so shutting down never loses the last action's CSV update.
           try { flushTracker(); } catch { /* best effort on shutdown */ }
           closeWorkspaceDbs();
+          // The PDF printer's shared browser (RISK-04) must not outlive the server.
+          try { const { closePdfBrowsers } = await import('../resume/chromiumPdf.js'); await closePdfBrowsers(); } catch { /* none open */ }
         },
       });
     });

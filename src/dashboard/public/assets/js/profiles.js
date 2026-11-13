@@ -14,6 +14,7 @@ import { closeDialog, guardDialog, openDialog } from './dialogs.js';
 import { formIsDirty, markClean, saveOnlyOnPurpose, withLabel } from './forms.js';
 import { validateEmail, validateFullName, validateRoles } from './validate.js';
 import { scheduleRefresh } from './mutations.js';
+import { clearSelection } from './selection.js';
 import { displayName, initials } from './format.js';
 import { closeMainMenu } from './menus.js';
 
@@ -155,6 +156,9 @@ export async function switchProfile(id, { quiet = false } = {}) {
   if (!id || id === before) return;
   const r = await postJson('/api/search-profiles/activate', { id });
   if (r.workspaceChanged) { reloadAsNewPerson(r.label, quiet ? null : before); return; }
+  // Same database, different person: a bulk selection made for the previous
+  // person must not carry over to the next one's actions.
+  clearSelection();
   scheduleRefresh(0);
   await afterChange();
   announceSwitch(r.label, quiet ? null : before);
@@ -170,6 +174,9 @@ const SWITCHED_KEY = 'jobagent.switched';
  */
 export function reloadAsNewPerson(label, previousId, note = '') {
   try { sessionStorage.setItem(SWITCHED_KEY, JSON.stringify({ label, previousId, note })); } catch { /* storage off: no notice, still correct */ }
+  // The open job (#job=…) is the previous person's: booting the next person's
+  // workspace with it asked their database for a job it does not have.
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);
   location.reload();
 }
 

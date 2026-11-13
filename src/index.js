@@ -381,7 +381,18 @@ async function runCommand(command, parsed, env) {
         }
         const { startDashboard, installProcessSafetyNet } = await import('./dashboard/server.js');
         const port = parseDashboardPort(parsed.options.port ?? env.DASHBOARD_PORT, 4646);
+        // One dashboard per install: two servers cache config and the database
+        // separately, so a profile switch in one leaves the other serving the
+        // previous person's jobs against the new person's files (BUG-03).
+        const { readLiveLock, writeLock } = await import('./dashboard/instanceLock.js');
+        const holder = readLiveLock(config.root);
+        if (holder) {
+          ui.warn(`JobAgent is already running for this folder at http://127.0.0.1:${holder.port} (process ${holder.pid}).`);
+          ui.note('Use that one, or stop it (Ctrl+C in its window) before starting another.');
+          return { command, ok: false, alreadyRunning: true, port: holder.port };
+        }
         const dash = await startDashboard({ config, db, logger, port });
+        const releaseLock = writeLock(config.root, { port: dash.port ?? port });
         let uninstallSafetyNet = () => {};
         let onSignal = null;
         let bodyError = null;
@@ -415,6 +426,7 @@ async function runCommand(command, parsed, env) {
           let cleanupError = null;
           try { await dash.close(); } catch (err) { cleanupError ??= err; }
           try { uninstallSafetyNet(); } catch (err) { cleanupError ??= err; }
+          try { releaseLock(); } catch { /* a stale lock is ignored once its pid is gone */ }
           // eslint-disable-next-line no-unsafe-finally -- deliberate: only when the body succeeded
           if (!bodyError && cleanupError) throw cleanupError;
         }
@@ -596,7 +608,13 @@ async function runCommand(command, parsed, env) {
   } finally {
     runLock?.release();
     db.close();
+    // The PDF printer shares one browser across a batch; never leave it running.
+    await closeSharedPdfBrowser();
   }
+}
+
+async function closeSharedPdfBrowser() {
+  try { const { closePdfBrowsers } = await import('./resume/chromiumPdf.js'); await closePdfBrowsers(); } catch { /* nothing to close */ }
 }
 
 /** Legacy `--mode=` / `--report` behavior. */
@@ -649,6 +667,7 @@ async function runLegacyMode(parsed, env) {
     return { mode, ...result };
   } finally {
     db.close();
+    await closeSharedPdfBrowser();
   }
 }
 

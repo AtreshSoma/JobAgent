@@ -184,15 +184,22 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
   if (req.method === 'PATCH' && path.startsWith('/api/search-profiles/')) {
     const id = decodeURIComponent(path.slice('/api/search-profiles/'.length));
     const body = await readBody(req);
+    // Editing the ACTIVE person during a run is refused BEFORE anything is
+    // written. It used to save the profile file, then answer 409 "applies
+    // after the run" — but nothing applied it afterwards, so the profile and
+    // the candidate/scoring files it generates silently disagreed (BUG-04).
+    if (ctx.runState.running && readActiveProfile(ctx.config?.root ?? '')?.id === id) {
+      return sendJson(res, 409, {
+        error: `${ctx.runState.phase ? `A ${ctx.runState.phase} run` : 'A run'} is using this profile right now, so nothing was saved. Save again when it finishes.`,
+        notSaved: true,
+      });
+    }
     return ctx.saving(res, () => {
       const root = ctx.requireConfigRoot();
       const updated = updatePersonProfile(root, id, body.fields ?? {});
       let warning = null;
       // Editing the ACTIVE person changes what is searched for right now.
       if (updated.active) {
-        if (ctx.runState.running) {
-          throw Object.assign(new Error(`saved — the change applies after the ${ctx.runState.phase} run finishes`), { statusCode: 409 });
-        }
         activateProfile(root, id);
         warning = ctx.reloadConfig();
         if (!warning) ctx.scheduleRescore();

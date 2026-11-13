@@ -18,6 +18,7 @@ import { humanize, hasBannedContent } from './humanizer.js';
 import { assertNoTemplateTokens } from '../config/placeholders.js';
 import { composeFromMaster } from './letterTailor.js';
 import { assessLetter } from './letterQuality.js';
+import { displayCompany } from '../utils/companyName.js';
 
 /**
  * @param {object} job normalized job (title, company, ...)
@@ -215,7 +216,8 @@ function buildContext(job, scoreResult, candidate, coverLetter) {
   const authStatus = String(candidate?.workAuthorization?.status ?? '').trim();
   return {
     title: job?.title ?? 'this role',
-    company: job?.company ?? 'your company',
+    // A board token ("shieldai") is never written into a letter as a name.
+    company: job?.company ? displayCompany(job.company) : 'your company',
     headline: candidate?.identity?.headline
       ?? candidate?.targetTitles?.[0]
       ?? 'candidate',

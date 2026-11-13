@@ -9,6 +9,8 @@ export const state = {
   pageSize: 100,
   sort: 'score',
   selectedId: null,
+  // Set by a view switch: the next list to load re-syncs the detail rail.
+  syncDetail: false,
   /** @type {Set<string>} */
   selected: new Set(),
   /** id -> row, for every row seen this session (batch actions need off-page rows) */

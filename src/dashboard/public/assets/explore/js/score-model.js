@@ -33,7 +33,7 @@ export const SCORE_MODEL = Object.freeze({
     resumeKeywordAlignment: 10,
   }),
   /** Penalty-only factors: they subtract and add nothing to the denominator. */
-  penalties: Object.freeze({ eligibility: 8, payFit: 6 }),
+  penalties: Object.freeze({ eligibility: 8, payFit: 6, trackFit: 20 }),
   tiers: Object.freeze({ priority: 85, apply: 75, queue: 60, nearMiss: 50 }),
   /** Credit for a skill named only under "nice to have" (PREFERRED_SKILL_CREDIT). */
   preferredCredit: 0.3,
@@ -64,7 +64,8 @@ const SENIORITY = Object.freeze({
   match: { factor: 1, reason: 'Same level as yours' },
   up1: { factor: 1, reason: 'One step up' },
   up2: { factor: 0.75, reason: 'Two steps up' },
-  up3: { factor: 0.4, reason: 'Three or more steps up' },
+  // Three steps above a senior IC is a director: a job managing people.
+  up3: { factor: 0.4, reason: 'Three or more steps up', managesPeople: true },
   down1: { factor: 0.5, reason: 'One step below' },
   down2: { factor: 0.15, reason: 'Two or more steps below' },
   unstated: { factor: 0.6, reason: 'Level not stated' },
@@ -234,6 +235,14 @@ export function scoreInputs(inputs = {}) {
     penalties.push({
       id: 'eligibility', label: 'Stated requirement',
       points: -round2(m.penalties.eligibility * eligibility.share), reason: eligibility.reason,
+    });
+  }
+  // Track: a people-manager posting for a search that targets IC roles (the
+  // lab's search does). Level and track are separate questions.
+  if (SENIORITY[x.seniority].managesPeople) {
+    penalties.push({
+      id: 'trackFit', label: 'Track',
+      points: -round2(m.penalties.trackFit), reason: 'A people-manager role; your search targets individual-contributor roles',
     });
   }
   if (x.payShortfall > 0) {

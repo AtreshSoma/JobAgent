@@ -88,6 +88,9 @@ export function filterParams({ forCount = false } = {}) {
   if ($('undated').checked) p.set('undated', 'true');
   // The API speaks hideClosed; the UI asks the question the positive way round.
   p.set('hideClosed', String(!$('includeClosed').checked));
+  // Jobs is for deciding what to apply to next: jobs already applied to live
+  // in Applications. "Closed jobs" brings them back with everything else.
+  if (state.view !== 'applications' && !$('includeClosed').checked) p.set('hideApplied', 'true');
   p.set('sort', state.sort);
   // Scope every board read to the active mode. Omitted for 'profile' because
   // that is the server's default too, so an older client and a newer server

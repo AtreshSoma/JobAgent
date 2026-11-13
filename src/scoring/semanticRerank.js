@@ -15,6 +15,7 @@ import { boardPage } from '../dashboard/data.js';
 import { embed, embedSettings } from '../llm/embeddings.js';
 import { readMasterUnits } from '../resume/tailorRunner.js';
 import { writeFileAtomic } from '../utils/fsSafe.js';
+import { workspacePaths } from '../profile/workspace.js';
 
 export function cosine(a, b) {
   let dot = 0; let na = 0; let nb = 0;
@@ -22,7 +23,9 @@ export function cosine(a, b) {
   return na && nb ? dot / Math.sqrt(na * nb) : 0;
 }
 
-const resultFile = (root) => join(root, 'data', 'semantic-rerank.json');
+// Per workspace: the scores compare THIS person's resume bullets with jobs in
+// THIS person's database, so another candidate must never be shown them.
+const resultFile = (root) => join(workspacePaths(root).dataDir, 'semantic-rerank.json');
 
 export function readRerank(root) {
   if (!root) return null;

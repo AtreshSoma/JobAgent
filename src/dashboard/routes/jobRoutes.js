@@ -18,6 +18,24 @@ import { decideRewrites, latestRewrites, proposeRewrites, refineRewrites, rewrit
 import { APPROVAL_STATUS } from '../../apply/approvalQueue.js';
 import { freezeVersions, readManifest, restoreVersion, unfreezeVersions, versionText } from '../../apply/documentVersions.js';
 import { setLetterMode } from '../../apply/letterMode.js';
+import { existsSync, readFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
+import { assertInsideDirectory } from '../../utils/pathSafe.js';
+import { writeLetterDocx } from '../../resume/tailorRunner.js';
+import { sendBackToReview } from './materialsRoutes.js';
+
+/**
+ * The job's output folder, or null — refused (403) when the stored path is
+ * outside the workspace. Reading versions copies files from it, so a tampered
+ * row must not point the server at arbitrary folders.
+ */
+function containedFolder(ctx, job) {
+  const folder = job?.output_folder_path ?? null;
+  if (!folder) return null;
+  const root = ctx.config?.root;
+  if (root) assertInsideDirectory(root, folder, 'the documents folder escapes the Job Agent workspace');
+  return folder;
+}
 
 export async function handleJobRoutes(ctx, req, res, { url, path }) {
 
@@ -175,7 +193,7 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
     }
     // Document versions (P2-2): list, compare, restore.
     if (req.method === 'GET' && action === 'versions') {
-      const folder = ctx.db.getJob(jobId)?.output_folder_path ?? null;
+      const folder = containedFolder(ctx, ctx.db.getJob(jobId));
       const manifest = folder ? readManifest(folder) : { versions: [] };
       return sendJson(res, 200, {
         versions: manifest.versions.map(({ n, cause, at, files, task, frozen }) => ({ n, cause, at, files, task, frozen })),
@@ -183,20 +201,50 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
       });
     }
     if (req.method === 'GET' && action === 'version-text') {
-      const folder = ctx.db.getJob(jobId)?.output_folder_path;
+      const folder = containedFolder(ctx, ctx.db.getJob(jobId));
       if (!folder) return sendJson(res, 404, { error: 'This job has no prepared documents yet.' });
       return sendJson(res, 200, versionText(folder, Number(url.searchParams.get('n'))));
     }
     if (req.method === 'POST' && action === 'restore-version') {
       const body = await readBody(req);
       const job = ctx.db.getJob(jobId);
-      if (!job?.output_folder_path) return sendJson(res, 404, { error: 'This job has no prepared documents yet.' });
-      const version = restoreVersion(job.output_folder_path, Number(body.n), {
+      const folder = containedFolder(ctx, job);
+      if (!folder) return sendJson(res, 404, { error: 'This job has no prepared documents yet.' });
+      // Every file a restore overwrites must be inside the workspace: these
+      // paths come from the database, not from code (BUG-05).
+      const letter = job.cover_letter_path ?? null;
+      const current = {
         resume: job.resume_docx_path ?? job.resume_path ?? null,
         resumePdf: job.resume_pdf_path ?? null,
-        letter: job.cover_letter_path ?? null,
+        letter,
+        // The Word copy of the letter follows the text. Without it, restoring
+        // rolled back the .txt and left the .docx on the newer letter.
+        letterDocx: letter && /\.txt$/i.test(letter) ? letter.replace(/\.txt$/i, '.docx') : null,
+      };
+      const root = ctx.config?.root;
+      if (root) {
+        for (const p of Object.values(current)) if (p) assertInsideDirectory(root, p, 'a document path escapes the Job Agent workspace');
+      }
+      const target = readManifest(folder).versions.find((v) => v.n === Number(body.n));
+      const hadDocx = Boolean(current.letterDocx && existsSync(current.letterDocx));
+      const version = restoreVersion(folder, Number(body.n), current, { now: ctx.nowDate() });
+      // The version predates the Word copy: rebuild it from the restored text
+      // (best effort; Python is optional), so both say the same thing.
+      if (hadDocx && target?.files?.letter && !target.files.letterDocx && ctx.deps?.writeLetterDocxFn !== false) {
+        try {
+          await (ctx.deps?.writeLetterDocxFn ?? writeLetterDocx)({ text: readFileSync(letter, 'utf8'), path: current.letterDocx, root, deps: ctx.deps ?? {} });
+        } catch (err) { ctx.logger?.warn?.(`restored letter .docx not rebuilt: ${sanitizeErrorMessage(err.message)}`); }
+      }
+      // The documents changed, so an approval of the previous ones no longer
+      // stands — the same rule as editing the letter or accepting a rewrite.
+      const needsReapproval = sendBackToReview(ctx, jobId);
+      ctx.db.insertEvent?.({
+        id: randomUUID(), job_id: jobId, event_type: 'documents_restored',
+        message: `documents restored to version ${Number(body.n)} by you`, metadata: JSON.stringify({ n: Number(body.n) }),
       });
-      return sendJson(res, 200, { restored: Number(body.n), version });
+      noteUserMutation();
+      ctx.refreshTracker();
+      return sendJson(res, 200, { restored: Number(body.n), version, needsReapproval });
     }
     // Recruiting outcomes and follow-ups on a SUBMITTED application. Each is
     // validated and appended as an event; none changes the job's status,

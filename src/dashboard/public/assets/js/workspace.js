@@ -3,11 +3,12 @@
 import { $, el, fmt, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
-import { cssEscape, loadDetail, revealInDetail, selectJob } from './detail.js';
+import { cssEscape, loadDetail, revealInDetail, selectJob, syncDetailToList } from './detail.js';
 import { autofillOne, scheduleRefresh } from './mutations.js';
 import { openSubmitDialog } from './actions.js';
 import { autofillBlockedReason, scheduleTodayReload } from './today.js';
 import { savePreference } from './main.js';
+import { signInStrip } from './signin.js';
 
 /* ───────────────────────── Applications workspace ─────────────────────────
  * One column per stage, in the order an application moves: the three the
@@ -97,6 +98,10 @@ export function loadWorkspace() {
       state.known.set(item.id, { ...(state.known.get(item.id) ?? {}), ...item });
     }
     renderWorkspace();
+    if (state.syncDetail && state.view === 'applications') {
+      state.syncDetail = false;
+      syncDetailToList((state.workspace.items ?? []).map((i) => i.id));
+    }
   })().finally(() => { workspaceInFlight = null; });
   return workspaceInFlight;
 }
@@ -127,6 +132,8 @@ export function renderWorkspace() {
       el('button', { type: 'button', class: 'small primary', 'data-action': 'set-view', 'data-view': 'board', text: 'Find a job to apply to' })));
     return;
   }
+  const signin = signInStrip(data.signInGroups ?? []);
+  if (signin) board.append(signin);
   // Two bands, one per phase, so all seven stages fit a laptop screen
   // without sideways scrolling; a wide screen lays them out as one row (CSS).
   for (const phase of ['prepare', 'outcome']) {
@@ -223,7 +230,7 @@ export function renderMetrics(m, weekly = null) {
     el('span', { class: 'ws-rates-note', text: ' · from outcomes you recorded' })));
 }
 
-const DIM_LABELS = { source: 'Where you found it', ats: 'Application system', scoreBand: 'Fit score', tier: 'Tier' };
+const DIM_LABELS = { source: 'Where you found it', ats: 'Application system', scoreBand: 'Fit score', tier: 'Tier', applySpeed: 'Applied after posting' };
 
 /** One conversion cell, in words: "2 of 9 (22%)" or "3 sent; too few to tell". Pure. */
 export function conversionText(cell, minCell = 5) {

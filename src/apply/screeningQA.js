@@ -470,7 +470,7 @@ export function effectiveAnswers(screeningAnswers = {}) {
       .map((id) => String(id ?? '').toLowerCase()).filter(Boolean),
   );
   const derivedIds = new Set(derived.map((e) => String(e?.id ?? '').toLowerCase()).filter(Boolean));
-  if (!derived.length && !owned.size) return stored;
+  if (!derived.length && !owned.size && !screeningAnswers.profileId) return stored;
 
   // An owned question the user answered THEMSELVES, under the profile that is
   // active now, is still their answer and is still used. `profileId` is stamped
@@ -481,6 +481,10 @@ export function effectiveAnswers(screeningAnswers = {}) {
   const keep = (entry) => {
     const id = String(entry?.id ?? '').toLowerCase();
     if (derivedIds.has(id)) return false;       // the profile answered it itself
+    // An answer stamped as ANOTHER candidate's is theirs, whatever the question
+    // (education, EEO, clearance, prior employer): never used for this one.
+    const owner = String(entry?.profileId ?? '');
+    if (owner && activeProfileId && owner !== activeProfileId) return false;
     if (!owned.has(id)) return true;            // not a profile-owned question
     return Boolean(activeProfileId) && String(entry?.profileId ?? '') === activeProfileId;
   };

@@ -22,7 +22,7 @@ import { ADAPTERS } from '../../src/search/index.js';
 import { adapterKind } from '../../src/search/sources.js';
 import { LIFECYCLE_VALUES, TRANSITIONS } from '../../src/lifecycle.js';
 import { COMMAND_TABLE } from '../../src/index.js';
-import { scoreJob, PREFERRED_SKILL_CREDIT, STRUCTURAL_WEIGHTS } from '../../src/scoring/scorer.js';
+import { scoreJob, PREFERRED_SKILL_CREDIT, STRUCTURAL_WEIGHTS, DEFAULT_TRACK_PENALTY } from '../../src/scoring/scorer.js';
 import { explainScore } from '../../src/scoring/explainScore.js';
 import { DEFAULT_ELIGIBILITY_PENALTY } from '../../src/scoring/eligibility.js';
 import { FIXTURE_VERIFIED_AUTO_APPLY_ATS } from '../../src/apply/autoApplyEligibility.js';
@@ -232,6 +232,7 @@ describe('Explore JobAgent: the Score Lab agrees with the real scorer', () => {
   it('restates the scorer’s constants', () => {
     expect(SCORE_MODEL.preferredCredit).toBe(PREFERRED_SKILL_CREDIT);
     expect(SCORE_MODEL.penalties.eligibility).toBe(DEFAULT_ELIGIBILITY_PENALTY);
+    expect(SCORE_MODEL.penalties.trackFit).toBe(DEFAULT_TRACK_PENALTY);
     expect(Object.keys(SCORE_MODEL.weights).sort()).toEqual([...STRUCTURAL_WEIGHTS].sort());
     const shipped = JSON.parse(read('config', 'scoring.json'));
     expect(SCORE_MODEL.tiers).toEqual(shipped.tiers);

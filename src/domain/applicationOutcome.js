@@ -249,6 +249,22 @@ export function scoreBand(score) {
 }
 
 /**
+ * How soon after posting an application went in (audit Backlog #16): the
+ * question "does applying early pay off for ME?" can only be answered from
+ * the person's own recorded outcomes. Null when either date is missing.
+ */
+export function applySpeedBand(postedAt, appliedAt) {
+  const p = Date.parse(postedAt ?? '');
+  const a = Date.parse(appliedAt ?? '');
+  if (!Number.isFinite(p) || !Number.isFinite(a) || a < p) return null;
+  const days = (a - p) / 86_400_000;
+  if (days < 1) return 'within a day';
+  if (days <= 3) return '1-3 days';
+  if (days <= 7) return '4-7 days';
+  return 'over a week';
+}
+
+/**
  * Which kinds of applications lead to interviews (P2-9): for each source,
  * ATS, score band and tier, how many submitted applications reached an
  * interview. A cell with fewer than MIN_CONVERSION_CELL applications shows
@@ -258,6 +274,7 @@ export function scoreBand(score) {
 export function conversionBreakdown(items = [], { minCell = MIN_CONVERSION_CELL } = {}) {
   const dims = {
     source: (i) => i.source, ats: (i) => i.atsPlatform, scoreBand: (i) => scoreBand(i.score), tier: (i) => i.tier,
+    applySpeed: (i) => applySpeedBand(i.postedAt, i.appliedAt),
   };
   const out = {};
   for (const [dim, keyOf] of Object.entries(dims)) {

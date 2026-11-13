@@ -497,17 +497,21 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
  * but never the safety gates: packets still enter the approval queue).
  *
  * @param {object} args { config, db, logger, jobIds, deps }
- * @returns {Promise<{ prepared: Array<{jobId, packetPath}>, failed: Array<{jobId, error}> }>}
+ * @returns {Promise<{ prepared: Array<{jobId, packetPath}>, failed: Array<{jobId, error}>,
+ *   cancelled: Array<{jobId, reason}> }>}
  */
 export async function preparePacketsForJobs({ config, db, logger, jobIds = [], deps = {} } = {}) {
   const prepared = [];
   const failed = [];
+  // Kept apart from `failed`: a job the person stopped before it started did
+  // not break, and the run details must not paint it red (BUG-07).
+  const cancelled = [];
   const counters = { jobs_prepared: 0 };
 
   for (const jobId of jobIds) {
     // Cooperative cancel (dashboard Cancel button): stop between jobs.
     if (deps.shouldCancel?.()) {
-      failed.push({ jobId, error: 'cancelled before this job started' });
+      cancelled.push({ jobId, reason: 'cancelled before this job started' });
       continue;
     }
     const row = db.getJob(jobId);
@@ -543,7 +547,7 @@ export async function preparePacketsForJobs({ config, db, logger, jobIds = [], d
       logger?.error?.(`prepare-selected failed: ${err.message}`, {}, jobId);
     }
   }
-  return { prepared, failed, counters };
+  return { prepared, failed, cancelled, counters };
 }
 
 /**

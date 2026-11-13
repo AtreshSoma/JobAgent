@@ -9,7 +9,7 @@ import { loadBoard } from './board.js';
 import { cssEscape, loadDetail, openResumePreview, renderDetail, saveNote, selectJob } from './detail.js';
 import { closeDialog, openDialog, requestClose, runPendingAlt, runPendingConfirm } from './dialogs.js';
 import { autofillOne, checkLink, sweepClosedPostings, fillProfileFromResume, decide, patchRow, prepareOne, runPhase, scheduleRefresh, simpleAction } from './mutations.js';
-import { setView, todayAct } from './today.js';
+import { scheduleTodayReload, setView, todayAct } from './today.js';
 import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection, reasonHandlers, showCompare, toggleSelect } from './selection.js';
 import { openDocuments, openReports } from './reports.js';
 import { openDataQuality, saveFreshness, startEnrichment, stopEnrichment, toggleEnrichment } from './dataQuality.js';
@@ -326,10 +326,15 @@ export const ACTIONS = {
   // 'change' listener below so keyboard toggling works identically, and
   // resolving to the input here still stops the row's select from firing.
   'clear-selection': clearSelection,
-  'batch-autofill': batchAutofill,
+  'batch-autofill': () => batchAutofill(),
+  'signin-retry': (target) => batchAutofill({ ids: String(target.dataset.ids ?? '').split(',').filter(Boolean) }),
   'batch-prepare': batchPrepare,
   'batch-approve': batchApprove,
   'batch-decide': (target) => batchDecide(target.dataset.decision),
+  'proposal-archive': async (target) => {
+    await batchDecide('archived', { ids: String(target.dataset.ids ?? '').split(',').filter(Boolean) });
+    scheduleTodayReload(300);
+  },
   compare: showCompare,
 
   decide: (target) => decide(target.dataset.id, target.dataset.decision),
@@ -366,6 +371,10 @@ export const ACTIONS = {
   'set-view': (target) => setView(target.dataset.view, { nav: true }),
   'today-review': (target) => selectJob(target.dataset.id, { user: true }),
   'today-act': (target) => todayAct(target),
+  'today-decide': async (target) => {
+    await decide(target.dataset.id, target.dataset.decision);
+    scheduleTodayReload(300);
+  },
   'copy-text': (target) => copyText(target.dataset.text, 'Copied'),
   'confirm-submitted': confirmSubmitted,
   'confirm-go': runPendingConfirm,
@@ -393,9 +402,9 @@ export const BUSY_ACTIONS = new Set([
   'save-answers', 'delete-answer', 'backup-now',
   'propose-rewrites', 'rewrite-accept', 'rewrite-reject', 'rewrite-accept-all', 'refine-rewrites',
   'compare-versions', 'restore-version', 'letter-mode', 'inbox-sync', 'inbox-record', 'inbox-dismiss', 'inbox-draft', 'run-rerank', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',
-  'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare',
+  'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare', 'signin-retry', 'proposal-archive',
   'decide', 'approve', 'reject-packet', 'assist', 'autofill-one', 'prepare-one',
-  'check-link', 'save-note', 'today-act', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
+  'check-link', 'save-note', 'today-act', 'today-decide', 'decision-reason', 'fill-profile-from-resume', 'sweep-postings',
   'submit-add-url', 'submit-job-search', 'submit-link', 'confirm-submitted', 'confirm-go',
   'confirm-went-through', 'not-submitted',
   'ws-act', 'ws-record', 'ws-undo-outcome', 'ws-record-form', 'ws-followup', 'ws-followup-set',

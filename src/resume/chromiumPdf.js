@@ -29,20 +29,71 @@ export function countPdfPages(buffer) {
 }
 
 /**
+ * ONE BROWSER FOR A BATCH (RISK-04). Preparing 20 packets launched 20 headless
+ * Chromiums, one per PDF — a cold start each. The browser is now shared while
+ * PDFs are being printed and closed once it has sat idle for IDLE_CLOSE_MS;
+ * every print still gets a fresh, isolated context and page. Keyed by the
+ * chromium module so a test's fake never shares a browser with the real one.
+ */
+export const IDLE_CLOSE_MS = 15_000;
+const pool = new Map();
+
+async function acquireBrowser(chromium) {
+  let entry = pool.get(chromium);
+  if (!entry) {
+    entry = { users: 0, timer: null, browser: chromium.launch({ headless: true }) };
+    pool.set(chromium, entry);
+    entry.browser.then((b) => b.on?.('disconnected', () => { if (pool.get(chromium) === entry) pool.delete(chromium); }))
+      .catch(() => { if (pool.get(chromium) === entry) pool.delete(chromium); });
+  }
+  clearTimeout(entry.timer);
+  entry.users += 1;
+  try {
+    return { browser: await entry.browser, entry };
+  } catch (err) {
+    entry.users -= 1;
+    throw err;
+  }
+}
+
+function releaseBrowser(chromium, entry) {
+  entry.users -= 1;
+  if (entry.users > 0) return;
+  entry.timer = setTimeout(() => {
+    if (entry.users > 0 || pool.get(chromium) !== entry) return;
+    pool.delete(chromium);
+    entry.browser.then((b) => b.close()).catch(() => {});
+  }, IDLE_CLOSE_MS);
+  // Not unref()d: the browser process would otherwise hold a CLI open forever
+  // once the timer stopped counting; worst case a command exits 15 s later.
+  // Commands close the pool explicitly at the end (closePdfBrowsers).
+}
+
+/** Close the shared browser now (shutdown, tests). */
+export async function closePdfBrowsers() {
+  const entries = [...pool.values()];
+  pool.clear();
+  await Promise.all(entries.map(async (e) => { clearTimeout(e.timer); try { await (await e.browser).close(); } catch { /* gone */ } }));
+}
+
+/**
  * Print HTML to a PDF file after checking every expected text is rendered.
  * @returns {Promise<{ exported: boolean, pdfPath: string|null, pages: number|null, reason: string }>}
  */
 export async function printHtmlToPdf({ html, texts = [], pdfPath, deps = {} }) {
   let chromium = deps.chromium;
   if (!chromium) ({ chromium } = await import('playwright'));
-  let browser;
+  let browser; let entry;
   try {
-    browser = await chromium.launch({ headless: true });
+    ({ browser, entry } = await acquireBrowser(chromium));
   } catch (err) {
-    return { exported: false, pdfPath: null, pages: null, reason: `Chromium could not start: ${err.message.split('\n')[0]}` };
+    return { exported: false, pdfPath: null, pages: null, reason: `Chromium could not start: ${String(err.message).split('\n')[0]}` };
   }
+  let context = null;
   try {
-    const page = await browser.newPage();
+    // A context per print: nothing (cookies, cache, routes) carries between resumes.
+    context = typeof browser.newContext === 'function' ? await browser.newContext() : null;
+    const page = await (context ?? browser).newPage();
     // Never fetch anything: the HTML is self-contained.
     await page.route('**/*', (route) => route.abort());
     await page.setContent(html, { waitUntil: 'load' });
@@ -53,9 +104,11 @@ export async function printHtmlToPdf({ html, texts = [], pdfPath, deps = {} }) {
       return { exported: false, pdfPath: null, pages: null, reason: `the PDF would leave out ${missing.length} paragraph(s); not written` };
     }
     await page.pdf({ path: pdfPath, format: 'Letter', printBackground: false, preferCSSPageSize: true });
+    if (!context) await page.close?.();
     return { exported: true, pdfPath, pages: countPdfPages(readFileSync(pdfPath)), reason: 'ok (Chromium)' };
   } finally {
-    await browser.close();
+    try { await context?.close(); } catch { /* browser already gone */ }
+    releaseBrowser(chromium, entry);
   }
 }
 

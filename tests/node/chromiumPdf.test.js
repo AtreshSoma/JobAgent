@@ -73,3 +73,39 @@ describe('Chromium PDF (P2-3)', { timeout: 60_000 }, () => {
     expect(countPdfPages(Buffer.from('/Type /Pages /Type /Page x /Type /Page'))).toBe(2);
   });
 });
+
+describe('one browser for a batch of PDFs (RISK-04)', () => {
+  it('launches Chromium once for several prints, each in its own context, and closes it on request', async () => {
+    const { printHtmlToPdf: print, closePdfBrowsers } = await import('../../src/resume/chromiumPdf.js');
+    const { writeFileSync: write, mkdtempSync: mk, rmSync: rm } = await import('node:fs');
+    const { tmpdir: tmp } = await import('node:os');
+    const { join: j } = await import('node:path');
+    const out = mk(j(tmp(), 'jobagent-pool-'));
+    let launches = 0; let contexts = 0; let closedContexts = 0; let browserClosed = false;
+    const page = {
+      route: async () => {}, setContent: async () => {}, evaluate: async () => 'Jordan Lee Data Engineer',
+      pdf: async ({ path }) => write(path, '%PDF /Type /Page'),
+    };
+    const fake = {
+      launch: async () => {
+        launches += 1;
+        return {
+          on() {}, newContext: async () => { contexts += 1; return { newPage: async () => page, close: async () => { closedContexts += 1; } }; },
+          close: async () => { browserClosed = true; },
+        };
+      },
+    };
+    try {
+      for (let i = 0; i < 3; i += 1) {
+        const r = await print({ html: '<p>x</p>', texts: ['Jordan Lee'], pdfPath: j(out, `r${i}.pdf`), deps: { chromium: fake } });
+        expect(r.exported).toBe(true);
+      }
+      expect(launches).toBe(1);
+      expect([contexts, closedContexts]).toEqual([3, 3]);
+      await closePdfBrowsers();
+      expect(browserClosed).toBe(true);
+    } finally {
+      rm(out, { recursive: true, force: true });
+    }
+  });
+});
