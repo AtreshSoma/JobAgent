@@ -63,7 +63,7 @@ def test_abbreviated_dates_keep_every_role_and_its_measured_result(tmp_path, hum
     fit = next(c for c in result["changes"] if c["type"] == "fit_to_page_budget")
     assert fit["evidence"][0]["roles_kept"] == 3
     for title in ("Acme", "Beta Co", "Gamma Inc"):
-        assert f"Cut report runtime from 6 hours to 40 minutes for" in joined
+        assert "Cut report runtime from 6 hours to 40 minutes for" in joined
         assert any(title in t and "40 minutes" in t for t in texts), f"{title} lost its measured result"
     assert result["invariants"]["roles_without_detail"] == []
     # Every omission says where it came from and why.
