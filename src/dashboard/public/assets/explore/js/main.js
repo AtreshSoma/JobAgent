@@ -4,13 +4,14 @@
  * Routes live in the hash so the page works from a static file path and a
  * link can point at one section:
  *   #/overview            the Product Overview
- *   #/overview/<stage>    one station of the Overview (discover, score, ...)
+ *   #/overview/<stage>    one scene of the Overview (discover, score, ...)
  *   #/how                 the Technical Deep Dive
  *   #/how/<topic>         one Deep Dive section (see DEEP_TOPICS)
  */
 import { renderOverview } from './overview.js';
 import { renderDeep } from './deep.js';
 import { prefersReducedMotion } from './dom.js';
+import { sceneLanding, startMotion, stopMotion } from './motion.js';
 
 const VIEWS = ['overview', 'how'];
 const $ = (id) => document.getElementById(id);
@@ -126,19 +127,23 @@ function watchReveals(root) {
 
 /**
  * Which line the reader is on: the header's progress rule takes its colour
- * from the station, signal or band crossing the middle of the window.
+ * from the chapter crossing the middle of the window. Chapters overlap while
+ * one slides over another, so the one in front (the later one) wins.
  */
 function watchHere(root) {
   if (typeof IntersectionObserver !== 'function') return;
+  const chapters = [...root.querySelectorAll('.ex-chapter')];
+  const crossing = new Set();
+  const lineOf = (el) => (el.classList.contains('ex-gate') ? 'signal' : el.classList.contains('ex-never') ? 'board' : (el.dataset.line ?? ''));
   const here = new IntersectionObserver((entries) => {
     for (const entry of entries) {
-      if (!entry.isIntersecting) continue;
-      const el = entry.target;
-      document.documentElement.dataset.here = el.classList.contains('ex-band-signal') ? 'signal'
-        : el.classList.contains('ex-never') ? 'board' : (el.dataset.line ?? '');
+      if (entry.isIntersecting) crossing.add(entry.target);
+      else crossing.delete(entry.target);
     }
+    const front = chapters.findLast((el) => crossing.has(el));
+    if (front) document.documentElement.dataset.here = lineOf(front);
   }, { rootMargin: '-50% 0px -49% 0px' });
-  for (const el of root.querySelectorAll('.ex-station, .ex-band-signal, .ex-never, .ex-hero, .ex-ledger, .ex-close')) here.observe(el);
+  for (const el of chapters) here.observe(el);
 }
 
 /**
@@ -166,11 +171,16 @@ function show({ view, part }, { fromLink = false } = {}) {
   // Named `page`, not `view`: `[data-view]` is how the two nav buttons are found.
   document.documentElement.dataset.page = view;
   document.title = view === 'how' ? 'How JobAgent works' : 'Explore JobAgent';
+  // The Overview's choreography measures the laid-out page, so it runs only
+  // while the Overview is on screen, and starts before any jump to a section.
+  if (view === 'overview') startMotion(views.overview);
+  else stopMotion();
 
   const prefix = view === 'how' ? 'topic' : 'station';
   const target = part ? $(`${prefix}-${part}`) : null;
   if (target) {
-    scrollToTop(target);
+    // A link followed inside the page glides there; opening the page on a section lands on it at once.
+    scrollToTop(target, { instant: !fromLink });
     // Move focus with the jump, so the next Tab continues from the section.
     if (fromLink) $(`${prefix}-${part}-${view === 'how' ? 'title' : 'name'}`)?.focus({ preventScroll: true });
   } else if (fromLink) {
@@ -183,9 +193,10 @@ function show({ view, part }, { fromLink = false } = {}) {
  * the CSS scroll-padding and scroll-behavior (so it glides unless the reader
  * prefers reduced motion).
  */
-function scrollToTop(el) {
+function scrollToTop(el, { instant = false } = {}) {
   const pad = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
-  window.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top + window.scrollY - pad) });
+  // A scene that holds while it plays is entered a little way in, with its first moment under way.
+  window.scrollTo({ top: Math.max(0, sceneLanding(el) ?? el.getBoundingClientRect().top + window.scrollY - pad), behavior: instant ? 'instant' : 'auto' });
 }
 
 function go(view) {
@@ -196,7 +207,7 @@ function go(view) {
 
 /* ───────────────────────── boot ───────────────────────── */
 
-const route = renderOverview(views.overview);
+renderOverview(views.overview);
 watchReveals(views.overview);
 watchHere(views.overview);
 
@@ -222,15 +233,14 @@ show(parseHash());
   if (part) {
     document.fonts?.ready.then(() => {
       const target = $(`${view === 'how' ? 'topic' : 'station'}-${part}`);
-      if (target && Math.abs(window.scrollY - landed) < 2) scrollToTop(target);
+      if (target && Math.abs(window.scrollY - landed) < 2) scrollToTop(target, { instant: true });
     });
   }
 }
 document.documentElement.dataset.ready = 'true';
-// The headline rises and the route draws in first (explore.css); then the
-// posting sets off along it, and waits at the first signal.
+// The headline rises out of its masks on load (scenes.css); the route near the
+// end of the page sets off when it is first scrolled to (overview.js).
 const still = prefersReducedMotion();
-setTimeout(() => route.start(), still ? 0 : 1500);
 // The entrance is played once. Showing the Overview again after visiting
 // How it works must not replay it, so it is switched off once it has run.
 setTimeout(() => { document.documentElement.dataset.intro = 'done'; }, still ? 0 : 2400);

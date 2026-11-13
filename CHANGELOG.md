@@ -9,8 +9,8 @@ Auto-fill completes far more of each application, asks you only what it cannot a
 
 ### New
 
-- Explore JobAgent, the compass icon in the header: follow one example posting from discovery to your Submit, and clear each of the two signals yourself.
-- How it works, inside Explore: a system map you can follow line by line, a score lab that shows how a score is reached, and where each part lives in the code.
+- Explore JobAgent, the compass icon in the header: one example posting, told in chapters that hold and turn over like pages as you scroll. Copies merge, the score adds up, your resume is reordered, the form fills and stops, and the two signals wait for you. At the end you can run the whole line yourself.
+- Under the hood, inside Explore: a system map you can follow line by line, a score lab that shows how a score is reached, and where each part lives in the code.
 - Unapprove, in a job's detail: take an approval back before anything is filled.
 - "I submitted it myself" on a job whose auto-fill stopped, and then "Yes, it went through" or "No, it didn't" to settle it. No puts the job back so you can try again.
 - See what stopped it, on Today and in a job's detail, goes straight to the reason an auto-fill stopped.

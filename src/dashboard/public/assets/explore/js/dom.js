@@ -64,6 +64,8 @@ const ICONS = {
   pause: 'M8.5 5.5v13M15.5 5.5v13',
   note: 'M12 3.5a8.5 8.5 0 1 0 0 17 8.5 8.5 0 0 0 0-17zM12 11v5.5M12 7.6v.4',
   stop: 'M7.5 7.5h9v9h-9z',
+  lock: 'M7.5 11V8a4.5 4.5 0 0 1 9 0v3M6 11h12v9H6z',
+  mail: 'M4 6.5h16v11H4zM4.5 7l7.5 6 7.5-6',
 };
 
 export function icon(name, { size = 16, label = null } = {}) {

@@ -1,44 +1,79 @@
 /**
- * The Product Overview: the headline and the route, the five stations, what
- * the product never does, the register of what is built, and the close.
+ * The Product Overview, told in the order a first-time reader needs it:
+ *
+ *   1. the claim, over a morning of postings with one brought to the front
+ *   2. the problem, read at the reader's pace
+ *   3. five chapter sheets the example posting passes through, with the two
+ *      signals only a person can clear between them
+ *   4. what JobAgent never does
+ *   5. what it is made of, and where its postings come from
+ *   6. the whole line, run by the reader's own hand
+ *   7. the register of what is built, and the next step
+ *
+ * A chapter rail (pinned layout only) shows where the reader is on the line.
  */
-import { h, icon } from './dom.js';
-import { statusBadge, topicLink } from './ui.js';
-import { buildRoute, buildStations } from './journey.js';
-import { BOUNDARIES, CAPABILITIES, CAPABILITY_AREAS, STATUS } from './content-overview.js';
+import { h, icon, prefersReducedMotion } from './dom.js';
+import { statusBadge } from './ui.js';
+import { buildRoute, LINE_OF } from './journey.js';
+import { buildScenes, heroField, hood, never, problem } from './scenes.js';
+import { CAPABILITIES, CAPABILITY_AREAS, GATES, HERO, JOURNEY, SOURCES, STATUS } from './content-overview.js';
 
-function hero(route) {
-  return h('section', { class: 'ex-hero', 'aria-labelledby': 'heroTitle' },
-    h('div', { class: 'ex-hero-top' },
-      h('h1', { id: 'heroTitle', class: 'ex-display ex-hero-title' },
-        // Each line rises out of its own mask on load; the outer span is the mask.
-        h('span', { class: 'ex-line' }, h('span', { text: 'All the work.' })), ' ',
-        // The full stop is drawn as the route's signal lamp: the call is the
-        // moment the line is held for you. The real "." stays for assistive tech.
-        h('span', { class: 'ex-line ex-display-stop' }, h('span', {}, 'Your call',
-          h('span', { class: 'sr-only', text: '.' }), h('span', { class: 'ex-lamp', 'aria-hidden': 'true' })))),
-      h('div', { class: 'ex-hero-side' },
-        h('p', { class: 'ex-lede', text: 'JobAgent finds jobs, explains every score, tailors your resume without inventing a word and fills in the form, all on your own computer. You approve. You press Submit.' }),
-        h('div', { class: 'ex-actions' },
-          h('a', { class: 'ex-btn ex-btn-solid', href: '#/overview/discover' }, 'Follow the line', icon('arrow', { size: 16 })),
-          h('a', { class: 'ex-btn', href: '#/how' }, 'How it works')))),
-    h('div', { class: 'ex-platform' }, route.root));
+function hero() {
+  const proof = [`${SOURCES.length} ${HERO.proof[0]}`, ...HERO.proof.slice(1)];
+  return h('section', { class: 'ex-chapter ex-hero', 'aria-labelledby': 'heroTitle' },
+    h('h1', { id: 'heroTitle', class: 'ex-hero-title' },
+      // Each line rises out of its own mask on load; the outer span is the mask.
+      h('span', { class: 'ex-line' }, h('span', { text: 'All the work.' })), ' ',
+      // The full stop is drawn as the line's signal lamp: the call is the
+      // moment the line is held for you. The real "." stays for assistive tech.
+      h('span', { class: 'ex-line ex-hero-call' }, h('span', {}, 'Your call',
+        h('span', { class: 'sr-only', text: '.' }), h('span', { class: 'ex-lamp', 'aria-hidden': 'true' })))),
+    heroField(),
+    h('div', { class: 'ex-hero-foot' },
+      h('p', { class: 'ex-lede', text: HERO.lede }),
+      h('div', { class: 'ex-actions' },
+        h('a', { class: 'ex-btn ex-btn-solid', href: '#/overview/discover' }, HERO.primary, icon('arrow', { size: 16 })),
+        h('a', { class: 'ex-btn', href: '#/how' }, HERO.secondary))),
+    h('ul', { class: 'ex-hero-proof' }, proof.map((text) => h('li', { text }))));
 }
 
-function boundaries() {
-  return h('section', { class: 'ex-never', id: 'boundaries', 'aria-labelledby': 'neverTitle', dataset: { reveal: '' } },
-    h('h2', { id: 'neverTitle', class: 'ex-station-name ex-never-word', tabindex: '-1', text: 'Never' }),
-    h('div', { class: 'ex-never-side' },
-      h('p', { class: 'ex-never-lede', text: 'What JobAgent will not do. Each line is a rule in the code with a test behind it, not a setting you could switch off by accident.' }),
-      topicLink('security', 'How these are enforced')),
-    h('ul', { class: 'ex-never-list' }, BOUNDARIES.never.map((text) => {
-      const [first, ...rest] = text.split('. ');
-      return h('li', {}, h('span', { class: 'ex-never-rule', text: rest.length ? `${first}.` : first }),
-        rest.length ? h('span', { class: 'ex-never-more', text: rest.join('. ') }) : null);
-    })),
-    h('div', { class: 'ex-does' },
-      h('h3', { class: 'ex-h3', text: 'What it does on its own' }),
-      h('ul', { class: 'ex-does-list' }, BOUNDARIES.does.map((text) => h('li', {}, icon('check', { size: 16 }), h('span', { text }))))));
+/**
+ * The chapter rail: the line itself, as a small pill at the foot of the
+ * window while the chapters play. Each station is a link to its chapter; the
+ * two signals sit between them. motion.js moves the fill and marks the
+ * chapter in view.
+ */
+function rail() {
+  const items = [];
+  for (const stage of JOURNEY) {
+    items.push(h('li', { class: 'ex-rail-stop', dataset: { stop: stage.id, line: LINE_OF[stage.id] } },
+      h('a', { href: `#/overview/${stage.id}`, 'aria-label': stage.name }, h('span', { class: 'ex-rail-dot', 'aria-hidden': 'true' }))));
+    if (GATES.some((g) => g.after === stage.id)) items.push(h('li', { class: 'ex-rail-signal', 'aria-hidden': 'true' }));
+  }
+  return h('nav', { class: 'ex-rail', 'aria-label': 'Chapters', dataset: { ground: 'ink' } },
+    h('span', { class: 'ex-rail-now', 'aria-hidden': 'true' }),
+    h('div', { class: 'ex-rail-line' }, h('span', { class: 'ex-rail-fill', 'aria-hidden': 'true' }), h('ol', {}, items)));
+}
+
+/** The whole line, once more, run by the reader: the posting waits at each signal for their click. */
+function runIt(route) {
+  const section = h('section', { class: 'ex-chapter ex-run', id: 'run', 'aria-labelledby': 'runTitle' },
+    h('div', { class: 'ex-run-head' },
+      h('h2', { id: 'runTitle', class: 'ex-big', tabindex: '-1', text: 'Now run the line yourself.' }),
+      h('p', { class: 'ex-lede', text: 'The posting moves on its own until it reaches a signal. Then it waits for you, as it does in the dashboard.' })),
+    h('div', { class: 'ex-platform' }, route.root));
+  // It sets off when it is first seen, not while the reader is still at the top.
+  if (typeof IntersectionObserver === 'function') {
+    const seen = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      seen.disconnect();
+      setTimeout(() => route.start(), prefersReducedMotion() ? 0 : 450);
+    }, { rootMargin: '0px 0px -25% 0px' });
+    seen.observe(route.root);
+  } else {
+    route.start();
+  }
+  return section;
 }
 
 /** The register: every capability, grouped by area, with how finished it is. */
@@ -86,9 +121,9 @@ function ledger() {
     }
   }
 
-  const section = h('section', { class: 'ex-ledger', id: 'ledger', 'aria-labelledby': 'ledgerTitle', dataset: { reveal: '' } },
+  const section = h('section', { class: 'ex-chapter ex-ledger', id: 'ledger', 'aria-labelledby': 'ledgerTitle', dataset: { reveal: '' } },
     h('div', { class: 'ex-ledger-head' },
-      h('h2', { id: 'ledgerTitle', class: 'ex-h2', tabindex: '-1', text: 'What is built, and what is not yet' }),
+      h('h2', { id: 'ledgerTitle', class: 'ex-big', tabindex: '-1', text: 'What is built, and what is not yet' }),
       h('p', { class: 'ex-section-lede', text: 'A plain account of every capability and how finished it is. Optional features are complete and switched off. Planned ones do not exist yet.' }),
       h('div', { class: 'ex-chips', role: 'group', 'aria-label': 'Filter by status' }, buttons),
       note),
@@ -98,22 +133,28 @@ function ledger() {
 }
 
 function closing() {
-  return h('section', { class: 'ex-close', 'aria-labelledby': 'closeTitle', dataset: { reveal: '' } },
-    h('h2', { id: 'closeTitle', class: 'ex-display ex-display-close', text: 'It is already running on this computer.' }),
-    h('p', { class: 'ex-lede', text: 'This page came from the same local server that runs your job search. Nothing on it was fetched from the internet.' }),
-    h('div', { class: 'ex-actions' },
-      h('a', { class: 'ex-btn ex-btn-solid', href: '/' }, 'Open dashboard', icon('arrow', { size: 16 })),
-      h('a', { class: 'ex-btn', href: '#/how' }, 'How it works')));
+  return h('section', { class: 'ex-chapter ex-close', 'aria-labelledby': 'closeTitle', dataset: { reveal: '' } },
+    h('h2', { id: 'closeTitle', class: 'ex-close-title', text: 'It is already running on this computer.' }),
+    h('div', { class: 'ex-close-side' },
+      h('p', { class: 'ex-lede', text: 'This page came from the same local server that runs your job search. Nothing on it was fetched from the internet.' }),
+      h('ol', { class: 'ex-next' }, ['Open the dashboard.', 'Press Find jobs.', 'Approve the packets you like.'].map((text) => h('li', { text }))),
+      h('div', { class: 'ex-actions' },
+        h('a', { class: 'ex-btn ex-btn-solid', href: '/' }, 'Open dashboard', icon('arrow', { size: 16 })),
+        h('a', { class: 'ex-btn', href: '#/how' }, HERO.secondary))));
 }
 
-/** Build the whole Overview into `root`. Returns the route so the caller can start it. */
+/** Build the whole Overview into `root`. Returns the route so the caller can reset it. */
 export function renderOverview(root) {
   const route = buildRoute();
   root.replaceChildren(
-    hero(route),
-    h('div', { class: 'ex-journey', id: 'journey' }, buildStations()),
-    boundaries(),
+    hero(),
+    problem(),
+    ...buildScenes(),
+    never(),
+    hood(),
+    runIt(route),
     ledger(),
-    closing());
+    closing(),
+    rail());
   return route;
 }

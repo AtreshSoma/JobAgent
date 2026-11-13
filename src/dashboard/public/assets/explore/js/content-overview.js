@@ -27,33 +27,93 @@ export const EXAMPLE_JOB = Object.freeze({
   posted: '2 days ago',
 });
 
+/** The opening statement. The headline is the product's rule in four words. */
+export const HERO = Object.freeze({
+  lede: 'JobAgent finds the jobs, explains every score, tailors your resume and fills the forms, all on your own computer. You approve. You submit.',
+  primary: 'See it work',
+  secondary: 'Explore the architecture',
+  // Three facts under the fold line. The first is counted from SOURCES where it is shown.
+  proof: ['source adapters', 'Serves itself on 127.0.0.1', 'Nothing is submitted without you'],
+});
+
+/**
+ * The postings floating behind the headline: one morning's worth of the boards.
+ * Illustrative, like every name on this page; the first is the example posting
+ * that the rest of the page follows.
+ */
+export const HERO_FIELD = Object.freeze([
+  { title: 'Data Platform Engineer', company: 'Contoso Health', source: 'Workday' },
+  { title: 'Analytics Engineer', company: 'Adventure Works', source: 'Ashby' },
+  { title: 'Lead Data Engineer', company: 'Fabrikam Systems', source: 'Lever' },
+  { title: 'Data Engineer', company: 'Tailspin Defense', source: 'iCIMS' },
+  { title: 'Staff Data Engineer', company: 'Woodgrove Bank', source: 'Greenhouse' },
+  { title: 'ML Data Engineer', company: 'Litware', source: 'SmartRecruiters' },
+  { title: 'Data Engineer II', company: 'Proseware', source: 'Rippling' },
+  { title: 'BI Engineer', company: 'Alpine Ski House', source: 'Lever' },
+  { title: 'Senior ETL Developer', company: 'Coho Winery', source: 'Workday' },
+  { title: 'Data Engineer, Payments', company: 'Wide World Importers', source: 'Ashby' },
+]);
+
+/**
+ * The problem the product answers, said plainly. `lines` are lit one after
+ * another as the reader scrolls; `contrast` sets JobAgent beside the two
+ * things people already use, with the last line as the answer.
+ */
+export const PROBLEM = Object.freeze({
+  lines: [
+    'Job hunting is mostly retyping.',
+    'The same boards every morning.',
+    'The same form, again.',
+    'One resume, reworded for every posting.',
+  ],
+  turn: 'JobAgent takes the retyping. You keep the decisions.',
+  contrast: [
+    { who: 'A job board', what: 'gives you a list. Everything after that is still yours to type.' },
+    { who: 'An auto-apply bot', what: 'sends applications in your name that you never read.' },
+    { who: 'JobAgent', what: 'prepares each application, shows its reasoning and waits for you.', ours: true },
+  ],
+  who: 'Built for people who apply to a lot of jobs and still want to read what goes out under their name.',
+});
+
 /**
  * The five stages of the journey, in the order work moves through them.
  * `topic` is the Technical Deep Dive section that explains the stage; `fact`
  * is the one true line printed under its stop on the route (the test checks
- * the number in Discover's against the adapter registry).
+ * the number in Discover's against the adapter registry). `beats` are the
+ * moments of the stage's scene, in the order its picture plays them, and
+ * `yours` is what stays under the reader's control.
  */
 export const JOURNEY = Object.freeze([
   {
     id: 'discover',
     fact: '18 source adapters',
     name: 'Discover',
-    title: 'It reads the job boards so you do not have to',
-    body: 'One run asks every source you have enabled, in parallel and politely: public applicant-tracking-system feeds, a cross-company search, company careers pages, and any link you paste. Copies of the same role are merged, old postings are set aside, and hard mismatches are removed with the reason kept.',
-    you: 'Press Find jobs, or leave watch mode running.',
-    agent: 'Fetches, normalizes, de-duplicates, checks freshness, applies your exclusions.',
+    title: 'Every job board, read for you',
+    body: 'One run asks every source you switched on, folds the copies of a role into one and sets aside what you ruled out. Every decision keeps its reason.',
+    beats: [
+      { name: 'Arrive', text: 'Postings come in from employer feeds, a cross-company search and links you paste.' },
+      { name: 'Merge', text: 'The same role listed three times becomes one row.' },
+      { name: 'Filter', text: 'Stale and excluded postings step back. Each keeps its reason.' },
+      { name: 'Organize', text: 'What is left is one clean list, ready to score.' },
+    ],
     yours: 'Which sources are on, how fresh a posting must be, what counts as a mismatch.',
+    more: 'How discovery works',
     topic: 'discovery',
   },
   {
     id: 'score',
     fact: 'Every point explained',
     name: 'Score',
-    title: 'Every posting gets a score you can read',
-    body: 'Scoring is deterministic: the same posting and the same profile always give the same number. Each category shows the points it earned and why, the terms that matched, and the gaps. The score sorts a posting into Priority, Apply, Queue, Near miss or Discard.',
-    you: 'A ranked board, a tier, and a plain-language explanation on every row.',
-    agent: 'Weighs title, skills, seniority, location, freshness, sponsorship and stated requirements.',
+    title: 'A score you can read, point by point',
+    body: 'No black box. The same posting and the same profile always give the same number, and every point carries its reason.',
+    beats: [
+      { name: 'Match', text: 'Your skills are looked up in the posting’s own words.' },
+      { name: 'Weigh', text: 'Title, skills, seniority, location, freshness and sponsorship each earn points.' },
+      { name: 'Decide', text: 'The total sorts the job into Priority, Apply, Queue, Near miss or Discard.' },
+      { name: 'Second opinion', text: 'A rank by meaning, from text embeddings, can sit beside the score. It never changes it.', status: 'optional' },
+    ],
     yours: 'The weights and thresholds live in a config file you can edit.',
+    more: 'How scoring works',
     topic: 'scoring',
   },
   {
@@ -61,32 +121,46 @@ export const JOURNEY = Object.freeze([
     fact: 'Your words, reordered',
     name: 'Tailor',
     title: 'Your resume, reordered for this job. Not rewritten.',
-    body: 'For strong matches JobAgent builds a per-job copy of your master resume. It moves your most relevant bullets and skills to the front and bolds the terms the posting asks for. It does not add, remove or reword a claim. A skill the posting wants and your resume lacks is reported as a gap.',
-    you: 'A tailored resume, a cover letter, and an ATS readiness report to review.',
-    agent: 'Tiers the posting’s keywords, permutes existing content, checks the result.',
+    body: 'A per-job copy of your master resume puts your most relevant evidence first. Nothing is added, removed or reworded.',
+    beats: [
+      { name: 'Read', text: 'The posting’s keywords are sorted by how much it wants them.' },
+      { name: 'Reorder', text: 'Your strongest bullets and skills for this job move to the top.' },
+      { name: 'Emphasize', text: 'Terms the posting asks for are set in bold, only where you already wrote them.' },
+      { name: 'Report', text: 'A skill you do not have is listed as a gap. It is never added.' },
+    ],
     yours: 'The master resume is opened read-only and never modified.',
+    more: 'How tailoring works',
     topic: 'tailoring',
   },
   {
     id: 'fill',
     fact: 'Fields filled, files attached',
     name: 'Fill',
-    title: 'It fills the form, then stops',
-    body: 'After you approve a packet, JobAgent opens the application in a real browser window, types your details, attaches the documents and answers the questions you have already answered once. It moves through Next and Continue. It stops before the final Submit, and it stops at once for a CAPTCHA, a login, a verification code or a bot wall.',
-    you: 'A filled form in an open browser, with a list of anything it left for you.',
-    agent: 'Scans the live form, fills from your profile and saved answers, verifies what it typed.',
+    title: 'It types the form. Then it stops.',
+    body: 'After you approve, JobAgent opens the application in a real browser window and does the typing. The last click stays yours.',
+    beats: [
+      { name: 'Recognize', text: 'It scans the live form and works out what each field is.' },
+      { name: 'Map', text: 'Each field is matched to your profile, your documents or an answer you saved.' },
+      { name: 'Fill and check', text: 'It types, attaches, then reads each field back to confirm it.' },
+      { name: 'Stop', text: 'It stops before Submit, and at once for a CAPTCHA, a login, a verification code or a bot check.' },
+    ],
     yours: 'You read the form and you click Submit.',
+    more: 'How autofill works',
     topic: 'autofill',
   },
   {
     id: 'track',
     fact: 'Outcomes and follow-ups',
     name: 'Track',
-    title: 'What happened next, in one place',
-    body: 'Once you confirm a submission, the application moves to its own board. Record an interview, an offer or a rejection, set a follow-up reminder, and export it all to a spreadsheet or your calendar. If you connect an inbox, replies from employers are read (never changed) and suggested as outcomes for you to confirm.',
-    you: 'Applications by stage, follow-ups due, and conversion numbers.',
-    agent: 'Keeps an append-only history of every event for each application.',
+    title: 'What happened next, all in one place',
+    body: 'Once you confirm a submission, every event is kept: outcomes, follow-up reminders and replies.',
+    beats: [
+      { name: 'Record', text: 'Each step lands in a history that is only ever added to.' },
+      { name: 'Reply', text: 'Connect an inbox and replies are read, never changed, and suggested as outcomes.', status: 'optional' },
+      { name: 'Confirm', text: 'You confirm the outcome, and the application moves to its stage.' },
+    ],
     yours: 'Outcomes are recorded only when you say so.',
+    more: 'How tracking works',
     topic: 'tracking',
   },
 ]);
@@ -106,6 +180,19 @@ export const DISCOVER_DEMO = Object.freeze([
   { company: 'Adventure Works', title: 'Analytics Engineer', meta: 'Ashby, no posting date', outcome: 'held', label: 'Held for review: date unknown' },
 ]);
 
+/**
+ * Illustrative posting text for the Score stage. {Braces} mark a skill from
+ * the example profile: four under the requirements and one under "nice to
+ * have", which is what the Score Lab's default inputs describe (five of eight
+ * skills found, one of them preferred only). Kafka is wanted and is not in
+ * the profile, so it is not marked; the Tailor stage reports it as the gap.
+ */
+export const SCORE_EXCERPT = Object.freeze({
+  requires: 'Build batch pipelines in {Spark}, orchestrate them with {Airflow}, and model marts in {dbt} and {SQL}.',
+  prefers: '{Python} services, Kafka.',
+  meaning: { label: 'Meaning rank', note: 'From text embeddings. Shown beside the score, never mixed into it.' },
+});
+
 /** Illustrative resume bullets for the Tailor stage. `rank` is the tailored position. */
 export const TAILOR_DEMO = Object.freeze({
   wanted: ['Spark', 'Airflow', 'dbt', 'Kafka'],
@@ -121,21 +208,43 @@ export const TAILOR_DEMO = Object.freeze({
 
 /** Illustrative form fields for the Fill stage, in the order they are handled. */
 export const FILL_DEMO = Object.freeze([
-  { label: 'First name', value: 'Jordan', from: 'Profile', state: 'filled' },
-  { label: 'Email', value: 'jordan@example.com', from: 'Profile', state: 'filled' },
-  { label: 'Resume', value: 'Northwind_Senior-Data-Engineer.pdf', from: 'Tailored for this job', state: 'filled' },
-  { label: 'Will you now or in the future require sponsorship?', value: 'Yes', from: 'Your saved answer', state: 'filled' },
-  { label: 'Why do you want to work at Northwind?', value: '', from: 'No saved answer, so it asks you', state: 'ask' },
+  { label: 'First name', kind: 'Text field', value: 'Jordan', from: 'Profile', state: 'filled' },
+  { label: 'Email', kind: 'Email field', value: 'jordan@example.com', from: 'Profile', state: 'filled' },
+  { label: 'Resume', kind: 'File upload', value: 'Northwind_Senior-Data-Engineer.pdf', from: 'Tailored for this job', state: 'filled' },
+  { label: 'Will you now or in the future require sponsorship?', kind: 'Yes or no', value: 'Yes', from: 'Your saved answer', state: 'filled' },
+  { label: 'Why do you want to work at Northwind?', kind: 'Long answer', value: '', from: 'No saved answer, so it asks you', state: 'ask' },
 ]);
 
-/** Illustrative history for the Track stage. */
+/**
+ * Illustrative history for the Track stage. `beat` is the moment of the scene
+ * the event belongs to (see JOURNEY's track beats).
+ */
 export const TRACK_DEMO = Object.freeze([
-  { when: 'Mon', what: 'Auto-fill stopped at Submit', who: 'JobAgent' },
-  { when: 'Mon', what: 'You submitted and confirmed it', who: 'You' },
-  { when: 'Mon', what: 'Follow-up reminder set', who: 'You' },
-  { when: 'Thu', what: 'Reply read from your inbox: interview invitation', who: 'JobAgent, as a suggestion' },
-  { when: 'Thu', what: 'Outcome recorded: Interviewing', who: 'You' },
+  { when: 'Mon', what: 'Auto-fill stopped at Submit', who: 'JobAgent', beat: 0 },
+  { when: 'Mon', what: 'You submitted and confirmed it', who: 'You', beat: 0 },
+  { when: 'Mon', what: 'Follow-up reminder set', who: 'You', beat: 0 },
+  { when: 'Thu', what: 'Reply read from your inbox: interview invitation', who: 'JobAgent, as a suggestion', beat: 1 },
+  { when: 'Thu', what: 'Outcome recorded: Interviewing', who: 'You', beat: 2 },
 ]);
+
+/** The stages an application can be recorded at, in order, and where the example ends up. */
+export const TRACK_STAGES = Object.freeze({ names: ['Awaiting response', 'Interviewing', 'Offer', 'Hired'], from: 0, to: 1 });
+
+/**
+ * Under the hood, in four facts. Each restates a row of the Deep Dive's
+ * technology stack (content-deep.js, STACK).
+ */
+export const HOOD = Object.freeze({
+  title: 'Plain parts, all on your machine',
+  body: 'No cloud account and no hosted service. One local process, one database file, and code you can read.',
+  facts: [
+    { name: 'One Node.js process', text: 'A dependency-free local server, bound to 127.0.0.1.' },
+    { name: 'One SQLite file per profile', text: 'Your jobs, scores and history, with daily snapshots.' },
+    { name: 'A visible Chromium window', text: 'Playwright drives the browser you watch it fill.' },
+    { name: 'A Python resume engine', text: 'python-docx edits your Word file and keeps its formatting.' },
+  ],
+  cta: 'Explore the architecture',
+});
 
 /** What the product does on its own, and what it refuses to do. Each line is enforced in code. */
 export const BOUNDARIES = Object.freeze({

@@ -32,7 +32,7 @@ function section(id, title, lede, ...children) {
  *   y 440  the control line (grey): every way in. The local server rises to
  *          the junction where the pipeline's branch turns.
  */
-const NET = Object.freeze({
+export const NET = Object.freeze({
   profile: { x: 420, y: 60, short: 'Profiles', line: 'control', up: true },
   config: { x: 560, y: 60, short: 'Config', line: 'control', up: true },
   inbox: { x: 770, y: 60, short: 'Inbox reader', line: 'track', up: true },
@@ -57,8 +57,8 @@ const NET = Object.freeze({
   mcp: { x: 630, y: 440, short: 'MCP server', line: 'control' },
   extension: { x: 770, y: 440, short: 'Extension', line: 'control' },
 });
-const NET_SIZE = Object.freeze([980, 520]);
-const NET_SIGNALS = Object.freeze([{ x: 635, y: 300, label: 'You approve' }, { x: 815, y: 300, label: 'You submit' }]);
+export const NET_SIZE = Object.freeze([980, 520]);
+export const NET_SIGNALS = Object.freeze([{ x: 635, y: 300, label: 'You approve' }, { x: 815, y: 300, label: 'You submit' }]);
 const NET_LINES = Object.freeze([
   { id: 'find', name: 'Find', note: 'postings in, verdicts stored' },
   { id: 'apply', name: 'Apply', note: 'tailor, packet, fill, with two signals' },
@@ -67,7 +67,7 @@ const NET_LINES = Object.freeze([
 ]);
 
 /** The drawn lines of the network. Decorative: the stations are real buttons laid over it. */
-function netDrawing() {
+export function netDrawing() {
   const path = (line, d, extra = {}) => svg('path', { class: `ex-net-line ex-net-${line}`, d, 'data-line': line, ...extra });
   return svg('svg', { class: 'ex-net-svg', viewBox: `0 0 ${NET_SIZE[0]} ${NET_SIZE[1]}`, 'aria-hidden': 'true', focusable: 'false', preserveAspectRatio: 'none' },
     // Control: profile and config feed the scorer; every way in shares one
@@ -80,6 +80,9 @@ function netDrawing() {
     path('find', 'M70 170 H630'),
     path('track', 'M630 170 H910'),
     path('apply', 'M350 170 V300 H910'),
+    // Which way work flows: a light runs along a line while it is the one being followed.
+    [['find', 'M70 170 H630'], ['track', 'M630 170 H910'], ['apply', 'M350 170 V300 H910']]
+      .map(([line, d]) => svg('path', { class: 'ex-net-pulse', d, 'data-line': line, pathLength: 100 })),
     svg('circle', { class: 'ex-net-junction', cx: 350, cy: 300, r: 7 }),
     NET_SIGNALS.map((s) => svg('rect', { class: 'ex-net-signal', x: s.x - 9, y: s.y - 9, width: 18, height: 18, rx: 3, transform: `rotate(45 ${s.x} ${s.y})` })));
 }

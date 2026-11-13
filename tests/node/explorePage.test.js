@@ -4,10 +4,11 @@
  *
  * Covers what only a browser can show: the page builds with no console or CSP
  * errors, the dashboard's header link opens it, the example posting is held at
- * each signal until it is cleared, the stations and diagrams respond to
- * pointer and keyboard, a deep link lands on its section, the theme is shared
- * with the dashboard, nothing overflows from 320px up, and axe finds no WCAG
- * A/AA problem in either section, theme or width.
+ * each signal until it is cleared, the scenes hold and play as the page is
+ * scrolled (and simply play on a phone, and stand still for reduced motion),
+ * the diagrams respond to pointer and keyboard, a deep link lands on its
+ * section, the theme is shared with the dashboard, nothing overflows from
+ * 320px up, and axe finds no WCAG A/AA problem in either section, theme or width.
  *
  * Self-skips when no browser can launch, like the other browser suites.
  */
@@ -76,7 +77,7 @@ describe('Explore JobAgent: files', () => {
   });
 
   it('loads nothing from outside the app', () => {
-    const files = ['index.html', 'explore.css', 'tokens.css', 'theme.js', ...readdirSync(join(EXPLORE, 'js')).map((f) => join('js', f))];
+    const files = ['index.html', 'explore.css', 'scenes.css', 'tokens.css', 'theme.js', ...readdirSync(join(EXPLORE, 'js')).map((f) => join('js', f))];
     for (const f of files) {
       const text = readFileSync(join(EXPLORE, f), 'utf8').replace(/http:\/\/www\.w3\.org\/2000\/svg/g, '');
       expect(text, f).not.toMatch(/https?:\/\//);
@@ -141,6 +142,10 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
       expect(await route.locator('.ex-stop-station').count()).toBe(JOURNEY.length);
       expect(await route.locator('.ex-stop-signal').count()).toBe(2);
 
+      // It waits near the end of the page and sets off when it is first scrolled to.
+      await page.waitForTimeout(600);
+      expect(await route.getAttribute('data-state'), 'not started before it is seen').toBe('idle');
+      await route.scrollIntoViewIfNeeded();
       // It travels on its own as far as the first signal, and no further.
       await expect.poll(() => route.getAttribute('data-state'), { timeout: 15_000 }).toBe('held');
       expect(await live.textContent()).toContain('Nothing is filled until you approve');
@@ -166,20 +171,23 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
     });
   });
 
-  it('links each stop to its station, and moves focus there', async (ctx) => {
+  it('links each stop to its scene, and moves focus there', async (ctx) => {
     if (!available) return ctx.skip();
     await withExplore(async (page) => {
-      expect(await page.locator('.ex-station').count()).toBe(JOURNEY.length);
-      expect(await page.locator('.ex-band-signal').count()).toBe(2);
+      expect(await page.locator('.ex-scene').count()).toBe(JOURNEY.length);
+      expect(await page.locator('.ex-gate').count()).toBe(2);
+      expect(await page.locator('.ex-gate-title').allTextContents()).toEqual(['You approve.', 'You submit.']);
       await page.locator('.ex-route').getByRole('link', { name: 'Score' }).click();
       expect(page.url()).toMatch(/#\/overview\/score$/);
       await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('station-score-name');
       for (const stage of JOURNEY) {
-        // Each station is an ordinary section. (A stage id once produced a class name that a
-        // component used too, and the Fill station became a zero-height sticky element.)
+        // Each scene is an ordinary section. (A stage id once produced a class name that a
+        // component used too, and the Fill scene became a zero-height sticky element.)
         expect(await page.locator(`#station-${stage.id}`).evaluate((el) => getComputedStyle(el).position), stage.id).toBe('relative');
         expect(await page.locator(`#station-${stage.id}-name`).textContent()).toBe(stage.name);
-        expect(await page.locator(`#station-${stage.id} .ex-station-claim`).textContent()).toBe(stage.title);
+        expect(await page.locator(`#station-${stage.id} .ex-scene-claim`).textContent()).toBe(stage.title);
+        // Every moment of the scene is listed, in order.
+        expect(await page.locator(`#station-${stage.id} .ex-beat-text`).allTextContents(), stage.id).toEqual(stage.beats.map((b) => b.text));
       }
     });
     // A link straight to one station lands on it.
@@ -242,7 +250,7 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
   it('switches to the deep dive, and a deep link lands on its section', async (ctx) => {
     if (!available) return ctx.skip();
     await withExplore(async (page) => {
-      await page.getByRole('button', { name: 'How it works' }).click();
+      await page.getByRole('button', { name: 'Under the hood' }).click();
       await page.waitForSelector('#viewHow:not([hidden])');
       expect(page.url()).toMatch(/#\/how$/);
       expect(await page.locator('#viewOverview').isHidden()).toBe(true);
@@ -352,62 +360,156 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
     });
   });
 
-  it('moves as you scroll, and every move ends in the same finished page', async (ctx) => {
+  it('holds each scene while its picture plays, and ends on the finished picture', async (ctx) => {
     if (!available) return ctx.skip();
     await withExplore(async (page) => {
       const opacity = (sel) => page.locator(sel).first().evaluate((el) => Number(getComputedStyle(el).opacity));
-      const scrollTo = (sel) => page.evaluate((q) => {
-        const el = document.querySelector(q);
-        window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 120, behavior: 'instant' });
-      }, sel);
+      // Scroll to a point inside a chapter: 0 is where its sheet starts to hold, 1 where the next sheet starts to cover it.
+      const seek = (id, at) => page.evaluate(([scene, p]) => {
+        const section = document.getElementById(`station-${scene}`);
+        const stage = section.querySelector('.ex-scene-stage');
+        const top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h'));
+        const start = section.getBoundingClientRect().top + window.scrollY - top;
+        const length = section.offsetHeight - 2 * stage.offsetHeight;
+        window.scrollTo({ top: start + length * p, behavior: 'instant' });
+      }, [id, at]);
+      const held = (id) => page.evaluate((scene) => {
+        const top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h'));
+        return Math.abs(document.querySelector(`#station-${scene} .ex-scene-stage`).getBoundingClientRect().top - top);
+      }, id);
 
-      // The entrance plays once and is then retired.
+      // The entrance plays once and is then retired; a wide window holds its scenes.
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.intro), { timeout: 10_000 }).toBe('done');
+      expect(await page.evaluate(() => document.documentElement.dataset.motion)).toBe('pinned');
 
-      // A picture below the fold starts hidden, and arrives when it is scrolled to.
-      expect(await page.locator('#station-score .ex-scorecard').getAttribute('data-reveal')).toBe('');
-      expect(await opacity('#station-score .ex-scorecard')).toBe(0);
-      await scrollTo('#station-score');
-      await expect.poll(() => opacity('#station-score .ex-scorecard'), { timeout: 5_000 }).toBe(1);
-      // The score counts up to the same number the static page shows.
-      await expect.poll(() => page.locator('#station-score .ex-score-num').textContent(), { timeout: 5_000 }).toBe('78');
+      // Score: the stage stays under the header while the number counts to the model's total.
+      const number = page.locator('#station-score .ex-score-num');
+      // It is already playing when the sheet lands (flat, once its tilt has caught up with the
+      // scroll), and the sheet, not the section, carries the chapter's ground.
+      await seek('score', 0);
+      await expect.poll(() => held('score'), { timeout: 5_000 }).toBeLessThan(2);
+      await expect.poll(async () => Number(await number.textContent()), { timeout: 5_000 }).toBeLessThan(70);
+      expect(await opacity('#station-score .ex-tier')).toBe(0);
+      expect(await page.locator('#station-score .ex-scene-stage').getAttribute('data-ground')).toBe('ivory');
+      expect(await page.locator('#station-score').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+      // The chapter rail is out, and names the chapter in front.
+      await expect.poll(() => page.locator('.ex-rail').evaluate((el) => el.classList.contains('is-on'))).toBe(true);
+      await expect.poll(() => page.locator('.ex-rail-now').textContent()).toBe('Score');
+      await seek('score', 0.98);
+      await expect.poll(() => held('score'), { timeout: 5_000 }).toBeLessThan(2);
+      await expect.poll(() => number.textContent(), { timeout: 5_000 }).toBe('78');
+      await expect.poll(() => opacity('#station-score .ex-tier'), { timeout: 5_000 }).toBe(1);
+      // Only the moment that is playing is spelled out (once the scrub has caught up with the scroll).
+      await expect.poll(() => page.locator('#station-score .ex-beat.is-on .ex-beat-name').textContent(), { timeout: 5_000 }).toContain('Second opinion');
+      expect(await page.locator('#station-score .ex-beat.is-on').count()).toBe(1);
+      // A preset chosen on the held stage is shown at once. The chips ease in at the end of the
+      // scene; wait for them to come to rest, because a click on a moving target is retried with
+      // a forced scroll, and scrolling is what plays the scene.
+      await expect.poll(() => page.locator('#station-score .ex-score-presets').evaluate((el) => {
+        const style = getComputedStyle(el);
+        return Number(style.opacity) === 1 && new DOMMatrix(style.transform).m42 === 0;
+      }), { timeout: 5_000 }).toBe(true);
+      await page.locator('#station-score').getByRole('button', { name: 'Right title, thin overlap' }).click();
+      expect(Number(await number.textContent())).toBeLessThan(60);
 
-      // The station's line is filled down to the middle of the window as you read.
-      const fill = await page.evaluate(() => {
-        const rail = document.querySelector('#station-score .ex-station-progress').getBoundingClientRect();
-        return Math.abs(rail.top - window.innerHeight / 2);
-      });
-      expect(fill).toBeLessThan(2);
+      // Discover: three copies of one role end as one row, and every row carries its outcome.
+      await seek('discover', 0.02);
+      await expect.poll(() => page.locator('#station-discover .ex-board-copy').first().evaluate((el) => getComputedStyle(el).visibility), { timeout: 5_000 }).toBe('visible');
+      await seek('discover', 0.99);
+      await expect.poll(() => page.locator('#station-discover .ex-board-copy').first().evaluate((el) => getComputedStyle(el).visibility), { timeout: 5_000 }).toBe('hidden');
+      await expect.poll(() => opacity('#station-discover .ex-board-merged > .ex-board-out'), { timeout: 5_000 }).toBe(1);
 
-      // The tailored resume's bullets slide into their new order, then the terms are emphasized.
-      const sheet = page.locator('#station-tailor .ex-sheet-tailored');
-      expect(await sheet.getAttribute('data-flip')).toBe('pending');
-      await scrollTo('#station-tailor .ex-spread');
-      await expect.poll(() => sheet.getAttribute('data-flip'), { timeout: 8_000 }).toBe('done');
-      expect(await sheet.locator('.ex-kw').allTextContents()).toEqual(['Spark', 'Airflow', 'dbt']);
-
+      // Tailor: the bullets settle in their new order and the terms are emphasized.
+      const bullet = page.locator('#station-tailor .ex-sheet-tailored .ex-sheet-bullet').first();
+      await seek('tailor', 0.99);
+      await expect.poll(() => bullet.evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).m42), { timeout: 5_000 }).toBe(0);
+      await expect.poll(() => page.locator('#station-tailor .ex-sheet-tailored .ex-kw').first().evaluate((el) => getComputedStyle(el).fontWeight), { timeout: 5_000 }).toBe('760');
       // The header's rule takes the colour of the line you are on.
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.here)).toBe('apply');
 
-      // Switching pages slides; afterwards the deep dive is shown, and its network draws itself in.
-      await page.getByRole('button', { name: 'How it works' }).click();
+      // Fill: it ends stopped before Submit, with the unanswered question left alone.
+      await seek('fill', 0.99);
+      await expect.poll(() => opacity('#station-fill .ex-halt'), { timeout: 5_000 }).toBe(1);
+      expect(await page.locator('#station-fill .ex-field-ask .ex-field-value').count()).toBe(0);
+
+      // Track: the application ends in the stage you confirmed.
+      await seek('track', 0.99);
+      await expect.poll(() => page.locator('#station-track .ex-app').evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).m41), { timeout: 5_000 }).toBe(0);
+      expect(await page.locator('#station-track .ex-stage.is-current .ex-stage-name').textContent()).toBe('Interviewing');
+
+      // Switching pages stops the Overview's choreography; the deep dive's network draws itself in.
+      await page.getByRole('button', { name: 'Under the hood' }).click();
       await page.waitForSelector('#viewHow:not([hidden])');
       await expect.poll(() => page.evaluate(() => document.documentElement.dataset.vt ?? 'none'), { timeout: 5_000 }).toBe('none');
-      await scrollTo('#topic-system .ex-map');
+      expect(await page.evaluate(() => document.documentElement.dataset.motion ?? 'none')).toBe('none');
+      await page.evaluate(() => {
+        const el = document.querySelector('#topic-system .ex-map');
+        window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 120, behavior: 'instant' });
+      });
       await expect.poll(() => opacity('#topic-system [data-node="sites"]'), { timeout: 6_000 }).toBe(1);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+      // Coming back starts it again.
+      await page.getByRole('button', { name: 'Overview' }).click();
+      await page.waitForSelector('#viewOverview:not([hidden])');
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.motion)).toBe('pinned');
     }, { motion: true, theme: 'light' });
+  });
+
+  it('covers every held sheet with the next one: no empty frame between chapters', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withExplore(async (page) => {
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.motion)).toBe('pinned');
+      const sheets = await page.evaluate(() => [...document.querySelectorAll('.ex-sheet-chapter, .ex-never')].map((el) => el.id));
+      expect(sheets.length).toBe(JOURNEY.length + 2 + 1);
+      for (let i = 0; i < sheets.length - 1; i += 1) {
+        // Half way through a peel, the held sheet is still in place and the next one is over it,
+        // so the window shows sheet, then sheet: never the page behind them.
+        const gap = await page.evaluate(([a, b]) => {
+          const top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h'));
+          const next = document.getElementById(b);
+          const y = next.getBoundingClientRect().top + window.scrollY - (top + (innerHeight - top) / 2);
+          window.scrollTo({ top: y, behavior: 'instant' });
+          const held = document.querySelector(`#${a} .ex-plate`).getBoundingClientRect();
+          const rising = (next.querySelector('.ex-plate') ?? next).getBoundingClientRect();
+          return { heldTop: Math.round(held.top - top), heldBottom: Math.round(innerHeight - held.bottom), risingTop: Math.round(rising.top) };
+        }, [sheets[i], sheets[i + 1]]);
+        expect(gap.heldTop, `${sheets[i]} is still held`).toBeLessThanOrEqual(2);
+        expect(gap.heldBottom, `${sheets[i]} reaches the foot of the window`).toBeLessThanOrEqual(40);
+        expect(gap.risingTop, `${sheets[i + 1]} is rising over it`).toBeLessThan(innerHeightOf(page));
+      }
+    }, { motion: true, viewport: { width: 1440, height: 900 } });
+  });
+
+  it('plays each picture once on a phone, without holding the page', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withExplore(async (page) => {
+      expect(await page.evaluate(() => document.documentElement.dataset.motion)).toBe('flow');
+      expect(await page.locator('#station-score .ex-scene-stage').evaluate((el) => getComputedStyle(el).position)).not.toBe('sticky');
+      await page.evaluate(() => {
+        const el = document.querySelector('#station-score .ex-scene-pic');
+        window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 200, behavior: 'instant' });
+      });
+      await expect.poll(() => page.locator('#station-score .ex-score-num').textContent(), { timeout: 10_000 }).toBe('78');
+      // Every moment stays listed: nothing folds away where nothing holds.
+      expect(await page.locator('#station-score .ex-beat-text').first().evaluate((el) => el.offsetHeight)).toBeGreaterThan(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+    }, { motion: true, viewport: { width: 390, height: 800 } });
   });
 
   it('shows the finished page at once when the reader prefers reduced motion', async (ctx) => {
     if (!available) return ctx.skip();
     await withExplore(async (page) => {
       expect(await page.evaluate(() => document.documentElement.dataset.intro)).toBe('done');
-      expect(await page.locator('#station-tailor .ex-sheet-tailored').getAttribute('data-flip')).toBeNull();
-      // Nothing waits to be revealed: every picture is fully drawn before it is scrolled to.
-      const hidden = await page.evaluate(() => [...document.querySelectorAll('.ex-demo, .ex-station-copy, .ex-band-signal, .ex-board-row, .ex-field-value')]
-        .filter((el) => Number(getComputedStyle(el).opacity) < 1 || getComputedStyle(el).clipPath.startsWith('inset(0px 100%')).length);
+      expect(await page.evaluate(() => document.documentElement.dataset.motion)).toBe('none');
+      // Nothing holds and nothing waits to be played: every picture is fully drawn before it is scrolled to.
+      expect(await page.locator('.ex-scene-stage').evaluateAll((els) => els.filter((el) => getComputedStyle(el).position === 'sticky').length)).toBe(0);
+      const hidden = await page.evaluate(() => [...document.querySelectorAll('.ex-demo, .ex-scene-head, .ex-beat, .ex-gate-title, .ex-board-row, .ex-board-out, .ex-field-value, .ex-halt, .ex-event, .ex-fcard, .ex-hood-node')]
+        .filter((el) => Number(getComputedStyle(el).opacity) < 1 || getComputedStyle(el).visibility === 'hidden' || getComputedStyle(el).clipPath.startsWith('inset(0px 100%')).length);
       expect(hidden).toBe(0);
+      expect(await page.locator('#station-score .ex-score-num').textContent()).toBe('78');
+      // The copies that only exist while Discover plays are never shown.
+      expect(await page.locator('.ex-board-copy').evaluateAll((els) => els.filter((el) => getComputedStyle(el).visibility !== 'hidden').length)).toBe(0);
     });
   });
 
@@ -449,6 +551,7 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
             await page.evaluate(() => { for (const d of document.querySelectorAll('details')) d.open = true; });
             if (!hash) {
               // Scan with a signal waiting (its button live) as well as at rest.
+              await page.locator('.ex-route').scrollIntoViewIfNeeded();
               await expect.poll(() => page.locator('.ex-route').getAttribute('data-state'), { timeout: 15_000 }).toBe('held');
             }
             expect(await scan(page), `${name} (${theme}, ${width}px)`).toEqual([]);
@@ -458,6 +561,11 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
     }
   }
 });
+
+/** The window's height, for a bound measured against it. */
+function innerHeightOf(page) {
+  return page.viewportSize()?.height ?? 900;
+}
 
 /** axe violations as compact, readable records. */
 async function scan(page) {
