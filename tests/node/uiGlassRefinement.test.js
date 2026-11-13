@@ -76,16 +76,19 @@ describe('the bulk-action bar keeps every safeguard', () => {
     expect(js('actions.js')).toMatch(/'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare'/);
   });
 
-  it('is a toolbar docked above the column headers, always present (no layout shift), and above the thumb on phones', () => {
-    // Above the table, in flow, sticking under the top bar; the headers stick
-    // beneath it, so names and sorting stay visible while rows are selected
-    // (audit 2026-11-13: floating over the rows it blended into them).
+  it('is a toolbar docked above the column headers while rows are ticked, and above the thumb on phones', () => {
+    // Above the table, sticking under the top bar; the headers stick beneath
+    // it while it is open, so names and sorting stay visible (audit
+    // 2026-11-13: floating over the rows it blended into them). It takes no
+    // room at rest; opening it scrolls the page so the clicked row stays put.
     const board = html.slice(html.indexOf('id="boardwrap"'), html.indexOf('<table id="board"'));
     expect(board).toContain('<div id="selbar" role="toolbar"');
-    expect(board).toContain('class="selbar-idle"');
-    expect(css).toMatch(/#selbar \{\s*position: sticky; top: var\(--topbar-h, 51px\); z-index: 4;\s*height: var\(--tbar-h\);/);
-    expect(css).toMatch(/thead th \{[^}]*top: calc\(var\(--topbar-h, 51px\) \+ var\(--tbar-h\)\)/);
+    expect(board).not.toContain('selbar-idle');
+    expect(css).toMatch(/#selbar \{\s*position: sticky; top: var\(--topbar-h, 51px\); z-index: 4;\s*height: 0; overflow: hidden;/);
+    expect(css).toMatch(/#selbar\[data-open="true"\] \{\s*height: var\(--tbar-h\);/);
+    expect(css).toContain('#boardwrap:has(#selbar[data-open="true"]) thead th { top: calc(var(--topbar-h, 51px) + var(--tbar-h)); }');
     expect(css).toMatch(/thead th \{[^}]*height: 40px/);
+    expect(js('selection.js')).toContain('keepRowStill(() => { bar.dataset.open = open; })');
     // The pipeline is one stepper, in the order the work happens.
     const pipeline = bar.slice(bar.indexOf('selbar-pipeline'));
     expect(pipeline.indexOf('batch-prepare')).toBeLessThan(pipeline.indexOf('batch-approve'));

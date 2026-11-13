@@ -1,6 +1,6 @@
 /** The application profile dialog, question queue, System health and downloads. */
 
-import { $, el, fmt, relTime, slowProgress, toast } from './dom.js';
+import { $, el, fmt, relTime, safeHref, slowProgress, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { cssEscape } from './detail.js';
@@ -230,83 +230,123 @@ export async function renderProfile({ keep = true, committed = null } = {}) {
 /** The work: questions a real form asked that the filler could not answer. */
 export function renderQuestionQueue(queue) {
   const section = el('section', { class: 'pf-section', id: 'pfQuestions' });
-  section.append(el('h3', { text: `Questions waiting on you (${fmt(queue.openCount)})` }));
+  section.append(el('h3', { text: `Questions to answer once (${fmt(queue.openCount)})` }));
 
   if (queue.error) {
     section.append(el('div', { class: 'st-blocked', text: queue.error }));
     return section;
   }
-  if (!queue.openCount) {
-    section.append(el('div', { class: 'muted' },
-      'Nothing queued. Every question the last auto-fill runs met was answered from your saved answers. '
-      + 'When a form asks something new, it lands here so you can answer it once instead of every time.'));
+  const open = queue.open ?? [];
+  if (!open.length) {
+    section.append(el('p', { class: 'muted pf-q-empty' },
+      'Nothing to answer. When an application form asks something your saved answers cannot cover, '
+      + 'it lands here so you can answer it once instead of on every form.'));
     return section;
   }
 
-  section.append(el('div', { class: 'evidence-note' },
-    `${fmt(queue.requiredCount)} of these were marked required by the form, which is what stopped the run. `
-    + 'An answer saved here is used by every future application that asks the same thing.'));
+  // Grouped by what kind of answer the question needs (see questionKind on
+  // the server). Employer-specific questions are shown, never saved: a saved
+  // "No" to "Have you worked for this company?" would be typed onto every
+  // employer's form, including one where it is untrue.
+  const general = open.filter((q) => q.kind !== 'employer' && q.kind !== 'voluntary');
+  const voluntary = open.filter((q) => q.kind === 'voluntary');
+  const employer = open.filter((q) => q.kind === 'employer');
 
-  for (const q of queue.open) {
-    const item = el('div', { class: 'pf-q' });
-    const head = el('div', { class: 'pf-q-head' });
-    head.append(el('b', { text: q.label }));
-    if (q.required) head.append(el('span', { class: 'chip bad', text: 'required' }));
-    head.append(el('span', {
-      class: 'faint',
-      text: `asked ${fmt(q.seenCount)}×${relTime(q.lastSeenAt) ? ` · last ${relTime(q.lastSeenAt)}` : ''}`,
-    }));
-    item.append(head);
+  if (general.length || voluntary.length) {
+    const required = queue.requiredCount ?? 0;
+    section.append(el('p', { class: 'muted pf-q-intro' },
+      `${required ? `Forms marked ${fmt(required)} of these as required. ` : ''}`
+      + 'Answer once and every future application that asks the same thing uses your answer.'));
+  }
+  for (const q of general) section.append(questionCard(q));
 
-    const asked = (q.jobs ?? []).map((j) => [j.company, j.title].filter(Boolean).join(' — ')).filter(Boolean);
-    if (asked.length) item.append(el('div', { class: 'faint fineprint', text: `Seen on: ${asked.join(' · ')}` }));
-    if (q.note) item.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }), el('div', { text: q.note })));
+  if (voluntary.length) {
+    section.append(el('h4', { class: 'pf-q-group', text: `Voluntary self-identification (${voluntary.length})` }),
+      el('p', { class: 'muted pf-q-intro', text: 'Optional on every form, and never held against you. Declining to answer is always a choice.' }));
+    for (const q of voluntary) section.append(questionCard(q));
+  }
 
-    // The live form's own choices, offered as one-click fills. The stored value
-    // stays free text — the filler maps it onto whatever the next form's option
-    // list happens to be called.
-    const options = (q.options ?? []).map((o) => o.label).filter(Boolean);
-    if (options.length && options.length <= 8) {
-      const row = el('div', { class: 'row-gap pf-choices' });
-      row.append(el('span', { class: 'faint', text: 'The form offered:' }));
-      for (const option of options) {
-        row.append(el('button', {
-          type: 'button', class: 'small ghost', 'data-action': 'use-question-choice',
-          'data-key': q.key, 'data-value': option, text: option,
-        }));
-      }
-      item.append(row);
+  if (employer.length) {
+    section.append(el('h4', { class: 'pf-q-group', text: `Depends on the employer (${employer.length})` }),
+      el('p', { class: 'muted pf-q-intro', text: 'The right answer changes from one employer or posting to the next, so these are never saved. '
+        + 'Auto-fill stops on them and you answer on the form.' }));
+    const list = el('ul', { class: 'pf-q-employer' });
+    for (const q of employer) {
+      list.append(el('li', {},
+        el('div', { class: 'pf-q-text', text: q.label }),
+        questionMeta(q),
+        el('button', {
+          type: 'button', class: 'small ghost', 'data-action': 'dismiss-question', 'data-key': q.key,
+          title: 'Remove it from this list. Forms that ask it still stop for your answer.', text: 'Got it',
+        })));
     }
-
-    item.append(el('label', { for: `qa-${q.key}`, text: 'Your answer' }));
-    item.append(el('textarea', { id: `qa-${q.key}`, rows: '2', 'data-q-answer': q.key }));
-
-    const details = el('details', { class: 'pf-adv' });
-    details.append(el('summary', { text: 'Matching (edit if this should cover other wordings)' }));
-    details.append(el('label', { for: `qp-${q.key}`, text: 'Match a question containing any of these phrases' }));
-    details.append(el('input', {
-      type: 'text', id: `qp-${q.key}`, 'data-q-patterns': q.key,
-      value: (q.suggestedPatterns ?? []).join(' | '),
-      title: 'Separate alternatives with |. A phrase must not end in punctuation.',
-    }));
-    details.append(el('label', { for: `qi-${q.key}`, text: 'Id' }));
-    details.append(el('input', { type: 'text', id: `qi-${q.key}`, 'data-q-id': q.key, value: q.suggestedId }));
-    item.append(details);
-
-    const actions = el('div', { class: 'row-gap' });
-    actions.append(el('button', {
-      type: 'button', class: 'small primary', 'data-action': 'save-question-answer', 'data-key': q.key,
-      text: 'Save answer',
-    }));
-    actions.append(el('button', {
-      type: 'button', class: 'small ghost', 'data-action': 'dismiss-question', 'data-key': q.key,
-      title: 'Keep it out of this list. The runner will still stop for it on every application.',
-      text: "I'll answer this by hand",
-    }));
-    item.append(actions);
-    section.append(item);
+    section.append(list);
   }
   return section;
+}
+
+/** Required flag, how often and when, and the form it came from (linked). */
+function questionMeta(q) {
+  const meta = el('div', { class: 'pf-q-meta' });
+  if (q.required) meta.append(el('span', { class: 'chip bad', text: 'Required' }));
+  const when = relTime(q.lastSeenAt);
+  meta.append(el('span', { class: 'faint', text: `Asked ${fmt(q.seenCount)}×${when ? `, last ${when}` : ''}` }));
+  const job = (q.jobs ?? []).find((j) => j.company || j.title);
+  if (job) {
+    const name = [job.company, job.title].filter(Boolean).join(' · ');
+    const more = (q.jobs ?? []).length > 1 ? ` and ${(q.jobs ?? []).length - 1} more` : '';
+    const href = safeHref(job.url);
+    meta.append(el('span', { class: 'faint pf-q-from' }, 'From ',
+      href ? el('a', { href, target: '_blank', rel: 'noopener', text: name }) : el('span', { text: name }),
+      more));
+  }
+  return meta;
+}
+
+/** One answerable question: the form's own choices as chips, or a box. */
+function questionCard(q) {
+  const item = el('article', { class: 'pf-q', 'aria-labelledby': `qt-${q.key}` });
+  item.append(el('h5', { class: 'pf-q-text', id: `qt-${q.key}`, text: q.label }), questionMeta(q));
+  if (q.note) item.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }), el('div', { text: q.note })));
+
+  // The live form's own choices, as one-click picks. The stored value stays
+  // free text; the filler maps it onto whatever the next form calls it.
+  const options = (q.options ?? []).map((o) => o.label).filter(Boolean);
+  const choices = options.length && options.length <= 8;
+  if (choices) {
+    const group = el('div', { class: 'pf-choices', role: 'group', 'aria-label': 'The form\'s choices' });
+    for (const option of options) {
+      group.append(el('button', {
+        type: 'button', class: 'pf-choice', 'data-action': 'use-question-choice', 'aria-pressed': 'false',
+        'data-key': q.key, 'data-value': option, text: option,
+      }));
+    }
+    item.append(group);
+  }
+  item.append(el('label', { class: 'pf-q-label', for: `qa-${q.key}`, text: choices ? 'Or write your own answer' : 'Your answer' }));
+  item.append(choices
+    ? el('input', { type: 'text', id: `qa-${q.key}`, 'data-q-answer': q.key, autocomplete: 'off' })
+    : el('textarea', { id: `qa-${q.key}`, rows: '2', 'data-q-answer': q.key }));
+
+  const details = el('details', { class: 'pf-adv' });
+  details.append(el('summary', { text: 'Which wordings this answer covers' }));
+  details.append(el('label', { for: `qp-${q.key}`, text: 'Match a question containing any of these phrases' }));
+  details.append(el('input', {
+    type: 'text', id: `qp-${q.key}`, 'data-q-patterns': q.key,
+    value: (q.suggestedPatterns ?? []).join(' | '),
+    title: 'Separate alternatives with |. A phrase must not end in punctuation.',
+  }));
+  details.append(el('label', { for: `qi-${q.key}`, text: 'Id' }));
+  details.append(el('input', { type: 'text', id: `qi-${q.key}`, 'data-q-id': q.key, value: q.suggestedId }));
+  item.append(details);
+
+  item.append(el('div', { class: 'pf-q-actions' },
+    el('button', { type: 'button', class: 'small primary', 'data-action': 'save-question-answer', 'data-key': q.key, text: 'Save answer' }),
+    el('button', {
+      type: 'button', class: 'small ghost', 'data-action': 'dismiss-question', 'data-key': q.key,
+      title: 'Keep it out of this list. Forms that ask it still stop for your answer.', text: 'Answer on each form',
+    })));
+  return item;
 }
 
 /** Who you are — the values the filler types into contact fields. */
@@ -761,3 +801,12 @@ export function download(path, filename) {
     toast(`Downloaded ${filename}`, 'good');
   }).catch((err) => toast(err.message, 'bad'));
 }
+
+// Typing your own answer un-selects a choice chip that no longer matches it.
+$('profileBody')?.addEventListener('input', (event) => {
+  const box = event.target.closest?.('[data-q-answer]');
+  if (!box) return;
+  for (const chip of box.closest('.pf-q')?.querySelectorAll('.pf-choice') ?? []) {
+    chip.setAttribute('aria-pressed', String(chip.dataset.value === box.value));
+  }
+});

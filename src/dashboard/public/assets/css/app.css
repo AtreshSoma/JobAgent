@@ -1693,7 +1693,7 @@ th, td {
 thead th {
   color: var(--text-faint); font-size: var(--fs-sm); font-weight: 600; letter-spacing: 0;
   background: var(--surface); height: 40px; padding-top: 0; padding-bottom: 0;
-  position: sticky; top: calc(var(--topbar-h, 51px) + var(--tbar-h)); z-index: 2; white-space: nowrap;
+  position: sticky; top: var(--topbar-h, 51px); z-index: 2; white-space: nowrap;
   box-shadow: inset 0 -1px 0 var(--line);
 }
 thead th.sortable { cursor: pointer; user-select: none; transition: color var(--dur-fast) ease; }
@@ -2857,18 +2857,49 @@ kbd {
 .pf-section .evidence-note { margin-bottom: var(--s3); }
 
 /* One queued question. The card boundary matters: each is a separate decision
-   with its own answer box and its own Save. */
+   with its own answer and its own Save. Question first, then one quiet
+   metadata line, then the form's own choices as selectable chips. */
 .pf-q {
   border: 1px solid var(--line); border-radius: var(--r-md);
-  background: var(--surface-2); padding: var(--s3); margin-bottom: var(--s3);
+  background: var(--surface-2); padding: var(--s4); margin-bottom: var(--s3);
+  display: grid; gap: var(--s2);
 }
-.pf-q-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
-.pf-q-head b { font-size: var(--fs-md); overflow-wrap: anywhere; }
-.pf-q .fineprint { margin: 3px 0 var(--s2); }
-.pf-q textarea, .pf-q input[type=text] { margin-bottom: var(--s2); }
-.pf-choices { margin: var(--s2) 0; flex-wrap: wrap; }
-.pf-adv { margin-bottom: var(--s2); }
-.pf-adv summary { font-size: var(--fs-sm); color: var(--text-faint); cursor: pointer; margin-bottom: var(--s2); }
+.pf-q-text { margin: 0; font-size: var(--fs-md); font-weight: 620; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; max-width: 72ch; }
+.pf-q-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-size: var(--fs-sm); }
+.pf-q-meta .chip { min-height: 20px; }
+.pf-q-from { min-width: 0; overflow-wrap: anywhere; }
+.pf-q-from a { color: var(--text-dim); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.pf-q-from a:hover { color: var(--text); text-decoration-color: currentColor; }
+.pf-q-intro { margin: 0 0 var(--s3); font-size: var(--fs-sm); max-width: 72ch; }
+.pf-q-group { margin: var(--s5, 24px) 0 var(--s1); font-size: var(--fs-md); font-weight: 650; }
+.pf-q-label { margin-top: 2px; font-size: var(--fs-sm); color: var(--text-dim); }
+.pf-q textarea, .pf-q input[type=text] { margin: 0; }
+.pf-q-actions { display: flex; align-items: center; gap: var(--s2); flex-wrap: wrap; margin-top: 2px; }
+.pf-q-empty { margin: 0; }
+
+/* The form's choices: one-tap picks, the chosen one filled. */
+.pf-choices { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0; }
+.pf-choice {
+  min-height: 32px; padding: 0 14px; border-radius: var(--r-full);
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+  font-size: var(--fs-sm); font-weight: 560; cursor: pointer;
+  transition: background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, color var(--dur-fast) ease, transform 100ms var(--ease-out);
+}
+.pf-choice:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); }
+.pf-choice:active { transform: scale(.97); }
+.pf-choice[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+/* Employer-specific questions: a compact list, never an answer box. */
+.pf-q-employer { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--s2); }
+.pf-q-employer li {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--s3); row-gap: 4px; align-items: start;
+  padding: var(--s3) var(--s4); border: 1px dashed var(--line); border-radius: var(--r-md);
+}
+.pf-q-employer .pf-q-text { grid-column: 1; font-weight: 560; }
+.pf-q-employer .pf-q-meta { grid-column: 1; }
+.pf-q-employer button { grid-column: 2; grid-row: 1 / span 2; align-self: center; }
+.pf-adv summary { font-size: var(--fs-sm); color: var(--text-faint); cursor: pointer; }
+.pf-adv[open] summary { margin-bottom: var(--s2); }
 
 /* Two columns on a laptop, one on a phone — an application form's contact
    block is short fields, and a single column of thirteen is a lot of scroll. */
@@ -3006,44 +3037,32 @@ kbd {
 @keyframes toastin { from { opacity: 0; transform: translateY(6px); } }
 
 /* ── the table toolbar (bulk actions) ──
-   A 44px row docked above the column headers, ALWAYS present, so ticking a box
-   never moves a row. At rest it says what selecting does, in faint text. With
-   rows ticked it becomes the action bar: tinted with the accent and marked by
-   an accent rail, so it reads as a different layer from the rows it acts on.
-   It used to float over the rows, where it blended into them and could cover
-   the focused row (WCAG 2.2 focus-not-obscured).
+   A 44px row docked above the column headers, shown only while rows are
+   ticked. Tinted with the accent and marked by an accent rail, so it reads as
+   a different layer from the rows it acts on. It used to float over the rows,
+   where it blended into them and could cover the focused row (WCAG 2.2
+   focus-not-obscured). Opening it inserts 44px above the table; selection.js
+   scrolls the page by the same amount so the clicked row does not move.
 
    Order follows the work: count + Clear, then the decisions (Shortlist,
    Reject, Archive, Compare), then the apply pipeline as ONE stepper,
    Prepare > Approve > Auto-fill, with the step the selection is ready for
    filled (selection.js sets `.primary`). It sticks under the top bar; the
-   column headers stick beneath it (--tbar-h), so names and sorting stay. */
+   column headers stick beneath it while it is open (--tbar-h). */
 :root { --tbar-h: 44px; }
 #selbar {
   position: sticky; top: var(--topbar-h, 51px); z-index: 4;
-  height: var(--tbar-h);
+  height: 0; overflow: hidden;
   container: selbar / inline-size;
-  background: var(--surface);
-  border-bottom: 1px solid var(--line);
   border-top-left-radius: calc(var(--r-md) - 1px); border-top-right-radius: calc(var(--r-md) - 1px);
-  transition: background-color var(--dur) ease, box-shadow var(--dur) ease;
 }
+#boardwrap:has(#selbar[data-open="true"]) thead th { top: calc(var(--topbar-h, 51px) + var(--tbar-h)); }
 #selbar[data-open="true"] {
+  height: var(--tbar-h); overflow: visible;
   background: linear-gradient(var(--accent-soft), var(--accent-soft)), var(--surface);
-  border-bottom-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, var(--line));
   box-shadow: inset 3px 0 0 var(--accent);
 }
-/* Resting hint. Hidden (not just transparent) once rows are ticked. */
-.selbar-idle {
-  position: absolute; inset: 0; margin: 0; padding: 0 var(--s4);
-  display: flex; align-items: center; gap: 10px;
-  font-size: var(--fs-sm); color: var(--text-faint); white-space: nowrap; overflow: hidden;
-  transition: opacity var(--dur-fast) ease;
-}
-.selbar-idle .ic { width: 16px; height: 16px; flex: none; color: var(--text-faint); }
-.selbar-keys { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
-.selbar-keys kbd { font-size: var(--fs-xs); }
-#selbar[data-open="true"] .selbar-idle { opacity: 0; visibility: hidden; }
 #selbar .selbar-inner {
   position: absolute; inset: 0;
   display: flex; align-items: center; gap: 4px; padding: 0 var(--s2) 0 var(--s4);
@@ -3112,7 +3131,6 @@ kbd {
   .selbar-clear { width: var(--h-sm); padding: 0; justify-content: center; }
   .selbar-wide { display: none; }
   .selbar-pipeline button:not(.primary), .step-sep { display: none; }
-  .selbar-keys { display: none; }
   .selbar-more { display: inline-block; }
   .selbar-sep { display: none; }
 }
@@ -3131,7 +3149,6 @@ kbd {
        that must not catch taps meant for the cards beneath it. */
     background: none; border: 0; box-shadow: none; border-radius: 0; pointer-events: none;
   }
-  #selbar .selbar-idle { display: none; }
   #selbar .selbar-pipeline { margin-left: auto; }
   #selbar .selbar-inner {
     position: static; inset: auto; width: auto; max-width: none; height: 52px; padding: 0 8px 0 10px;

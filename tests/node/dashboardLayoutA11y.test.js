@@ -39,14 +39,18 @@ async function openJobs(width, height) {
 }
 
 describe('the Jobs board at 1280x800', () => {
-  it('starts the first row within 312px and keeps column headers visible while rows are selected', async () => {
+  it('starts the first row within 300px, keeps the ticked row still, and keeps column headers visible', async () => {
     if (skip) return;
     const page = await openJobs(1280, 800);
-    // 369px before the audit; the always-present 44px toolbar is deliberate.
-    const top = await page.evaluate(() => document.querySelector('#rows tr.job').getBoundingClientRect().top);
-    expect(top).toBeLessThanOrEqual(312);
+    // 369px before the audit; the toolbar takes no room until rows are ticked.
+    const rowTop = () => page.evaluate(() => document.querySelectorAll('#rows tr.job')[2].getBoundingClientRect().top);
+    expect(await page.evaluate(() => document.querySelector('#rows tr.job').getBoundingClientRect().top)).toBeLessThanOrEqual(300);
 
-    await page.locator('#rows tr.job input[type=checkbox]').first().check();
+    const before = await rowTop();
+    await page.locator('#rows tr.job input[type=checkbox]').nth(2).check();
+    await expect.poll(() => page.evaluate(() => document.getElementById('selbar').dataset.open)).toBe('true');
+    // Opening the toolbar scrolls the page by its height: the clicked row does not move.
+    expect(Math.abs((await rowTop()) - before)).toBeLessThanOrEqual(1);
     await expect.poll(() => page.evaluate(() => document.getElementById('selbar').dataset.open)).toBe('true');
     const covered = await page.evaluate(() => {
       const th = document.querySelector('thead th.sortable');

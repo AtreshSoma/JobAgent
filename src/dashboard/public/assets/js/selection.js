@@ -42,11 +42,32 @@ const STEP_ACTIONS = {
 
 let lastAnnounced = 0;
 
+/**
+ * Open or close the toolbar without moving the row being worked on.
+ *
+ * The toolbar takes 44px above the table only while rows are ticked, so
+ * opening it pushes every row down. Measured against the row that has focus
+ * (the one just ticked) or the first row on screen, the page is scrolled by
+ * exactly that shift: the clicked checkbox stays under the pointer. On a phone
+ * the bar is fixed, nothing shifts, and this scrolls by 0.
+ */
+function keepRowStill(change) {
+  const rows = $('rows');
+  const anchor = document.activeElement?.closest?.('#rows tr.job')
+    ?? [...rows.querySelectorAll('tr.job')].find((tr) => tr.getBoundingClientRect().bottom > 0);
+  const before = anchor?.getBoundingClientRect().top;
+  change();
+  if (anchor == null || before == null) return;
+  const shift = anchor.getBoundingClientRect().top - before;
+  if (shift) window.scrollBy({ top: shift, behavior: 'instant' });
+}
+
 export function syncSelectionBar() {
   const n = state.selected.size;
   const bar = $('selbar');
   $('selCount').textContent = `${n} selected`;
-  bar.dataset.open = String(n > 0);
+  const open = String(n > 0);
+  if (bar.dataset.open !== open) keepRowStill(() => { bar.dataset.open = open; });
   if (n === 0) closeMenu($('bulkMenu'));
 
   const jobs = [...state.selected].map((id) => state.known.get(id)).filter(Boolean);

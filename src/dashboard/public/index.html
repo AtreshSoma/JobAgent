@@ -459,9 +459,9 @@
 
       <p id="selHint" class="sr-only"></p>
       <!-- THE TABLE TOOLBAR (bulk actions), docked above the column headers.
-           Always present, so ticking a box never moves a row: at rest it
-           says what selecting does; with rows ticked it becomes the action
-           bar, tinted, in workflow order: count and Clear, the decisions
+           Shown only while rows are ticked (the page scrolls by its height
+           as it opens, so the row you clicked stays under the pointer). It
+           is tinted, in workflow order: count and Clear, the decisions
            (Shortlist, Reject, Archive, Compare), then the apply pipeline as
            one stepper (Prepare > Approve > Auto-fill) with the next step
            filled. It sticks under the top bar with the headers sticking
@@ -475,11 +475,6 @@
            stops before Submit; nothing here can submit an application. -->
       <div id="selbar" role="toolbar" aria-label="Bulk actions for selected jobs"
         aria-describedby="selHint" aria-orientation="horizontal" data-open="false">
-        <p class="selbar-idle" aria-hidden="true">
-          <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><rect x="4" y="4" width="16" height="16" rx="4"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
-          Tick jobs to shortlist, compare, prepare or auto-fill them together.
-          <span class="selbar-keys"><kbd>X</kbd> ticks the focused row</span>
-        </p>
         <div class="selbar-inner">
           <span class="selbar-count"><b id="selCount">0 selected</b></span>
           <button type="button" class="small ghost selbar-clear" data-action="clear-selection"

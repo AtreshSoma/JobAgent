@@ -29,6 +29,8 @@ Each person's answers stay theirs, the Jobs list shows more and hides what you a
 - People-manager roles score lower when your search is for individual-contributor roles, and the other way round. Your saved jobs are scored again on the next search.
 - Company names taken from job-board addresses are written properly, such as Shield AI instead of shieldai, including in cover letters.
 - Each Applications column scrolls on its own, so Before you apply and After you apply both stay in view.
+- Questions to answer once, in Application profile: each question shows the form it came from with a link to the posting, and the form's own choices are one tap.
+- Questions whose answer depends on the employer, such as whether you worked there before or were referred, are listed apart and never saved for every application.
 - Badges and labels are at least 12px, the job rows use one Tab stop instead of hundreds, and file pickers and pagination have names for screen readers.
 - Data quality opens instantly after the first time, and its count of active jobs matches the Jobs list.
 - Preparing many resumes at once starts the PDF printer once instead of once per resume.
@@ -41,6 +43,7 @@ Each person's answers stay theirs, the Jobs list shows more and hides what you a
 - Editing the active person during a search now says nothing was saved, instead of saving part of the change.
 - Restoring an earlier version of a job's documents sends an approved packet back for review and restores the Word cover letter too.
 - The browser extension opens the posting in a new tab instead of replacing the dashboard, and no longer reports "ready" while required dropdowns or choices are empty.
+- Field names and site controls such as Search, Select or a code are no longer listed as questions to answer.
 - Stopping a batch of preparations shows the jobs it never reached as cancelled, not failed.
 - Switching between Jobs, Applications and Today no longer leaves an unrelated job open beside the list, and switching person no longer opens the previous person's job.
 

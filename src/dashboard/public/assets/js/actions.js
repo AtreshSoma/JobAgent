@@ -242,7 +242,9 @@ export const ACTIONS = {
     const box = $('profileBody').querySelector(`[data-q-answer="${cssEscape(target.dataset.key)}"]`);
     if (!box) return;
     box.value = target.dataset.value;
-    box.focus();
+    // One choice is the answer: show which, and keep focus on the choice so
+    // the next press of Tab reaches Save.
+    for (const chip of target.parentElement.querySelectorAll('.pf-choice')) chip.setAttribute('aria-pressed', String(chip === target));
   },
   'pf-jump': (target) => {
     const section = $(target.dataset.target);
