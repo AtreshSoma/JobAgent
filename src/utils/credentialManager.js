@@ -164,6 +164,9 @@ export function getRuntimeSettings(env = process.env) {
     // this many seconds for YOU to clear it in the open window, then continue
     // (audit A2). 0 = off: the run stops at the wall, as before. Headed runs only.
     assistWaitForWallSeconds: Math.max(0, Number.parseInt(env.ASSIST_WAIT_FOR_WALL_SECONDS ?? '0', 10) || 0),
+    // How many applications a batch may fill at once, each in its own tab of one
+    // browser, never two on the same host (audit A11). 1 = one at a time (default); at most 3.
+    assistConcurrency: Math.min(3, Math.max(1, Number.parseInt(env.ASSIST_CONCURRENCY ?? '1', 10) || 1)),
     // Also export a PDF next to each tailored .docx resume (most ATS prefer PDF).
     resumeExportPdf: String(env.RESUME_EXPORT_PDF ?? 'true').trim().toLowerCase() !== 'false',
     // Fit tailored resumes to the page limit by LibreOffice's render, when it
