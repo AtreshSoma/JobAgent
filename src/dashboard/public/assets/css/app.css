@@ -3960,3 +3960,8 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
 .export-form h4 { margin: 0; font-size: var(--fs-md); }
 .export-form p { margin: 0; }
 .export-form input { max-width: 20rem; }
+
+/* Requirement phrases outside the vocabulary (R12). */
+.unlisted { list-style: none; margin: var(--s2) 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.unlisted li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--s2); font-size: var(--fs-md); }
+.unlisted li button { margin-left: auto; }

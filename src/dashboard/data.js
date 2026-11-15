@@ -51,6 +51,7 @@ import { applicationAccess, openQuestionsFor, signInGroups } from '../apply/auto
 import { loadQuestionQueue } from '../apply/questionQueue.js';
 import { evidenceFor, masterResumeLines } from '../resume/evidenceMap.js';
 import { scoringVocabulary } from '../scoring/scorer.js';
+import { corpusFrequency, requirementPhrases } from '../scoring/requirementPhrases.js';
 import { employerHistory } from './employerHistory.js';
 import { preferenceProposals } from './preferenceProposals.js';
 
@@ -1729,6 +1730,23 @@ function boardPageRows(db, filters = {}) {
 }
 
 /**
+ * How many recent stored postings mention a phrase (R12), from a sample of the
+ * 2,000 newest descriptions, kept for ten minutes per database.
+ */
+const FREQUENCY = new WeakMap();
+function postingFrequency(db) {
+  const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
+  if (!raw) return null;
+  const hit = FREQUENCY.get(db);
+  if (hit && Date.now() - hit.at < 600_000) return hit.frequency;
+  const texts = raw.prepare("SELECT jd_text FROM jobs WHERE jd_text IS NOT NULL AND jd_text <> '' ORDER BY created_at DESC LIMIT 2000")
+    .all().map((r) => r.jd_text);
+  const frequency = corpusFrequency(texts);
+  FREQUENCY.set(db, { at: Date.now(), frequency });
+  return frequency;
+}
+
+/**
  * Full detail for one job: board row + packet summary (blockers, prefill plan,
  * screening answers, uploads) read from the packet JSON when present.
  *
@@ -1860,6 +1878,21 @@ export function jobDetail(db, jobId, deps = {}) {
       return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines, {
         aliases: scoring.evidenceAliases ?? {}, vocabulary: scoringVocabulary(scoring),
       });
+    })(),
+    // What the posting's requirement sections name that the vocabulary does
+    // not know, word for word, ranked by how many stored postings ask for it
+    // (R12). The person can add one to what is looked for.
+    unlistedRequirements: (() => {
+      try {
+        const scoring = deps.config?.scoring ?? {};
+        const root = deps.root ?? deps.config?.root ?? null;
+        return requirementPhrases(job.jd_text ?? '', {
+          vocabulary: scoringVocabulary(scoring),
+          aliases: scoring.evidenceAliases ?? {},
+          resumeLines: root ? masterResumeLines(root) : [],
+          frequency: postingFrequency(db),
+        });
+      } catch { return []; }
     })(),
     openQuestions: (() => {
       const root = deps.root ?? deps.config?.root ?? null;

@@ -323,6 +323,7 @@ export const CAPABILITIES = Object.freeze([
   { area: 'Match', name: 'Deterministic fit scoring', what: 'Weighted categories, tiers, and a written explanation per job.', status: 'shipped', topic: 'scoring' },
   { area: 'Match', name: 'Eligibility checks', what: 'Reads stated years, degree, licence and clearance floors and holds a job you do not meet.', status: 'shipped', topic: 'scoring' },
   { area: 'Match', name: 'Sponsorship reading', what: 'Classifies each posting as Confirmed, Likely, Unconfirmed or Denied, with the sentence that decided it.', status: 'shipped', topic: 'scoring' },
+  { area: 'Match', name: 'Requirements outside your vocabulary', what: 'Lists what a posting\'s requirements name that JobAgent does not look for, word for word and ranked by how many postings ask; you choose what to add.', status: 'shipped', topic: 'scoring' },
   { area: 'Match', name: 'Setup card', what: 'What is left before applying, grouped by where you fix it. Finding and scoring jobs work meanwhile.', status: 'shipped', topic: 'profiles' },
   { area: 'Match', name: 'Profiles for any profession', what: 'Search profiles built from a resume and a role-family taxonomy; several people can share one install.', status: 'shipped', topic: 'profiles' },
   { area: 'Match', name: 'Rank top matches by meaning', what: 'A second, labelled number from text embeddings. It never changes the score.', status: 'optional', topic: 'ai' },

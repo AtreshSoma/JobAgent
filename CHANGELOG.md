@@ -7,6 +7,10 @@
 
 Your name and contact details stay on your computer, and what JobAgent says about itself now matches what it does.
 
+### New
+
+- Also asked for: a job lists what its requirements name that JobAgent does not look for yet, word for word, with whether your resume shows it and how many postings ask for it. Look for this skill adds it, and jobs are rescored.
+
 ### Improvements
 
 - Tailoring knows more section names, such as Career History, Professional Background, Technical Proficiencies and About Me, and a section holding your jobs counts as experience whatever it is called. A heading-like line in capitals or bold ends the section above it.

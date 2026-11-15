@@ -851,7 +851,37 @@ export function fitCard(job) {
   }
   const evidence = (job.evidence ?? []).filter((e) => !String(job.title ?? '').toLowerCase().includes(String(e.term).toLowerCase()));
   if (!unread && evidence.length) card.append(evidenceList(evidence));
+  if (!unread && job.unlistedRequirements?.length) card.append(unlistedRequirementsList(job));
   return card;
+}
+
+/**
+ * What this posting's requirements name that JobAgent does not look for (R12):
+ * word for word, with whether your resume shows it and how many stored
+ * postings ask for it. "Look for this skill" adds it to the profile; nothing
+ * else changes, and it claims nothing about you.
+ */
+export function unlistedRequirementsList(job) {
+  const items = job.unlistedRequirements;
+  const list = el('ul', { class: 'unlisted' });
+  for (const item of items) {
+    const facts = [
+      item.preferred ? 'preferred' : 'required',
+      item.inResume ? 'in your resume' : 'not in your resume',
+      item.postings != null ? `in ${item.postings} stored posting${item.postings === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(' · ');
+    list.append(el('li', {},
+      el('b', { text: item.phrase }), ' ', el('span', { class: 'muted', text: facts }),
+      el('button', {
+        type: 'button', class: 'small ghost', 'data-action': 'watch-skill', 'data-id': job.id, 'data-phrase': item.phrase,
+        'aria-label': `Look for ${item.phrase} in postings`, text: 'Look for this skill',
+      })));
+  }
+  return el('details', { class: 'fitcard-evidence', 'data-key': 'unlisted' },
+    el('summary', { text: `Also asked for, not in what JobAgent looks for (${items.length})` }),
+    el('p', { class: 'muted fineprint', text: 'Taken word for word from this posting\'s requirements. Adding one makes '
+      + 'every posting that asks for it count it, and lists it as a gap where your resume does not show it.' }),
+    list);
 }
 
 /**

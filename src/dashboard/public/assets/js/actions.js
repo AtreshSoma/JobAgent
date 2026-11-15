@@ -265,6 +265,16 @@ export const ACTIONS = {
   'open-health': openHealth,
   'backup-now': backupNow,
   'export-bundle': () => exportEverything(),
+  // A requirement phrase from a posting, added to what is looked for (R12).
+  'watch-skill': async (target) => {
+    try {
+      const r = await postJson('/api/search-profiles/watch-skill', { jobId: target.dataset.id, phrase: target.dataset.phrase });
+      toast(r.added ? `JobAgent now looks for ${target.dataset.phrase}. Jobs are being rescored.` : `${target.dataset.phrase} was already on the list.`, 'good');
+      if (r.added) await loadDetail(target.dataset.id);
+    } catch (err) {
+      toast(err.message, 'bad');
+    }
+  },
   'export-jobs': () => download('/api/export/jobs.csv', 'jobagent_jobs.csv'),
   'export-tracker': () => download('/api/export/tracker.csv', 'job_tracker.csv'),
   'export-calendar': () => download('/api/calendar.ics', 'jobagent-follow-ups.ics'),
@@ -410,7 +420,7 @@ export const BUSY_ACTIONS = new Set([
   'profile-from-resume-create', 'profile-from-resume-keep', 'confirm-merge-selection',
   'profile-from-resume-reconsider', 'adopt-resume-titles', 'adopt-resume-skills',
   'restore-master', 'save-profile', 'save-question-answer', 'dismiss-question',
-  'save-answers', 'delete-answer', 'backup-now', 'export-bundle',
+  'save-answers', 'delete-answer', 'backup-now', 'export-bundle', 'watch-skill',
   'propose-rewrites', 'rewrite-accept', 'rewrite-reject', 'rewrite-accept-all', 'refine-rewrites',
   'compare-versions', 'restore-version', 'letter-mode', 'inbox-sync', 'inbox-record', 'inbox-dismiss', 'inbox-draft', 'run-rerank', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',
   'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare', 'signin-retry', 'proposal-archive',
