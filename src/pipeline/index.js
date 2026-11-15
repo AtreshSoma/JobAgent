@@ -50,6 +50,7 @@ import { dateStamp, formatPostedRelative } from '../utils/dates.js';
 import { buildJobPaths } from '../utils/outputPaths.js';
 import { keywordsForJob, tailorResumeForJob, writeLetterDocx } from '../resume/tailorRunner.js';
 import { refreshLetterPdf } from '../apply/letterPdf.js';
+import { requiredFormFieldsFor } from '../automation/coverageProbe.js';
 import { composeGroundedLetter, letterSettings } from '../apply/groundedLetter.js';
 import { recordVersion } from '../apply/documentVersions.js';
 import { letterModeFor } from '../apply/letterMode.js';
@@ -946,7 +947,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     // is reviewing days after it was built.
     owner: packetOwner({ ...config, resumeFingerprint: masterResumeFingerprint(config.root) }),
     atsReport: resumeAtsReport,
-    formFields: job.formFields ?? [],
+    // The questions the form asks, known BEFORE auto-fill starts when a probe of
+    // this exact form exists (audit A13); empty otherwise, as before.
+    formFields: job.formFields ?? requiredFormFieldsFor(config.root, job.url),
     html: job.html ?? '',
   });
   const packetPath = writePacket(packet, outPaths.folder, outPaths.packetName);

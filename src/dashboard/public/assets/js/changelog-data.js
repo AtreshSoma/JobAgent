@@ -25,6 +25,7 @@ export const CHANGELOG = Object.freeze([
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       new: [
+        'Auto-fill coverage in System health: for each application platform, how many fields a probe found, how many auto-fill would answer, and how many need you. A probe reads one page without typing or clicking and records no values. It has run only on saved pages so far, and the table says so.',
         'Also asked for: a job lists what its requirements name that JobAgent does not look for yet, word for word, with whether your resume shows it and how many postings ask for it. Look for this skill adds it, and jobs are rescored.',
       ],
       improved: [

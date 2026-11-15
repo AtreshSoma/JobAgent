@@ -340,6 +340,7 @@ export const CAPABILITIES = Object.freeze([
 
   { area: 'Apply', name: 'Approval queue', what: 'Every packet waits for your approval, and the approval covers exactly what you saw.', status: 'shipped', topic: 'packets' },
   { area: 'Apply', name: 'Assisted form filling', what: 'Fills a live application in a real browser and stops before Submit.', status: 'shipped', topic: 'autofill' },
+  { area: 'Apply', name: 'Auto-fill coverage probe', what: 'Reads one application page without typing or clicking, and records which questions auto-fill could answer, per platform. Saved pages only so far; no live site has been probed.', status: 'experimental', topic: 'autofill' },
   { area: 'Apply', name: 'Answer once, reuse everywhere', what: 'A question it could not answer is queued; your answer fills every later form.', status: 'shipped', topic: 'autofill' },
   { area: 'Apply', name: 'Browser extension', what: 'Fills an approved packet in the tab you already have open. Loaded manually in Chrome or Edge.', status: 'optional', topic: 'interfaces' },
   { area: 'Apply', name: 'Final auto-submit', what: 'A server route that can click Submit under strict conditions. No dashboard button calls it, and it is refused on every ATS until one is verified live.', status: 'experimental', topic: 'autofill' },

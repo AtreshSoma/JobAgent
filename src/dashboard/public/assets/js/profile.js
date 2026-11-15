@@ -740,8 +740,32 @@ export async function openHealth() {
     c.detail ?? '—',
     c.fix ?? '—',
   ])));
+  await renderCoverage(body);
   await renderBackups(body);
   await renderLlmUsage(body);
+}
+
+/**
+ * Auto-fill coverage per ATS (audit A1): what a dry run found and could answer
+ * on probed forms. Said plainly on the table: saved pages and local fixtures,
+ * page one of each form, no live site.
+ */
+export async function renderCoverage(host) {
+  let table;
+  try { table = await api('/api/coverage'); } catch { return; }
+  const section = el('section', { class: 'coverage', 'aria-labelledby': 'coverageTitle' });
+  section.append(el('h3', { id: 'coverageTitle', text: 'Auto-fill coverage' }));
+  if (!table.rows?.length) {
+    section.append(el('p', { class: 'muted', text: 'No form has been probed yet. A probe reads one application page without typing or clicking, and records which questions auto-fill could answer.' }));
+  } else {
+    section.append(miniTable(['ATS', 'Forms', 'Fields found', 'Would fill', 'Need you', 'Coverage'], table.rows.map((r) => [
+      r.ats, fmt(r.forms), fmt(r.found), fmt(r.mapped),
+      r.requiredNeedsYou ? `${fmt(r.needsYou)} (${fmt(r.requiredNeedsYou)} required)` : fmt(r.needsYou),
+      `${r.percent}%`,
+    ])));
+  }
+  section.append(el('p', { class: 'muted fineprint', text: table.basis }));
+  host.append(section);
 }
 
 /** LLM usage over the last 30 days (P3-5): tokens per task and model. */
