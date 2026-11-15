@@ -29,6 +29,7 @@
  * local fixture forms.
  */
 
+import { readApprovedAnswers, withApprovedAnswers } from '../apply/approvedAnswers.js';
 import { createBrowserSession, openApplicationPage, inspectCurrentPage } from './browser.js';
 import { unfilledRequiredControls } from './domScanner.js';
 import { clickAndSettle } from './navigator.js';
@@ -151,7 +152,12 @@ export async function assistApply({
   // (Next/Continue/Review) — never a final Submit. Cap the number of pages.
   const maxSteps = Math.max(1, Number(options.maxSteps ?? config?.runtime?.assistMaxSteps ?? 8));
   const candidate = config?.candidate ?? {};
-  const screeningAnswers = config?.screeningAnswers ?? {};
+  // Answers the person approved for THIS job (audit A4) join the saved screening
+  // answers for this run only. packet.approvedAnswers overrides the store (tests).
+  const screeningAnswers = withApprovedAnswers(
+    config?.screeningAnswers ?? {},
+    packet?.approvedAnswers ?? readApprovedAnswers(config?.root, packet?.job?.id),
+  );
   const inspectPage = deps.inspectPage ?? inspectCurrentPage;
 
   // The run: everything the states in assistStages.js read and change. State a

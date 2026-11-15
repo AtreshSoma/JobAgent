@@ -372,6 +372,70 @@ export function readinessCard(job) {
   return wrap;
 }
 
+/**
+ * Draft, edit and approve answers to open questions for ONE job (audit A4).
+ * A draft is only shown. Nothing is kept until you approve it, and an approved
+ * answer is used on this job's form only.
+ */
+export function answerDraftPanel(job) {
+  const wrap = el('div', { class: 'answer-draft' });
+  const note = el('p', { class: 'muted fineprint', text: 'For an open question such as "Why do you want to work here?". A draft uses only lines from your resume, which it shows. It is never typed until you approve it, and only on this job.' });
+  const question = el('input', { type: 'text', id: `ad-q-${job.id}`, maxlength: '300', autocomplete: 'off', placeholder: 'Paste the question from the form' });
+  const status = el('div', { class: 'muted fineprint', role: 'status', 'aria-live': 'polite' });
+  const draftBox = el('textarea', { id: `ad-t-${job.id}`, rows: '5', maxlength: '4000' });
+  const cited = el('ul', { class: 'plan' });
+  const approve = el('button', { type: 'button', class: 'small primary', text: 'Approve for this job' });
+  const editor = el('div', { hidden: true }, el('label', { for: draftBox.id, text: 'Your answer (edit freely)' }), draftBox,
+    el('div', { class: 'muted fineprint', text: 'Resume lines this draft used:' }), cited, approve);
+  const saved = el('ul', { class: 'plan' });
+  let draftSource = 'written';
+  let draftEvidence = [];
+
+  const showSaved = (answers) => {
+    saved.replaceChildren(...answers.map((a) => {
+      const back = el('button', { type: 'button', class: 'small ghost', text: 'Take back' });
+      back.addEventListener('click', async () => {
+        try {
+          const r = await api(`/api/jobs/${encodeURIComponent(job.id)}/approved-answers`, {
+            method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question: a.question }),
+          });
+          showSaved(r.answers ?? []);
+        } catch (err) { status.textContent = err.message; }
+      });
+      return el('li', {}, el('b', { text: a.question }), el('div', { text: a.text }), back);
+    }));
+  };
+  api(`/api/jobs/${encodeURIComponent(job.id)}/approved-answers`).then((r) => showSaved(r.answers ?? [])).catch(() => {});
+
+  const draft = el('button', { type: 'button', class: 'small', text: 'Draft from my resume' });
+  draft.addEventListener('click', async () => {
+    const q = question.value.trim();
+    if (!q) { status.textContent = 'Paste the question first.'; return; }
+    draft.disabled = true; status.textContent = 'Drafting…';
+    try {
+      const r = await postJson(`/api/jobs/${encodeURIComponent(job.id)}/draft-answer`, { question: q });
+      if (!r.ok) { status.textContent = `No draft: ${r.reason}`; editor.hidden = true; return; }
+      draftBox.value = r.text; draftSource = 'draft'; draftEvidence = r.evidence.map((e) => e.id);
+      cited.replaceChildren(...r.evidence.map((e) => el('li', { text: e.text })));
+      editor.hidden = false; status.textContent = 'Check it against the lines below, edit it, then approve it.';
+    } catch (err) { status.textContent = err.message; } finally { draft.disabled = false; }
+  });
+  draftBox.addEventListener('input', () => { /* an edited draft is still labelled a draft: it began as one */ });
+  approve.addEventListener('click', async () => {
+    approve.disabled = true;
+    try {
+      const r = await postJson(`/api/jobs/${encodeURIComponent(job.id)}/approved-answers`, {
+        question: question.value.trim(), text: draftBox.value, source: draftSource, evidence: draftEvidence,
+      });
+      showSaved(r.answers ?? []); editor.hidden = true; status.textContent = 'Approved for this job. Auto-fill will type it on this job\'s form only.';
+      toast('Answer approved for this job.', 'good');
+    } catch (err) { status.textContent = err.message; } finally { approve.disabled = false; }
+  });
+
+  wrap.append(note, el('label', { for: question.id, text: 'Question' }), question, draft, status, editor, saved);
+  return wrap;
+}
+
 /** The posting's buried conditions as small expandable tags. */
 export function clauseStrip(clauses) {
   const list = el('ul', { class: 'clauses', 'aria-label': 'Conditions stated in this posting' });
@@ -487,6 +551,12 @@ export function detailSections(job) {
   // the form's questions is nobody ready to answer?
   if (job.access && !['submitted', 'rejected', 'archived', 'discarded'].includes(job.appStatus)) {
     out.push(railSection('readiness', el('h3', { text: 'Auto-fill readiness' }), readinessCard(job)));
+  }
+
+  // An open question the form asks ("Why do you want to work here?"): a draft
+  // from your resume for you to edit and approve, for this job only.
+  if (job.access && !['submitted', 'rejected', 'archived', 'discarded'].includes(job.appStatus)) {
+    out.push(railSection('answers', el('h3', { text: 'Answers for this job' }), answerDraftPanel(job)));
   }
 
   // After a submission, what the employer did and when to chase it. Right
