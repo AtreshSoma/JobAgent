@@ -80,7 +80,7 @@ async function openJob(page) {
 }
 
 describe('a refused Prepare says why, in the job, until it is fixed', { timeout: 60_000 }, () => {
-  it('lists each template value with the answer that fixes it, and keeps Prepare off', async (ctx) => {
+  it('names what is left, links to the setup card, and keeps Prepare off', async (ctx) => {
     if (!available) return ctx.skip();
     unanswered(dash.root);
     await withPage(async (page) => {
@@ -88,15 +88,14 @@ describe('a refused Prepare says why, in the job, until it is fixed', { timeout:
       const box = page.locator('.resume-card .prepare-problem');
       await box.waitFor();
       const text = await box.innerText();
-      expect(text).toMatch(/template text/);
-      expect(text).toMatch(/work authorization status/);
-      expect(text).toContain(TEMPLATE_STATUS);
-      // A screen, never a file: the Saved answer this value is filled from.
-      expect(text).toContain('Application profile → Saved answers');
-      expect(text).toContain('"work_authorization"');
-      expect(text).not.toMatch(/\.json/);
+      expect(text).toMatch(/Prepare is off until setup is finished/);
+      expect(text).toMatch(/Work authorization and sponsorship/);
+      expect(text).not.toMatch(/\.json|npm run|npx /);
       expect(await page.locator('.resume-card [data-action="prepare-one"]').isDisabled()).toBe(true);
-      expect(await page.locator('#systemNotices .notice-items').innerText()).toContain('Saved answers');
+      // The card holds the steps: the value it still says, and the Saved answer that fixes it.
+      const item = page.locator('#setupCard .sp-group[data-group="authorization"] .sp-item');
+      expect(await item.textContent()).toContain(TEMPLATE_STATUS);
+      expect(await item.locator('[data-action="setup-fix"]').getAttribute('data-field')).toBe('work_authorization');
     });
   });
 
@@ -106,7 +105,7 @@ describe('a refused Prepare says why, in the job, until it is fixed', { timeout:
     answer(dash.root);
     await withPage(async (page) => {
       await openJob(page);
-      await page.locator('#systemNotices .notice-items').waitFor({ state: 'detached' }).catch(() => {});
+      await page.locator('#setupCard').waitFor({ state: 'detached' }).catch(() => {});
       expect(await page.locator('.resume-card .prepare-problem').count()).toBe(0);
       expect(await page.locator('.resume-card [data-action="prepare-one"]').isDisabled()).toBe(false);
     });
@@ -131,7 +130,7 @@ describe('a refused Prepare says why, in the job, until it is fixed', { timeout:
 
         await page.locator('.resume-card .prepare-problem').waitFor({ state: 'detached' });
         expect(await page.locator('.resume-card [data-action="prepare-one"]').isDisabled()).toBe(false);
-        expect(await page.locator('#systemNotices .notice-items').count()).toBe(0);
+        expect(await page.locator('#setupCard').count()).toBe(0);
       }, null, own);
     } finally {
       await own.stop();

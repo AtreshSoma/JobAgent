@@ -164,13 +164,40 @@ $('profileBody').addEventListener('focusout', (event) => {
  * details form, one queued question at a time, and the saved-answer list. A
  * single "Save" spanning all three would leave it unclear what a click writes.
  */
-export async function openProfile() {
+export async function openProfile({ focus = null } = {}) {
   const body = $('profileBody');
   const stop = slowProgress(body, 'Loading your application profile…');
   profileMessage('');
   openDialog($('dlgProfile'));
   // Opening starts from what is stored: nothing typed before is still on screen.
   try { await renderProfile({ keep: false }); } finally { stop(); }
+  if (focus) focusProfileField(focus);
+}
+
+/**
+ * Scroll to one field and put the cursor in it: where a setup-card item sends you.
+ * `editor` is 'details' (a box in Your details, by its data-path) or 'answers'
+ * (a Saved answer, by id; the list is opened first). An answer that no longer
+ * exists lands on the Saved answers list instead of nowhere.
+ *
+ * @param {{editor?: string, field?: string}} focus
+ * @returns {boolean} whether the exact field was found
+ */
+export function focusProfileField({ editor = 'details', field = '' } = {}) {
+  const body = $('profileBody');
+  let target;
+  if (editor === 'answers') {
+    body.querySelector('details.pf-saved')?.setAttribute('open', '');
+    target = field ? body.querySelector(`[data-a-answer="${cssEscape(field)}"]`) : null;
+    if (!target) $('pfAnswers')?.scrollIntoView({ block: 'start' });
+  } else {
+    target = field ? body.querySelector(`[data-path="${cssEscape(field)}"]`) : null;
+    if (!target) $('pfDetails')?.scrollIntoView({ block: 'start' });
+  }
+  if (!target) return false;
+  target.scrollIntoView({ block: 'center' });
+  target.focus({ preventScroll: true });
+  return true;
 }
 
 export function profileMessage(text, tone = 'muted') {
@@ -768,7 +795,7 @@ export async function renderBackups(host) {
     section.append(el('button', { type: 'button', class: 'small', 'data-action': 'backup-now', text: 'Back up now' }));
   }
   section.append(el('p', { class: 'muted', text: 'Every job list, with its decisions, notes and applications, is copied daily and checked. '
-    + 'To move everything to another computer in one file, run "npm run export" in the JobAgent folder.' }));
+    + 'Moving everything to another computer in one file is not in the dashboard yet; the User Guide explains it under "Utilities and diagnostics".' }));
   host.append(section);
 }
 

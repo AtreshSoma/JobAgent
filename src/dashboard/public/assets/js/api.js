@@ -26,7 +26,7 @@ export async function api(path, options = {}) {
   } catch {
     setServerStatus(false);
     throw new Error('Cannot reach the dashboard server — it may have stopped. '
-      + 'Restart it with "npm run dashboard", then reload this page.');
+      + 'Open JobAgent again from its launcher, then reload this page.');
   }
   setServerStatus(true);
   const body = await res.json().catch(() => ({}));
@@ -38,7 +38,7 @@ export async function api(path, options = {}) {
     // process. Say what it actually is.
     if (res.status === 404 && /^no route:/i.test(body.error ?? '')) {
       throw Object.assign(new Error('This feature is newer than the dashboard process that is running. '
-        + 'Stop it and run "npm run dashboard" again, then reload this page.'), { status: 404, noRoute: true });
+        + 'Close JobAgent, open it again from its launcher, then reload this page.'), { status: 404, noRoute: true });
     }
     // `body` rides along so a form can place per-field messages (`body.fields`).
     throw Object.assign(new Error(body.error || res.statusText), { status: res.status, body });

@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
 import { openDialog, placeToasts } from './dialogs.js';
-import { autofillBlockedReason, BROWSER_MISSING, placeholderList, prepareBlockedNotice } from './today.js';
+import { autofillBlockedReason, BROWSER_MISSING, prepareBlockedNotice } from './today.js';
 import { rewritesSection } from './rewrites.js';
 import { versionsSection } from './versions.js';
 
@@ -1115,7 +1115,7 @@ export function actionPlan(job) {
     // offering a retry that is certain to fail the same way.
     if (state.browserUnavailable || BROWSER_MISSING.test(job.statusReason ?? '')) {
       return {
-        text: 'Auto-fill could not start a browser. Install it once (npx playwright install chromium in the JobAgent folder), then retry.',
+        text: 'Auto-fill could not start a browser. Close JobAgent and open it again from its launcher, and say yes when it offers to download the browser (about 150 MB). Then retry.',
         buttons: [autofillButton(job.id, '↻ Retry auto-fill'), openPosting()],
       };
     }
@@ -1204,7 +1204,7 @@ export const UNDO_LABEL = Object.freeze({
 });
 
 /** Hover text on a Prepare control while template text blocks it. */
-const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. The box below lists each value and where to fix it.';
+const PREPARE_BLOCKED_TITLE = 'Off until setup is finished. The setup card at the top of the page lists what is left.';
 
 /**
  * Why this job cannot be prepared, shown where Prepare is clicked and kept
@@ -1214,12 +1214,15 @@ const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. Th
 export function prepareProblemBox(jobId) {
   const blocked = prepareBlockedNotice();
   if (blocked) {
+    // Why, in one line, and a way to the card that fixes it. The card holds
+    // the steps; repeating them here is how the old notice reached 19 lines.
+    const left = (blocked.setup?.groups ?? []).flatMap((g) => g.items).filter((i) => !i.done).map((i) => i.label);
     return el('div', { class: 'attention prepare-problem', role: 'status' },
       el('span', { class: 'mark', text: '!' }),
       el('div', {},
-        el('b', { text: 'Prepare is off: your profile still holds template text.' }),
-        el('div', { text: 'Replace each value below with your real, truthful one. This box clears once they are all fixed.' }),
-        blocked.items?.length ? placeholderList(blocked.items) : null));
+        el('b', { text: 'Prepare is off until setup is finished.' }),
+        left.length ? el('div', { text: `Still to fill in: ${left.slice(0, 4).join(', ')}${left.length > 4 ? `, and ${left.length - 4} more` : ''}.` }) : null,
+        el('button', { type: 'button', class: 'small', 'data-action': 'open-setup', text: 'Finish setup' })));
   }
   const failure = state.prepareFailures?.get(jobId);
   if (failure) {

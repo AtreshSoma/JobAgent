@@ -28,6 +28,7 @@ import { activeProfileId, addAnyway, loadProfiles, openAddProfile, openEditProfi
 import { rewriteActions } from './rewrites.js';
 import { versionActions } from './versions.js';
 import { inboxActions } from './inbox.js';
+import { revealSetupCard, toggleSetupCard } from './setup.js';
 import { rerankActions } from './rerank.js';
 import { LETTER_BUSY_ACTIONS, letterActions } from './letters.js';
 
@@ -234,6 +235,13 @@ export const ACTIONS = {
   'open-profile': (target) => {
     closeDialog(target?.closest?.('dialog:not(#dlgDetail)'));
     openProfile();
+  },
+  // The setup card (S1): each item opens the screen that fixes it, at its field.
+  'setup-fix': (target) => openProfile({ focus: { editor: target.dataset.editor, field: target.dataset.field } }),
+  'setup-toggle': (target) => toggleSetupCard(target.dataset.force ?? null),
+  'open-setup': (target) => {
+    closeDialog(target?.closest?.('dialog:not(#dlgDetail)'));
+    revealSetupCard();
   },
   'save-profile': saveProfileDetails,
   'save-question-answer': (target) => saveQuestionAnswer(target.dataset.key),

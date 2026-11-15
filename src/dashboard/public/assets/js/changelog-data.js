@@ -24,6 +24,12 @@ export const CHANGELOG = Object.freeze([
     summary: 'Your name and contact details stay on your computer, and what JobAgent says about itself now matches what it does.',
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
+      improved: [
+        'Setup is one line at the top of the page: Finish setup to apply, how much is done, and Continue setup. It stays closed or open as you left it, and the job list is always on the first screen.',
+        'Open setup to see Contact, Work authorization and sponsorship, Experience and Screening answers, each item once. Each button opens the box that fixes it.',
+        'Before your first search, Next says Run your first search instead of saying nothing new was found in the last 24 hours.',
+        'The dashboard no longer shows command-line instructions for setup. Installing the browser, restarting and reading job descriptions each point to the launcher or a button.',
+      ],
       fixed: [
         'Cover letters written with the optional model no longer send your name, email, phone or city to the model provider. Your summary, headline and bullets are still used, and rewrite suggestions, reply drafts and Rank by meaning skip any line that carries contact details too.',
         'Explore JobAgent no longer says tailoring never leaves anything out. A bullet left out to fit two pages is listed in Compare with master, and wording changes only where you accepted a rewording.',

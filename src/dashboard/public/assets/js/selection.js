@@ -9,6 +9,7 @@ import { DECISION_REASONS, reasonLabel, renderDetail, verdictLabel } from './det
 import { confirmAction, openDialog } from './dialogs.js';
 import { scheduleRefresh } from './mutations.js';
 import { autofillBlockedReason, prepareBlockedNotice } from './today.js';
+import { revealSetupCard } from './setup.js';
 import { pollRun } from './runs.js';
 import { closeMenu } from './menus.js';
 import { bulkStepReasons, primaryBulkStep } from './bulk.js';
@@ -181,7 +182,7 @@ export async function batchAutofill({ ids = null } = {}) {
 
 export async function batchPrepare() {
   if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
-  if (prepareBlockedNotice()) { toast('Prepare is off until the template values in the notice at the top of the page are replaced.', 'bad'); return; }
+  if (prepareBlockedNotice()) { toast('Prepare is off until setup is finished. The setup card shows what is left.', 'bad'); revealSetupCard(); return; }
   const ids = [...state.selected];
   if (!ids.length) return;
   for (const id of ids) state.prepareFailures.delete(id);
