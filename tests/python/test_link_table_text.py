@@ -152,3 +152,32 @@ def test_a_skills_table_cell_with_a_link_is_left_as_it_is(tmp_path):
     row = next(p for p in Document(result["output_path"]).paragraphs if p.text.startswith("Tools"))
     assert "Tableau, SQL, Snowflake" in row.text
     assert len(row._p.findall(qn("w:hyperlink"))) == 1
+
+
+# ── text boxes (R15) ─────────────────────────────────────────────────────────
+
+def test_a_text_box_is_printed_where_it_sits_and_only_once(tmp_path):
+    """Word stores a text box twice (a drawing and a VML fallback); print it once."""
+    from docx.oxml import parse_xml
+
+    doc = Document()
+    doc.add_paragraph("PROFESSIONAL SUMMARY")
+    anchor = doc.add_paragraph()
+    box = ('<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:r>'
+           '<w:t>Data engineer who ships reliable reporting.</w:t></w:r></w:p>')
+    anchor._p.append(parse_xml(
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:v="urn:schemas-microsoft-com:vml"><mc:AlternateContent>'
+        f'<mc:Choice Requires="wps"><w:drawing><wps:txbx><w:txbxContent>{box}</w:txbxContent></wps:txbx></w:drawing></mc:Choice>'
+        f'<mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>{box}</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>'
+        '</mc:AlternateContent></w:r>'))
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    path = tmp_path / "box.docx"
+    doc.save(str(path))
+    rendering = tailor.docx_to_html(path)
+    body = rendering["html"].split("<body>", 1)[1]
+    assert body.count("Data engineer who ships reliable reporting.") == 1
+    assert body.index("PROFESSIONAL SUMMARY") < body.index("Data engineer who ships") < body.index("PROFESSIONAL EXPERIENCE")
+    assert "Data engineer who ships reliable reporting." in rendering["texts"]

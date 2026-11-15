@@ -132,7 +132,7 @@ def _readiness(path: str | Path) -> Dict[str, Any]:
                               "so applicant systems read it in order. The words do not change.")
     if text_boxes:
         add("warn", "text_boxes", f"{_plural(text_boxes, 'text box', 'text boxes')}. Text in a text box is not "
-                                  "tailored and is left out of the PDF.")
+                                  "tailored (it is printed in the PDF).")
     if typed:
         add("note", "typed_bullets", f"{_plural(typed, 'bullet')} typed by hand (a dash or a dot). They are "
                                      "handled like list bullets.")

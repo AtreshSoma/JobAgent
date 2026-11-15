@@ -334,8 +334,6 @@ EXPECT: Dict[str, Dict] = {
 
 # Checks that fail today, by audit ID. Remove an entry when its fix lands.
 KNOWN: Dict[tuple, str] = {
-    ("text_box_summary", "pdf_text_complete"): "R15: the PDF leaves out text-box text",
-    ("text_box_summary", "master_pdf_text_complete"): "R15: the PDF leaves out text-box text",
 }
 
 

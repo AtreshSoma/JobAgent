@@ -2198,6 +2198,26 @@ def _verify_layout_invariants(
     return invariants
 
 
+def _text_box_paragraphs(paragraph) -> List[Any]:
+    """Paragraphs inside the text boxes anchored in ``paragraph``, each once.
+
+    Word stores a text box twice, as a drawing and as a VML fallback inside
+    mc:Fallback; the fallback copy is skipped.
+    """
+    from docx.text.paragraph import Paragraph
+
+    found = []
+    for node in paragraph._p.iter():
+        if not str(node.tag).endswith("}txbxContent"):
+            continue
+        if any(str(a.tag).endswith("}Fallback") for a in node.iterancestors()):
+            continue
+        for child in node:
+            if str(child.tag).endswith("}p"):
+                found.append(Paragraph(child, paragraph._parent))
+    return found
+
+
 _ALIGN_CSS = {1: "center", 2: "right", 3: "justify"}
 
 
@@ -2372,6 +2392,10 @@ def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
             add_table(block)
         else:
             add_paragraph(block)
+            # A text box's text, right after the paragraph it is anchored in
+            # (R15): it was left off the page, and out of the check.
+            for box_paragraph in _text_box_paragraphs(block):
+                add_paragraph(box_paragraph, css="text-box")
     close_list()
     for paragraph in page_part_paragraphs("footer"):
         add_paragraph(paragraph, css="page-footer")
