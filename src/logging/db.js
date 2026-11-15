@@ -929,6 +929,23 @@ export class Database {
   }
 
   /**
+   * Descriptions of the most recent profile postings that have a real one, for
+   * measuring how well the vocabulary covers them (audit D4). Summary-only rows
+   * and short teasers are skipped: they say nothing about coverage.
+   * @param {{limit?: number}} [options]
+   * @returns {string[]}
+   */
+  sampleDescriptions({ limit = 1500 } = {}) {
+    const take = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 1500;
+    return this.prepareCached(
+      `SELECT jd_text FROM jobs
+        WHERE jd_text IS NOT NULL AND LENGTH(jd_text) >= 300 AND COALESCE(summary_only, 0) = 0
+          AND (discovery_mode IS NULL OR discovery_mode = 'profile')
+        ORDER BY rowid DESC LIMIT ?`,
+    ).all(take).map((r) => r.jd_text);
+  }
+
+  /**
    * Read the stated pay of every row that has not been read yet (audit D6), in
    * batches, once. A cursor on rowid keeps each batch cheap; a row is marked
    * checked even when it states no pay, so it is never visited again.

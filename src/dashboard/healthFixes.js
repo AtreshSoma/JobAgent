@@ -36,6 +36,7 @@ const FIXES = {
   resume: 'Open the account menu, choose Master resume, and upload your resume.',
   config: 'A settings file could not be read. The detail names it; the User Guide\'s troubleshooting section explains how to repair it.',
   db: 'The job database could not be opened. Close JobAgent, open it again from its launcher, and check the detail if it happens again.',
+  vocabulary: 'Open a job, find Also asked for, and choose Look for this skill on the real skills its postings name. Jobs are scored again afterwards.',
   outputs: 'JobAgent cannot write to the folders named in the detail. Check their permissions in Finder or File Explorer.',
 };
 
