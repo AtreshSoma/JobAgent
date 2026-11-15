@@ -353,7 +353,7 @@ flowchart TD
 
 **Auto-preparation scope.** Only Priority and Apply tiers get prepared automatically. Queue-tier jobs are prepared only when you pick them yourself with "Prepare selected".
 
-**Two-page resume discipline.** The tailor repairs layout artifacts like manual page breaks, merged role blocks, and blank filler, then holds the result to two pages by dropping whole low-relevance bullets from the oldest roles. It never shortens or rewords a claim, and never drops a role, its dates, or its last bullet. Whatever it omitted is listed for review. Nothing is added: the optional "Most relevant to this role" line was removed.
+**Two-page resume discipline.** The tailor repairs layout artifacts like manual page breaks, merged role blocks, and blank filler, then holds the result to two pages by dropping whole low-relevance bullets from the oldest roles. It never shortens or rewords a claim, and never drops a role, its dates, or its last bullet. Whatever it omitted is listed for review. Nothing is added: the optional "Most relevant to this role" line was removed. With LibreOffice installed, the page count is **measured**: the tailor renders the resume and leaves out the fewest bullets that bring it within the limit (set `RESUME_MEASURE_PAGES=false` to use the estimate only). Without it, an estimate that reads the document's own fonts and spacing decides, calibrated to within about a tenth of a page of LibreOffice.
 
 </details>
 

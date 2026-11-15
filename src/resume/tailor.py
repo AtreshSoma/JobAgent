@@ -54,7 +54,6 @@ If a keyword is requested but missing from the resume, it is reported as a gap
 """
 from __future__ import annotations
 
-import math
 import re
 from collections import Counter
 from copy import deepcopy
@@ -65,6 +64,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 from docx.enum.text import WD_TAB_ALIGNMENT
 
 import evidence
+import pagefit
 from jdKeywords import classify_qualification_keywords
 from keywordAudit import read_docx_text
 
@@ -1241,81 +1241,9 @@ def _normalize_layout(document) -> Dict[str, Any] | None:
 
 
 # ── page-fit geometry ────────────────────────────────────────────────────────
-# Letter page, in twips (1/1440 inch), used when a document declares no size.
-_DEFAULT_PAGE = {"width": 12240, "height": 15840, "left": 1080, "right": 1080, "top": 864, "bottom": 864}
-# Average glyph advance as a fraction of point size, and the line box as a
-# multiple of it, for the Calibri/Aptos-class fonts this template uses.
-#
-# These are FITTED, not guessed: ten variants of a real tailored résumé (from
-# eight bullets short of it to twelve bullets past it) were rendered through
-# Word and their true page counts recorded. These values are the pair that
-# separates every measured 2-page document from the 3-page one, with the
-# decision boundary landing on exactly 2.0. Re-run tests/python's calibration
-# case if the template's font ever changes.
-_AVG_CHAR_EM = 0.42
-_LINE_LEADING = 1.20
-_DEFAULT_FONT_HALF_POINTS = 22  # 11pt, python-docx's template default
-
-
-def _page_metrics(document) -> Dict[str, int]:
-    section = document.sections[0] if document.sections else None
-    metrics = dict(_DEFAULT_PAGE)
-    if section is not None:
-        for key, value in (
-            ("width", section.page_width), ("height", section.page_height),
-            ("left", section.left_margin), ("right", section.right_margin),
-            ("top", section.top_margin), ("bottom", section.bottom_margin),
-        ):
-            if value is not None:
-                metrics[key] = int(value.twips)
-    metrics["usable_width"] = max(1, metrics["width"] - metrics["left"] - metrics["right"])
-    metrics["usable_height"] = max(1, metrics["height"] - metrics["top"] - metrics["bottom"])
-    return metrics
-
-
-def _font_half_points(paragraph) -> int:
-    for run in paragraph.runs:
-        if run.font.size is not None:
-            return int(run.font.size.pt * 2)
-    if paragraph.style is not None and getattr(paragraph.style.font, "size", None) is not None:
-        return int(paragraph.style.font.size.pt * 2)
-    return _DEFAULT_FONT_HALF_POINTS
-
-
-def _paragraph_height(paragraph, usable_width: int) -> int:
-    """Estimate one paragraph's rendered height in twips."""
-    half_points = _font_half_points(paragraph)
-    point_size = half_points / 2
-    char_width = max(1.0, _AVG_CHAR_EM * point_size * 20)
-    indent = 0
-    fmt = paragraph.paragraph_format
-    for value in (fmt.left_indent, fmt.right_indent):
-        if value is not None:
-            indent += max(0, int(value.twips))
-    width = max(char_width * 8, usable_width - indent)
-    text = paragraph.text or ""
-    lines = max(1, math.ceil(len(text) * char_width / width)) if text.strip() else 1
-    line_height = point_size * 20 * _LINE_LEADING
-    before = int(fmt.space_before.twips) if fmt.space_before is not None else 0
-    after = int(fmt.space_after.twips) if fmt.space_after is not None else 0
-    return int(lines * line_height + before + after)
-
-
-def estimate_page_count(document) -> float:
-    """Estimated pages as a float (1.4 means "spills onto a second page").
-
-    An estimate is the right tool here: converting to PDF needs Microsoft Word,
-    which is optional in this project, and a résumé's geometry is simple enough
-    (single column, no floats, no tables after flattening) that a line-count
-    model is accurate to within a line per paragraph. It is used to DECIDE
-    whether to trim, so being slightly conservative only means a tidier page.
-    """
-    metrics = _page_metrics(document)
-    total = sum(
-        _paragraph_height(paragraph, metrics["usable_width"])
-        for paragraph in document.paragraphs
-    )
-    return total / metrics["usable_height"]
+# The estimate and the LibreOffice measurement live in src/resume/pagefit.py
+# (audit R6): style- and font-aware, calibrated against LibreOffice renders.
+estimate_page_count = pagefit.estimate_page_count
 
 
 # A bullet that states a measured result: a number with a unit, a currency
@@ -1340,6 +1268,10 @@ def _norm_bullet(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+#: Most LibreOffice renders one page fit may run (each takes about a second).
+_MAX_FIT_MEASUREMENTS = 8
+
+
 def _fit_to_pages(
     document,
     *,
@@ -1348,8 +1280,17 @@ def _fit_to_pages(
     qualification_details: Dict[str, Dict[str, Any]],
     min_bullets_per_role: int = 1,
     keep_bullets: Sequence[str] | None = None,
+    measure: Any = None,
 ) -> tuple[Dict[str, Any] | None, List[str]]:
     """Trim the résumé to `max_pages` by omitting the LEAST VALUABLE bullets.
+
+    MEASURED, NOT ONLY ESTIMATED (R6). With ``measure`` (a document -> pages
+    callable; LibreOffice in practice, see src/resume/pagefit.py), the estimate
+    only proposes how many bullets to leave out. The real page count then
+    decides, by a short search over that same order: the fewest bullets that
+    bring the rendered document within budget. Bullets the estimate would have
+    dropped needlessly are kept, and a document the estimate thought fit but
+    renders long is trimmed. Without ``measure`` it works on the estimate alone.
 
     Value is not just keyword overlap. Each bullet is scored on three things a
     reviewer actually weighs, and the lowest-value bullets go first:
@@ -1371,8 +1312,14 @@ def _fit_to_pages(
         LONGER rather than thinner, and a limitation says so: losing a real,
         relevant achievement costs more than a third page.
     """
-    if max_pages <= 0 or estimate_page_count(document) <= max_pages:
+    if max_pages <= 0:
         return None, []
+    if estimate_page_count(document) <= max_pages:
+        if measure is None:
+            return None, []
+        first = measure(document)
+        if first is None or first <= max_pages:
+            return None, []
 
     pinned = {_norm_bullet(text) for text in (keep_bullets or []) if str(text or "").strip()}
     roles: List[Dict[str, Any]] = []
@@ -1435,13 +1382,63 @@ def _fit_to_pages(
             candidates.append((item["value"], -(total_roles - role_index), -item["position"], role, item))
     candidates.sort(key=lambda entry: entry[:3])
 
+    # Every candidate in leave-out order. `apply(k)` sets exactly the first k
+    # aside, from a snapshot of the body, so a search can put bullets back.
+    body = document.element.body
+    original = list(body)
+    order = [entry[4]["paragraph"]._p for entry in candidates]
+
+    def apply(k: int) -> None:
+        gone = {id(node) for node in order[:k]}
+        for child in list(body):
+            body.remove(child)
+        for child in original:
+            if id(child) not in gone:
+                body.append(child)
+
+    k = 0
+    while k < len(order) and estimate_page_count(document) > max_pages:
+        k += 1
+        apply(k)
+
+    pages = None
+    measurements = 0
+    if measure is not None:
+        seen: Dict[int, Any] = {}
+
+        def pages_at(n: int):
+            nonlocal measurements
+            if n not in seen:
+                apply(n)
+                seen[n] = measure(document)
+                measurements += 1
+            return seen[n]
+
+        at_estimate = pages_at(k)
+        if at_estimate is not None:
+            if at_estimate <= max_pages:
+                lo, hi = 0, k  # the estimate may have trimmed more than needed
+            elif pages_at(len(order)) is not None and pages_at(len(order)) > max_pages:
+                lo = hi = len(order)  # cannot fit within the rules: leave all candidates out
+            else:
+                lo, hi = k + 1, len(order)
+            while lo < hi and measurements < _MAX_FIT_MEASUREMENTS:
+                mid = (lo + hi) // 2
+                result = pages_at(mid)
+                if result is None:
+                    break
+                if result <= max_pages:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            k = hi
+            pages = pages_at(k)
+        apply(k)
+
     dropped: List[Dict[str, Any]] = []
-    for _value, _age, _pos, role, item in candidates:
-        if estimate_page_count(document) <= max_pages:
-            break
+    for _value, _age, _pos, role, item in candidates[:k]:
         paragraph = item["paragraph"]
         raw = paragraph.text or ""
-        _remove_paragraph(paragraph)
         reasons = []
         reasons.append("matches no requirement in this posting" if not item["terms"]
                        else f"only matches {', '.join(item['terms'][:3])}")
@@ -1459,24 +1456,28 @@ def _fit_to_pages(
         })
 
     estimated = estimate_page_count(document)
+    length = f"{pages} page(s), measured" if pages is not None else f"an estimated {estimated:.1f} pages"
+    if not dropped and pages is not None and pages <= max_pages:
+        return None, []  # the estimate thought it long; the render says it fits
     if not dropped:
         return None, [
-            f"The résumé is an estimated {estimated:.1f} pages, over the {max_pages}-page target. "
+            f"The résumé is {length}, over the {max_pages}-page target. "
             "Nothing was left out: every remaining bullet is recent, measured, or evidences a "
             "requirement of this posting. Shorten wording in the master resume if length matters."
         ]
 
     limitations: List[str] = []
-    if estimated > max_pages:
+    if (pages if pages is not None else estimated) > max_pages:
         limitations.append(
-            f"Still an estimated {estimated:.1f} pages after leaving out {len(dropped)} bullet(s). "
+            f"Still {length} after leaving out {len(dropped)} bullet(s). "
             "The rest were kept on purpose (recent, measured, or required by this posting)."
         )
     return {
         "type": "fit_to_page_budget",
         "where": "PROFESSIONAL EXPERIENCE bullets",
         "before": f"content estimated at more than {max_pages} page(s)",
-        "after": f"{len(dropped)} lowest-value bullet(s) omitted; estimated {estimated:.1f} page(s)",
+        "after": f"{len(dropped)} lowest-value bullet(s) omitted; "
+                 + (f"{pages} page(s), measured by LibreOffice" if pages is not None else f"estimated {estimated:.1f} page(s)"),
         "evidence": [{
             "max_pages": max_pages,
             "omitted": dropped,
@@ -1484,6 +1485,9 @@ def _fit_to_pages(
             "min_bullets_per_role": min_bullets_per_role,
             "pinned": len(pinned),
             "text_changed": False,
+            "pages": pages if pages is not None else round(estimated, 2),
+            "measured_by": "LibreOffice" if pages is not None else None,
+            "measurements": measurements,
         }],
         "reason": (
             f"a {max_pages}-page résumé is the target; the bullets omitted are the ones with the "
@@ -2402,6 +2406,7 @@ def _build_tailored(
     max_pages: int,
     keep_bullets: Sequence[str] | None,
     check_each_step: bool = False,
+    measure_pages: Any = None,
 ) -> Dict[str, Any]:
     """One tailoring pass over a fresh copy of the master, without the ``skip`` steps.
 
@@ -2515,7 +2520,7 @@ def _build_tailored(
         )
 
     fitted = run("fit", _fit_to_pages, document, max_pages=max_pages, keywords=present,
-                 qualification_details=qualification_details, keep_bullets=keep_bullets)
+                 qualification_details=qualification_details, keep_bullets=keep_bullets, measure=measure_pages)
     fit_change, fit_limitations = fitted or (None, [])
     if fitted is not None and check_each_step:
         try:
@@ -2530,6 +2535,11 @@ def _build_tailored(
         changes.append(pagination_change)
 
     invariants.update(layout(fit_change))
+    # A measured length outranks the estimate (R6).
+    measured = ((fit_change or {}).get("evidence") or [{}])[0].get("measured_by")
+    if measured:
+        invariants["measured_pages"] = fit_change["evidence"][0]["pages"]
+        invariants["within_page_budget"] = max_pages <= 0 or invariants["measured_pages"] <= max_pages
     invariants["table_text_preserved"] = True
     invariants["tables_removed_for_ats"] = len(document.tables) == 0
     invariants["page_breaks_stabilized"] = True
@@ -2568,8 +2578,13 @@ def tailor_resume(
     evidence_lines: Sequence[str] | None = None,
     evidence_vocabulary: Sequence[str] | None = None,
     gap_terms: Sequence[str] | None = None,
+    measure_pages: Any = None,
 ) -> Dict[str, Any]:
     """Create a tailored resume for ``job`` and return a result dict.
+
+    ``measure_pages`` (document -> pages, or None when it cannot say) makes the
+    page fit check the rendered length instead of trusting the estimate (R6);
+    tailor_cli passes LibreOffice's when it is installed.
 
     The three ``evidence_``/``gap_`` options make the packet's gaps the score's
     gaps (audit R13): the runner sends the master resume's lines exactly as the
@@ -2629,6 +2644,7 @@ def tailor_resume(
                 master_path, skip=set(skipped), present=audit["present"],
                 qualification_details=qualification_details, accepted_rewrites=accepted_rewrites,
                 max_pages=max_pages, keep_bullets=keep_bullets, check_each_step=diagnose,
+                measure_pages=measure_pages,
             )
             break
         except _StepFailed as failed:

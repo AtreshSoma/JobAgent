@@ -9,6 +9,7 @@ Your name and contact details stay on your computer, and what JobAgent says abou
 
 ### Improvements
 
+- With LibreOffice installed, a tailored resume is fitted to your page limit by its real rendered length, so bullets are no longer left out that did not need to be, and a resume that renders long is caught. Without it, the estimate now reads your fonts and spacing.
 - Resume check in Master resume: when you upload a resume, JobAgent says what tailoring can work with (sections, jobs, bullets, contact details) and flags what it cannot, such as text boxes or headings it does not know, with an estimated page count.
 - The optional "Most relevant to this role" line is gone. A tailored resume holds only lines from your master resume, and Compare with master flags any line that is not.
 - Setup is one line at the top of the page: Finish setup to apply, how much is done, and Continue setup. It stays closed or open as you left it, and the job list is always on the first screen.

@@ -510,6 +510,10 @@ def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path
     a document that only half-filled the page still started page 2 at the break
     and ran to a third page. Length is now solved by dropping content, and only
     ever whole bullets, worst-first, from the oldest role.
+
+    Sized to what LibreOffice renders (2026-11-15): three pages before the fit.
+    It used 12 repetitions per bullet, five pages in LibreOffice, which no fit
+    could bring to two; only the old estimate thought it could.
     """
     from docx import Document
 
@@ -519,17 +523,17 @@ def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path
     doc.add_paragraph("Senior Data Engineer")
     doc.add_paragraph("Acme - Remote - March 2022 - Present")
     for index in range(12):
-        doc.add_paragraph((f"Delivered SQL and Python platform outcome {index}. " * 12), style="List Bullet")
+        doc.add_paragraph((f"Delivered SQL and Python platform outcome {index}. " * 6), style="List Bullet")
     doc.add_paragraph("Data Engineer")
     doc.add_paragraph("Example - Remote - January 2020 - February 2022")
     doc.add_paragraph("Built reliable data pipelines.", style="List Bullet")
     for index in range(6):
-        doc.add_paragraph((f"Maintained unrelated legacy reporting {index}. " * 12), style="List Bullet")
+        doc.add_paragraph((f"Maintained unrelated legacy reporting {index}. " * 6), style="List Bullet")
     doc.add_paragraph("BI Developer")
     doc.add_paragraph("Older Co - Remote - January 2018 - December 2019")
     doc.add_paragraph("Built reliable analytics models.", style="List Bullet")
     for index in range(6):
-        doc.add_paragraph((f"Produced routine monthly spreadsheets {index}. " * 12), style="List Bullet")
+        doc.add_paragraph((f"Produced routine monthly spreadsheets {index}. " * 6), style="List Bullet")
     master = tmp_path / "DENSE_PAGING_MASTER.docx"
     doc.save(master)
 
@@ -563,7 +567,7 @@ def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path
     assert omitted, "nothing was trimmed from an over-long resume"
     assert all("Delivered SQL and Python platform outcome" not in text for text in omitted)
     assert any("Produced routine monthly spreadsheets" in text for text in omitted)
-    assert "Delivered SQL and Python platform outcome 0. " * 12 in " ".join(texts)
+    assert "Delivered SQL and Python platform outcome 0. " * 6 in " ".join(texts)
 
     # Whole bullets only — nothing shortened, reworded, or merged.
     assert all(text in {t for t in texts} or True for text in omitted)
@@ -668,10 +672,10 @@ def test_layout_artifacts_from_a_previous_pass_are_repaired(tmp_path, humanizer_
 def test_page_estimate_tracks_real_word_pagination(tmp_path, humanizer_patterns):
     """The geometry model must scale with content and honour the page budget.
 
-    The constants in tailor.py are FITTED: ten variants of a real tailored
-    resume were rendered through Word and their true page counts recorded. This
-    pins the properties that fit depends on, so a change to the model fails here
-    rather than in someone's application.
+    The estimate is calibrated against LibreOffice (src/resume/pagefit.py,
+    tests/python/test_pagefit.py, which pins these same resumes to measured
+    page counts). These bounds were "between one and two pages" for 40 bullets,
+    checked against the estimate itself; LibreOffice renders them as 3.07.
     """
     from docx import Document
 
@@ -691,8 +695,8 @@ def test_page_estimate_tracks_real_word_pagination(tmp_path, humanizer_patterns)
         return Document(str(path))
 
     assert estimate_page_count(resume(4)) < 1.0
-    assert 1.0 < estimate_page_count(resume(40)) < 2.0
-    assert estimate_page_count(resume(80)) > 2.0
+    assert abs(estimate_page_count(resume(40)) - 3.07) < 0.15
+    assert estimate_page_count(resume(80)) > 5.0
     # Strictly monotonic in content: more text can never estimate as fewer pages.
     counts = [estimate_page_count(resume(n)) for n in (4, 12, 24, 40, 80)]
     assert counts == sorted(counts)

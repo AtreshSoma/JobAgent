@@ -337,7 +337,6 @@ KNOWN: Dict[tuple, str] = {
     ("text_box_summary", "pdf_text_complete"): "R15: the PDF leaves out text-box text",
     ("text_box_summary", "master_pdf_text_complete"): "R15: the PDF leaves out text-box text",
     ("other_heading_words", "experience_reordered"): "R14: 'CAREER HISTORY' is not a known heading, so nothing is reordered",
-    ("georgia_spaced", "estimate_sees_style"): "R6: the page estimate ignores fonts and spacing set on styles",
 }
 
 

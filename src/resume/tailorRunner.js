@@ -227,6 +227,9 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
     enable_rewrites: options.enableRewrites === true,
+    // Check the page fit against LibreOffice's render when it is installed
+    // (R6). runtime.resumeMeasurePages: false keeps the estimate only.
+    measure_pages: config.runtime?.resumeMeasurePages !== false,
     // RESUME_PDF_ENGINE=chromium: no Word/LibreOffice attempt; Chromium below.
     export_pdf: options.exportPdf === true && pdfEngine(deps.env ?? process.env) !== 'chromium',
     // Hard length target. The tailor omits whole low-relevance bullets from the
@@ -381,7 +384,9 @@ function invokePython(request, deps = {}) {
   // Longer than Python's own PDF conversion limits when a PDF is requested,
   // so Python reports "conversion timed out" itself instead of Node killing a
   // healthy tailor mid-export and discarding the DOCX it already wrote.
-  const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({ exportPdf: request.export_pdf === true });
+  const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({
+    exportPdf: request.export_pdf === true, measurePages: request.measure_pages === true,
+  });
   const script = scriptPath();
 
   return new Promise((resolve, reject) => {

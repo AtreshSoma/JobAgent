@@ -39,6 +39,15 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
+def _page_measurer(request: dict):
+    """LibreOffice's page count for the fit, unless turned off or not installed."""
+    if request.get("measure_pages") is False:
+        return None
+    import pagefit
+
+    return pagefit.measure_document if pagefit.measurement_available() else None
+
+
 def _run(request: dict) -> dict:
     from tailor import master_units, tailor_resume  # local import so import errors are reported
 
@@ -122,6 +131,8 @@ def _run(request: dict) -> dict:
         evidence_lines=request.get("evidence_lines") or None,
         evidence_vocabulary=request.get("evidence_vocabulary"),
         gap_terms=request.get("gap_terms"),
+        # The rendered length decides the page fit when LibreOffice is here (R6).
+        measure_pages=_page_measurer(request),
     )
 
     pdf_path = None
