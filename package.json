@@ -58,6 +58,7 @@
     "postings:check": "node scripts/checkPostings.mjs",
     "postings:prune": "node scripts/checkPostings.mjs --apply --limit=5000",
     "setup": "node scripts/setupLocalConfig.mjs",
+    "setup:all": "node scripts/prepareLaunch.mjs --full",
     "setup:check": "node scripts/setupLocalConfig.mjs --check",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

@@ -12,8 +12,8 @@
 import { BROWSER_INSTALL_FIX } from './data.js';
 
 const RELAUNCH = 'Close JobAgent and open it again from its launcher, which installs what is missing.';
-const PYTHON = 'Resume tailoring needs Python and its packages, which the launcher does not set up yet. '
-  + 'The User Guide\'s installation section lists the steps. Until then, jobs use your master resume as it is.';
+const PYTHON = 'Resume tailoring needs Python 3.12 or newer. Install it from python.org, then close JobAgent and open it again from its launcher, '
+  + 'which offers to set up the rest. Until then, jobs use your master resume as it is.';
 
 /** Check id -> what to do in the dashboard. */
 const FIXES = {

@@ -110,7 +110,11 @@ npm run setup                      # seed your personal config from the examples
 cp .env.example .env               # then edit it. DRY_RUN needs no secrets
 ```
 
-**Python (resume tailoring).** Use a virtual environment. On macOS (Homebrew)
+**Python (resume tailoring).**
+
+**One step:** `npm run setup:all` installs the Node dependencies, makes `.venv` with Python 3.12+ and installs `requirements.txt`, downloads the form-filling browser, and ends on the `npm run doctor` report. The launchers also offer the Python step the first time they run, and refresh it when `requirements.txt` changes. JobAgent finds `.venv` on its own, so `PYTHON=` in `.env` is optional. The manual steps:
+
+Use a virtual environment. On macOS (Homebrew)
 and recent Debian/Ubuntu a bare `pip install` into the system Python is refused
 with `externally-managed-environment` (PEP 668) — that is the OS protecting
 itself, and a venv is the fix, not `--break-system-packages`:
