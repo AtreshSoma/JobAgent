@@ -17,6 +17,7 @@
  * pipeline is fully testable offline.
  */
 
+import { createBoardFingerprints } from '../search/boardFingerprints.js';
 import { join } from 'node:path';
 import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -217,6 +218,11 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   // whose id only exists after a detail read) — see src/search/detailBudget.js.
   const detailCache = deps.detailCache !== undefined ? deps.detailCache : createDetailCache(db);
   const sourceTimings = deps.sourceTimings ?? createSourceTimings({ root: config.root });
+  // Which boards changed since the last search (D1). Injectable so tests never
+  // touch the filesystem; null turns skipping off.
+  const boardFingerprints = deps.boardFingerprints !== undefined
+    ? deps.boardFingerprints
+    : createBoardFingerprints({ root: config.root });
   const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
@@ -240,6 +246,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       // per-source timing record behind for diagnosis. Injectable so tests
       // never touch the filesystem.
       sourceTimings,
+      boardFingerprints,
     },
     hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
@@ -252,6 +259,11 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       return false;
     },
   });
+  // A completed sweep starts the full-sweep clock again; a cancelled one does not.
+  try {
+    boardFingerprints?.finishRun({ completed: !searchCancelled });
+    boardFingerprints?.save();
+  } catch { /* the fingerprints are an optimisation; losing them only means a full read next time */ }
   logger.event(EVENT_TYPES.SEARCH_END, {
     message: `Search complete: ${jobs.length} jobs, ${duplicates.length} dupes, ${errors.length} errors`,
     meta: { found: jobs.length, duplicates: duplicates.length, errors: errors.length },

@@ -51,6 +51,8 @@ within a week. Workday accounts for ~60% of the wall clock.
 
 ### Run time and cancellation
 
+**Skipping unchanged boards (audit D1, Workday only so far).** Each Workday tenant search records its total and first page. When both match the last run, only the first page is read. A full sweep reads every page every 3 days. A run that skipped pages is recorded as not a full listing, so the expiry pass (which retires rows a source stopped listing) never counts it; a board whose walk had an error is not remembered. Other adapters read everything as before. Tested in `boardFingerprints` with a fake board; the speed-up has not been measured on a live sweep.
+
 Two things dominated a discovery run's wall clock and its responsiveness, both
 fixed by measurement rather than guesswork.
 

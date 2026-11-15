@@ -16,6 +16,7 @@ Setup is one calm line instead of a wall of warnings, tailored resumes are fitte
 
 - The cover letter is also made as a PDF beside its Word and text copies, so a form whose letter slot takes only PDF no longer stops the run. Editing or restoring a letter removes the old PDF first, so an employer never receives a PDF of text you replaced.
 - Auto-fill reads application forms built with web components (open shadow roots), where it used to say the form could not be read. The check that holds Submit back while a required question is blank reads them too.
+- Searches are quicker on Workday: a board whose total and newest postings have not changed since the last search has only its first page read. Every three days a full search reads everything, and a skipped page is never taken to mean a job closed.
 - A search can run every morning on its own, through your computer's scheduler, and notify you of new matches without the dashboard open. It only searches and scores; the User Guide shows how to add or remove it.
 - The launcher now offers to set up Python for resume tailoring the first time, and keeps its packages up to date. There is also one setup step that installs everything and ends on the health report.
 - System health has Sign out everywhere: it removes the browser folder that keeps your sign-ins to application sites such as Workday, signing you out of all of them on this computer. The security notes now say plainly which of your files are stored unencrypted.
