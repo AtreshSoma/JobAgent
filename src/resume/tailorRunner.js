@@ -363,8 +363,8 @@ export async function resumeHtml(docxPath, { root, deps = {} } = {}) {
  *
  * @returns {Promise<object>} see src/resume/readiness.py
  */
-export async function resumeReadiness(docxPath, { root, deps = {} } = {}) {
-  const response = await invokePython({ mode: 'readiness', docx_path: docxPath }, { ...deps, root });
+export async function resumeReadiness(docxPath, { root, atsConfig = null, deps = {} } = {}) {
+  const response = await invokePython({ mode: 'readiness', docx_path: docxPath, ats_config: atsConfig ?? {} }, { ...deps, root });
   if (!response?.ok || !response.readiness) throw new Error(response?.error ?? 'could not check the resume');
   return response.readiness;
 }

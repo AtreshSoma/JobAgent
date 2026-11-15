@@ -20,6 +20,19 @@
         "tier2Weight": { "type": "number", "minimum": 0, "maximum": 1 }
       }
     },
+    "sectionHeadings": {
+      "type": "object",
+      "description": "Extra section names by kind, added to the tailor's built-in list (audit R14).",
+      "additionalProperties": false,
+      "properties": {
+        "_note": { "type": "string" },
+        "summary": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "experience": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "skills": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "education": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "other": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
     "requiredMarkers": { "type": "array", "items": { "type": "string" } },
     "preferredMarkers": { "type": "array", "items": { "type": "string" } },
     "outcomeSignals": { "type": "array", "items": { "type": "string" } },

@@ -57,11 +57,23 @@ def test_tables_text_boxes_and_header_contact_are_flagged(tmp_path):
 
 
 def test_headings_it_does_not_recognise_are_named(tmp_path):
-    report = readiness(corpus.build("other_heading_words", tmp_path))
+    from docx import Document
+    doc = Document()
+    for line in (corpus.NAME, "PROFESSIONAL EXPERIENCE", corpus.ROLE_1, "SIDE QUESTS",
+                 "Ran a data meetup for 200 members."):
+        doc.add_paragraph(line)
+    path = tmp_path / "unknown_heading.docx"
+    doc.save(str(path))
+    report = readiness(path)
     unknown = _codes(report)["unrecognized_headings"]
     assert unknown["level"] == "warn"
-    assert "CAREER HISTORY" in unknown["message"]
-    assert "CAREER HISTORY" in report["unrecognized_headings"]
+    assert "SIDE QUESTS" in unknown["message"]
+    assert report["unrecognized_headings"] == ["SIDE QUESTS"]
+
+
+def test_an_installs_own_heading_names_are_known(tmp_path):
+    report = readiness(corpus.build("other_heading_words", tmp_path))
+    assert report["unrecognized_headings"] == []
 
 
 def test_no_contact_details_and_no_roles_are_warnings(tmp_path):

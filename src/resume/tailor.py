@@ -529,28 +529,47 @@ def _set_cell_text_preserving(cell, text: str) -> None:
         para.add_run(text)
 
 
-_COMPETENCY_HEADINGS = {
-    "core competencies", "technical skills", "skills", "key skills",
-    "areas of expertise", "technologies",
+#: Section names by kind (R14). "Career History", "Professional Background"
+#: and "Technical Proficiencies" were unknown, so nothing under them was
+#: reordered and nothing said so. More names per install: ats_resume.json
+#: "sectionHeadings" (see _section_heading_overrides).
+_HEADING_KINDS: Dict[str, set] = {
+    "summary": {
+        "professional summary", "summary", "profile", "career summary", "about me", "about",
+        "executive summary", "professional profile", "overview", "summary of qualifications",
+        "objective", "career objective", "personal statement", "qualifications summary",
+    },
+    "experience": {
+        "professional experience", "work experience", "experience", "employment history",
+        "career history", "professional background", "work history", "employment",
+        "career experience", "professional history", "relevant experience",
+    },
+    "skills": {
+        "core competencies", "technical skills", "skills", "key skills", "areas of expertise",
+        "technologies", "technical proficiencies", "technical expertise", "competencies",
+        "core skills", "skill set", "skills and tools", "tools", "technical summary",
+    },
+    "education": {
+        "education", "academic background", "education and training", "academic qualifications",
+    },
+    "other": {
+        "certifications", "projects", "selected projects", "publications", "awards",
+        "additional information",
+        # Secondary experience blocks. Unrecognised, "EARLIER EXPERIENCE" read as
+        # body text inside the role above it.
+        "earlier experience", "additional experience", "other experience",
+        "volunteer experience", "volunteering", "leadership",
+        "honors", "honors and awards", "licenses", "training", "languages", "interests", "references",
+    },
 }
-_SECTION_HEADINGS = _COMPETENCY_HEADINGS | {
-    "professional summary", "summary", "profile", "career summary",
-    "professional experience", "work experience", "experience", "employment history",
-    "education", "certifications", "projects", "selected projects", "publications",
-    "awards", "additional information",
-    # Secondary experience blocks. Unrecognised, "EARLIER EXPERIENCE" read as
-    # body text inside the role above it.
-    "earlier experience", "additional experience", "other experience",
-    "relevant experience", "volunteer experience", "volunteering", "leadership",
-    "honors", "honors and awards", "licenses", "training", "languages",
-}
+_COMPETENCY_HEADINGS = set(_HEADING_KINDS["skills"])
+_SECTION_HEADINGS = set().union(*_HEADING_KINDS.values())
 
 
 #: Sections whose dated lines are not jobs (R4). Experience-like sections
 #: (and projects or volunteering, which read as roles) are not listed.
-_NON_ROLE_SECTIONS = _COMPETENCY_HEADINGS | {
-    "professional summary", "summary", "profile", "career summary",
-    "education", "certifications", "licenses", "training", "languages",
+_NON_ROLE_SECTIONS = _HEADING_KINDS["summary"] | _HEADING_KINDS["skills"] | _HEADING_KINDS["education"] | {
+    "certifications", "licenses", "training", "languages", "interests", "references",
     "honors", "honors and awards", "awards", "publications", "additional information",
 }
 
@@ -1585,10 +1604,65 @@ def _norm_heading(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
-_SUMMARY_HEADINGS = {"professional summary", "summary", "profile", "career summary"}
-_EXPERIENCE_HEADINGS = {
-    "professional experience", "work experience", "experience", "employment history",
-}
+_SUMMARY_HEADINGS = _HEADING_KINDS["summary"]
+_EXPERIENCE_HEADINGS = _HEADING_KINDS["experience"]
+
+
+class _section_heading_overrides:
+    """Add a person's own section names (ats_resume.json "sectionHeadings") for one tailoring.
+
+    The heading tables are module-level, read by many helpers; this widens them
+    for the duration of a call and puts them back after, so a long-lived
+    worker serving several people never carries one person's names over.
+    """
+
+    def __init__(self, headings: Dict[str, Sequence[str]] | None):
+        self.headings = {kind: {_norm_heading(n) for n in names or [] if str(n).strip()}
+                         for kind, names in (headings or {}).items() if kind in _HEADING_KINDS}
+        self.saved = None
+
+    def __enter__(self):
+        tables = [_SECTION_HEADINGS, _COMPETENCY_HEADINGS, _NON_ROLE_SECTIONS, *_HEADING_KINDS.values()]
+        self.saved = [(table, set(table)) for table in tables]
+        for kind, names in self.headings.items():
+            _HEADING_KINDS[kind].update(names)
+            _SECTION_HEADINGS.update(names)
+            if kind == "skills":
+                _COMPETENCY_HEADINGS.update(names)
+            if kind in ("summary", "skills", "education"):
+                _NON_ROLE_SECTIONS.update(names)
+        return self
+
+    def __exit__(self, *exc):
+        for table, before in self.saved:
+            table.clear()
+            table.update(before)
+        return False
+
+
+def _looks_like_heading(paragraph) -> bool:
+    """A short line set like a heading: capitals, a Heading style, or all bold.
+
+    Ends the section above it even when its name is unknown, so one section's
+    lines never run on into the next (R14).
+    """
+    text = (paragraph.text or "").strip()
+    if not text or len(text) > 40 or len(text.split()) > 5 or re.search(r"[\d@|:,.;]", text):
+        return False
+    if _is_bullet(paragraph):
+        return False
+    style = (getattr(paragraph.style, "name", "") or "").lower()
+    if style.startswith("heading") or style == "title":
+        return True
+    letters = [c for c in text if c.isalpha()]
+    if letters and all(c.isupper() for c in letters) and len(letters) >= 4:
+        return True
+    runs = [run for run in paragraph.runs if (run.text or "").strip()]
+    return bool(runs) and all(run.bold for run in runs)
+
+
+def _ends_section(paragraph) -> bool:
+    return _is_section_heading(paragraph.text) or _looks_like_heading(paragraph)
 
 
 def _section_bounds(document, headings: set[str]) -> tuple[int, int] | None:
@@ -1599,13 +1673,34 @@ def _section_bounds(document, headings: set[str]) -> tuple[int, int] | None:
         None,
     )
     if start is None:
+        # The section holding the jobs is experience, whatever it is called (R14).
+        if headings is _EXPERIENCE_HEADINGS:
+            return _experience_bounds_by_roles(paragraphs)
         return None
     end = len(paragraphs)
     for index in range(start + 1, len(paragraphs)):
-        if _is_section_heading(paragraphs[index].text):
+        if _ends_section(paragraphs[index]):
             end = index
             break
     return start + 1, end
+
+
+def _experience_bounds_by_roles(paragraphs) -> tuple[int, int] | None:
+    """The section around the first job line, when no heading names experience."""
+    first_role = next((i for i, p in enumerate(paragraphs) if _is_role_heading(p)), None)
+    if first_role is None:
+        return None
+    start = 0
+    for index in range(first_role - 1, 0, -1):  # index 0 is the name line
+        if _ends_section(paragraphs[index]):
+            start = index + 1
+            break
+    end = len(paragraphs)
+    for index in range(first_role + 1, len(paragraphs)):
+        if _ends_section(paragraphs[index]) and not _is_role_heading(paragraphs[index]):
+            end = index
+            break
+    return start, end
 
 
 #: Characters a person types to start a bullet by hand. Only "• · ▪ ◦" were
@@ -2639,8 +2734,48 @@ def tailor_resume(
     evidence_vocabulary: Sequence[str] | None = None,
     gap_terms: Sequence[str] | None = None,
     measure_pages: Any = None,
+    section_headings: Dict[str, Sequence[str]] | None = None,
 ) -> Dict[str, Any]:
     """Create a tailored resume for ``job`` and return a result dict.
+
+    ``section_headings`` adds section names by kind (summary, experience,
+    skills, education, other) for this call (R14).
+    """
+    with _section_heading_overrides(section_headings):
+        return _tailor_resume(
+            master_path, output_dir, job, keywords, patterns, max_pages=max_pages,
+            required_markers=required_markers, preferred_markers=preferred_markers,
+            evidence_aliases=evidence_aliases, enable_rewrites=enable_rewrites, now=now,
+            output_name=output_name, llm_qualifications=llm_qualifications,
+            accepted_rewrites=accepted_rewrites, keep_bullets=keep_bullets,
+            evidence_lines=evidence_lines, evidence_vocabulary=evidence_vocabulary,
+            gap_terms=gap_terms, measure_pages=measure_pages,
+        )
+
+
+def _tailor_resume(
+    master_path: str | Path,
+    output_dir: str | Path,
+    job: Dict[str, Any],
+    keywords: Iterable[str],
+    patterns: Dict[str, Any] | None = None,
+    *,
+    max_pages: int = 2,
+    required_markers: Iterable[str] | None = None,
+    preferred_markers: Iterable[str] | None = None,
+    evidence_aliases: Dict[str, Sequence[str]] | None = None,
+    enable_rewrites: bool = False,
+    now: datetime | None = None,
+    output_name: str | None = None,
+    llm_qualifications: Dict[str, Sequence[str]] | None = None,
+    accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
+    keep_bullets: Sequence[str] | None = None,
+    evidence_lines: Sequence[str] | None = None,
+    evidence_vocabulary: Sequence[str] | None = None,
+    gap_terms: Sequence[str] | None = None,
+    measure_pages: Any = None,
+) -> Dict[str, Any]:
+    """The body of tailor_resume, with the heading tables already set.
 
     ``measure_pages`` (document -> pages, or None when it cannot say) makes the
     page fit check the rendered length instead of trusting the estimate (R6);

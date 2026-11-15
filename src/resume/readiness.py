@@ -27,20 +27,6 @@ def _has_phone(text: str) -> bool:
     return any(10 <= sum(c.isdigit() for c in m.group(0)) <= 15 for m in _PHONE_CANDIDATE_RE.finditer(text or ""))
 
 
-def _looks_like_heading(paragraph, text: str) -> bool:
-    """A short line set like a heading: capitals, a Heading style, or all bold."""
-    if len(text) > 40 or len(text.split()) > 5 or re.search(r"[\d@|:,.;]", text):
-        return False
-    style = (getattr(paragraph.style, "name", "") or "").lower()
-    if style.startswith("heading") or style == "title":
-        return True
-    letters = [c for c in text if c.isalpha()]
-    if letters and all(c.isupper() for c in letters) and len(letters) >= 4:
-        return True
-    runs = [run for run in paragraph.runs if (run.text or "").strip()]
-    return bool(runs) and all(run.bold for run in runs)
-
-
 def _text_boxes(document) -> int:
     """Text boxes, counted once: Word also stores a fallback copy of each one."""
     count = 0
@@ -57,8 +43,13 @@ def _plural(n: int, word: str, many: str | None = None) -> str:
     return f"{n} {word if n == 1 else (many or word + 's')}"
 
 
-def readiness(path: str | Path) -> Dict[str, Any]:
+def readiness(path: str | Path, *, section_headings: Dict[str, List[str]] | None = None) -> Dict[str, Any]:
     """Read a resume the way the tailor will, and say what it found."""
+    with tailor._section_heading_overrides(section_headings):
+        return _readiness(path)
+
+
+def _readiness(path: str | Path) -> Dict[str, Any]:
     from docx import Document
     from docx.oxml.ns import qn
 
@@ -85,7 +76,7 @@ def readiness(path: str | Path) -> Dict[str, Any]:
             numbered = paragraph._p.pPr is not None and paragraph._p.pPr.numPr is not None
             if "list" not in style and "bullet" not in style and not numbered:
                 typed += 1
-        elif first_line_seen and _looks_like_heading(paragraph, text):
+        elif first_line_seen and tailor._looks_like_heading(paragraph):
             unrecognized.append(text)
         first_line_seen = True
     for table in document.tables:

@@ -1374,7 +1374,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (readinessCache?.file === file && readinessCache.mtimeMs === mtimeMs) return readinessCache.result;
     let result;
     try {
-      result = { available: true, ...(await readinessImpl(file, { root: config?.root })) };
+      result = { available: true, ...(await readinessImpl(file, { root: config?.root, atsConfig: config?.atsResume ?? null })) };
     } catch (err) {
       result = {
         available: false,

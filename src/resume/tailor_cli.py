@@ -39,6 +39,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 
+def _section_headings(ats_config: dict):
+    names = (ats_config or {}).get("sectionHeadings") or {}
+    return {kind: list(v) for kind, v in names.items() if isinstance(v, list) and v} or None
+
+
 def _page_measurer(request: dict):
     """LibreOffice's page count for the fit, unless turned off or not installed."""
     if request.get("measure_pages") is False:
@@ -83,7 +88,9 @@ def _run(request: dict) -> dict:
 
         if not request.get("docx_path"):
             return {"ok": False, "error": "docx_path is required"}
-        return {"ok": True, "readiness": readiness(request["docx_path"])}
+        return {"ok": True, "readiness": readiness(
+            request["docx_path"], section_headings=_section_headings(request.get("ats_config")),
+        )}
 
     if request.get("mode") == "units":
         # The master's paragraphs as citable evidence units (P1-2). Read-only.
@@ -133,6 +140,8 @@ def _run(request: dict) -> dict:
         gap_terms=request.get("gap_terms"),
         # The rendered length decides the page fit when LibreOffice is here (R6).
         measure_pages=_page_measurer(request),
+        # Extra section names for this install (R14).
+        section_headings=_section_headings(ats_config),
     )
 
     pdf_path = None
