@@ -47,6 +47,11 @@
     {"term": "go", "line": "Go-live planning", "inList": true, "expect": false, "why": "an item that is not the term"},
     {"term": "go", "line": "Go", "expect": false, "why": "alone, with nothing to say it is a skill"},
 
+    {"term": "rust", "line": "Senior Compiler Engineer – Rust GPU", "expect": true, "why": "Rust is a language, not an everyday word, in resumes and postings"},
+    {"term": "spring", "line": "Application Security Engineer, Lead. Colorado Springs, CO.", "expect": false, "why": "a city, not the framework"},
+    {"term": "spring", "line": "Built services in Java and Spring Boot.", "expect": true, "why": "next to Java, and Boot beside it"},
+    {"term": "spring", "line": "Hired in the spring of 2021.", "expect": false, "why": "the season"},
+
     {"term": "data pipeline", "line": "Built data pipelines in Airflow.", "expect": true, "why": "plural of the last word (R3)"},
     {"term": "pipeline", "line": "Owned 12 pipelines end to end.", "expect": true, "why": "plural"},
     {"term": "dependency", "line": "Removed 40 dependencies from the build.", "expect": true, "why": "y to ies"},

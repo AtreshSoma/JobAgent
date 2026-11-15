@@ -2,7 +2,7 @@
   "_about": "Rules for the one evidence check (audit R2, R3, R13/D3), read by src/resume/evidence.py and src/resume/evidence.js. credentialWords are the paperwork around a credential: 'RN license' is evidenced by 'RN'. everydayTerms are skills that are also ordinary words: they count only in a skills list, next to another technology, or beside one of their anchor words. Single letters (R, C) are everyday too and must be written as capitals. technologies are the neighbours that make an everyday term a skill; a caller's own vocabulary is added to them.",
   "everydayTerms": [
     "go", "excel", "access", "word", "teams", "outlook", "project", "visio",
-    "swift", "rust", "ruby", "julia", "dart", "elm", "crystal", "scheme",
+    "swift", "spring", "ruby", "julia", "dart", "elm", "crystal", "scheme",
     "chef", "puppet", "salt", "pig", "hive", "basic", "assembly", "shell"
   ],
   "anchors": {
@@ -17,7 +17,7 @@
     "r": ["rstudio", "tidyverse", "ggplot2", "shiny", "cran"],
     "c": ["ansi"],
     "shell": ["bash", "unix", "scripting"],
-    "rust": ["cargo"],
+    "spring": ["boot", "framework", "mvc", "batch"],
     "swift": ["swiftui", "ios", "xcode"]
   },
   "credentialWords": ["license", "licence", "licensure", "licensed", "certification", "certificate", "certified", "credential", "registration", "active", "current", "valid"],
