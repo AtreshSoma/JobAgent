@@ -59,9 +59,10 @@ a distribution that must contain open-source code only.
 
 | Declared dependency | Version constraint | Declared license |
 | --- | --- | --- |
-| python-docx | 1.1.2 | MIT |
-| pytest | 9.0.3 | MIT |
-| python-dotenv | 1.2.2 | BSD-3-Clause |
+| python-docx | 1.2.0 | MIT |
+| pytest | 9.2.0 | MIT |
+| python-dotenv | 1.2.4 | BSD-3-Clause |
+| ruff | 0.17.5 | MIT |
 | docx2pdf | 0.1.8 | MIT |
 | openai (optional probe) | >=1.40.0 | Apache-2.0 |
 

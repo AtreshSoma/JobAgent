@@ -135,7 +135,7 @@ jobs:
         with:
           python-version: '3.12'
       - run: npm ci
-      - run: python -m pip install ruff
+      - run: python -m pip install -r requirements.txt
       # `npm run lint` runs eslint, then ruff when it is installed.
       - run: npm run lint
       - run: npm run typecheck
