@@ -1,0 +1,16 @@
+<!doctype html><html><head><title>Apply - Acme</title></head><body>
+<h1>Data Engineer</h1>
+<form class="jv-form" onsubmit="return false">
+  <div class="jv-field"><label for="jv-first">First Name</label><input id="jv-first" name="firstName" required></div>
+  <div class="jv-field"><label for="jv-last">Last Name</label><input id="jv-last" name="lastName" required></div>
+  <div class="jv-field"><label for="jv-email">Email</label><input id="jv-email" name="email" type="email" required></div>
+  <div class="jv-field"><label for="jv-phone">Phone</label><input id="jv-phone" name="phone"></div>
+  <div class="jv-field">
+    <span>Resume</span>
+    <label for="jv-resume" class="jv-attach">Attach resume</label>
+    <input id="jv-resume" name="resume" type="file" style="position:absolute;left:-9999px">
+  </div>
+  <button type="submit" id="jv-submit">Submit Application</button>
+</form>
+<script>document.getElementById('jv-submit').addEventListener('click', () => { window.__submitted = true; });</script>
+</body></html>

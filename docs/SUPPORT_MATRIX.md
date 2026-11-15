@@ -251,9 +251,9 @@ tenant that sets `searchText: ""` still means "enumerate everything".
 | Ashby | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
 | Workday | ✅ (`data-automation-id` selectors) | ✅ | ✅ | ✅ | account-creation/login walls stop the run (by design) | ✅ `atsApplicationFixtures`, `workdayFormFill` |
 | SmartRecruiters | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
-| iCIMS | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | frequently login-walled → blocked with RCA. **This row is about AUTO-FILL only.** iCIMS is a working, enabled DISCOVERY source — 2,431 rows in the live store across 54 portals — but it was absent from the discovery table above, so this document read as “iCIMS is unsupported” | ❌ no dedicated fixture |
-| Taleo | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | legacy multi-frame flows often blocked | ❌ no dedicated fixture |
-| Jobvite | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | — | ❌ no dedicated fixture |
+| iCIMS | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | frequently login-walled → blocked with RCA. **This row is about AUTO-FILL only.** iCIMS is a working, enabled DISCOVERY source — 2,431 rows in the live store across 54 portals — but it was absent from the discovery table above, so this document read as “iCIMS is unsupported” | ◐ `atsMoreFixtures`: an iframe-embedded, two-step form written by hand, **not captured from a live site** |
+| Taleo | ◐ generic resolver + selector hints; fills ids full of dots and link-styled buttons (hand-written fixture) | ◐ link-style Next | ◐ | ◐ | legacy multi-frame flows often blocked | ◐ `atsMoreFixtures`: a hand-written form, **not captured from a live site** |
+| Jobvite | ◐ generic resolver + selector hints; name-based fields and a file input hidden behind an "Attach" label (hand-written fixture) | ◐ | ◐ | ◐ | — | ◐ `atsMoreFixtures`: a hand-written form, **not captured from a live site** |
 | Generic accessible forms | ✅ semantic field resolver (labels/ARIA/question text; selects, comboboxes, radios, checkboxes, dates, files, conditionals) | ✅ safe Next/Continue only | ✅ | ✅ | unknown required questions block (never guessed). **Assisted fill only — never eligible for auto-submit**, since an unrecognised site is by definition not fixture-verified | ✅ `atsApplicationFixtures` generic case, `validationDetection`, `fieldFiller` |
 
 **Live verification.** None of the ATS rows above has a recorded supervised
