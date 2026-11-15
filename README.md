@@ -290,7 +290,7 @@ pie showData title Score points (100 total)
 
 | Source | Kind | Default | Cost |
 | --- | --- | :---: | --- |
-| **`ats-search`**: Workable and SmartRecruiters cross-company search | Query-first | ✅ On | Free, no key |
+| **`ats-search`**: Workable, SmartRecruiters and The Muse cross-company search | Query-first | ✅ On | Free, no key |
 | **Greenhouse, Lever, Ashby, SmartRecruiters, Workday** boards | Company-first | ✅ On | Free |
 | **Rippling, Oracle Recruiting, Amazon Jobs, iCIMS**, careers pages | Company-first | ✅ On | Free |
 | **Manual URLs and CSV** (`data/jobs_input/manual_jobs.csv`) | Your list | ✅ On | Free |

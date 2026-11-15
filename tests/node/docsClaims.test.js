@@ -57,3 +57,24 @@ describe('the README auto-submit gates (X2)', () => {
     if (verified.length === 0) expect(gates).toMatch(/no ATS has (?:passed|a recorded)[^.]*\. [^.]*refused on every ATS|refused on every ATS/i);
   });
 });
+
+describe('cross-company search providers (X7, N6)', () => {
+  const NAMES = { workable: 'Workable', smartrecruiters: 'SmartRecruiters', themuse: 'The Muse' };
+  const jobboards = JSON.parse(read('config/jobboards.json'));
+  const providers = jobboards.sources.find((s) => s.id === 'ats-search')?.options?.providers ?? [];
+
+  it('the README source table names every provider ats-search uses', () => {
+    expect(providers.length).toBeGreaterThan(0);
+    const row = README.split("\n").find((l) => l.startsWith("| **`ats-search`**"));
+    for (const id of providers) {
+      expect(NAMES[id], `display name for provider ${id}`).toBeTruthy();
+      expect(row, `README ats-search row names ${NAMES[id]}`).toContain(NAMES[id]);
+    }
+  });
+
+  it('the support matrix does not call an enabled provider rejected', () => {
+    const matrix = read('docs/SUPPORT_MATRIX.md');
+    const rejected = matrix.split('\n\n').filter((p) => /rejected on yield/i.test(p)).join(' ');
+    for (const id of providers) expect(rejected, `${NAMES[id]} listed as rejected`).not.toMatch(new RegExp(`${NAMES[id]} \\d+ of \\d+`));
+  });
+});
