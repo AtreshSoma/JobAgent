@@ -120,8 +120,8 @@ export const JOURNEY = Object.freeze([
     id: 'tailor',
     fact: 'Your words, reordered',
     name: 'Tailor',
-    title: 'Your resume, reordered for this job. Not rewritten.',
-    body: 'A per-job copy of your master resume puts your most relevant evidence first. Nothing is added, removed or reworded.',
+    title: 'Your resume, reordered for this job. Never invented.',
+    body: 'A per-job copy of your master resume puts your most relevant evidence first. Nothing is invented. Wording changes only where you accepted a rewording checked against your own lines, and a bullet left out to fit two pages is listed, so Compare with master shows it.',
     beats: [
       { name: 'Read', text: 'The posting’s keywords are sorted by how much it wants them.' },
       { name: 'Reorder', text: 'Your strongest bullets and skills for this job move to the top.' },

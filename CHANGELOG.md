@@ -10,6 +10,7 @@ Your name and contact details stay on your computer, and what JobAgent says abou
 ### Fixes
 
 - Cover letters written with the optional model no longer send your name, email, phone or city to the model provider. Your summary, headline and bullets are still used, and rewrite suggestions, reply drafts and Rank by meaning skip any line that carries contact details too.
+- Explore JobAgent no longer says tailoring never leaves anything out. A bullet left out to fit two pages is listed in Compare with master, and wording changes only where you accepted a rewording.
 
 _Nothing is submitted without your review. That has not changed._
 

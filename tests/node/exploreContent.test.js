@@ -288,3 +288,22 @@ describe('Explore JobAgent: the Score Lab agrees with the real scorer', () => {
     expect(scoreInputs({ payShortfall: 0.25 }).raw).toBe(scoreInputs({}).raw - SCORE_MODEL.penalties.payFit);
   });
 });
+
+describe('Explore JobAgent: the tailoring claim matches the tailor (audit X1)', () => {
+  const tailor = JOURNEY.find((stage) => stage.id === 'tailor');
+  const said = () => [tailor.title, tailor.body, tailor.fact, ...tailor.beats.map((b) => b.text)].join(' ');
+
+  it('does not claim nothing is removed or reworded', () => {
+    // The page fit leaves out whole bullets (max_pages, default 2) and
+    // accepted rewrites change wording, so neither can be denied.
+    expect(said()).not.toMatch(/nothing is (?:added, )?removed/i);
+    expect(said()).not.toMatch(/reworded\.|not rewritten/i);
+  });
+
+  it('says what is true: nothing invented, left-out lines listed, rewording only where you accepted it', () => {
+    expect(said()).toMatch(/never invent|nothing is invented/i);
+    expect(said()).toMatch(/left out/i);
+    expect(said()).toMatch(/Compare with master/);
+    expect(said()).toMatch(/rewording you accepted|you accepted/i);
+  });
+});
