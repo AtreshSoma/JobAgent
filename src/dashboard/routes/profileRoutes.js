@@ -7,6 +7,8 @@
  * Returns NOT_HANDLED when no route here matched, so server.js tries the next
  * module; anything else means the request was answered.
  */
+import { openProfileDirs } from '../../automation/browser.js';
+import { signOutEverywhere } from '../../profile/signOut.js';
 import { dismissQuestion, loadQuestionQueue, markQuestionAnswered, reopenQuestion, suggestPatterns } from '../../apply/questionQueue.js';
 import { adoptResumeEvidence, readProfile, readScreeningAnswers, upsertScreeningAnswer, writeProfile, writeScreeningAnswers } from '../../config/profileStore.js';
 import { buildBackground, profileFromResume } from '../../profile/fromResume.js';
@@ -443,6 +445,21 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
       if (body.key) markQuestionAnswered(root, String(body.key), { answerId: 'skill_experience', now: ctx.nowDate() });
       return sendJson(res, 200, { ...saved, warning: ctx.reloadConfig(), ...ctx.profileState() });
     });
+  }
+  // Sign out everywhere (P5): remove this person's browser profile folders, and
+  // with them every application-site sign-in on this computer.
+  if (req.method === 'POST' && path === '/api/profile/sign-out-everywhere') {
+    const body = await readBody(req);
+    if (body.confirm !== true) return sendJson(res, 400, { error: 'confirm that you want to be signed out of every application site' });
+    if (ctx.runState.running) {
+      return sendJson(res, 409, { error: `a ${ctx.runState.phase} run is in progress — try again when it finishes` });
+    }
+    try {
+      const root = ctx.requireConfigRoot();
+      return sendJson(res, 200, signOutEverywhere(root, ctx.config?.profile?.id ?? null, { openDirs: openProfileDirs() }));
+    } catch (err) {
+      return sendJson(res, err.statusCode ?? 400, { error: err.message });
+    }
   }
   if (req.method === 'POST' && path === '/api/profile/questions/status') {
     const body = await readBody(req);

@@ -53,3 +53,26 @@ hosted for other people.
 Your profile, answers, resume, job database and `.env` are git-ignored. Never
 force-add them, and never expose the dashboard port to a network (for example
 with port forwarding or a tunnel).
+
+### What is stored on this computer, and how
+
+Everything JobAgent keeps is in its own folder, as **ordinary, unencrypted
+files**. Anyone who can read that folder (another account with access to it,
+a backup service, a stolen laptop without disk encryption) can read them:
+
+- your profile, screening answers and settings (`config/`), and any API keys in `.env`;
+- your master resume, cover letters and every tailored document (`resumes/`, `applications/`);
+- the job database and logs (`data/`, `logs/`);
+- **one browser profile folder per person** (`.browser-profile-…`), which holds
+  live sign-ins to every application site auto-fill used, such as Workday or iCIMS.
+
+What this means in practice:
+
+- Turn on your operating system's disk encryption (FileVault on macOS,
+  BitLocker on Windows). JobAgent does not encrypt its working folder.
+- The **Export everything** backup can be encrypted with a passphrase; the
+  working copy cannot.
+- **System health → Sign out everywhere** removes the active person's browser
+  profile folder, which signs them out of every application site on this
+  computer. Close any auto-fill window first; the next auto-fill asks you to
+  sign in again.

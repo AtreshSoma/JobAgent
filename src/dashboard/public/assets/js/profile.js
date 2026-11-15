@@ -795,6 +795,7 @@ export async function openHealth() {
   ])));
   await renderCoverage(body);
   renderExtensionPairing(body);
+  renderSignOut(body);
   await renderBackups(body);
   await renderLlmUsage(body);
 }
@@ -841,6 +842,27 @@ export function renderExtensionPairing(host) {
     } catch (err) { out.textContent = err.message; } finally { button.disabled = false; }
   });
   section.append(el('p', { class: 'muted', text: 'Open the extension\'s settings page, then show a code here and type it in. No key to copy.' }), button, out);
+  host.append(section);
+}
+
+/**
+ * Sign out everywhere (audit P5): remove the active person's browser profile,
+ * and with it every application-site sign-in on this computer.
+ */
+export function renderSignOut(host) {
+  const section = el('section', { class: 'signout', 'aria-labelledby': 'signOutTitle' });
+  section.append(el('h3', { id: 'signOutTitle', text: 'Application-site sign-ins' }));
+  const out = el('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
+  const button = el('button', { type: 'button', class: 'small', text: 'Sign out everywhere' });
+  button.addEventListener('click', async () => {
+    if (!window.confirm('Sign out of every application site auto-fill has used on this computer? You will sign in again on the next auto-fill.')) return;
+    button.disabled = true;
+    try {
+      const { removed } = await postJson('/api/profile/sign-out-everywhere', { confirm: true });
+      out.textContent = removed.length ? 'Signed out. The next auto-fill opens a fresh browser.' : 'There were no saved sign-ins to remove.';
+    } catch (err) { out.textContent = err.message; } finally { button.disabled = false; }
+  });
+  section.append(el('p', { class: 'muted', text: 'Auto-fill keeps your sign-ins to sites such as Workday in a browser folder on this computer, unencrypted. This removes them.' }), button, out);
   host.append(section);
 }
 

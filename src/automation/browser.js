@@ -61,6 +61,11 @@ function sharedSession(context, page) {
   };
 }
 
+/** Persistent profile folders a browser in this process has open (audit P5). */
+export function openProfileDirs() {
+  return [...liveProfiles.entries()].filter(([, e]) => !e.closed).map(([dir]) => dir);
+}
+
 export async function createBrowserSession({
   headless = false, slowMo = 0, channel = null, userDataDir = null, deps = {},
 } = {}) {
