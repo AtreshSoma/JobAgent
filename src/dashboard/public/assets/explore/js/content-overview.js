@@ -323,11 +323,13 @@ export const CAPABILITIES = Object.freeze([
   { area: 'Match', name: 'Deterministic fit scoring', what: 'Weighted categories, tiers, and a written explanation per job.', status: 'shipped', topic: 'scoring' },
   { area: 'Match', name: 'Eligibility checks', what: 'Reads stated years, degree, licence and clearance floors and holds a job you do not meet.', status: 'shipped', topic: 'scoring' },
   { area: 'Match', name: 'Sponsorship reading', what: 'Classifies each posting as Confirmed, Likely, Unconfirmed or Denied, with the sentence that decided it.', status: 'shipped', topic: 'scoring' },
+  { area: 'Match', name: 'Setup card', what: 'What is left before applying, grouped by where you fix it. Finding and scoring jobs work meanwhile.', status: 'shipped', topic: 'profiles' },
   { area: 'Match', name: 'Profiles for any profession', what: 'Search profiles built from a resume and a role-family taxonomy; several people can share one install.', status: 'shipped', topic: 'profiles' },
   { area: 'Match', name: 'Rank top matches by meaning', what: 'A second, labelled number from text embeddings. It never changes the score.', status: 'optional', topic: 'ai' },
   { area: 'Match', name: 'Weight calibration from outcomes', what: 'Proposes bounded weight changes once you have recorded enough results. You apply them.', status: 'optional', topic: 'scoring' },
 
   { area: 'Prepare', name: 'Resume tailoring', what: 'Reorders and emphasizes existing content in a per-job copy; produces DOCX and PDF.', status: 'shipped', topic: 'tailoring' },
+  { area: 'Prepare', name: 'Resume check on upload', what: 'Says once what tailoring can read in your master resume (sections, jobs, bullets, contact details) and what it cannot, such as text boxes.', status: 'shipped', topic: 'tailoring' },
   { area: 'Prepare', name: 'ATS readiness report', what: 'Keyword coverage, density band, layout problems an ATS trips on, and honest gaps.', status: 'shipped', topic: 'tailoring' },
   { area: 'Prepare', name: 'Template cover letters', what: 'Assembled from your profile and letter settings, cleaned of filler phrases.', status: 'shipped', topic: 'packets' },
   { area: 'Prepare', name: 'Document versions', what: 'Every prepared resume and letter is kept; the submitted set is frozen.', status: 'shipped', topic: 'packets' },

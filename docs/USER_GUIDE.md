@@ -891,6 +891,8 @@ npm run test:coverage  # the same, with the coverage gate CI enforces
 npm run test:py        # Python test suite (pytest, needs `python` on PATH)
 ```
 
+In the dashboard, the same export is **System health → Backups → Export everything**: one file in `exports/`, offered as a download, encrypted when you give a passphrase.
+
 <details>
 <summary><b>🧰 Maintenance scripts, and a typical phase-by-phase session</b></summary>
 
