@@ -80,6 +80,7 @@ import { assertInsideDirectory, isInsideDirectory } from '../utils/pathSafe.js';
 import { approveJobPacket, buildMasterResume, setDuringBulkRun, noteUserMutation, setBrowserAvailability, withdrawApproval } from './data.js';
 import { approvalDigest, approvedDigest, digestChanges } from '../apply/approvalDigest.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
+import { resumeReadiness } from '../resume/tailorRunner.js';
 import { runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult, preparePacketsForJobs } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { createCodeFreshness } from './codeFreshness.js';
@@ -1357,6 +1358,31 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     return { replaced: true, backup, master: masterResumeState() };
   }
 
+  /**
+   * What tailoring will be able to work with in the current master resume
+   * (audit F4), cached by file and modification time: it runs Python, and the
+   * dialog asks every time it opens. Never refuses anything; it only reports.
+   */
+  const readinessImpl = deps.resumeReadinessImpl ?? resumeReadiness;
+  let readinessCache = null;
+  async function masterResumeReadiness() {
+    const { file } = masterResumePaths();
+    let mtimeMs;
+    try { mtimeMs = statSync(file).mtimeMs; } catch { return { available: false, reason: 'There is no master resume yet.' }; }
+    if (readinessCache?.file === file && readinessCache.mtimeMs === mtimeMs) return readinessCache.result;
+    let result;
+    try {
+      result = { available: true, ...(await readinessImpl(file, { root: config?.root })) };
+    } catch (err) {
+      result = {
+        available: false,
+        reason: `The resume check needs the Python part of JobAgent, which could not run (${String(err.message).split('\n')[0]}).`,
+      };
+    }
+    readinessCache = { file, mtimeMs, result };
+    return result;
+  }
+
   /** Roll back to a kept previous version (itself backed up first). */
   function restoreMasterResume(name) {
     const { historyDir } = masterResumePaths();
@@ -2038,6 +2064,7 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     get isSubmittedOrUnverified() { return isSubmittedOrUnverified; },
     get logger() { return logger; },
     get masterResumeState() { return masterResumeState; },
+    get masterResumeReadiness() { return masterResumeReadiness; },
     get materializeResumePreview() { return materializeResumePreview; },
     get nowDate() { return nowDate; },
     get postingSweep() { return postingSweep; },

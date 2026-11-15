@@ -44,7 +44,13 @@ export async function handleMasterResumeRoutes(ctx, req, res, { path }) {
     // The whole point of the upload: say immediately whether this resume and
     // the saved search profile are describing the same job. Replacing the
     // file changes nothing about discovery on its own.
-    return sendJson(res, 200, { ...result, suggestions: ctx.resumeSuggestions() });
+    // What tailoring will be able to work with, said once, now (audit F4).
+    return sendJson(res, 200, {
+      ...result, suggestions: ctx.resumeSuggestions(), readiness: await ctx.masterResumeReadiness(),
+    });
+  }
+  if (req.method === 'GET' && path === '/api/master-resume/readiness') {
+    return sendJson(res, 200, await ctx.masterResumeReadiness());
   }
   // Role/skill evidence read out of the CURRENT master resume, next to what
   // discovery is actually searching for. Read-only: it proposes, and adopting

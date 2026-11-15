@@ -68,6 +68,14 @@ def _run(request: dict) -> dict:
             return {"ok": False, "error": "docx_path is required"}
         return {"ok": True, **docx_to_html(request["docx_path"])}
 
+    if request.get("mode") == "readiness":
+        # What tailoring will be able to work with in this resume (F4). Read-only.
+        from readiness import readiness
+
+        if not request.get("docx_path"):
+            return {"ok": False, "error": "docx_path is required"}
+        return {"ok": True, "readiness": readiness(request["docx_path"])}
+
     if request.get("mode") == "units":
         # The master's paragraphs as citable evidence units (P1-2). Read-only.
         if not request.get("master_path"):

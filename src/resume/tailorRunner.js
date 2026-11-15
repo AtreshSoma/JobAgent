@@ -353,6 +353,19 @@ export async function resumeHtml(docxPath, { root, deps = {} } = {}) {
   return { html: response.html, texts: response.texts ?? [] };
 }
 
+/**
+ * What tailoring will be able to work with in a resume (audit F4): sections,
+ * jobs, bullets and contact details found; tables, text boxes, typed bullets,
+ * links and unknown headings flagged; an estimated page count. Read-only.
+ *
+ * @returns {Promise<object>} see src/resume/readiness.py
+ */
+export async function resumeReadiness(docxPath, { root, deps = {} } = {}) {
+  const response = await invokePython({ mode: 'readiness', docx_path: docxPath }, { ...deps, root });
+  if (!response?.ok || !response.readiness) throw new Error(response?.error ?? 'could not check the resume');
+  return response.readiness;
+}
+
 /** Write a cover letter's text as a plain .docx (P1-3). Resolves the path. */
 export async function writeLetterDocx({ text, path, root, deps = {} } = {}) {
   const response = await invokePython({ mode: 'letter_docx', text, path }, { ...deps, root });

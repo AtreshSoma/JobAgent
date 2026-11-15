@@ -537,6 +537,16 @@ export async function renderMasterResume() {
       + 'Use “↻ Re-tailor” on a job to rebuild its resume from the current master.'));
   }
 
+  // ── what tailoring can work with (audit F4) ────────────────────────────
+  if (master.exists && !master.textError) {
+    const check = el('section', { class: 'mr-section mr-check', id: 'mrCheck', 'aria-labelledby': 'mrCheckHead', 'aria-busy': 'true' },
+      el('h3', { id: 'mrCheckHead', text: 'Resume check' }),
+      el('p', { class: 'muted', text: 'Reading your resume the way tailoring will…' }));
+    body.append(check);
+    // Not awaited: it runs Python, and the rest of the dialog should not wait.
+    renderReadiness(check);
+  }
+
   // ── your job search ────────────────────────────────────────────────────
   // Whose search is running, and does this resume belong to them? This comes
   // FIRST among the sections: it decides whether anything below it matters.
@@ -652,6 +662,40 @@ export async function uploadMasterResume(file) {
     }
   }
   await installMasterResume(file, bytes);
+}
+
+/** Finding level -> its mark and a word for screen readers. Never colour alone. */
+const CHECK_LEVEL = { ok: ['✓', 'Fine'], note: ['i', 'Note'], warn: ['!', 'Check'] };
+
+/**
+ * The resume check: what tailoring will be able to work with in this resume,
+ * found once when it is uploaded instead of job by job. It reports; nothing is
+ * refused because of it.
+ */
+export async function renderReadiness(host) {
+  let report;
+  try { report = await api('/api/master-resume/readiness'); }
+  catch (err) { report = { available: false, reason: err.message }; }
+  host.removeAttribute('aria-busy');
+  host.querySelector('p.muted')?.remove();
+  if (!report.available) {
+    host.append(el('p', { class: 'muted', text: report.reason }));
+    return;
+  }
+  const warnings = report.findings.filter((f) => f.level === 'warn').length;
+  host.append(el('p', { class: 'mr-note', text: warnings
+    ? `${warnings} thing${warnings === 1 ? '' : 's'} to look at before tailoring relies on this resume.`
+    : 'Tailoring can read this resume.' }));
+  const order = { warn: 0, ok: 1, note: 2 };
+  const list = el('ul', { class: 'mr-findings' });
+  for (const finding of [...report.findings].sort((a, b) => order[a.level] - order[b.level])) {
+    const [mark, word] = CHECK_LEVEL[finding.level] ?? CHECK_LEVEL.note;
+    list.append(el('li', { class: `mr-finding is-${finding.level}`, 'data-code': finding.code },
+      el('span', { class: 'mr-finding-mark', 'aria-hidden': 'true', text: mark }),
+      el('span', { class: 'sr-only', text: `${word}: ` }),
+      el('span', { text: finding.message })));
+  }
+  host.append(list);
 }
 
 /** Two display names for the same person (case, spacing and middle initials aside). */
