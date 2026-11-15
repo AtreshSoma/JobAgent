@@ -14,6 +14,7 @@ import { chromium } from 'playwright';
 import {
   postSubmitDestination, SUBMIT_CONFIRMATION_RE, watchForHumanSubmission,
 } from '../../src/automation/applyRunner.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const ORACLE = 'https://acme.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1';
 
@@ -48,7 +49,8 @@ describe('the hand-off watcher on an Oracle-style finish', () => {
   let browser;
   let context;
   beforeAll(async () => {
-    browser = await chromium.launch({ headless: true });
+    browser = await launchOrSkip(() => chromium.launch({ headless: true }));
+    if (!browser) return;
     context = await browser.newContext();
     await context.route(`${ORACLE}/**`, (route) => route.fulfill({
       status: 200, contentType: 'text/html',
@@ -56,6 +58,7 @@ describe('the hand-off watcher on an Oracle-style finish', () => {
     }));
   }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   async function finish(steps) {
     const page = await context.newPage();

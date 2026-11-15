@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const PAYLOAD = {
   job: { id: 'j1' }, artifacts: {},
@@ -37,8 +38,9 @@ async function fill(page, html) {
 
 describe('required fields the way modern forms mark them', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('an empty aria-required custom select and radio group block "ready for review"', async () => {
     const page = await browser.newPage();

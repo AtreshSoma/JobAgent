@@ -12,6 +12,7 @@ import { chromium } from 'playwright';
 
 import { applicationFields, scanFields } from '../../src/automation/domScanner.js';
 import { assistApply } from '../../src/automation/applyRunner.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const LANDING = `
 <style>input,button{display:block;width:200px;height:26px;margin:4px}</style>
@@ -30,8 +31,9 @@ const LANDING = `
 
 describe('incidental inputs on a landing page', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('are tagged by the scanner and excluded from application fields', async () => {
     const page = await browser.newPage();

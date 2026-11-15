@@ -16,6 +16,7 @@ import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
 import { canTransition, LIFECYCLE } from '../../src/lifecycle.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { retractSubmissionReport } from '../../src/dashboard/data.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const BLOCKER = 'form validation: You need to agree to the terms and conditions.';
 
@@ -32,9 +33,10 @@ describe('settling an unconfirmed submission in the dashboard', () => {
         assist_blockers: JSON.stringify([BLOCKER]),
       });
     }
-    browser = await launchBrowser();
+    browser = await launchOrSkip(launchBrowser);
   }, 60_000);
   afterAll(async () => { await browser?.close(); await dash?.stop(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   const panel = (page) => page.evaluate(() => ({
     attention: document.querySelector('[data-section="attention"]')?.innerText ?? '',

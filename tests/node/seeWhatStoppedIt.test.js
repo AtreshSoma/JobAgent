@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 describe('See what stopped it', () => {
   let dash;
@@ -22,9 +23,10 @@ describe('See what stopped it', () => {
       sponsorship: 'Unconfirmed', status: 'assist_blocked', jd_text: 'Build pipelines. '.repeat(40),
       assist_blockers: JSON.stringify(['resume: upload input not found (input[type="file"])']),
     });
-    browser = await launchBrowser();
+    browser = await launchOrSkip(launchBrowser);
   }, 60_000);
   afterAll(async () => { await browser?.close(); await dash?.stop(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   for (const [label, viewport] of [['desktop rail', { width: 1440, height: 900 }], ['phone sheet', { width: 390, height: 844 }]]) {
     it(`reveals the reason and focuses the retry (${label})`, async () => {

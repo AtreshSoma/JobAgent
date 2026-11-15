@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { chooseFileInput, classifyFileInput, uploadFiles } from '../../src/automation/uploadRunner.js';
 import { descriptor as greenhouse } from '../../src/apply/platforms/greenhouse.js';
 import { descriptor as generic } from '../../src/apply/platforms/generic.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const FIXTURES = join(process.cwd(), 'tests', 'node', 'fixtures');
 const RESUME = join(FIXTURES, 'sample_resume.txt');
@@ -42,8 +43,9 @@ describe('classifyFileInput', () => {
 
 describe('uploads against real markup', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   async function attached(page) {
     return page.evaluate(() => Object.fromEntries(

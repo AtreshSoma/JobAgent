@@ -15,6 +15,7 @@ import {
   applyValue, fillScannedFields, isSensitiveChoiceLabel, matchOption, sponsorshipChoiceConflict,
 } from '../../src/automation/fieldFiller.js';
 import { mapToChoice } from '../../src/apply/screeningQA.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const SPONSOR_Q = 'Will you now or in the future require sponsorship for employment visa status?';
 
@@ -128,8 +129,9 @@ describe('read-back contradiction check', () => {
 
 describe('read-back against a live DOM', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('clears a select whose widget committed the opposite answer', async () => {
     const page = await browser.newPage();

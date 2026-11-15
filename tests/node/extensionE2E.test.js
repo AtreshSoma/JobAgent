@@ -2,11 +2,13 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { chromium } from 'playwright';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 describe('Chromium extension assisted-fill E2E', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('fills approved truthful fields while leaving demographics, attestations, and submit untouched', async () => {
     const page = await browser.newPage();
