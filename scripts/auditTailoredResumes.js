@@ -79,7 +79,6 @@ export async function auditTailoredResumes({
         config,
         options: {
           exportPdf: false,
-          addSummaryLine: config.runtime?.resumeFocusLine === true,
           outputDir: join(reportDir, safeName(`${job.company}-${job.title}`)),
           outputFilename: 'Tailored_Resume_Audit.docx',
         },

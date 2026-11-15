@@ -3234,7 +3234,6 @@ export function buildDocuments(db, {
         tailoring: tailoring ? {
           changes,
           gaps,
-          summaryLine: tailoring.summaryLine ?? null,
           changeCount: changes.length,
           gapCount: gaps.length,
           pageCount: tailoring.pageCount ?? null,

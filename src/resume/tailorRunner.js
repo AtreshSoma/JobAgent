@@ -135,7 +135,6 @@ export function pageBudget(value) {
  * @param {object} args.config loadConfig bundle (uses config.root, humanizerPatterns)
  * @param {object} [args.options]
  * @param {boolean} [args.options.exportPdf=false] also export a PDF (best-effort)
- * @param {boolean} [args.options.addSummaryLine=false]
  * @param {boolean} [args.options.enableRewrites=false] recorded but intentionally disabled by Python
  * @param {object} [args.deps]
  * @param {Function} [args.deps.spawnImpl] override child_process.spawn (testing)
@@ -143,7 +142,7 @@ export function pageBudget(value) {
  * @param {number} [args.deps.timeoutMs=60000]
  * @returns {Promise<{
  *   tailored: boolean, output_path: string, pdf_path: string|null,
- *   audit: object|null, emphasized: number|null, summaryLine: string|null,
+ *   audit: object|null, emphasized: number|null,
  *   warning: string|null, usedFallback: boolean
  * }>}
  */
@@ -158,7 +157,6 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     pdfWarning: null,
     audit: null,
     emphasized: null,
-    summaryLine: null,
     changes: [],
     gaps: [],
     qualifications: {},
@@ -232,7 +230,6 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     evidence_aliases: config.scoring?.evidenceAliases ?? {},
     ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
-    add_summary_line: options.addSummaryLine === true,
     enable_rewrites: options.enableRewrites === true,
     // RESUME_PDF_ENGINE=chromium: no Word/LibreOffice attempt; Chromium below.
     export_pdf: options.exportPdf === true && pdfEngine(deps.env ?? process.env) !== 'chromium',
@@ -309,9 +306,8 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
       : null,
     audit: response.audit ?? null,
     emphasized: response.emphasized ?? null,
-    summaryLine: response.summary_line ?? null,
     // Structured, evidence-backed record of every tailoring action (skill
-    // reorders with before/after, emphasis evidence, focus line) plus the JD
+    // reorders with before/after, emphasis evidence) plus the JD
     // requirements the resume does NOT support (reported, never inserted).
     changes: response.changes ?? [],
     gaps: response.gaps ?? [],

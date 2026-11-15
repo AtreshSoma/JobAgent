@@ -11,7 +11,6 @@ Request (stdin JSON):
       "output_dir": "resumes/output",
       "job": {"company": "...", "title": "...", "jd_text": "..."},
       "keywords": ["azure", "databricks", ...],
-      "add_summary_line": true,
       "export_pdf": false
     }
 
@@ -22,7 +21,6 @@ Response (stdout JSON):
       "pdf_path": null,
       "audit": {"present": [...], "missing": [...]},
       "emphasized": 3,
-      "summary_line": "Relevant strengths for this role: ...",
       "error": null
     }
 
@@ -84,7 +82,6 @@ def _run(request: dict) -> dict:
     vocabulary = request.get("vocabulary") or []
     evidence_aliases = request.get("evidence_aliases") or {}
     ats_config = request.get("ats_config") or {}
-    add_summary_line = bool(request.get("add_summary_line", False))
     export_pdf = bool(request.get("export_pdf", False))
 
     if not master_path:
@@ -98,7 +95,6 @@ def _run(request: dict) -> dict:
         job,
         keywords,
         request.get("patterns") or {},
-        add_summary_line=add_summary_line,
         max_pages=int(request.get("max_pages") if request.get("max_pages") is not None else 2),
         required_markers=ats_config.get("requiredMarkers"),
         preferred_markers=ats_config.get("preferredMarkers"),
@@ -166,7 +162,6 @@ def _run(request: dict) -> dict:
         "page_count": page_count,
         "audit": result.get("audit"),
         "emphasized": result.get("emphasized"),
-        "summary_line": result.get("summary_line"),
         "changes": result.get("changes", []),
         "gaps": result.get("gaps", []),
         "qualifications": result.get("qualifications", {}),

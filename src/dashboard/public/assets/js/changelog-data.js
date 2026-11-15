@@ -25,6 +25,7 @@ export const CHANGELOG = Object.freeze([
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       improved: [
+        'The optional "Most relevant to this role" line is gone. A tailored resume holds only lines from your master resume, and Compare with master flags any line that is not.',
         'Setup is one line at the top of the page: Finish setup to apply, how much is done, and Continue setup. It stays closed or open as you left it, and the job list is always on the first screen.',
         'Open setup to see Contact, Work authorization and sponsorship, Experience and Screening answers, each item once. Each button opens the box that fixes it.',
         'Before your first search, Next says Run your first search instead of saying nothing new was found in the last 24 hours.',

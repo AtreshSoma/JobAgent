@@ -19,23 +19,22 @@ Tailoring actions (all honest, content-preserving):
      is bracket-aware, so a qualified skill like
      "Dimensional Modeling (Kimball, Inmon)" moves as ONE item. Pure permutation
      of existing items — nothing is added, removed, or reworded.
-  5. Optionally insert a "most relevant to this role" line built ONLY from
-     keywords that are both requested by the job AND already present in the
-     resume. It is anchored just above the CORE COMPETENCIES / PROFESSIONAL
-     SUMMARY heading so ATS parsers see the job's own terminology up top.
-  6. Flatten layout tables into single-column paragraphs in the generated copy,
+  5. Flatten layout tables into single-column paragraphs in the generated copy,
      preserving their exact text/runs so ATS parsers read content in order.
-  7. Repair layout artifacts: manual page breaks (which freeze pagination and
+  6. Repair layout artifacts: manual page breaks (which freeze pagination and
      leave half-empty pages), role blocks a previous pass folded into one
      paragraph (which cost the first bullet of every role its formatting),
      runs of blank filler, and `mailto:` prefixes left in visible text. These
      arrive from OUTSIDE too — a tailored copy saved back over the master
      carries them into every later run — so they are cleaned on the way in.
-  8. Fit the result to a page budget (2 pages by default) by OMITTING whole
+  7. Fit the result to a page budget (2 pages by default) by OMITTING whole
      low-relevance bullets from the oldest roles, worst-first, never dropping a
      role, heading, date, or a role's last bullet, and never shortening or
      rewording anything. Omissions are listed in `changes` for review.
-  9. Save the result to a per-job .docx in the job's output folder.
+  8. Save the result to a per-job .docx in the job's output folder.
+
+Nothing is ever added: the optional "Most relevant to this role" line was
+removed (audit R9), because it was text the master never contained.
 
 Free-form rewriting is intentionally disabled. Without a claim-level evidence
 map, even plausible wording changes can silently invent scope, ownership,
@@ -66,7 +65,6 @@ from typing import Any, Dict, Iterable, List, Sequence
 from docx.enum.text import WD_TAB_ALIGNMENT
 
 import evidence
-from humanizer import humanize
 from jdKeywords import classify_qualification_keywords
 from keywordAudit import read_docx_text
 
@@ -209,25 +207,6 @@ def _iter_all_paragraphs(document):
 #: human reviewer's eye to a handful of decisive matches. Past this, bolding
 #: stops meaning anything and the page reads as keyword-stuffed.
 _MAX_EMPHASIZED_TERMS = 12
-
-#: Most terms named in the single "Most relevant to this role" line.
-#:
-#: REGRESSION GUARD. This line had no cap at all. Verified against a real,
-#: buzzword-dense JD (a role that legitimately touched every configured
-#: keyword category at once): the generated line named 31 terms in one
-#: sentence — "Most relevant to this role: data engineer, senior data
-#: engineer, azure, microsoft fabric, fabric, adf, synapse, databricks..." —
-#: which reads as a keyword dump, not a highlight, to any human reviewer.
-#:
-#: This is deliberately much smaller than _MAX_EMPHASIZED_TERMS: bolding is
-#: distributed across a whole two-page document and stays absorbable at 12,
-#: but this list sits in ONE sentence, so it needs to read like something a
-#: person would actually write. It costs nothing for ATS keyword coverage —
-#: every term still appears verbatim in the resume's actual content (that is
-#: WHY it was eligible for "present" in the first place); this line is a
-#: human-facing highlight, not the mechanism that gets a term recognized.
-_MAX_FOCUS_LINE_TERMS = 6
-
 
 def _merge_spans(spans: Sequence[tuple]) -> List[tuple]:
     """Merge overlapping/adjacent (start, end) ranges, left to right."""
@@ -706,18 +685,10 @@ def _parse_competency_line(text: str) -> tuple | None:
 def _is_competency_paragraph(paragraph) -> bool:
     """Structural test for a skills line, independent of document position.
 
-    Position-independent on purpose: inserting the focus line shifts paragraph
-    indexes, and the content-unit invariant must classify a line identically
-    before and after tailoring.
-
-    The generated focus line ("Most relevant to this role: a, b, c") is itself
-    shaped like a competency list, so it is excluded explicitly — the invariant
-    accounts for it as a whole inserted paragraph, and decomposing it here would
-    make the before/after unit counts disagree.
+    Position-independent on purpose: the content-unit invariant must classify a
+    line identically before and after tailoring, wherever reordering moved it.
     """
     if _is_bullet(paragraph):
-        return False
-    if _norm_heading(paragraph.text).startswith("most relevant to this role:"):
         return False
     return _parse_competency_line(paragraph.text) is not None
 
@@ -1602,12 +1573,6 @@ def _protect_headings(document) -> Dict[str, Any] | None:
     }
 
 
-# Headings we prefer to anchor the per-job focus line above (in priority order).
-# Placed just before the first match so the job's own terminology sits near the
-# top of the resume, where ATS keyword parsers weigh it most.
-_FOCUS_ANCHORS = ("core competencies", "professional summary", "professional experience")
-
-
 def _norm_heading(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
@@ -1657,14 +1622,11 @@ def _is_bullet(paragraph) -> bool:
 
 
 def _nonempty_runs(paragraphs: Sequence[Any]) -> List[List[Any]]:
-    """Return movable paragraph groups without moving spacers/focus lines."""
+    """Return movable paragraph groups without moving blank spacers."""
     groups: List[List[Any]] = []
     current: List[Any] = []
     for paragraph in paragraphs:
-        is_focus_line = _norm_heading(paragraph.text).startswith(
-            "most relevant to this role:"
-        )
-        if (paragraph.text or "").strip() and not is_focus_line:
+        if (paragraph.text or "").strip():
             current.append(paragraph)
         elif current:
             groups.append(current)
@@ -1812,91 +1774,6 @@ def _prioritize_existing_content(
                 changes.append(change)
 
     return changes, selected, movable_nodes
-
-
-def _collapse_alias_duplicates(
-    ranked: Sequence[str], evidence_aliases: Dict[str, Any] | None
-) -> List[str]:
-    """Keep only the first (highest-ranked) term from each alias group.
-
-    Verified on a real dense JD: "fabric" and "microsoft fabric" — configured
-    as each other's alias in scoring.json — both matched and both ranked near
-    the top, so a naive top-N selection put them side by side in the same
-    sentence ("...microsoft fabric, fabric, and adf"). That reads as a typo to
-    a human, not a highlight. Since they mean the same thing, only the
-    highest-ranked one needs to be said once.
-    """
-    aliases = evidence_aliases or {}
-    kept: List[str] = []
-    kept_keys: set = set()
-    for term in ranked:
-        key = re.sub(r"\s+", " ", str(term).lower()).strip()
-        if key in kept_keys:
-            continue
-        related = {
-            re.sub(r"\s+", " ", str(a).lower()).strip() for a in (aliases.get(key) or [])
-        }
-        if related & kept_keys:
-            continue
-        kept.append(term)
-        kept_keys.add(key)
-    return kept
-
-
-def _join_naturally(items: Sequence[str]) -> str:
-    """Join like a person would write it: "a", "a and b", "a, b, and c"."""
-    items = list(items)
-    if len(items) <= 1:
-        return "".join(items)
-    if len(items) == 2:
-        return f"{items[0]} and {items[1]}"
-    return f"{', '.join(items[:-1])}, and {items[-1]}"
-
-
-def _insert_focus_line(
-    document, present: List[str], patterns: Dict[str, Any] | None
-) -> tuple[str, bool]:
-    """Insert a per-job focus line built only from ``present`` keywords.
-
-    ``present`` is already ranked most-decisive-first and capped by the caller
-    (see ``_MAX_FOCUS_LINE_TERMS``) — this function only renders it, so it
-    never has to decide what to drop.
-
-    The line is anchored above the first matching heading in ``_FOCUS_ANCHORS``
-    (falling back to the top of the document). Returns ``(text, inserted)``.
-    An existing focus line is reused to prevent duplicate content.
-    """
-    label = "Most relevant to this role"
-    text = humanize(f"{label}: {_join_naturally(present)}.", patterns or {})
-
-    for paragraph in document.paragraphs:
-        if _norm_heading(paragraph.text).startswith(_norm_heading(label) + ":"):
-            return paragraph.text, False
-
-    anchor = None
-    for para in document.paragraphs:
-        if _norm_heading(para.text) in _FOCUS_ANCHORS:
-            anchor = para
-            break
-
-    if anchor is not None:
-        new_para = anchor.insert_paragraph_before()
-    elif document.paragraphs:
-        new_para = document.paragraphs[0].insert_paragraph_before()
-    else:
-        new_para = document.add_paragraph()
-
-    # Bold the label, italicize the keyword list, so it reads as a deliberate
-    # tailoring cue rather than body copy.
-    head, sep, rest = text.partition(":")
-    if sep:
-        run_label = new_para.add_run(head + ":")
-        run_label.bold = True
-        run_kw = new_para.add_run(rest)
-        run_kw.italic = True
-    else:
-        new_para.add_run(text).italic = True
-    return text, True
 
 
 def _evidence_terms(
@@ -2098,12 +1975,9 @@ def _verify_truth_invariants(
     source_nodes: Sequence[Any],
     source_styles: Dict[Any, str],
     movable_nodes: set,
-    inserted_focus_text: str | None,
 ) -> Dict[str, Any]:
     """Fail closed if tailoring changed claims, role scope, or formatting."""
     expected_units = Counter(source_units)
-    if inserted_focus_text:
-        expected_units[f"paragraph:{inserted_focus_text}"] += 1
     actual_units = Counter(_content_units(document))
     text_units_preserved = actual_units == expected_units
 
@@ -2499,7 +2373,6 @@ def tailor_resume(
     patterns: Dict[str, Any] | None = None,
     *,
     max_pages: int = 2,
-    add_summary_line: bool = False,
     required_markers: Iterable[str] | None = None,
     preferred_markers: Iterable[str] | None = None,
     evidence_aliases: Dict[str, Sequence[str]] | None = None,
@@ -2603,8 +2476,6 @@ def tailor_resume(
             "source": "master_resume",
         })
 
-    summary_line = None
-    focus_line_inserted = False
     limitations = [
         (
             f"{len([c for c in rewrite_changes if c['type'] == 'rewrite'])} bullet(s) use a rewording you "
@@ -2631,63 +2502,6 @@ def tailor_resume(
             "single-column ATS-safe layout without changing their words."
         ),
     ]
-    if add_summary_line and audit["present"]:
-        indexed_present = list(enumerate(audit["present"]))
-        ranked_present = [
-            keyword for _index, keyword in sorted(
-                indexed_present,
-                key=lambda pair: (
-                    -_QUALIFICATION_WEIGHT.get(
-                        qualification_details.get(
-                            re.sub(r"\s+", " ", str(pair[1]).lower()).strip(), {}
-                        ).get("classification", "unclassified"),
-                        1,
-                    ),
-                    pair[0],
-                ),
-            )
-        ]
-        # Collapse alias-equivalent terms (e.g. "fabric"/"microsoft fabric")
-        # BEFORE capping, so the limited slots aren't spent twice on the same
-        # skill, then cap AFTER ranking so a long list still surfaces its most
-        # decisive (required-first) terms rather than an arbitrary prefix. The
-        # audit evidence below is built from this same list, so what a
-        # reviewer sees in `changes` always matches what the line actually says.
-        ranked_present = _collapse_alias_duplicates(ranked_present, evidence_aliases)
-        ranked_present = ranked_present[:_MAX_FOCUS_LINE_TERMS]
-        summary_line, focus_line_inserted = _insert_focus_line(
-            document, ranked_present, patterns
-        )
-        if focus_line_inserted:
-            focus_evidence = []
-            for keyword in ranked_present:
-                key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
-                detail = qualification_details.get(key, {})
-                focus_evidence.append({
-                    "keyword": keyword,
-                    "qualification": detail.get("classification", "unclassified"),
-                    "master_resume_evidence": _resume_evidence(
-                        resume_text, str(keyword), evidence_aliases
-                    ),
-                    "jd_evidence": detail.get("jd_evidence", []),
-                })
-            changes.append({
-                "type": "focus_line",
-                "where": "above the first recognized resume section",
-                "before": "",
-                "after": summary_line,
-                "evidence": focus_evidence,
-                "reason": (
-                    "surfaces only terms already evidenced in the master resume, with "
-                    "required terms listed first"
-                ),
-                "source": "master_resume",
-            })
-        else:
-            limitations.append(
-                "An existing 'Most relevant to this role' line was reused; a duplicate was not inserted."
-            )
-
     # Requirements the resume does NOT evidence. Reported, never inserted.
     gaps = []
     has_jd_text = bool((job.get("jd_text") or "").strip())
@@ -2738,7 +2552,6 @@ def tailor_resume(
         source_nodes=source_nodes,
         source_styles=source_styles,
         movable_nodes=movable_nodes,
-        inserted_focus_text=summary_line if focus_line_inserted else None,
     )
 
     table_change = _flatten_tables_for_ats(document)
@@ -2805,7 +2618,6 @@ def tailor_resume(
         "audit": audit,
         "qualifications": qualifications,
         "emphasized": emphasized,
-        "summary_line": summary_line,
         "changes": changes,
         "gaps": gaps,
         "selected_content": selected_content,

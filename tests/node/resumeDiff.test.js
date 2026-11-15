@@ -46,8 +46,9 @@ describe('diffResume', () => {
     expect(r.summary.moved).toBe(1);
     expect(by['Maintained the team wiki.'].status).toBe('omitted');
     expect(by['Maintained the team wiki.'].flags).toEqual([]); // declared, unmeasured, unmatched
-    expect(by['Most relevant to this role: SQL, Python'].flags).toEqual(['focus line']);
-    expect(r.flagged).toHaveLength(0);
+    // The tailor adds nothing, so an added line (here, an old focus line) is flagged.
+    expect(by['Most relevant to this role: SQL, Python'].flags).toEqual(['not in master']);
+    expect(r.flagged.map((row) => row.text)).toEqual(['Most relevant to this role: SQL, Python']);
   });
 
   it('flags a left-out measured result and anything missing without a reason', () => {

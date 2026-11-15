@@ -783,13 +783,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     // prefer PDF). Best-effort: requires Word/docx2pdf, falls back silently.
     // outputDir/outputFilename route the tailored docx straight into the
     // professional job folder with a clean, candidate-named filename.
-    // The per-job "Most relevant to this role" focus line is OFF by default
-    // (it read awkwardly near the header); opt back in with
-    // config.runtime.resumeFocusLine === true.
     const tailored = await tailorFn({
       job, score, config,
       options: {
-        addSummaryLine: config?.runtime?.resumeFocusLine === true,
         exportPdf: config?.runtime?.resumeExportPdf !== false,
         outputDir: outPaths.folder,
         outputFilename: `${outPaths.resumeBase}.docx`,
@@ -814,7 +810,6 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
       ? {
           changes: tailored.changes ?? [],
           gaps: tailored.gaps ?? [],
-          summaryLine: tailored.summaryLine ?? null,
           qualifications: tailored.qualifications ?? {},
           selectedContent: tailored.selectedContent ?? {},
           rewritePolicy: tailored.rewritePolicy ?? null,

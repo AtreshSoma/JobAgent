@@ -79,7 +79,7 @@ describe('tailorResumeForJob', () => {
         setImmediate(() => {
           child.stdout.emit('data', Buffer.from(JSON.stringify({
             ok: true, output_path: outputPath, pdf_path: null,
-            audit: { emphasized: ['spark'] }, emphasized: 1, summary_line: 'Tailored for Acme',
+            audit: { emphasized: ['spark'] }, emphasized: 1,
             ats_report: { match_score: 78, band: 'strong', tier1: { missing: [] } },
           }) + '\n'));
           child.emit('close', 0);
@@ -107,7 +107,6 @@ describe('tailorResumeForJob', () => {
     expect(r.tailored).toBe(true);
     expect(r.usedFallback).toBe(false);
     expect(r.output_path).toBe(outputPath);
-    expect(r.summaryLine).toBe('Tailored for Acme');
     expect(r.warning).toBe(null);
     // The ATS report flows through to the caller.
     expect(r.atsReport).toMatchObject({ match_score: 78, band: 'strong' });

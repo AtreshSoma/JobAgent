@@ -98,8 +98,8 @@ packet said `resumeTailored: true`, so the problem was invisible.
 - [ ] **Order summary sentences** the same way, moving sentences intact.
 - [ ] **Order skill categories,** not only the skills inside each category, so
       the category that matches the job comes first.
-- [ ] **Turn the "Most relevant to this role" line on by default** once P0 lands,
-      since it only uses terms that are both requested and already present.
+- [x] ~~Turn the "Most relevant to this role" line on by default.~~ Removed
+      instead (audit R9, 2026-11): it was text the master never contained.
 - [ ] **Report gaps by importance:** a missing *required* skill first, with the
       line in the posting that asks for it.
 
