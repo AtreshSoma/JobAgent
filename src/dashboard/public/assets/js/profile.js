@@ -794,6 +794,7 @@ export async function openHealth() {
     c.fix ?? '—',
   ])));
   await renderCoverage(body);
+  renderExtensionPairing(body);
   await renderBackups(body);
   await renderLlmUsage(body);
 }
@@ -818,6 +819,28 @@ export async function renderCoverage(host) {
     ])));
   }
   section.append(el('p', { class: 'muted fineprint', text: table.basis }));
+  host.append(section);
+}
+
+/**
+ * Pair the browser extension (audit A12): a short code to type into the
+ * extension's settings page, instead of copying a key from .env.
+ */
+export function renderExtensionPairing(host) {
+  const section = el('section', { class: 'pairing', 'aria-labelledby': 'pairingTitle' });
+  section.append(el('h3', { id: 'pairingTitle', text: 'Browser extension' }));
+  const out = el('p', { class: 'pairing-code', role: 'status', 'aria-live': 'polite' });
+  const button = el('button', { type: 'button', class: 'small', text: 'Pair the extension' });
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const { code, expiresAt } = await postJson('/api/extension-pairing', {});
+      const minutes = Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60000));
+      out.replaceChildren(el('b', { class: 'code', text: code }),
+        el('span', { class: 'muted', text: ` Type this into the extension's settings page within ${minutes} minutes. It works once.` }));
+    } catch (err) { out.textContent = err.message; } finally { button.disabled = false; }
+  });
+  section.append(el('p', { class: 'muted', text: 'Open the extension\'s settings page, then show a code here and type it in. No key to copy.' }), button, out);
   host.append(section);
 }
 

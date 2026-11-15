@@ -4,10 +4,16 @@
   <h1>Connection settings</h1>
   <p class="muted">The dashboard must be running locally. The key stays in Chromium extension storage.</p>
   <label>Local server<input id="serverUrl" value="http://127.0.0.1:4646" spellcheck="false"></label>
+  <h2>Pair with the dashboard</h2>
+  <p class="muted">In the dashboard, open System health, choose Pair the extension, and type the code it shows.</p>
+  <label>Pairing code<input id="code" autocomplete="off" spellcheck="false" placeholder="ABCD-2345" maxlength="9"></label>
+  <button id="pair">Pair</button>
+  <details><summary>Or paste the key by hand</summary>
   <label>Extension key<input id="key" type="password" autocomplete="off" minlength="32"></label>
-  <button id="save">Save and test</button>
+  <button id="save">Save and test</button></details>
   <div id="status" role="status"></div>
   <h2>Safety model</h2>
   <ul><li>Only the active tab is accessed after you click Fill.</li><li>Only human-approved packets are returned.</li><li>Passwords, CAPTCHAs, demographic questions, attestations, and submit buttons are never filled or clicked.</li></ul>
+  <script src="pairing.js"></script>
   <script src="options.js"></script>
 </main></body></html>

@@ -86,6 +86,11 @@ export async function handleSystemRoutes(ctx, req, res, { path }) {
     const root = ctx.config?.root;
     return sendJson(res, 200, coverageTable(root ? readCoverage(root) : []));
   }
+  // A code to pair the browser extension with this dashboard (audit A12).
+  if (req.method === 'POST' && path === '/api/extension-pairing') {
+    try { ctx.extensionKeyForPairing(); } catch (err) { return sendJson(res, 409, { error: err.message }); }
+    return sendJson(res, 200, ctx.pairing.issue());
+  }
   if (req.method === 'GET' && path === '/api/export/jobs.csv') {
     const csv = exportRowsToCsv(buildExportRows(ctx.db, { now: ctx.nowDate() }));
     res.writeHead(200, {

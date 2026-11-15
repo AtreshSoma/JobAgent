@@ -30,7 +30,8 @@ async function fill(page, html) {
   });
   await page.setContent(`<style>input,select,button,div[role]{display:block;width:240px;min-height:28px;margin:8px}</style>
     <form id="application">${html}<button type="submit">Submit application</button></form>`);
-  await page.addScriptTag({ path: resolve('extension/content.js') });
+  await page.addScriptTag({ path: resolve('extension/fieldLabels.js') });
+    await page.addScriptTag({ path: resolve('extension/content.js') });
   return page.evaluate((payload) => new Promise((done) => {
     globalThis.__jobAgentListener({ type: 'JOB_AGENT_FILL', payload, connection: { trustedHost: true } }, null, done);
   }), PAYLOAD);

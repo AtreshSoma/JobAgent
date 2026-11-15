@@ -72,7 +72,7 @@ $('fill').addEventListener('click', async () => {
     });
     const targets = selectFillFrames(probed, { expectedHost: expected, pageHost: actual });
     if (!targets.length) throw new Error('No frame on this page belongs to the application.');
-    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: targets }, files: ['content.js'] });
+    await chrome.scripting.executeScript({ target: { tabId: tab.id, frameIds: targets }, files: ['fieldLabels.js', 'content.js'] });
     const results = [];
     for (const frameId of targets) {
       try {

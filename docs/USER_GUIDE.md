@@ -471,7 +471,7 @@ The unpacked Manifest V3 extension in `extension/` moves an approved job from it
 |:--:|---|
 | **1** | Start the dashboard with `npm run dashboard` |
 | **2** | Open `chrome://extensions` or `edge://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this repository's `extension` folder |
-| **3** | Open the extension's **Connection settings**. Keep the server at `http://127.0.0.1:4646` and paste the value of `JOB_AGENT_EXTENSION_KEY` from your local `.env` |
+| **3** | Open the extension's **Connection settings**. Keep the server at `http://127.0.0.1:4646`. In the dashboard open **System health → Pair the extension**, then type the code it shows into **Pairing code** and press **Pair**. The code works once and lasts five minutes. (Pasting a key by hand still works, under "Or paste the key by hand".) |
 | **4** | Prepare and approve a job in the UI, select its row, and click the extension. The selected ID transfers automatically through the dashboard URL, so there is nothing to copy and paste |
 | **5** | Choose **Open application**. On LinkedIn, Indeed, or an employer job page, choose **Start / fill application**. It starts the application when it needs to, or fills the visible form step and attaches the approved resume. Review it, continue, and run it again on later ATS steps |
 

@@ -109,6 +109,7 @@ import { openDatabase } from '../logging/db.js';
 import { seedJobsInto } from '../profile/seed.js';
 import { deriveFromProfile } from '../profile/derive.js';
 import { LOOPBACK_HOSTNAMES, MAX_MASTER_RESUME_BYTES, acceptsGzip, batchJobIds, isAllowedOrigin, sendJson } from './httpHelpers.js';
+import { createPairing, ensureExtensionKey } from '../extension/pairing.js';
 import { handleExtensionRoutes } from './routes/extensionRoutes.js';
 import { handleBoardRoutes } from './routes/boardRoutes.js';
 import { handleMasterResumeRoutes } from './routes/masterResumeRoutes.js';
@@ -308,7 +309,29 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
       if (handle !== bootDb) { try { handle.close(); } catch { /* best effort on shutdown */ } }
     }
   }
-  const extensionKey = deps.extensionKey ?? process.env.JOB_AGENT_EXTENSION_KEY ?? '';
+  // The extension key: from the environment, else the one kept in data/ (made
+  // when the person first shows a pairing code; audit A12).
+  const envExtensionKey = deps.extensionKey ?? process.env.JOB_AGENT_EXTENSION_KEY ?? '';
+  let keptExtensionKey = '';
+  const pairing = createPairing();
+  function currentExtensionKey() {
+    if (envExtensionKey) return envExtensionKey;
+    if (!keptExtensionKey && config?.root) {
+      try {
+        const kept = readFileSync(join(workspacePaths(config.root).dataDir, 'extension_key'), 'utf8').trim();
+        if (kept.length >= 32) keptExtensionKey = kept;
+      } catch { /* not paired yet */ }
+    }
+    return keptExtensionKey;
+  }
+  /** The key a pairing code hands out; made now when there is none. */
+  function extensionKeyForPairing() {
+    const existing = currentExtensionKey();
+    if (existing) return existing;
+    if (!config?.root) throw new Error('This dashboard was started without a project root, so it cannot keep an extension key.');
+    keptExtensionKey = ensureExtensionKey(config.root);
+    return keptExtensionKey;
+  }
   // Each run gets its OWN JobLogger (`runDeps.logger`, see startRun). Passing
   // the dashboard SESSION's logger made the pipeline's endRun() write every
   // run's counters to the session's run id — which upserted a mode='unknown'
@@ -2075,7 +2098,9 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     get deps() { return deps; },
     get enrichment() { return enrichment; },
     get enrichmentStatus() { return enrichmentStatus; },
-    get extensionKey() { return extensionKey; },
+    get extensionKey() { return currentExtensionKey(); },
+    get pairing() { return pairing; },
+    extensionKeyForPairing,
     get flushTracker() { return flushTracker; },
     get healthReport() { return healthReport; },
     get isSubmittedOrUnverified() { return isSubmittedOrUnverified; },

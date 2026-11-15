@@ -355,7 +355,7 @@ sequenceDiagram
     end
 ```
 
-The **Chrome / Edge extension** (unpacked Manifest V3, in [`extension/`](extension/)) does the same inside your normal signed-in browser profile. Load it from `chrome://extensions` or `edge://extensions` with **Developer mode → Load unpacked**, then paste `JOB_AGENT_EXTENSION_KEY` from your `.env` into its Connection settings. It uses only `activeTab`, talks only to the loopback dashboard, and never fills passwords, CAPTCHAs, legal attestations, or work-authorization questions. See the [setup steps](docs/USER_GUIDE.md#-chrome--edge-extension).
+The **Chrome / Edge extension** (unpacked Manifest V3, in [`extension/`](extension/)) does the same inside your normal signed-in browser profile. Load it from `chrome://extensions` or `edge://extensions` with **Developer mode → Load unpacked**, then pair it with the code the dashboard shows (System health → Pair the extension) in its Connection settings. It uses only `activeTab`, talks only to the loopback dashboard, and never fills passwords, CAPTCHAs, legal attestations, or work-authorization questions. See the [setup steps](docs/USER_GUIDE.md#-chrome--edge-extension).
 
 ## 👤 Search profiles
 

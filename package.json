@@ -40,6 +40,7 @@
     "cleanup-outputs": "node scripts/cleanupGeneratedOutputs.js",
     "audit:resumes": "node scripts/auditTailoredResumes.js --limit=3",
     "coverage:probe": "node scripts/coverageProbe.mjs",
+    "sync:extension": "node scripts/syncExtension.mjs",
     "verify": "node scripts/verifyRepoHealth.js",
     "lint": "node scripts/lint.mjs",
     "typecheck": "tsc -p jsconfig.json",
