@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 
 import { extractDocxText } from './docxText.js';
+import { normalize, shows } from './evidence.js';
 import { masterResumeFile } from '../profile/workspace.js';
 
 /** Longest quote kept per line. */
@@ -19,33 +20,32 @@ const MAX_QUOTE = 200;
 /** Lines kept per skill. */
 const MAX_LINES = 2;
 
-const escapeRe = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** A whole-word, case-insensitive matcher for a skill ("C++", "Node.js", "SQL"). */
-function termPattern(term) {
-  const t = String(term ?? '').trim();
-  if (!t) return null;
-  return new RegExp(`(?:^|[^a-z0-9+#])${escapeRe(t)}(?![a-z0-9+#])`, 'i');
-}
-
 /**
  * The master resume's lines that mention each term.
  *
+ * Asked of the one evidence check (src/resume/evidence.js, audit R13), so a
+ * skill shown here is exactly a skill the score and the packet do not list as
+ * a gap: same rules, same lines, same aliases. Short lines count too ("Tools:
+ * Excel"); longer ones are quoted first.
+ *
  * @param {string[]} terms skills the posting asks for
  * @param {string[]} lines the master resume, one paragraph per entry
+ * @param {{aliases?: Record<string, string[]>, vocabulary?: string[]}} [options]
  * @returns {Array<{term: string, lines: string[]}>} in the order given; empty `lines` = not evidenced
  */
-export function evidenceFor(terms = [], lines = []) {
-  const usable = lines.map((l) => String(l ?? '').trim()).filter((l) => l.length >= 12);
+export function evidenceFor(terms = [], lines = [], { aliases = {}, vocabulary = [] } = {}) {
+  const usable = lines.map((l) => String(l ?? '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+  const aliasMap = new Map(Object.entries(aliases ?? {}).map(([k, v]) => [normalize(k), Array.isArray(v) ? v : []]));
   const out = [];
   const seen = new Set();
   for (const term of terms) {
     const key = String(term ?? '').trim().toLowerCase();
     if (!key || seen.has(key)) continue;
     seen.add(key);
-    const re = termPattern(term);
+    const candidates = [term, ...(aliasMap.get(normalize(term)) ?? [])];
     // Bullets (longer, specific) before headings and skill lists.
-    const hits = usable.filter((l) => re.test(l)).sort((a, b) => b.length - a.length).slice(0, MAX_LINES)
+    const hits = usable.filter((l) => candidates.some((c) => shows(c, l, { vocabulary })))
+      .sort((a, b) => b.length - a.length).slice(0, MAX_LINES)
       .map((l) => (l.length > MAX_QUOTE ? `${l.slice(0, MAX_QUOTE - 1)}…` : l));
     out.push({ term: String(term).trim(), lines: hits });
   }

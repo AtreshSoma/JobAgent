@@ -17,6 +17,7 @@ Your name and contact details stay on your computer, and what JobAgent says abou
 
 ### Fixes
 
+- A job's score and its prepared packet list the same missing skills. Both now check your master resume the same way; the score used to check your profile with a looser match, so "java" counted for JavaScript.
 - When one tailoring step fails its checks, only that step is left out and the review says which. Before, the whole tailoring was dropped and the job used your untailored resume.
 - Bold in a tailored resume goes only on your summary, skills and bullets, never on your name, a heading or a job title line, and a skill Word had stored in two pieces is now found and bolded.
 - Bullets typed by hand with -, –, *, ●, ■ or ➢ are bullets: they are reordered and fitted like list bullets, and one that mentions a date is no longer read as a job.

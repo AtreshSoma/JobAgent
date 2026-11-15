@@ -50,6 +50,7 @@ import { extractHiddenClauses } from '../scoring/hiddenClauses.js';
 import { applicationAccess, openQuestionsFor, signInGroups } from '../apply/autofillReadiness.js';
 import { loadQuestionQueue } from '../apply/questionQueue.js';
 import { evidenceFor, masterResumeLines } from '../resume/evidenceMap.js';
+import { scoringVocabulary } from '../scoring/scorer.js';
 import { employerHistory } from './employerHistory.js';
 import { preferenceProposals } from './preferenceProposals.js';
 
@@ -1855,7 +1856,10 @@ export function jobDetail(db, jobId, deps = {}) {
       if (!root) return null;
       const lines = masterResumeLines(root);
       if (!lines.length) return null;
-      return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines);
+      const scoring = deps.config?.scoring ?? {};
+      return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines, {
+        aliases: scoring.evidenceAliases ?? {}, vocabulary: scoringVocabulary(scoring),
+      });
     })(),
     openQuestions: (() => {
       const root = deps.root ?? deps.config?.root ?? null;

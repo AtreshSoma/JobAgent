@@ -18,6 +18,7 @@ import { excludedLocationMatch, postedPay, usdPayPreference } from './searchCons
 import { seniorityRank } from '../profile/roleFamilies.js';
 import { matchedTitlePhrases } from './titleMatch.js';
 import { assessEligibility, eligibilityPenalty, requiredText } from './eligibility.js';
+import { findEvidence, postingText, shows as evidenceShows } from '../resume/evidence.js';
 import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 
 /**
@@ -61,7 +62,7 @@ export const DIRECT_ATS_SOURCES = Object.freeze(new Set([
  * are recomputed instead of looking current. 2: seniority per profession,
  * preferred-only skills at partial credit (audit 2026-11-11).
  */
-export const SCORER_VERSION = 3; // 3: people-manager vs IC track (audit 2026-11-13)
+export const SCORER_VERSION = 4; // 4: one evidence check with the tailor (audit R2, R3, R13); 3: people-manager vs IC track
 
 /** Credit for a skill the posting names only as preferred / nice to have. */
 export const PREFERRED_SKILL_CREDIT = 0.3;
@@ -147,11 +148,17 @@ function numeralLevel(title) {
  */
 export function scoreJob(job = {}, {
   scoring, sponsorship, candidate = {}, resumeKeywords, now = new Date(), freshnessModel = null,
-  exclusions = null,
+  exclusions = null, evidenceLines = null,
 } = {}) {
   const weights = scoring.weights;
   const kw = scoring.keywords;
   const text = normalizeText([job.title, job.jdText].join(' \n '));
+  // The same check the tailor uses for "does the posting ask for X?" (audit
+  // R2, R13): case kept, so "R" is the language and "r" is not, and an
+  // everyday term ("go-live", "I excel at") is not a skill.
+  const rawText = [job.title, job.jdText].join(' \n ');
+  const vocabulary = scoringVocabulary(scoring);
+  const asksFor = evidenceMatcher(vocabulary);
 
   const breakdown = {};
   const matchedAll = new Set();
@@ -193,7 +200,7 @@ export function scoreJob(job = {}, {
     // categories keep strict phrase matching.
     breakdown[category.id] = category.match === 'title'
       ? keywordCategory(job.title, category.terms, category.weight, category.fullAt, matchedAll, matchedTitlePhrases)
-      : keywordCategory(text, category.terms, category.weight, category.fullAt, matchedAll, matchedPhrases, required);
+      : keywordCategory(rawText, category.terms, category.weight, category.fullAt, matchedAll, asksFor, required, matchedPhrases);
   }
 
   // Seniority fit.
@@ -231,7 +238,7 @@ export function scoreJob(job = {}, {
 
   // Resume keyword alignment.
   breakdown.resumeKeywordAlignment = scoreResumeAlignment(
-    text, candidate, resumeKeywords, weights.resumeKeywordAlignment,
+    rawText, candidate, resumeKeywords, weights.resumeKeywordAlignment, asksFor,
   );
 
   // Pay fit: a PENALTY ONLY, and only when both sides are stated. It carries no
@@ -265,8 +272,12 @@ export function scoreJob(job = {}, {
   const total = max > 0 ? Math.round((raw / max) * 100) : 0;
 
   const matchedKeywords = [...matchedAll];
+  // Gaps are judged on the posting (body and title) against the master
+  // resume's own lines when the caller has them, exactly as the tailor judges
+  // them, so the score and the packet list the same gaps (R13).
   const missingKeywords = computeMissing(
-    text, candidate, kw, scoring.evidenceAliases, categories, scoring.marketSkills,
+    job.jdText, candidate, kw, scoring.evidenceAliases, categories, scoring.marketSkills,
+    { evidenceLines, vocabulary, title: job.title },
   );
 
   return {
@@ -388,13 +399,16 @@ export function resolveCategories(scoring = {}, candidate = {}) {
  * or PREFERRED_SKILL_CREDIT when `requiredOnly` is given and the term appears
  * only outside it (preferred / nice-to-have material).
  */
-function keywordCategory(text, keywords = [], weight = 0, fullAt = 1, sink, match = matchedPhrases, requiredOnly = null) {
+function keywordCategory(text, keywords = [], weight = 0, fullAt = 1, sink, match = matchedPhrases, requiredOnly = null,
+  matchRequired = match) {
   const matched = match(text, keywords);
   for (const m of matched) sink?.add(m);
   let credit = matched.length;
   let preferredOnly = [];
   if (requiredOnly !== null && matched.length) {
-    const inRequired = new Set(match(requiredOnly, keywords).map((m) => normalizeText(m)));
+    // Only terms the posting was already found to ask for; `requiredOnly` is
+    // lowercased, so it can place a match but not judge one.
+    const inRequired = new Set(matchRequired(requiredOnly, matched).map((m) => normalizeText(m)));
     preferredOnly = matched.filter((m) => !inRequired.has(normalizeText(m)));
     credit = matched.length - preferredOnly.length + PREFERRED_SKILL_CREDIT * preferredOnly.length;
   }
@@ -704,12 +718,12 @@ function scoreFreshness(job, freshness, weight, now, model = null) {
   return { points: round2(weight * factor), weight, matched: [`${age} days old`] };
 }
 
-function scoreResumeAlignment(text, candidate, resumeKeywords, weight) {
+function scoreResumeAlignment(text, candidate, resumeKeywords, weight, match = matchedPhrases) {
   const profileTerms = resumeKeywords && resumeKeywords.length
     ? resumeKeywords
     : candidateStackTerms(candidate);
   if (profileTerms.length === 0) return { points: 0, weight, matched: [] };
-  const matched = matchedPhrases(text, profileTerms);
+  const matched = match(text, profileTerms);
   const coverage = Math.min(1, matched.length / Math.max(1, Math.min(8, profileTerms.length)));
   return { points: round2(weight * coverage), weight, matched };
 }
@@ -740,9 +754,6 @@ const GROWTH_BUCKET = 'growth';
  * @param {boolean} [options.includeGrowth=false]
  * @returns {string[]}
  */
-/** Paperwork words around a credential ("license", "certified"), dropped when checking evidence. */
-const CREDENTIAL_WORDS = /\b(license|licence|licensure|licensed|certification|certificate|certified|credential|registration|active|current|valid)\b/g;
-
 export function candidateStackTerms(candidate = {}, { includeGrowth = false } = {}) {
   const stack = candidate.technicalStack ?? {};
   return Object.entries(stack)
@@ -762,7 +773,8 @@ export function candidateStackTerms(candidate = {}, { includeGrowth = false } = 
  * and missingKeywords (alias not substring-matched in the profile), which
  * reads as a contradiction on the dashboard.
  */
-export function computeMissing(text, candidate, kw, evidenceAliases = {}, categories = null, marketSkills = null) {
+export function computeMissing(text, candidate, kw, evidenceAliases = {}, categories = null, marketSkills = null,
+  { evidenceLines = null, vocabulary = null, title = '' } = {}) {
   // A GAP NEEDS A VOCABULARY THE CANDIDATE DOES NOT OWN.
   //
   // "Missing" means: this JD asks for something you cannot evidence. Finding
@@ -772,66 +784,111 @@ export function computeMissing(text, candidate, kw, evidenceAliases = {}, catego
   // circularity was briefly introduced here while making scoring profile-driven,
   // and is the reason this comment exists.)
   //
-  // So the vocabulary is the market one: every list under `scoring.keywords`,
-  // plus any category that declares an explicit vocabulary rather than binding
-  // to the profile. A category bound to `targetTitles` or `technicalStack` is
-  // deliberately excluded.
+  // So the vocabulary is the market one (gapVocabulary): every list under
+  // `scoring.keywords` except titles and domains, `scoring.marketSkills`
+  // (written by activating a search profile from the person's role families, so
+  // a nurse's or an accountant's gaps are looked for too), and any category that
+  // declares an explicit vocabulary rather than binding to the profile.
   //
-  // THAT CONSEQUENCE IS NOW FIXED. Gap analysis used to be only as good as
-  // `scoring.keywords`, which shipped as a data-engineering word list — so a
-  // nurse or an accountant was told they had no gaps, not because they had
-  // none but because nothing was looking for theirs. `scoring.marketSkills` is
-  // written by activating a search profile and holds every skill the
-  // candidate's own role families know about (config/role_families.json), so
-  // the question "what is this JD asking for that I cannot evidence?" is now
-  // answerable in any field. It is still candidate-INDEPENDENT — a vocabulary
-  // of the market, not of the person — which is what makes a gap a gap.
-  // `titles` and `domains` are excluded on principle: a job title is not a skill
-  // you can be missing, and neither is an industry. Including them reported
-  // "data engineer" as a gap on a data-engineering role.
+  // ONE EVIDENCE CHECK (audit R13/D3). "Does the posting ask for it?" and "does
+  // the resume show it?" are both answered by src/resume/evidence.js, the twin of
+  // the tailor's evidence.py: boundary- and case-aware, everyday words only in
+  // context, plurals counted. The evidence is the master resume's own lines
+  // (`evidenceLines`) when the caller has them; the tailor is sent the same
+  // lines, so the score and the packet list the same gaps. This used to be
+  // `profileText.includes(term)` over candidate.json, where "java" was shown by
+  // "javascript" and "r" by any word. Without a master resume, the profile's
+  // skills, certifications, industries and education stand in, read as lists.
+  const important = gapVocabulary({ keywords: kw, marketSkills }, categories);
+  const vocab = vocabulary ?? scoringVocabulary({ keywords: kw, marketSkills });
+  const posting = postingText(text);
+  const heading = String(title ?? '');
+  const inJd = new Map();
+  for (const term of important) {
+    const key = normalizeText(term);
+    if (inJd.has(key)) continue;
+    // A skill named only in the title ("Lead Data Engineer - Snowflake") is asked for.
+    if (evidenceShows(term, posting, { vocabulary: vocab }) || evidenceShows(term, heading, { vocabulary: vocab })) {
+      inJd.set(key, term);
+    }
+  }
+  const lines = Array.isArray(evidenceLines) && evidenceLines.length ? evidenceLines : profileEvidenceLines(candidate);
+  const options = { aliases: evidenceAliases ?? {}, vocabulary: vocab };
+  // The credential rule ("RN license" shown by "RN") is part of the check.
+  return [...inJd.keys()].filter((key) => findEvidence(key, lines, options).length === 0);
+}
+
+/**
+ * Every term the scorer looks for, as context for the evidence check: an
+ * everyday term ("Go", "R") counts next to one of these. Sent to the tailor as
+ * well, so both sides judge context against the same list.
+ *
+ * @param {object} [scoring]
+ * @returns {string[]}
+ */
+export function scoringVocabulary(scoring = {}) {
+  // One array per scoring config: the evidence check caches by its identity.
+  const cached = VOCABULARIES.get(scoring);
+  if (cached) return cached;
+  const seen = new Set();
+  const out = [];
+  const add = (term) => {
+    const key = String(term ?? '').toLowerCase().trim();
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push(term);
+  };
+  for (const term of Array.isArray(scoring.marketSkills) ? scoring.marketSkills : []) add(term);
+  for (const list of Object.values(scoring.keywords ?? {})) {
+    if (Array.isArray(list)) list.forEach(add);
+  }
+  if (scoring && typeof scoring === 'object') VOCABULARIES.set(scoring, out);
+  return out;
+}
+const VOCABULARIES = new WeakMap();
+
+/**
+ * The terms that can be a gap: skills, never a job title or an industry. "Data
+ * engineer" was once reported as a gap on a data-engineering role. Sent to the
+ * tailor so its gap list holds the same kind of terms.
+ *
+ * @param {object} [scoring]
+ * @param {object[]|null} [categories] resolveCategories(scoring, candidate)
+ * @returns {string[]}
+ */
+export function gapVocabulary(scoring = {}, categories = null) {
   const NOT_SKILLS = new Set(['titles', 'domains']);
-  const fromProfile = Array.isArray(marketSkills) ? marketSkills : [];
-  const marketVocabulary = [
-    ...fromProfile,
-    ...Object.entries(kw ?? {})
+  const market = [
+    ...(Array.isArray(scoring.marketSkills) ? scoring.marketSkills : []),
+    ...Object.entries(scoring.keywords ?? {})
       .filter(([name]) => !NOT_SKILLS.has(name))
       .flatMap(([, list]) => list ?? []),
   ];
-  const declaredVocabulary = (categories ?? [])
+  const declared = (categories ?? [])
     .filter((c) => c.match !== 'title' && !c.from)
     .flatMap((c) => c.terms ?? []);
-  const important = [...marketVocabulary, ...declaredVocabulary]
-    .filter((t) => typeof t === 'string' && t.trim());
-  const inJd = new Set(matchedPhrases(text, important).map((p) => normalizeText(p)));
-  const profileText = normalizeText([
-    ...candidateStackTerms(candidate),
-    ...(candidate.certifications ?? []),
-    ...(candidate.domainExperience ?? []),
-    // A degree is evidence too: "BSN preferred" against a nurse who holds a
-    // BSN was reported as a gap, because only skills and certifications were
-    // consulted.
-    ...(Array.isArray(candidate.education) ? candidate.education.flatMap((e) => [e?.degree, e?.field]) : []),
-  ].filter((t) => typeof t === 'string').join(' '));
-  const words = ` ${profileText} `;
-  const aliases = new Map(
-    Object.entries(evidenceAliases ?? {}).map(([term, list]) => [
-      normalizeText(term),
-      (Array.isArray(list) ? list : []).map((a) => normalizeText(a)),
-    ]),
-  );
-  const evidenced = (term) => {
-    if (profileText.includes(term) || (aliases.get(term) ?? []).some((a) => a && profileText.includes(a))) return true;
-    // "RN license", "CPA certification", "active teaching license": the
-    // credential is the evidence, not the paperwork word around it. Matched
-    // on whole words, because a two-letter core like "rn" is inside "learning".
-    const core = term.replace(CREDENTIAL_WORDS, ' ').replace(/\s+/g, ' ').trim();
-    return Boolean(core) && core !== term && words.includes(` ${core} `);
-  };
-  const missing = [];
-  for (const term of inJd) {
-    if (!evidenced(term)) missing.push(term);
-  }
-  return missing;
+  return [...market, ...declared].filter((t) => typeof t === 'string' && t.trim());
+}
+
+/** The profile read as evidence lines, for a candidate with no master resume. */
+export function profileEvidenceLines(candidate = {}) {
+  const education = Array.isArray(candidate.education)
+    ? candidate.education.flatMap((e) => [e?.degree, e?.field]) : [];
+  return [
+    ['Skills', candidateStackTerms(candidate)],
+    ['Certifications', candidate.certifications ?? []],
+    ['Industries', candidate.domainExperience ?? []],
+    // A degree is evidence too: "BSN preferred" against a nurse who holds a BSN.
+    ['Education', education],
+  ].map(([label, terms]) => [label, (terms ?? []).filter((t) => typeof t === 'string' && t.trim())])
+    .filter(([, terms]) => terms.length)
+    .map(([label, terms]) => `${label}: ${terms.join(', ')}`);
+}
+
+/** A matchedPhrases-shaped matcher that asks the one evidence check. */
+function evidenceMatcher(vocabulary) {
+  return (text, phrases) => (Array.isArray(phrases) ? phrases : [])
+    .filter((p) => typeof p === 'string' && p.trim() && evidenceShows(p, String(text ?? ''), { vocabulary }));
 }
 
 function round2(n) {

@@ -1,5 +1,13 @@
 {
   "_about": "One evidence check (audit R2, R3, R13/D3). Each case: does `line` evidence `term`? Run by tests/python/test_evidence.py against src/resume/evidence.py and by tests/node/evidence.test.js against src/resume/evidence.js, so the scorer and the tailor cannot answer differently. `vocabulary` is the caller's own term list, added to the built-in technologies.",
+  "evidenceCases": [
+    {"term": "rn license", "lines": ["Registered nurse (RN) on a 30-bed cardiac unit."], "expect": true, "why": "the credential is the evidence, not the paperwork word"},
+    {"term": "active cpa certification", "lines": ["CPA, State of Illinois."], "expect": true, "why": "paperwork words dropped"},
+    {"term": "teaching license", "lines": ["Taught grade 4 maths for six years."], "expect": false, "why": "no credential named"},
+    {"term": "spark", "lines": ["Built pipelines in PySpark."], "aliases": {"spark": ["pyspark"]}, "expect": true, "why": "an alias"},
+    {"term": "spark", "lines": ["Built pipelines in PySpark."], "expect": false, "why": "PySpark is not Spark without the alias"},
+    {"term": "go", "lines": ["Owned the go-live.", "Languages: Go, Python"], "expect": true, "why": "the second line"}
+  ],
   "cases": [
     {"term": "go", "line": "Owned the go-live of three platforms.", "expect": false, "why": "go-live is a phrase, not the language"},
     {"term": "r", "line": "Partnered with R&D on the new platform.", "expect": false, "why": "R&D is a department"},

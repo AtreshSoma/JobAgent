@@ -31,6 +31,7 @@ _RULES = json.loads((Path(__file__).with_name("evidence_rules.json")).read_text(
 EVERYDAY = frozenset(_RULES["everydayTerms"])
 ANCHORS: Dict[str, frozenset] = {k: frozenset(v) for k, v in _RULES["anchors"].items()}
 TECHNOLOGIES = frozenset(_RULES["technologies"])
+_CREDENTIAL_RE = re.compile(r"\b(?:" + "|".join(map(re.escape, _RULES["credentialWords"])) + r")\b")
 
 # Characters that glue a word into something else: "go-live", "R&D", "C++", "C#".
 _JOINERS = r"\-&'’@+#"
@@ -209,7 +210,10 @@ def find_evidence(
     found: List[Dict[str, str]] = []
     seen = set()
     vocabulary = tuple(vocabulary)
-    for candidate in [term, *alias_map.get(key, [])]:
+    # "RN license", "CPA certification": the credential is the evidence, not the
+    # paperwork word around it, so the bare credential is tried last.
+    core = normalize(_CREDENTIAL_RE.sub(" ", key))
+    for candidate in [term, *alias_map.get(key, []), *([core] if core and core != key else [])]:
         ckey = normalize(candidate)
         if not ckey or ckey in seen:
             continue

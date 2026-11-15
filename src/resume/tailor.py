@@ -1800,6 +1800,7 @@ def _audit_supported_keywords(
     resume_text: str,
     keywords: Sequence[str],
     evidence_aliases: Dict[str, Sequence[str]] | None = None,
+    vocabulary: Sequence[str] | None = None,
 ) -> Dict[str, Any]:
     """Boundary-aware audit used for mutation decisions.
 
@@ -1820,7 +1821,7 @@ def _audit_supported_keywords(
             continue
         seen.add(key)
         matches = evidence.find_evidence(
-            str(keyword), lines, aliases=alias_map, vocabulary=keywords,
+            str(keyword), lines, aliases=alias_map, vocabulary=keywords if vocabulary is None else vocabulary,
         )
         target = present if matches else missing
         target.append(keyword)
@@ -2560,8 +2561,17 @@ def tailor_resume(
     llm_qualifications: Dict[str, Sequence[str]] | None = None,
     accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
     keep_bullets: Sequence[str] | None = None,
+    evidence_lines: Sequence[str] | None = None,
+    evidence_vocabulary: Sequence[str] | None = None,
+    gap_terms: Sequence[str] | None = None,
 ) -> Dict[str, Any]:
     """Create a tailored resume for ``job`` and return a result dict.
+
+    The three ``evidence_``/``gap_`` options make the packet's gaps the score's
+    gaps (audit R13): the runner sends the master resume's lines exactly as the
+    scorer read them, the scorer's vocabulary (context for everyday terms) and
+    the terms that can be a gap at all (skills, never a job title). Without
+    them the tailor reads the master itself, as before.
 
     The function may reorder exact existing content and change emphasis. It
     never rewrites claims on its own: the only reworded text it writes is
@@ -2578,13 +2588,14 @@ def tailor_resume(
         raise FileNotFoundError(f"Master resume not found: {master_path}")
 
     keywords = list(keywords)
-    resume_text = read_docx_text(master_path)
-    audit = _audit_supported_keywords(resume_text, keywords, evidence_aliases)
+    resume_text = "\n".join(str(line) for line in evidence_lines) if evidence_lines else read_docx_text(master_path)
+    audit = _audit_supported_keywords(resume_text, keywords, evidence_aliases, evidence_vocabulary)
     qualifications = classify_qualification_keywords(
         job.get("jd_text", ""),
         keywords,
         required_markers=list(required_markers or _DEFAULT_REQUIRED_MARKERS),
         preferred_markers=list(preferred_markers or _DEFAULT_PREFERRED_MARKERS),
+        vocabulary=evidence_vocabulary,
     )
     # Grounded requirement classification from the optional LLM layer.
     # Marker-based classification depends on a posting having explicit
@@ -2664,12 +2675,23 @@ def tailor_resume(
     # Requirements the resume does NOT evidence. Reported, never inserted.
     gaps = []
     has_jd_text = bool((job.get("jd_text") or "").strip())
+    gap_keys = None if gap_terms is None else {_norm_kw(term) for term in gap_terms}
+    title = str(job.get("title") or "")
+    title_vocabulary = keywords if evidence_vocabulary is None else evidence_vocabulary
     for keyword in audit.get("missing", []):
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         detail = qualification_details.get(key, {})
+        if gap_keys is not None:
+            # The scorer's rules (R13): a job title or an industry is not a
+            # skill you can be missing, and a gap is something the posting's
+            # body or its title asks for.
+            if key not in gap_keys:
+                continue
+            if not detail.get("jd_evidence") and not evidence.shows(str(keyword), title, vocabulary=title_vocabulary):
+                continue
         # Stored score keywords can outlive a later JD refresh. Never display a
         # purported gap when the current non-empty JD has no occurrence/evidence.
-        if has_jd_text and not detail.get("jd_evidence"):
+        elif has_jd_text and not detail.get("jd_evidence"):
             continue
         gaps.append({
             "keyword": keyword,

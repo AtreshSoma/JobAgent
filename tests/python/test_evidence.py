@@ -13,13 +13,21 @@ import pytest
 import evidence
 import tailor
 
-CASES = json.loads((Path(__file__).resolve().parents[1] / "shared" / "evidence_cases.json").read_text())["cases"]
+_SHARED = json.loads((Path(__file__).resolve().parents[1] / "shared" / "evidence_cases.json").read_text())
+CASES = _SHARED["cases"]
+EVIDENCE_CASES = _SHARED["evidenceCases"]
 
 
 @pytest.mark.parametrize("case", CASES, ids=[f"{c['term']}|{c['line'][:40]}|{c['expect']}" for c in CASES])
 def test_shared_cases(case):
     found = evidence.occurrences(case["term"], case["line"], vocabulary=case.get("vocabulary", ()),
                                  in_list=case.get("inList", False))
+    assert bool(found) is case["expect"], case["why"]
+
+
+@pytest.mark.parametrize("case", EVIDENCE_CASES, ids=[f"{c['term']}|{c['expect']}" for c in EVIDENCE_CASES])
+def test_shared_find_evidence_cases(case):
+    found = evidence.find_evidence(case["term"], case["lines"], aliases=case.get("aliases"))
     assert bool(found) is case["expect"], case["why"]
 
 

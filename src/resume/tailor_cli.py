@@ -110,6 +110,10 @@ def _run(request: dict) -> dict:
         accepted_rewrites=request.get("accepted_rewrites") or None,
         # Bullets the person pinned for this job: never omitted to fit the page.
         keep_bullets=request.get("keep_bullets") or None,
+        # The score's evidence, so the packet lists the score's gaps (R13).
+        evidence_lines=request.get("evidence_lines") or None,
+        evidence_vocabulary=request.get("evidence_vocabulary"),
+        gap_terms=request.get("gap_terms"),
     )
 
     pdf_path = None

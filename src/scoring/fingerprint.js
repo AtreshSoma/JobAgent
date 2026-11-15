@@ -27,6 +27,8 @@ import { loadRoleFamilies } from '../profile/roleFamilies.js';
 import { TITLE_MATCH_VERSION } from './titleMatch.js';
 import { SCORER_VERSION } from './scorer.js';
 import { ELIGIBILITY_VERSION, candidateYearsOfExperience, candidateDegreeLevel } from './eligibility.js';
+import { EVIDENCE_VERSION } from '../resume/evidence.js';
+import { masterResumeLines } from '../resume/evidenceMap.js';
 
 /** taxonomy object -> digest, so the taxonomy is hashed once per load. */
 const TAXONOMY_DIGESTS = new WeakMap();
@@ -50,6 +52,16 @@ function taxonomyDigest(config) {
     TAXONOMY_DIGESTS.set(taxonomy, digest);
   }
   return digest;
+}
+
+/** Short digest of the master resume's lines (the gap evidence), or null without one. */
+function resumeDigest(config) {
+  if (Array.isArray(config.evidenceLines)) {
+    return createHash('sha1').update(config.evidenceLines.join('\n')).digest('hex').slice(0, 12);
+  }
+  if (!config.root) return null;
+  const lines = masterResumeLines(config.root);
+  return lines.length ? createHash('sha1').update(lines.join('\n')).digest('hex').slice(0, 12) : null;
 }
 
 /** Whole years, as eligibility compares them (see assessEligibility). */
@@ -144,6 +156,10 @@ export function scoringFingerprintMaterial(config = {}) {
     titleMatcher: TITLE_MATCH_VERSION,
     // How a posting is read (seniority words, preferred-only skills).
     scorer: SCORER_VERSION,
+    // Gaps are judged by the one evidence check against the master resume's
+    // lines (R13), so a new rule set or a new resume changes stored gaps.
+    evidence: EVIDENCE_VERSION,
+    resume: resumeDigest(config),
     // Eligibility compares the posting's floor with the candidate's years and
     // degree. The DERIVED values are hashed, not the raw work history: a
     // reworded bullet cannot change a verdict, but a new role, a corrected

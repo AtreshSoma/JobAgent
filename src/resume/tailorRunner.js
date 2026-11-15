@@ -24,6 +24,8 @@ import {
 } from './pythonEnv.js';
 import { masterResumeFile } from '../profile/workspace.js';
 import { docxToPdfViaChromium, pdfEngine } from './chromiumPdf.js';
+import { masterResumeLines } from './evidenceMap.js';
+import { gapVocabulary, resolveCategories, scoringVocabulary } from '../scoring/scorer.js';
 
 /**
  * The active person's master resume (never overwritten by tailoring). Each
@@ -96,21 +98,8 @@ export function mergeTerms(base = [], extra = []) {
  * @returns {string[]}
  */
 export function vocabularyFromScoring(scoring = {}) {
-  const kw = scoring.keywords ?? {};
-  const seen = new Set();
-  const out = [];
-  const add = (term) => {
-    const key = String(term ?? '').toLowerCase().trim();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    out.push(term);
-  };
-  for (const term of Array.isArray(scoring.marketSkills) ? scoring.marketSkills : []) add(term);
-  for (const list of Object.values(kw)) {
-    if (!Array.isArray(list)) continue;
-    for (const term of list) add(term);
-  }
-  return out;
+  // One list with the scorer's evidence context (src/scoring/scorer.js).
+  return scoringVocabulary(scoring);
 }
 
 /**
@@ -217,6 +206,12 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     keywords: mergeTerms(keywordsForJob(score), llmPhrases),
     // Vocabulary + ATS rules drive the deterministic ATS readiness report.
     vocabulary: mergeTerms(vocabularyFromScoring(config.scoring), llmPhrases),
+    // ONE EVIDENCE CHECK (audit R13): the master resume's lines exactly as the
+    // scorer read them, its vocabulary and the terms that can be a gap, so the
+    // packet lists the gaps the score lists. LLM phrases stay out of these.
+    evidence_lines: masterResumeLines(root),
+    evidence_vocabulary: scoringVocabulary(config.scoring ?? {}),
+    gap_terms: gapVocabulary(config.scoring ?? {}, resolveCategories(config.scoring ?? {}, config.candidate ?? {})),
     // Grounded requirement classification. Only phrases verified verbatim
     // against this posting are sent, and Python applies them to ORDERING
     // priority only — never to resume content.
