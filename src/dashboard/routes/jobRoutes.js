@@ -7,6 +7,7 @@
  * Returns NOT_HANDLED when no route here matched, so server.js tries the next
  * module; anything else means the request was answered.
  */
+import { buildPrepPack, renderPrepPackHtml } from '../prepPack.js';
 import { markApplicationUserSubmitted, markApplicationVerified, retractApplicationSubmission } from '../../apply/applicationState.js';
 import { loadPacket } from '../../cli/commands.js';
 import { sanitizeErrorMessage } from '../../utils/failureRca.js';
@@ -70,6 +71,24 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
       const detail = jobDetail(ctx.db, jobId, { ...ctx.deps, root: ctx.config?.root ?? null, config: ctx.config, now: ctx.nowDate() });
       if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
       return sendJson(res, 200, detail);
+    }
+    // Interview prep pack (F10): requirements beside the resume lines that show
+    // them, the gaps, the posting's conditions, and the submitted documents.
+    if (req.method === 'GET' && action === 'prep-pack') {
+      const detail = jobDetail(ctx.db, jobId, { ...ctx.deps, root: ctx.config?.root ?? null, config: ctx.config, now: ctx.nowDate() });
+      if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+      const folder = containedFolder(ctx, ctx.db.getJob(jobId));
+      const pack = buildPrepPack(detail, { versions: folder ? readManifest(folder).versions : [] });
+      return sendJson(res, 200, pack);
+    }
+    if (req.method === 'GET' && action === 'prep-page') {
+      const detail = jobDetail(ctx.db, jobId, { ...ctx.deps, root: ctx.config?.root ?? null, config: ctx.config, now: ctx.nowDate() });
+      if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+      const folder = containedFolder(ctx, ctx.db.getJob(jobId));
+      const html = renderPrepPackHtml(buildPrepPack(detail, { versions: folder ? readManifest(folder).versions : [] }));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(html);
+      return;
     }
     if (req.method === 'POST' && action === 'resume-preview') {
       const result = await ctx.materializeResumePreview(jobId);

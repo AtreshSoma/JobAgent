@@ -565,6 +565,12 @@ export function detailSections(job) {
   // under the next step, because once applied this IS the next step.
   if (job.application?.appStatus === 'submitted') {
     out.push(railSection('application', el('h3', { text: 'Application' }), applicationCard(job.application)));
+    // At Interviewing: one printable page to prepare from (F10).
+    if (job.application.stage === 'interviewing') {
+      out.push(railSection('prep', el('h3', { text: 'Interview prep' }),
+        el('p', { class: 'muted', text: 'What the posting asks for beside the resume lines that show it, the gaps to prepare for, its conditions and what you submitted, on one page you can print.' }),
+        el('a', { class: 'button small', href: `/api/jobs/${encodeURIComponent(job.id)}/prep-page`, target: '_blank', rel: 'noopener', text: 'Open prep pack' })));
+    }
   }
 
   // WHY THIS FIT, before the materials and buttons: the explanation is what
