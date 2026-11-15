@@ -3954,3 +3954,9 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
 .pal-detail { color: var(--text-dim); font-size: var(--fs-sm); margin-left: auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-empty { padding: 14px 10px; color: var(--text-dim); font-size: var(--fs-md); }
 .pal-foot { margin: 0; padding: 8px 14px; border-top: 1px solid var(--line-soft); font-size: var(--fs-xs); }
+
+/* Move to another computer (System health → Backups). */
+.export-form { margin-top: var(--s3); display: flex; flex-direction: column; gap: 6px; max-width: 32rem; }
+.export-form h4 { margin: 0; font-size: var(--fs-md); }
+.export-form p { margin: 0; }
+.export-form input { max-width: 20rem; }

@@ -81,6 +81,7 @@ import { approveJobPacket, buildMasterResume, setDuringBulkRun, noteUserMutation
 import { approvalDigest, approvedDigest, digestChanges } from '../apply/approvalDigest.js';
 import { extractDocxText, isDocxBuffer } from '../resume/docxText.js';
 import { resumeReadiness } from '../resume/tailorRunner.js';
+import { forDashboard } from './healthFixes.js';
 import { runScore, runRescore, runPrepareApps, loadPacket, recordAssistResult, preparePacketsForJobs } from '../cli/commands.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { createCodeFreshness } from './codeFreshness.js';
@@ -398,7 +399,8 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     if (healthPromise) return healthPromise;
     healthPromise = (async () => {
       const doctor = deps.doctorFn ?? (await import('../cli/doctor.js')).runDoctor;
-      const report = await doctor({ env: process.env, root: config?.root ?? undefined });
+      // Fixes rewritten for someone with no terminal open (S1).
+      const report = forDashboard(await doctor({ env: process.env, root: config?.root ?? undefined }));
       healthCache = report;
       healthCacheAt = Date.now();
       return report;

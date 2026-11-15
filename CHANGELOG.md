@@ -14,7 +14,8 @@ Your name and contact details stay on your computer, and what JobAgent says abou
 - Setup is one line at the top of the page: Finish setup to apply, how much is done, and Continue setup. It stays closed or open as you left it, and the job list is always on the first screen.
 - Open setup to see Contact, Work authorization and sponsorship, Experience and Screening answers, each item once. Each button opens the box that fixes it.
 - Before your first search, Next says Run your first search instead of saying nothing new was found in the last 24 hours.
-- The dashboard no longer shows command-line instructions for setup. Installing the browser, restarting and reading job descriptions each point to the launcher or a button.
+- The dashboard no longer shows command-line instructions. Installing the browser, restarting and reading job descriptions point to the launcher or a button, and System health says which screen fixes each finding.
+- Move to another computer: System health → Backups exports everything to one file you can download, encrypted if you give a passphrase.
 
 ### Fixes
 

@@ -14,7 +14,7 @@ import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection,
 import { openDocuments, openReports } from './reports.js';
 import { openDataQuality, saveFreshness, startEnrichment, stopEnrichment, toggleEnrichment } from './dataQuality.js';
 import { adoptResumeSelection, chooseResumeProfile, openMasterResume, openMergePicker, reconsiderResumeChoice, renderMasterResume, restoreMasterVersion, selectedAdoptTitles, submitMergeSelection } from './master.js';
-import { backupNow, download, openHealth, openProfile, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
+import { backupNow, download, exportEverything, openHealth, openProfile, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
 import { applyRunGate, openRuns, pollRun, setRunDetails } from './runs.js';
 import { closeMainMenu, toggleMenu } from './menus.js';
 import { applyViewPrefs, hiddenColumns, onFilterChange, savePreference, setFilterSheet, syncThemeControl } from './main.js';
@@ -264,6 +264,7 @@ export const ACTIONS = {
   'delete-answer': (target) => saveAllAnswers({ removeId: target.dataset.id }),
   'open-health': openHealth,
   'backup-now': backupNow,
+  'export-bundle': () => exportEverything(),
   'export-jobs': () => download('/api/export/jobs.csv', 'jobagent_jobs.csv'),
   'export-tracker': () => download('/api/export/tracker.csv', 'job_tracker.csv'),
   'export-calendar': () => download('/api/calendar.ics', 'jobagent-follow-ups.ics'),
@@ -409,7 +410,7 @@ export const BUSY_ACTIONS = new Set([
   'profile-from-resume-create', 'profile-from-resume-keep', 'confirm-merge-selection',
   'profile-from-resume-reconsider', 'adopt-resume-titles', 'adopt-resume-skills',
   'restore-master', 'save-profile', 'save-question-answer', 'dismiss-question',
-  'save-answers', 'delete-answer', 'backup-now',
+  'save-answers', 'delete-answer', 'backup-now', 'export-bundle',
   'propose-rewrites', 'rewrite-accept', 'rewrite-reject', 'rewrite-accept-all', 'refine-rewrites',
   'compare-versions', 'restore-version', 'letter-mode', 'inbox-sync', 'inbox-record', 'inbox-dismiss', 'inbox-draft', 'run-rerank', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',
   'batch-autofill', 'batch-prepare', 'batch-approve', 'batch-decide', 'compare', 'signin-retry', 'proposal-archive',
