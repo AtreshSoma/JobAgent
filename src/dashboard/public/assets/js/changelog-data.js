@@ -20,8 +20,8 @@ export const CHANGELOG_GROUPS = Object.freeze([
 export const CHANGELOG = Object.freeze([
   {
     version: 'v0.2.3',
-    date: '2026-11-14',
-    summary: 'Your name and contact details stay on your computer, and what JobAgent says about itself now matches what it does.',
+    date: '2026-11-15',
+    summary: 'Setup is one calm line instead of a wall of warnings, tailored resumes are fitted and printed from your real document, the score and the packet agree on your gaps, and your name and contact details stay on your computer.',
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       new: [
@@ -41,6 +41,7 @@ export const CHANGELOG = Object.freeze([
         'Move to another computer: System health → Backups exports everything to one file you can download, encrypted if you give a passphrase.',
       ],
       fixed: [
+        'The form filler\'s dry-run option no longer types, chooses, attaches or clicks anything or saves any progress. It reads the first page and reports what it would do.',
         'Text in a text box is printed in the PDF of your resume, once, where it sits. It is still not tailored, and the resume check says so.',
         'A job\'s score and its prepared packet list the same missing skills. Both now check your master resume the same way; the score used to check your profile with a looser match, so "java" counted for JavaScript.',
         'When one tailoring step fails its checks, only that step is left out and the review says which. Before, the whole tailoring was dropped and the job used your untailored resume.',
