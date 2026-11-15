@@ -66,7 +66,9 @@ import { join } from 'node:path';
  * @param {number} [args.dailyCount=0] applications submitted today
  * @param {object} [args.options]
  * @param {boolean} [args.options.headless]
- * @param {boolean} [args.options.dryRun=false] fill/upload resolve-only (no typing/attaching)
+ * @param {boolean} [args.options.dryRun=false] read the form and report what WOULD be done: nothing is
+ *   typed, chosen, attached or clicked, no application state is saved, and the run stops on the first
+ *   page with `status: 'dry_run'` and `wouldClick` (audit N2)
  * @param {object} [args.deps]
  * @param {Function} [args.deps.createSession] -> { page, close }
  * @param {Function} [args.deps.openPage] override openApplicationPage
@@ -121,10 +123,16 @@ export async function assistApply({
     result.phases.push({ phase: name, at: nowIso(), ...(detail ? { detail } : {}) });
   };
 
+  // A DRY RUN HAS NO SIDE EFFECTS (audit N2). It used to gate only the static
+  // plan and uploads: the dynamic fill, the conditional fill and every
+  // Next/Continue click ignored it, so a "dry run" typed into and advanced a
+  // live application. Now: no typing, choosing, attaching or clicking, no
+  // saved application state, and it stops on the first page.
+  const dryRun = options.dryRun === true;
   let stateStore;
   let applicationState;
   try {
-    stateStore = resolveApplicationStateStore({
+    stateStore = dryRun ? null : resolveApplicationStateStore({
       packet,
       root: config?.root,
       statePath: options.statePath,
@@ -316,7 +324,6 @@ export async function assistApply({
 
   try {
     const { page } = session;
-    const dryRun = options.dryRun === true;
     // LIVE_ASSIST walks multi-step forms, clicking only safe forward controls
     // (Next/Continue/Review) — never a final Submit. Cap the number of pages.
     const maxSteps = Math.max(1, Number(options.maxSteps ?? config?.runtime?.assistMaxSteps ?? 8));
@@ -335,6 +342,7 @@ export async function assistApply({
     const dailyCap = Math.max(1, Number(config?.runtime?.maxApplicationsPerDay ?? 15) || 15);
     const tryAutoSubmit = async (scope) => {
       if (!autoSubmit) return false;
+      if (dryRun) return false; // a dry run never submits (N2)
       if (result.blockers.length > 0) return false;
       if (!result.sponsorshipTruthful || !result.requiredFieldsFilled) return false;
       if (!result.submitSelector || !result.submitSelectorConfident) return false;
@@ -565,7 +573,7 @@ export async function assistApply({
       // newsletter signup is neither filled nor counted as "this page has a
       // form" (see applicationFields / allowApplyStart below).
       const scanned = applicationFields(await scanFields(scope));
-      const dyn = await fillScannedFields(scope, scanned, { candidate, screeningAnswers, alreadyFilled: stepFilledKeys });
+      const dyn = await fillScannedFields(scope, scanned, { candidate, screeningAnswers, alreadyFilled: stepFilledKeys, dryRun });
       for (const f of dyn.filled ?? []) {
         completedThisStep.push(f);
         addFilledResult(f, stepNumber);
@@ -578,7 +586,7 @@ export async function assistApply({
       // controls (stepFilledKeys prevents duplicate actions).
       const conditionalScan = applicationFields(await scanFields(scope));
       const conditional = await fillScannedFields(scope, conditionalScan, {
-        candidate, screeningAnswers, alreadyFilled: stepFilledKeys,
+        candidate, screeningAnswers, alreadyFilled: stepFilledKeys, dryRun,
       });
       for (const f of conditional.filled ?? []) {
         completedThisStep.push(f);
@@ -740,6 +748,15 @@ export async function assistApply({
       const advance = await findAdvanceControl(scope, {
         allowApplyStart: scanned.length === 0 && result.filled.length === 0,
       });
+      // A dry run reads one page and stops before any click (N2).
+      if (dryRun) {
+        result.dryRun = true;
+        result.status = 'dry_run';
+        result.wouldClick = advance ? (advance.text ?? advance.selector ?? 'Next') : null;
+        result.blockers = [...baseBlockers, ...stepBlockers];
+        result.sessionLeftOpen = false;
+        return result;
+      }
       // A page with nothing of the application on it and no way forward is
       // reported as exactly that further down ("no application form found",
       // "sign-in required"). Reporting the resume input missing first sent

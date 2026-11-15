@@ -588,7 +588,9 @@ export async function applyValue(page, field, value, { requiresSponsorship } = {
  * @param {Set<string>} [ctx.alreadyFilled] selectors already handled
  * @returns {Promise<{filled: object[], needsUser: object[], errors: object[]}>}
  */
-export async function fillScannedFields(page, scannedFields = [], { candidate, screeningAnswers, alreadyFilled = new Set() } = {}) {
+export async function fillScannedFields(page, scannedFields = [], {
+  candidate, screeningAnswers, alreadyFilled = new Set(), dryRun = false,
+} = {}) {
   // File inputs are scanned (so required uploads are visible) but NEVER
   // planned or filled here — attaching documents is uploadRunner's job, and a
   // text value typed into a file input would be both wrong and rejected.
@@ -598,7 +600,8 @@ export async function fillScannedFields(page, scannedFields = [], { candidate, s
   // a question for the person carries the choices the form really offers.
   for (const f of fillable) {
     const fixedList = f.kind === 'combobox' && (f.typeable === false || f.selectLike === true);
-    if (!fixedList || f.hasValue === true || (f.options ?? []).length) continue;
+    // Reading a dropdown's choices means opening it: not in a dry run (N2).
+    if (dryRun || !fixedList || f.hasValue === true || (f.options ?? []).length) continue;
     const key = f.selector ?? `${f.kind}:${f.name}`;
     if (alreadyFilled.has(key)) continue;
     // The runner scans twice per step (once more for conditional questions);
@@ -645,6 +648,13 @@ export async function fillScannedFields(page, scannedFields = [], { candidate, s
     if (!field) continue;
     const key = field.selector ?? `${field.kind}:${field.name}`;
     if (alreadyFilled.has(key)) continue;
+    // A dry run reports what it would type or choose, and does neither (N2).
+    if (dryRun) {
+      alreadyFilled.add(key);
+      filled.push({ field: entry.field, label: entry.label, selector: field.selector, source: entry.source,
+        action: 'dry-run', kind: field.kind });
+      continue;
+    }
     const res = await applyValue(page, field, entry.value, { requiresSponsorship });
     if (res.ok) {
       alreadyFilled.add(key);

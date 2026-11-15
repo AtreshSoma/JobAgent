@@ -72,7 +72,11 @@ export async function fillFields(page, fillPlan = {}, { dryRun = false } = {}) {
   const errors = [];
 
   if (dryRun) {
-    return { filled, unresolved, errors, plannedFills: resolved };
+    // What would be typed, reported like a fill but marked: nothing was (N2).
+    const would = resolved.map((step) => ({
+      field: step.field, label: step.label, selector: step.selector, source: step.source, action: 'dry-run',
+    }));
+    return { filled: would, unresolved, errors, plannedFills: resolved };
   }
 
   for (const step of resolved) {
