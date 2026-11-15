@@ -24,6 +24,7 @@ import {
 } from './pythonEnv.js';
 import { masterResumeFile } from '../profile/workspace.js';
 import { docxToPdfViaChromium, pdfEngine } from './chromiumPdf.js';
+import { PythonPool } from './pythonWorker.js';
 import { masterResumeLines } from './evidenceMap.js';
 import { gapVocabulary, resolveCategories, scoringVocabulary } from '../scoring/scorer.js';
 
@@ -377,7 +378,50 @@ export async function writeLetterDocx({ text, path, root, deps = {} } = {}) {
 }
 
 /** Spawn the python CLI, feed it the request JSON, and parse its JSON reply. */
-function invokePython(request, deps = {}) {
+/**
+ * One pool of long-lived `tailor_cli.py --serve` workers per interpreter
+ * (R17). JOB_AGENT_PYTHON_WORKERS sets its size (1-4, default 2);
+ * JOB_AGENT_PYTHON_WORKER=off starts a fresh interpreter per request, as before.
+ */
+const POOLS = new Map();
+
+function workerPool(exe, env, platform) {
+  if (!POOLS.has(exe)) {
+    POOLS.set(exe, new PythonPool({
+      size: Number(env.JOB_AGENT_PYTHON_WORKERS) || 2,
+      spawn: () => spawn(exe, [scriptPath(), '--serve'], pythonSpawnOptions(env, platform)),
+      kill: (child) => killProcessTree(child, { platform }),
+    }));
+  }
+  return POOLS.get(exe);
+}
+
+/** Let every Python worker go (shutdown, tests). */
+export async function closePythonWorkers() {
+  const pools = [...POOLS.values()];
+  POOLS.clear();
+  await Promise.all(pools.map((p) => p.close()));
+}
+
+async function invokePython(request, deps = {}) {
+  const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
+  if (!deps.spawnImpl && String(env.JOB_AGENT_PYTHON_WORKER ?? '').toLowerCase() !== 'off') {
+    const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({
+      exportPdf: request.export_pdf === true, measurePages: request.measure_pages === true,
+    });
+    try {
+      return await workerPool(pythonExe(env, { root: deps.root, platform }), env, platform).request(request, { timeoutMs });
+    } catch (err) {
+      // A worker that could not start or died is not the request's fault:
+      // try once in a fresh interpreter. A timeout is the request's own.
+      if (/timed out/.test(err.message)) throw err;
+    }
+  }
+  return invokePythonOnce(request, deps);
+}
+
+function invokePythonOnce(request, deps = {}) {
   const spawnImpl = deps.spawnImpl ?? spawn;
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;

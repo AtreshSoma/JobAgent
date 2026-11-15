@@ -248,16 +248,45 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"invalid JSON request: {err}"}))
         return 0
 
-    try:
-        response = _run(request)
-    except FileNotFoundError as err:
-        response = {"ok": False, "error": str(err)}
-    except Exception as err:  # noqa: BLE001 - report any failure to the caller
-        response = {"ok": False, "error": f"{type(err).__name__}: {err}"}
+    print(json.dumps(_answer(request)))
+    return 0
 
-    print(json.dumps(response))
+
+def _answer(request: dict) -> dict:
+    try:
+        return _run(request)
+    except FileNotFoundError as err:
+        return {"ok": False, "error": str(err)}
+    except Exception as err:  # noqa: BLE001 - report any failure to the caller
+        return {"ok": False, "error": f"{type(err).__name__}: {err}"}
+
+
+def serve() -> int:
+    """Answer one JSON request per line until stdin closes (audit R17).
+
+    Each request ran in a fresh interpreter that imported python-docx and the
+    tailor again: two or three starts per job. A worker started once answers
+    request after request. Every reply is one line carrying the request's
+    ``_id``. Anything a module prints while working goes to stderr, so it can
+    never be mistaken for a reply.
+    """
+    replies = sys.stdout
+    sys.stdout = sys.stderr
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as err:
+            replies.write(json.dumps({"ok": False, "error": f"invalid JSON request: {err}"}) + "\n")
+            replies.flush()
+            continue
+        request_id = request.pop("_id", None) if isinstance(request, dict) else None
+        response = _answer(request if isinstance(request, dict) else {})
+        replies.write(json.dumps({"_id": request_id, **response}) + "\n")
+        replies.flush()
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(serve() if "--serve" in sys.argv[1:] else main())
