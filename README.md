@@ -25,7 +25,7 @@
 Approve a packet and the agent opens the application in a real browser, fills it in, uploads your documents, and **stops before the final Submit**. Everything runs on your machine. The dashboard listens only on `127.0.0.1`, and your profile and answers stay in gitignored local files.
 
 > [!IMPORTANT]
-> **You stay in control of every application.** The agent fills and uploads, then hands the browser back to you. The single automated submit path requires your opt-in for that specific run, a clean form, a supported ATS, and an unused daily cap, and it records a job as applied only after the submission is **verified**. See the [Safety model](#-safety-model).
+> **You stay in control of every application.** The agent fills and uploads, then hands the browser back to you. The single automated submit path requires your opt-in for that specific run, a clean form, a supported ATS with a recorded supervised live run (none has one yet, so today it is refused everywhere), and an unused daily cap, and it records a job as applied only after the submission is **verified**. See the [Safety model](#-safety-model).
 
 ## ✨ Highlights
 
@@ -242,7 +242,10 @@ stateDiagram-v2
 - ✅ A confidently identified submit button
 - ✅ Daily cap not reached (`MAX_APPLICATIONS_PER_DAY`, default **15**, counted in your time zone)
 - ✅ A fixture-verified ATS: Greenhouse, Lever, Ashby, Workday, or SmartRecruiters. Unknown sites are fill-only
+- ✅ A recorded supervised live run on that ATS, listed in `config/verified_live_ats.json` (see [LIVE_VERIFICATION.md](docs/LIVE_VERIFICATION.md))
 - ✅ The packet was approved **before** the run started and belongs to the active candidate
+
+**Today no ATS has passed the live-run gate, so final Auto-submit is refused on every ATS.** Assisted fill, which never submits, works as described above.
 
 </details>
 

@@ -33,3 +33,27 @@ describe('what reaches a model provider (X3, N1)', () => {
     });
   }
 });
+
+describe('the README auto-submit gates (X2)', () => {
+  const gates = README.slice(README.indexOf('The gates on the one automated submit path'), README.indexOf('</details>', README.indexOf('The gates on the one automated submit path')));
+  const verified = JSON.parse(read('config/verified_live_ats.json')).verified ?? [];
+
+  it('lists the live-verification gate', () => {
+    expect(gates).toContain('config/verified_live_ats.json');
+    expect(gates).toMatch(/LIVE_VERIFICATION\.md/);
+  });
+
+  it('the summary at the top names the live run too', () => {
+    const summary = README.slice(README.indexOf('You stay in control of every application'), README.indexOf('## ', README.indexOf('You stay in control of every application')));
+    expect(summary).toMatch(/live run/i);
+  });
+
+  it('the User Guide gate list names it too', () => {
+    const line = GUIDE.split('\n').find((l) => l.includes('A fixture-verified ATS'));
+    expect(line).toContain('verified_live_ats.json');
+  });
+
+  it('says plainly when no ATS has passed it', () => {
+    if (verified.length === 0) expect(gates).toMatch(/no ATS has (?:passed|a recorded)[^.]*\. [^.]*refused on every ATS|refused on every ATS/i);
+  });
+});
