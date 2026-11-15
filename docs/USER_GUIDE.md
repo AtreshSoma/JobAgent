@@ -855,6 +855,8 @@ npm run end-to-end     # prepare-apps then assist (stops at approval boundary)
 npm run watch          # poll on an interval
 ```
 
+**A search every morning, without the dashboard open.** `npm run schedule` shows the entry for your computer's own scheduler (launchd on macOS, cron on Linux, Task Scheduler on Windows) for one search-and-score cycle with a desktop notification. `npm run schedule -- --install` adds it (`--time 06:45` for another time), and `npm run schedule -- --remove` takes it out. The scheduled run never prepares, fills or submits anything; its log is `logs/scheduled.log`.
+
 ### Human approval workflow
 
 ```bash
