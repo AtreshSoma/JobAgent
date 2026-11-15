@@ -316,6 +316,77 @@ def _bold_spans_in_run(paragraph, run, spans: Sequence[tuple]) -> int:
     return bolded
 
 
+def _section_of(paragraph) -> str | None:
+    """The nearest recognized section heading above a paragraph (normalized), or None.
+
+    A paragraph in a table cell is placed by the heading above its table.
+    """
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    node = paragraph._p
+    while node.getparent() is not None and node.getparent().tag != qn("w:body"):
+        node = node.getparent()
+    for sibling in node.itersiblings(preceding=True):
+        if sibling.tag != qn("w:p"):
+            continue
+        text = (Paragraph(sibling, paragraph._parent).text or "").strip()
+        if text and _is_section_heading(text):
+            return _norm_heading(text)
+    return None
+
+
+def _emphasis_allowed(paragraph) -> bool:
+    """Bold may go on a bullet, or on a line in the summary or skills section."""
+    text = (paragraph.text or "").strip()
+    if not text or _is_section_heading(text) or _is_role_heading(paragraph):
+        return False
+    if _is_bullet(paragraph):
+        return True
+    section = _section_of(paragraph)
+    if section is None:
+        return False
+    parts = [part.strip() for part in re.split(r"\s*(?:&|/|\band\b|,)\s*", section) if part.strip()]
+    return any(part in _SUMMARY_HEADINGS or part in _COMPETENCY_HEADINGS for part in parts)
+
+
+def _merge_identical_runs(paragraph) -> int:
+    """Join neighbouring runs that hold plain text and look exactly the same.
+
+    The visible text and formatting are unchanged; only Word's invisible run
+    boundaries go. Spell-check markers between such runs are dropped too.
+    """
+    from lxml import etree
+    from docx.oxml.ns import qn
+
+    def plain(run) -> bool:
+        children = [child.tag for child in run]
+        return children.count(qn("w:t")) == 1 and all(tag in (qn("w:t"), qn("w:rPr")) for tag in children)
+
+    def looks(run) -> bytes:
+        properties = run.find(qn("w:rPr"))
+        return etree.tostring(properties) if properties is not None else b""
+
+    merged = 0
+    previous = None
+    for child in list(paragraph._p):
+        if child.tag == qn("w:proofErr"):
+            paragraph._p.remove(child)
+            continue
+        if child.tag != qn("w:r") or not plain(child):
+            previous = None
+            continue
+        if previous is not None and looks(previous) == looks(child):
+            kept = previous.find(qn("w:t"))
+            kept.text = (kept.text or "") + (child.find(qn("w:t")).text or "")
+            kept.set(qn("xml:space"), "preserve")
+            paragraph._p.remove(child)
+            merged += 1
+        else:
+            previous = child
+    return merged
+
+
 def _emphasize(
     document,
     keywords: List[str],
@@ -354,7 +425,14 @@ def _emphasize(
     mutations: List[Dict[str, Any]] = []
     emphasized_terms: set = set()
 
-    paragraphs = list(_iter_all_paragraphs(document))
+    # Only the summary, skills and bullets take bold (R8). The first mention
+    # anywhere used to win, so a term went bold in a role line ("Airflow
+    # Platform Engineer | Example Corp"), a heading or the name.
+    paragraphs = [para for para in _iter_all_paragraphs(document) if _emphasis_allowed(para)]
+    # Word splits text into runs for reasons nobody sees ("Tuned Sp" + "ark"):
+    # join runs that look the same, so a split term is found and bolded.
+    for para in paragraphs:
+        _merge_identical_runs(para)
     for keyword in ordered_keywords:
         if len(emphasized_terms) >= max_terms:
             break
@@ -365,22 +443,27 @@ def _emphasize(
         for para in paragraphs:
             if placed:
                 break
-            if _norm_heading(para.text).startswith("most relevant to this role:"):
-                continue
-            for run in list(para.runs):
-                text = run.text or ""
-                if not text:
-                    continue
-                spans = evidence.occurrences(str(keyword), text, vocabulary=ordered_keywords)
-                if not spans:
-                    continue
-                start, end = spans[0]
+            runs = list(para.runs)
+            bounds = []
+            cursor = 0
+            for run in runs:
+                bounds.append((cursor, cursor + len(run.text or "")))
+                cursor += len(run.text or "")
+            # Matched against the whole line, so the context rules for an
+            # everyday term see the sentence, not one run of it.
+            text = "".join(run.text or "" for run in runs)
+            for start, end in evidence.occurrences(str(keyword), text, vocabulary=ordered_keywords):
+                index = next((i for i, (left, right) in enumerate(bounds) if left <= start and end <= right), None)
+                if index is None:
+                    continue  # spans runs that look different: left alone
+                run = runs[index]
                 # Already bold in the master: nothing to do, but the term is
                 # spent so we do not hunt for another occurrence.
                 if run.bold is True:
                     placed = True
                     break
-                added = _bold_spans_in_run(para, run, [(start, end)])
+                offset = bounds[index][0]
+                added = _bold_spans_in_run(para, run, [(start - offset, end - offset)])
                 if not added:
                     continue
                 count += added
