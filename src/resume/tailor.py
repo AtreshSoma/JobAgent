@@ -484,6 +484,15 @@ _SECTION_HEADINGS = _COMPETENCY_HEADINGS | {
 }
 
 
+#: Sections whose dated lines are not jobs (R4). Experience-like sections
+#: (and projects or volunteering, which read as roles) are not listed.
+_NON_ROLE_SECTIONS = _COMPETENCY_HEADINGS | {
+    "professional summary", "summary", "profile", "career summary",
+    "education", "certifications", "licenses", "training", "languages",
+    "honors", "honors and awards", "awards", "publications", "additional information",
+}
+
+
 def _preceding_section_heading(document, table) -> str:
     """Return the closest recognized section heading before a table."""
     from docx.oxml.ns import qn
@@ -875,7 +884,40 @@ def _is_role_heading(paragraph) -> bool:
     # date ("Led the March 2021 migration…"). Long prose lines are the same.
     if _is_bullet(paragraph) or len(text) > 160:
         return False
-    return bool(_EMPLOYMENT_DATE_RE.search(text))
+    if not _EMPLOYMENT_DATE_RE.search(text):
+        return False
+    return not _in_non_role_section(paragraph)
+
+
+def _non_role_heading(text: str) -> bool:
+    """A heading whose section holds no employment: education, skills, summary…"""
+    normalized = _norm_heading(text)
+    if normalized in _NON_ROLE_SECTIONS:
+        return True
+    parts = [part.strip() for part in re.split(r"\s*(?:&|/|\band\b|,)\s*", normalized) if part.strip()]
+    return len(parts) > 1 and all(part in _NON_ROLE_SECTIONS for part in parts)
+
+
+def _in_non_role_section(paragraph) -> bool:
+    """Is the nearest section heading above this paragraph one that holds no roles?
+
+    A dated line is a role only in a section that can hold one. Role detection
+    used to scan every paragraph, so "B.S. Computer Science, …, 2012 - 2016"
+    was a role, and when education came first it became the CURRENT role:
+    the page fit's never-drop protection guarded an education line and the
+    real current role's required evidence was omitted (R4). With no heading
+    above at all (a resume without headings), dated lines stay roles.
+    """
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    for sibling in paragraph._p.itersiblings(preceding=True):
+        if sibling.tag != qn("w:p"):
+            continue
+        text = (Paragraph(sibling, paragraph._parent).text or "").strip()
+        if text and _is_section_heading(text):
+            return _non_role_heading(text)
+    return False
 
 
 def _remove_paragraph(paragraph) -> None:
@@ -1510,11 +1552,15 @@ def _section_bounds(document, headings: set[str]) -> tuple[int, int] | None:
     return start + 1, end
 
 
-#: Characters a person types to start a bullet by hand.
-_BULLET_GLYPHS = "•·▪◦"
-_TYPED_BULLET_RE = re.compile(rf"^\s*[{_BULLET_GLYPHS}]\s+")
+#: Characters a person types to start a bullet by hand. Only "• · ▪ ◦" were
+#: known, so "- ", "– ", "* ", "● ", "■ " and "➢ " lines were never bullets:
+#: never reordered or trimmed, and one with a date in it ("- Led the March
+#: 2021 migration") became a role heading (R5). Whitespace must follow the
+#: glyph, so "-5%" and "*Required" stay text.
+_BULLET_GLYPHS = re.escape("•·▪◦‣⁃○●■□◆◇►▸▹➢➤✓✔-–—*")
+_TYPED_BULLET_RE = re.compile(rf"^\s*[{_BULLET_GLYPHS}]\s+(?=\S)")
 #: The same glyph at the start of rendered HTML, after any opening tags.
-_LEADING_GLYPH_HTML_RE = re.compile(rf"^((?:<[^>]+>)*)\s*[{_BULLET_GLYPHS}]\s+")
+_LEADING_GLYPH_HTML_RE = re.compile(rf"^((?:<[^>]+>)*)\s*[{_BULLET_GLYPHS}]\s+(?=\S)")
 
 
 def _is_bullet(paragraph) -> bool:

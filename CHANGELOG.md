@@ -16,6 +16,8 @@ Your name and contact details stay on your computer, and what JobAgent says abou
 
 ### Fixes
 
+- Bullets typed by hand with -, –, *, ●, ■ or ➢ are bullets: they are reordered and fitted like list bullets, and one that mentions a date is no longer read as a job.
+- A dated line under Education or Certifications is no longer read as a job, so page fitting protects your current role, not your degree.
 - Skills that are also everyday words (Go, R, C, Excel) count only in a skills list or next to another technology, so "go-live", "R&D" and "I excel at" are no longer read as skills in your resume or in a posting.
 - A plural in your resume counts for the skill: "data pipelines" now shows "data pipeline".
 - The PDF of your resume now includes a linked email or profile link, contact details in the page header, tables and typed • bullets. Before, it was refused or printed without them.

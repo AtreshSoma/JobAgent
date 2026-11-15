@@ -334,11 +334,6 @@ EXPECT: Dict[str, Dict] = {
 
 # Checks that fail today, by audit ID. Remove an entry when its fix lands.
 KNOWN: Dict[tuple, str] = {
-    ("education_first", "structure"): "R4: a dated education line is read as a role",
-    ("dated_education_last", "structure"): "R4: a dated education line is read as a role, even below experience",
-    ("dash_bullets", "structure"): "R5: typed '- ' bullets are not bullets",
-    ("dash_bullet_with_date", "structure"): "R5: a typed bullet with a date is read as a role",
-    ("other_typed_glyphs", "structure"): "R5: – * ● ■ ➢ bullets are not bullets",
     ("text_box_summary", "pdf_text_complete"): "R15: the PDF leaves out text-box text",
     ("text_box_summary", "master_pdf_text_complete"): "R15: the PDF leaves out text-box text",
     ("other_heading_words", "experience_reordered"): "R14: 'CAREER HISTORY' is not a known heading, so nothing is reordered",
