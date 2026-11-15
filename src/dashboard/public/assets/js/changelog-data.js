@@ -31,6 +31,8 @@ export const CHANGELOG = Object.freeze([
         'The dashboard no longer shows command-line instructions for setup. Installing the browser, restarting and reading job descriptions each point to the launcher or a button.',
       ],
       fixed: [
+        'Skills that are also everyday words (Go, R, C, Excel) count only in a skills list or next to another technology, so "go-live", "R&D" and "I excel at" are no longer read as skills in your resume or in a posting.',
+        'A plural in your resume counts for the skill: "data pipelines" now shows "data pipeline".',
         'The PDF of your resume now includes a linked email or profile link, contact details in the page header, tables and typed • bullets. Before, it was refused or printed without them.',
         'A table cell holding a link no longer stops tailoring, and a role line kept in a table keeps its dates at the right edge.',
         'An accepted rewording of a line that had a link replaces the whole line, and the review says the link is not kept.',

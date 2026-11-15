@@ -14,6 +14,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List, Sequence
 
+import evidence
+
 
 def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
@@ -221,10 +223,12 @@ def classify_qualification_keywords(
     for keyword in deduped:
         occurrences: List[Dict[str, str]] = []
         kinds = set()
-        for hit in _phrase_pattern(str(keyword)).finditer(text):
+        # The same check the resume side uses (src/resume/evidence.py): a
+        # posting that says "go-live" does not ask for Go (R2).
+        for hit_start, hit_end in evidence.occurrences(str(keyword), text, vocabulary=deduped):
             active = None
             for event in events:
-                if event[0] > hit.start():
+                if event[0] > hit_start:
                     break
                 active = event
             kind = active[2] if active is not None else "unclassified"
@@ -232,7 +236,7 @@ def classify_qualification_keywords(
             occurrences.append({
                 "classification": kind,
                 "marker": active[3] if active is not None else "",
-                "excerpt": _context(text, hit.start(), hit.end()),
+                "excerpt": _context(text, hit_start, hit_end),
             })
 
         if "required" in kinds:

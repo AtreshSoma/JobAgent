@@ -334,8 +334,6 @@ EXPECT: Dict[str, Dict] = {
 
 # Checks that fail today, by audit ID. Remove an entry when its fix lands.
 KNOWN: Dict[tuple, str] = {
-    ("everyday_words", "no_everyday_word_matches"): "R2: go-live, R&D and 'I excel' count as Go, R and Excel",
-    ("plural_terms", "plurals_match"): "R3: 'data pipelines' does not evidence 'data pipeline'",
     ("education_first", "structure"): "R4: a dated education line is read as a role",
     ("dated_education_last", "structure"): "R4: a dated education line is read as a role, even below experience",
     ("dash_bullets", "structure"): "R5: typed '- ' bullets are not bullets",

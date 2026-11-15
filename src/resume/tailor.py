@@ -65,6 +65,7 @@ from typing import Any, Dict, Iterable, List, Sequence
 
 from docx.enum.text import WD_TAB_ALIGNMENT
 
+import evidence
 from humanizer import humanize
 from jdKeywords import classify_qualification_keywords
 from keywordAudit import read_docx_text
@@ -115,14 +116,6 @@ def output_filename(company: str, title: str, now: datetime | None = None) -> st
     return f"{_slug(company)}_{_slug(title)}_{_date_stamp(now)}.docx"
 
 
-def _phrase_pattern(phrase: str) -> re.Pattern:
-    """Boundary-aware matcher that remains tolerant of tech punctuation."""
-    return re.compile(
-        rf"(?<![a-z0-9]){re.escape((phrase or '').strip())}(?![a-z0-9])",
-        re.IGNORECASE,
-    )
-
-
 def _keyword_details(qualifications: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {
         re.sub(r"\s+", " ", str(item.get("keyword", "")).lower()).strip(): item
@@ -135,11 +128,16 @@ def _matches_for_text(
     text: str,
     keywords: Sequence[str],
     qualification_details: Dict[str, Dict[str, Any]],
+    *,
+    in_list: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Return grounded keyword evidence for one existing resume fragment."""
+    """Return grounded keyword evidence for one existing resume fragment.
+
+    ``in_list``: ``text`` is one item of a skills list (src/resume/evidence.py).
+    """
     matched: List[Dict[str, Any]] = []
     for keyword in keywords:
-        if not keyword or not _phrase_pattern(str(keyword)).search(text or ""):
+        if not keyword or not evidence.shows(str(keyword), text or "", vocabulary=keywords, in_list=in_list):
             continue
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         detail = qualification_details.get(key, {})
@@ -363,7 +361,6 @@ def _emphasize(
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         if key in emphasized_terms:
             continue
-        pattern = _phrase_pattern(str(keyword))
         placed = False
         for para in paragraphs:
             if placed:
@@ -374,20 +371,21 @@ def _emphasize(
                 text = run.text or ""
                 if not text:
                     continue
-                match = pattern.search(text)
-                if not match:
+                spans = evidence.occurrences(str(keyword), text, vocabulary=ordered_keywords)
+                if not spans:
                     continue
+                start, end = spans[0]
                 # Already bold in the master: nothing to do, but the term is
                 # spent so we do not hunt for another occurrence.
                 if run.bold is True:
                     placed = True
                     break
-                added = _bold_spans_in_run(para, run, [(match.start(), match.end())])
+                added = _bold_spans_in_run(para, run, [(start, end)])
                 if not added:
                     continue
                 count += added
                 mutations.append({
-                    "text": match.group(0),
+                    "text": text[start:end],
                     "paragraph": (para.text or "").strip(),
                     "before_bold": run.bold,
                     "after_bold": True,
@@ -540,7 +538,7 @@ def _reorder_competencies(
             if len(before_items) < 2:
                 continue
             evidence_by_item = {
-                item: _matches_for_text(item, keywords, qualification_details)
+                item: _matches_for_text(item, keywords, qualification_details, in_list=True)
                 for item in before_items
             }
             indexed = list(enumerate(before_items))
@@ -666,7 +664,7 @@ def _reorder_competency_paragraphs(
         label, _sep, before_items = parsed
 
         evidence_by_item = {
-            item: _matches_for_text(item, keywords, qualification_details)
+            item: _matches_for_text(item, keywords, qualification_details, in_list=True)
             for item in before_items
         }
         indexed = list(enumerate(before_items))
@@ -1807,21 +1805,17 @@ def _audit_supported_keywords(
     missing: List[str] = []
     supported_by: Dict[str, List[Dict[str, str]]] = {}
     seen = set()
+    keywords = [str(k) for k in keywords]
+    lines = resume_text.splitlines()
+    alias_map = {term: _evidence_terms(term, evidence_aliases)[1:] for term in keywords}
     for keyword in keywords:
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         if not key or key in seen:
             continue
         seen.add(key)
-        matches: List[Dict[str, str]] = []
-        for term in _evidence_terms(str(keyword), evidence_aliases):
-            for line in resume_text.splitlines():
-                clean = re.sub(r"\s+", " ", line).strip()
-                if clean and _phrase_pattern(term).search(clean):
-                    matches.append({
-                        "matched_term": term,
-                        "resume_text": clean[:300],
-                    })
-                    break
+        matches = evidence.find_evidence(
+            str(keyword), lines, aliases=alias_map, vocabulary=keywords,
+        )
         target = present if matches else missing
         target.append(keyword)
         if matches:
@@ -1923,20 +1917,11 @@ def _resume_evidence(
     evidence_aliases: Dict[str, Sequence[str]] | None = None,
 ) -> List[Dict[str, str]]:
     """Return compact exact master-resume excerpts supporting a term."""
-    found: List[Dict[str, str]] = []
-    for term in _evidence_terms(keyword, evidence_aliases):
-        for line in resume_text.splitlines():
-            clean = re.sub(r"\s+", " ", line).strip()
-            if clean and _phrase_pattern(term).search(clean):
-                found.append({
-                    "keyword": keyword,
-                    "matched_term": term,
-                    "resume_text": clean[:300],
-                })
-                break
-        if len(found) == 3:
-            break
-    return found
+    aliases = {keyword: _evidence_terms(keyword, evidence_aliases)[1:]}
+    return [
+        {"keyword": keyword, **item}
+        for item in evidence.find_evidence(keyword, resume_text.splitlines(), aliases=aliases, limit=3)
+    ]
 
 
 def _content_units(document) -> List[str]:
