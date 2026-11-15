@@ -3965,3 +3965,12 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
 .unlisted { list-style: none; margin: var(--s2) 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .unlisted li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--s2); font-size: var(--fs-md); }
 .unlisted li button { margin-left: auto; }
+
+/* Answers for this job (audit A4): labels above full-width boxes, as in the
+   Questions list, so the panel reads top to bottom in the narrow rail. */
+.answer-draft label { display: block; margin: 10px 0 4px; font-weight: 600; }
+.answer-draft input[type="text"],
+.answer-draft textarea { display: block; width: 100%; box-sizing: border-box; }
+.answer-draft button { margin-top: 8px; }
+.answer-draft [role="status"] { margin-top: 6px; }
+.answer-draft ul.plan { margin: 6px 0 0; }
