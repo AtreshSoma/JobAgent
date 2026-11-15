@@ -114,7 +114,7 @@ export const ARCH_NODES = Object.freeze([
     id: 'automation', layer: 'engine', name: 'Browser assist',
     role: 'Fills a live form with Playwright.',
     detail: 'Opens a visible Chromium window, checks the page for anything that needs a human, scans the real form, fills and verifies each field, uploads documents, advances through safe steps and stops before Submit. Progress is checkpointed without storing any value it typed.',
-    files: ['src/automation/applyRunner.js', 'src/automation/guards.js', 'src/automation/domScanner.js', 'src/automation/fieldFiller.js', 'src/automation/navigator.js', 'src/automation/uploadRunner.js', 'src/automation/browser.js', 'src/apply/applicationState.js'],
+    files: ['src/automation/applyRunner.js', 'src/automation/assistStages.js', 'src/automation/assistSupport.js', 'src/automation/guards.js', 'src/automation/domScanner.js', 'src/automation/fieldFiller.js', 'src/automation/navigator.js', 'src/automation/uploadRunner.js', 'src/automation/browser.js', 'src/apply/applicationState.js'],
     talks: ['packets', 'sites', 'db', 'files'],
   },
   {
