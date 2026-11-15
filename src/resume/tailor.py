@@ -601,9 +601,11 @@ def _reorder_competencies(
             if len(value_cell.paragraphs) != 1:
                 continue
             nonempty_runs = [
-                run for run in value_cell.paragraphs[0].runs if (run.text or "")
+                run for run, _link in _inline_items(value_cell.paragraphs[0]) if (run.text or "")
             ]
-            if len(nonempty_runs) > 1:
+            # A link in the cell cannot be rebuilt into one run without
+            # losing it (R16): leave the cell as it is.
+            if len(nonempty_runs) > 1 or value_cell.paragraphs[0].hyperlinks:
                 continue
             before_items = _split_skill_list(value_cell.text)
             if len(before_items) < 2:
@@ -760,12 +762,14 @@ def _reorder_competency_paragraphs(
             continue
         item_end = item_start + len(joined)
 
+        # Offsets over EVERY run, linked or not, because `full` includes link
+        # text; only a run outside a link is ever rewritten (R16).
         target_run = None
         run_offset = 0
-        for run in paragraph.runs:
+        for run, link in _inline_items(paragraph):
             run_text = run.text or ""
             run_end = run_offset + len(run_text)
-            if run_offset <= item_start and item_end <= run_end:
+            if link is None and run_offset <= item_start and item_end <= run_end:
                 target_run = (run, run_offset)
                 break
             run_offset = run_end

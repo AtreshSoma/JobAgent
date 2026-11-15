@@ -103,3 +103,52 @@ def test_a_rewrite_of_a_linked_bullet_says_the_link_is_not_kept(tmp_path):
     change = next(c for c in result["changes"] if c["type"] == "rewrite")
     assert change["after"] == rewrite
     assert "example.com/post" in change["formatting_note"]
+
+
+# ── skills lines that hold a link (R16, the rest of it) ──────────────────────
+
+def _skills_master(tmp_path, build):
+    doc = Document()
+    doc.add_paragraph("CORE COMPETENCIES")
+    build(doc)
+    doc.add_paragraph("PROFESSIONAL EXPERIENCE")
+    doc.add_paragraph(corpus.ROLE_1)
+    doc.add_paragraph("Moved batch jobs to Snowflake.", style="List Bullet")
+    path = tmp_path / "skills_link.docx"
+    doc.save(str(path))
+    return path
+
+
+def test_a_skills_line_with_a_link_keeps_the_link_and_needs_no_rollback(tmp_path):
+    # The link comes before the list, and the list sits in one run: positions
+    # measured on the line's text (link included) must not be used on runs
+    # that leave the link out.
+    def build(doc):
+        line = doc.add_paragraph()
+        corpus.add_hyperlink(line, "https://example.com/tools", "Data")
+        line.add_run(" Tools: SQL, Airflow, Snowflake")
+
+    master = _skills_master(tmp_path, build)
+    result = tailor.tailor_resume(master, tmp_path / "out", JOB, ["snowflake"], {})
+    assert result["skipped_steps"] == []
+    out = Document(result["output_path"])
+    line = next(p for p in out.paragraphs if p.text.startswith("Data Tools:"))
+    assert line.text == "Data Tools: Snowflake, SQL, Airflow"
+    assert len(line._p.findall(qn("w:hyperlink"))) == 1
+
+
+def test_a_skills_table_cell_with_a_link_is_left_as_it_is(tmp_path):
+    def build(doc):
+        table = doc.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "Tools"
+        cell = table.cell(0, 1).paragraphs[0]
+        corpus.add_hyperlink(cell, "https://example.com/dash", "Tableau")
+        cell.add_run(", SQL, Snowflake")
+
+    master = _skills_master(tmp_path, build)
+    result = tailor.tailor_resume(master, tmp_path / "out", JOB, ["snowflake"], {})
+    assert result["skipped_steps"] == []
+    assert not any(c["type"] == "reorder_skills" for c in result["changes"])
+    row = next(p for p in Document(result["output_path"]).paragraphs if p.text.startswith("Tools"))
+    assert "Tableau, SQL, Snowflake" in row.text
+    assert len(row._p.findall(qn("w:hyperlink"))) == 1
