@@ -1451,6 +1451,7 @@ export function resumeChangeLabel(change = {}) {
     fit_to_page_budget: 'Omitted the least relevant bullets from the oldest roles to hold the page limit.',
     rewrite: 'Used a rewording you accepted, backed by your own resume text.',
     rewrite_skipped: 'Skipped a rewording you accepted: that bullet is no longer in your master resume.',
+    step_skipped: 'Left out one tailoring step because its result failed a check. Everything else was tailored as usual.',
   };
   const label = labels[change.type] || change.reason
     || String(change.type ?? 'Recorded an update').replace(/_/g, ' ');
@@ -1460,6 +1461,8 @@ export function resumeChangeLabel(change = {}) {
   if (change.type === 'rewrite' && change.before && change.after) {
     return `${label} "${change.before}" became "${change.after}"${change.formatting_note ? ` ${change.formatting_note}` : ''}`;
   }
+  // Which step was left out is the point of a skipped step (R11).
+  if (change.type === 'step_skipped' && change.where) return `${label} (${change.where})`;
   return ['normalize_layout', 'fit_to_page_budget'].includes(change.type) && change.after
     ? `${label} (${change.after})`
     : label;

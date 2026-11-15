@@ -169,6 +169,7 @@ def _run(request: dict) -> dict:
         "rewrite_policy": result.get("rewrite_policy", {}),
         "invariants": result.get("invariants", {}),
         "limitations": result.get("limitations", []),
+        "skipped_steps": result.get("skipped_steps", []),
         "validation": validation,
         "ats_report": ats_report,
         "error": None,

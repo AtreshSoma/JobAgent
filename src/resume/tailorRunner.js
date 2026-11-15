@@ -164,6 +164,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     rewritePolicy: null,
     invariants: null,
     limitations: [],
+    skippedSteps: [],
     validation: null,
     atsReport: null,
     warning: null,
@@ -316,6 +317,9 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     rewritePolicy: response.rewrite_policy ?? null,
     invariants: response.invariants ?? null,
     limitations: response.limitations ?? [],
+    // Optional steps left out because their result failed a check (R11); the
+    // rest of the tailoring was kept. Listed in the review.
+    skippedSteps: response.skipped_steps ?? [],
     validation: response.validation ?? null,
     atsReport: response.ats_report ?? null,
     // Audit trail for the optional grounded requirement expansion: which

@@ -17,6 +17,7 @@ Your name and contact details stay on your computer, and what JobAgent says abou
 
 ### Fixes
 
+- When one tailoring step fails its checks, only that step is left out and the review says which. Before, the whole tailoring was dropped and the job used your untailored resume.
 - Bold in a tailored resume goes only on your summary, skills and bullets, never on your name, a heading or a job title line, and a skill Word had stored in two pieces is now found and bolded.
 - Bullets typed by hand with -, –, *, ●, ■ or ➢ are bullets: they are reordered and fitted like list bullets, and one that mentions a date is no longer read as a job.
 - A dated line under Education or Certifications is no longer read as a job, so page fitting protects your current role, not your degree.

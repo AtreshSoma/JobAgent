@@ -1993,12 +1993,11 @@ def _verify_truth_invariants(
         sum(node is candidate for candidate in output_nodes) == 1
         for node in source_nodes
     )
+    # A source paragraph that is gone has no style (None), which fails here
+    # cleanly instead of crashing inside the generator.
+    output_styles = {paragraph._p: paragraph.style.name or "" for paragraph in document.paragraphs}
     paragraph_styles_preserved = all(
-        source_styles[node] == next(
-            paragraph.style.name or ""
-            for paragraph in document.paragraphs
-            if paragraph._p is node
-        )
+        source_styles[node] == output_styles.get(node)
         for node in source_nodes
     )
 
@@ -2365,6 +2364,185 @@ def _replace_paragraph_text(paragraph, text: str) -> None:
         new_run._r.insert(0, properties)
 
 
+#: Steps tailoring can do without, in the order they run, with how the review names them.
+#: Table flattening is not here: a failure there still falls back to the master.
+_OPTIONAL_STEPS: Dict[str, str] = {
+    "rewrites": "your accepted rewordings",
+    "prioritize": "reordering the summary and bullets",
+    "competency_tables": "reordering skills tables",
+    "competency_lines": "reordering skills lines",
+    "emphasize": "bolding the posting's terms",
+    "normalize_layout": "layout cleanup",
+    "fit": "fitting to the page limit",
+    "protect_headings": "keeping headings with their text",
+}
+
+
+class _StepFailed(RuntimeError):
+    """An optional tailoring step whose result failed a check."""
+
+    def __init__(self, step: str, error: Exception):
+        super().__init__(f"{step}: {error}")
+        self.step = step
+        self.error = error
+
+
+def _build_tailored(
+    master_path: Path,
+    *,
+    skip: set,
+    present: Sequence[str],
+    qualification_details: Dict[str, Dict[str, Any]],
+    accepted_rewrites: Sequence[Dict[str, Any]] | None,
+    max_pages: int,
+    keep_bullets: Sequence[str] | None,
+    check_each_step: bool = False,
+) -> Dict[str, Any]:
+    """One tailoring pass over a fresh copy of the master, without the ``skip`` steps.
+
+    A step that raises is reported as ``_StepFailed``. With ``check_each_step``,
+    each content step is also followed by the full truth invariants, and the
+    page fit by the layout invariants, so a step that silently broke one is
+    pinned too. The final checks are not attributed: they raise a plain
+    RuntimeError, as before.
+    """
+    from docx import Document
+
+    # Open the master read-only: we load it, mutate the in-memory copy, and save
+    # to a NEW path. The master file on disk is never written.
+    document = Document(str(master_path))
+    state: Dict[str, Any] = {"movable_nodes": set()}
+
+    def run(name, fn, *args, check=None, **kwargs):
+        if name in skip:
+            return None
+        try:
+            out = fn(*args, **kwargs)
+            if check is not None:
+                check()
+            return out
+        except RuntimeError as err:
+            raise _StepFailed(name, err) from err
+
+    # Accepted, evidence-verified rewrites (P1-2) are applied first, and the
+    # invariant baseline is updated for exactly those units: every other unit
+    # must still survive byte-for-byte, and these must be the accepted text.
+    rewrite_changes, rewritten_units = run("rewrites", _apply_accepted_rewrites, document, accepted_rewrites) or ([], {})
+    source_units = _content_units(document)
+    source_nodes = [paragraph._p for paragraph in document.paragraphs]
+    source_styles = {
+        paragraph._p: paragraph.style.name or "" for paragraph in document.paragraphs
+    }
+
+    def truth():
+        return _verify_truth_invariants(
+            document, source_units=source_units, source_nodes=source_nodes,
+            source_styles=source_styles, movable_nodes=state["movable_nodes"],
+        )
+
+    changes: List[Dict[str, Any]] = list(rewrite_changes)
+    selected_content: Dict[str, Any] = {"summary": [], "experience": []}
+    prioritized = run("prioritize", _prioritize_existing_content, document, present, qualification_details)
+    if prioritized:
+        content_changes, selected_content, state["movable_nodes"] = prioritized
+        changes.extend(content_changes)
+        if check_each_step:
+            try:
+                truth()
+            except RuntimeError as err:
+                raise _StepFailed("prioritize", err) from err
+
+    check = truth if check_each_step else None
+    changes.extend(run("competency_tables", _reorder_competencies, document, present, qualification_details,
+                       check=check) or [])
+    # Paragraph-based CORE COMPETENCIES ("Data Platforms:  Azure Databricks, …").
+    # Table-only handling above missed this extremely common layout entirely.
+    changes.extend(run("competency_lines", _reorder_competency_paragraphs, document, present, qualification_details,
+                       check=check) or [])
+
+    emphasized, emphasis_evidence, emphasis_mutations = run(
+        "emphasize", _emphasize, document, present, qualification_details, check=check,
+    ) or (0, [], [])
+    if emphasized:
+        changes.append({
+            "type": "emphasize",
+            "where": "throughout",
+            "before": [
+                {"text": item["text"], "bold": item["before_bold"]}
+                for item in emphasis_mutations
+            ],
+            "after": [
+                {"text": item["text"], "bold": item["after_bold"]}
+                for item in emphasis_mutations
+            ],
+            "evidence": emphasis_evidence,
+            "reason": (
+                f"bolded {emphasized} existing mention(s) of supported JD terms; "
+                "no text changed"
+            ),
+            "source": "master_resume",
+        })
+
+
+    invariants = truth()
+
+    table_change = _flatten_tables_for_ats(document)
+    if table_change:
+        changes.append(table_change)
+
+    # ── layout phase ─────────────────────────────────────────────────────────
+    # Runs AFTER the truth invariants above, because these steps are allowed to
+    # change the document's SHAPE (page breaks, blank filler, how many bullets a
+    # 2017 role shows) while the checks above pin its CLAIMS. Everything the
+    # layout phase may do is re-verified by `_verify_layout_invariants`.
+    layout_change = run("normalize_layout", _normalize_layout, document)
+    if layout_change:
+        changes.append(layout_change)
+
+    units_before_fit = _content_units(document)
+
+    def omitted_by(fit_change):
+        return (fit_change or {}).get("evidence", [{}])[0].get("omitted", [])
+
+    def layout(fit_change):
+        return _verify_layout_invariants(
+            document, units_before_fit=units_before_fit, omitted=omitted_by(fit_change), max_pages=max_pages,
+        )
+
+    fitted = run("fit", _fit_to_pages, document, max_pages=max_pages, keywords=present,
+                 qualification_details=qualification_details, keep_bullets=keep_bullets)
+    fit_change, fit_limitations = fitted or (None, [])
+    if fitted is not None and check_each_step:
+        try:
+            layout(fit_change)
+        except RuntimeError as err:
+            raise _StepFailed("fit", err) from err
+    if fit_change:
+        changes.append(fit_change)
+
+    pagination_change = run("protect_headings", _protect_headings, document)
+    if pagination_change:
+        changes.append(pagination_change)
+
+    invariants.update(layout(fit_change))
+    invariants["table_text_preserved"] = True
+    invariants["tables_removed_for_ats"] = len(document.tables) == 0
+    invariants["page_breaks_stabilized"] = True
+    invariants["role_context_text_preserved"] = True
+    invariants["ats_safe_structure_preserved"] = (
+        invariants["paragraph_styles_preserved"]
+        and invariants["protected_content_order_preserved"]
+        and invariants["tables_removed_for_ats"]
+    )
+    if not invariants["ats_safe_structure_preserved"]:
+        raise RuntimeError("ATS-safe structure invariant failed before save")
+    return {
+        "document": document, "changes": changes, "rewrite_changes": rewrite_changes,
+        "rewritten_units": rewritten_units, "selected_content": selected_content,
+        "emphasized": emphasized, "invariants": invariants, "fit_limitations": fit_limitations,
+    }
+
+
 def tailor_resume(
     master_path: str | Path,
     output_dir: str | Path,
@@ -2395,8 +2573,6 @@ def tailor_resume(
     provenance records, gaps, rewrite policy, and verified invariants.
     Raises FileNotFoundError if the master is missing.
     """
-    from docx import Document
-
     master_path = Path(master_path)
     if not master_path.exists():
         raise FileNotFoundError(f"Master resume not found: {master_path}")
@@ -2422,59 +2598,42 @@ def tailor_resume(
     qualifications["audit"] = _qualification_audit(qualifications, audit)
     qualification_details = _keyword_details(qualifications)
 
-    # Open the master read-only: we load it, mutate the in-memory copy, and save
-    # to a NEW path. The master file on disk is never written.
-    document = Document(str(master_path))
-    # Accepted, evidence-verified rewrites (P1-2) are applied first, and the
-    # invariant baseline is updated for exactly those units: every other unit
-    # must still survive byte-for-byte, and these must be the accepted text.
-    rewrite_changes, rewritten_units = _apply_accepted_rewrites(document, accepted_rewrites)
-    source_units = _content_units(document)
-    source_nodes = [paragraph._p for paragraph in document.paragraphs]
-    source_styles = {
-        paragraph._p: paragraph.style.name or "" for paragraph in document.paragraphs
-    }
-    changes: List[Dict[str, Any]] = list(rewrite_changes)
+    # Each optional step runs in _build_tailored. A step whose result fails a
+    # check is skipped and the copy is rebuilt from the master without it (R11):
+    # one bad step used to discard the whole tailoring. The truth and layout
+    # invariants are unchanged and still run on the final document; anything
+    # they reject that no single optional step explains still fails closed.
+    # The first pass checks once at the end, as before. Only when that fails is
+    # the pass repeated with a check after every step, to find which one to
+    # leave out, so a resume that tailors cleanly pays nothing extra.
+    skipped: Dict[str, str] = {}
+    diagnose = False
+    for _attempt in range(len(_OPTIONAL_STEPS) + 2):
+        try:
+            built = _build_tailored(
+                master_path, skip=set(skipped), present=audit["present"],
+                qualification_details=qualification_details, accepted_rewrites=accepted_rewrites,
+                max_pages=max_pages, keep_bullets=keep_bullets, check_each_step=diagnose,
+            )
+            break
+        except _StepFailed as failed:
+            if failed.step in skipped:
+                raise failed.error from failed
+            skipped[failed.step] = str(failed.error)
+        except RuntimeError:
+            if diagnose:
+                raise
+            diagnose = True
+    else:  # pragma: no cover - every optional step skipped and still failing
+        raise RuntimeError("tailoring could not finish with any combination of steps")
 
-    content_changes, selected_content, movable_nodes = _prioritize_existing_content(
-        document, audit["present"], qualification_details
-    )
-    changes.extend(content_changes)
-
-    competency_changes = _reorder_competencies(
-        document, audit["present"], qualification_details
-    )
-    changes.extend(competency_changes)
-
-    # Paragraph-based CORE COMPETENCIES ("Data Platforms:  Azure Databricks, …").
-    # Table-only handling above missed this extremely common layout entirely.
-    competency_changes = _reorder_competency_paragraphs(
-        document, audit["present"], qualification_details
-    )
-    changes.extend(competency_changes)
-
-    emphasized, emphasis_evidence, emphasis_mutations = _emphasize(
-        document, audit["present"], qualification_details
-    )
-    if emphasized:
-        changes.append({
-            "type": "emphasize",
-            "where": "throughout",
-            "before": [
-                {"text": item["text"], "bold": item["before_bold"]}
-                for item in emphasis_mutations
-            ],
-            "after": [
-                {"text": item["text"], "bold": item["after_bold"]}
-                for item in emphasis_mutations
-            ],
-            "evidence": emphasis_evidence,
-            "reason": (
-                f"bolded {emphasized} existing mention(s) of supported JD terms; "
-                "no text changed"
-            ),
-            "source": "master_resume",
-        })
+    document = built["document"]
+    changes = built["changes"]
+    rewrite_changes = built["rewrite_changes"]
+    rewritten_units = built["rewritten_units"]
+    selected_content = built["selected_content"]
+    emphasized = built["emphasized"]
+    invariants = built["invariants"]
 
     limitations = [
         (
@@ -2546,60 +2705,26 @@ def tailor_resume(
             "A rewrite was requested but deliberately not performed because supported rewriting is unavailable."
         )
 
-    invariants = _verify_truth_invariants(
-        document,
-        source_units=source_units,
-        source_nodes=source_nodes,
-        source_styles=source_styles,
-        movable_nodes=movable_nodes,
-    )
-
-    table_change = _flatten_tables_for_ats(document)
-    if table_change:
-        changes.append(table_change)
-
-    # ── layout phase ─────────────────────────────────────────────────────────
-    # Runs AFTER the truth invariants above, because these steps are allowed to
-    # change the document's SHAPE (page breaks, blank filler, how many bullets a
-    # 2017 role shows) while the checks above pin its CLAIMS. Everything the
-    # layout phase may do is re-verified by `_verify_layout_invariants`.
-    layout_change = _normalize_layout(document)
-    if layout_change:
-        changes.append(layout_change)
-
-    units_before_fit = _content_units(document)
-    fit_change, fit_limitations = _fit_to_pages(
-        document,
-        max_pages=max_pages,
-        keywords=audit["present"],
-        qualification_details=qualification_details,
-        keep_bullets=keep_bullets,
-    )
-    if fit_change:
-        changes.append(fit_change)
-    limitations.extend(fit_limitations)
-
-    pagination_change = _protect_headings(document)
-    if pagination_change:
-        changes.append(pagination_change)
-
-    invariants.update(_verify_layout_invariants(
-        document,
-        units_before_fit=units_before_fit,
-        omitted=(fit_change or {}).get("evidence", [{}])[0].get("omitted", []),
-        max_pages=max_pages,
-    ))
-    invariants["table_text_preserved"] = True
-    invariants["tables_removed_for_ats"] = len(document.tables) == 0
-    invariants["page_breaks_stabilized"] = True
-    invariants["role_context_text_preserved"] = True
-    invariants["ats_safe_structure_preserved"] = (
-        invariants["paragraph_styles_preserved"]
-        and invariants["protected_content_order_preserved"]
-        and invariants["tables_removed_for_ats"]
-    )
-    if not invariants["ats_safe_structure_preserved"]:
-        raise RuntimeError("ATS-safe structure invariant failed before save")
+    limitations.extend(built["fit_limitations"])
+    skipped_steps = [
+        {"step": name, "label": _OPTIONAL_STEPS[name], "reason": reason} for name, reason in skipped.items()
+    ]
+    for item in skipped_steps:
+        changes.append({
+            "type": "step_skipped",
+            "where": item["label"],
+            "before": f"{item['label']} was attempted",
+            "after": "left out; the rest of the tailoring was kept",
+            "evidence": [{"step": item["step"], "check_failed": item["reason"]}],
+            "reason": "its result failed a check, so the resume was rebuilt without that step",
+            "source": "master_resume",
+        })
+    if skipped_steps:
+        limitations.append(
+            f"Skipped {len(skipped_steps)} tailoring step(s) whose result failed a check: "
+            + ", ".join(item["label"] for item in skipped_steps)
+            + ". Everything else was tailored as usual."
+        )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2624,4 +2749,5 @@ def tailor_resume(
         "rewrite_policy": rewrite_policy,
         "invariants": invariants,
         "limitations": limitations,
+        "skipped_steps": skipped_steps,
     }
