@@ -12,6 +12,7 @@
  * gaps to fill in, never invented. Paragraphs that fail are left out.
  */
 import { llmSettings } from '../llm/client.js';
+import { withoutContactLines } from '../llm/identityUnits.js';
 import { runTask, SYSTEM_UNTRUSTED_RULE, untrusted } from '../llm/task.js';
 import { profileTerms, verifyParagraph } from '../resume/claimVerifier.js';
 import { readMasterUnits, vocabularyFromScoring } from '../resume/tailorRunner.js';
@@ -67,7 +68,8 @@ export async function draftReply({ db, suggestionId, config, env = process.env, 
   let units = [];
   try {
     units = (await (deps.readMasterUnitsFn ?? readMasterUnits)({ root: config?.root, deps }))
-      .filter((u) => u.kind === 'bullet').slice(0, 40);
+      .filter((u) => u.kind === 'bullet');
+    units = withoutContactLines(units, config?.candidate).slice(0, 40);
   } catch { /* without a resume, only courtesy paragraphs can pass */ }
   const result = await runTask(DRAFT_REPLY_TASK, {
     company: job.company ?? '', title: job.title ?? '', kind: meta.kind, subject: meta.subject, evidence: meta.evidence, units,

@@ -14,6 +14,7 @@
  * closing, humanizer, word limit and leftover-placeholder check.
  */
 import { llmSettings } from '../llm/client.js';
+import { withoutContactLines, withoutIdentityUnits } from '../llm/identityUnits.js';
 import { runTask, SYSTEM_UNTRUSTED_RULE } from '../llm/task.js';
 import { profileTerms, verifyParagraph } from '../resume/claimVerifier.js';
 import { readMasterUnits, vocabularyFromScoring } from '../resume/tailorRunner.js';
@@ -105,7 +106,10 @@ export async function composeGroundedLetter({ job, config, requirements = [], en
     ? parseLetter(letterText).body.filter((t) => !/\[[^\]]{3,}\]/.test(t))
       .map((text, i) => ({ id: `l${i + 1}`, kind: 'paragraph', text: text.replace(/\{(?:company|title|role)\}/g, (m) => (m === '{company}' ? String(job.company ?? '') : String(job.title ?? ''))) }))
     : [];
-  units = [...units, ...letterUnits];
+  // The name line and contact lines are paragraphs too; they are not evidence
+  // and never go to the provider (audit N1). Everything else still does.
+  const candidate = config?.candidate ?? {};
+  units = [...withoutIdentityUnits(units, candidate), ...withoutContactLines(letterUnits, candidate)];
   const bullets = units.filter((u) => u.kind === 'bullet' || u.kind === 'paragraph').slice(0, 60 + letterUnits.length);
   const company = String(job.company ?? '').trim();
   const title = String(job.title ?? '').trim();

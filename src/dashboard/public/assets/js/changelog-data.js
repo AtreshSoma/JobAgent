@@ -19,6 +19,17 @@ export const CHANGELOG_GROUPS = Object.freeze([
 
 export const CHANGELOG = Object.freeze([
   {
+    version: 'v0.2.3',
+    date: '2026-11-14',
+    summary: 'Your name and contact details stay on your computer, and what JobAgent says about itself now matches what it does.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      fixed: [
+        'Cover letters written with the optional model no longer send your name, email, phone or city to the model provider. Your summary, headline and bullets are still used, and rewrite suggestions, reply drafts and Rank by meaning skip any line that carries contact details too.',
+      ],
+    },
+  },
+  {
     version: 'v0.2.2',
     date: '2026-11-13',
     summary: 'Each person\'s answers stay theirs, the Jobs list shows more and hides what you already applied to, and a command palette, sign-in batching and evidence from your own resume make each step quicker.',

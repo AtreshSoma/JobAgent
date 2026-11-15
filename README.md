@@ -410,10 +410,21 @@ Set with `RUN_MODE` in `.env` or `--mode=`. Unknown values fall back to `DRY_RUN
 
 ## 🧠 Optional LLM assist
 
-**Off by default.** Turn it on with `LLM_ASSIST=on` and an OpenAI-compatible endpoint (see `.env.example`). It does one narrow job: it reads a job description and proposes requirement phrases the keyword list missed.
+**Off by default.** Turn it on with `LLM_ASSIST=on` and a provider (see `.env.example`). Its first job is narrow: it reads a job description and proposes requirement phrases the keyword list missed. Every other feature has its own switch. Each sends exactly this to the provider you chose:
+
+| Feature | Switch | What is sent |
+| --- | --- | --- |
+| Requirement phrases | `LLM_ASSIST=on` | The posting's title and description |
+| Rewrite suggestions | `RESUME_REWRITE=suggest` | Your resume bullets (up to 40) with the role line each sits under, requirement phrases from the posting, and any instruction you type to refine them |
+| Grounded cover letters | `COVER_LETTER_MODE=grounded` | The company and job title, requirement phrases, your resume's summary, headline and bullets (up to 60) with their role lines, and the paragraphs of your master cover letter |
+| Reply drafts | `LLM_ASSIST=on` with an inbox connected | Your resume bullets (up to 40), the employer and job title, and the reply's subject and the sentence it was flagged on |
+| Reply sorting | `INBOX_LLM=on` | The subject and up to 6,000 characters of a reply the rules could not sort |
+| Rank by meaning | `RERANK=on` | Your resume bullets, and the title and first 2,000 characters of each of your top 50 matches |
+
+Your name and contact details are never sent by any of them: a line carrying your name, an email address, a phone number or your own profile links is dropped before a request is built. Screening answers, EEO answers and salary expectations are never sent either. Rewrites, letters, reply drafts and ranking all send your own resume text, so a local provider (**Ollama** or **LM Studio**) keeps everything on this computer.
 
 > [!IMPORTANT]
-> **It can't fabricate.** Every proposed phrase must appear **verbatim in that job description** or it's dropped. The model never writes or rewords resume text, never answers screening questions, and is never consulted on submit. Only the public job title and description are sent. Your resume and contact details are not.
+> **It can't fabricate.** Every proposed requirement phrase must appear **verbatim in that job description** or it's dropped. A rewrite or letter paragraph is kept only when the resume lines it cites back it up, and no rewording reaches your resume until you accept it. The model never answers screening questions and is never consulted on submit.
 
 ## ⚙️ Configuration
 

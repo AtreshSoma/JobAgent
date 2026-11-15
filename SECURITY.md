@@ -34,11 +34,17 @@ hosted for other people.
 - The optional LLM assist is off by default. Requirement extraction, the only
   thing `LLM_ASSIST=on` does by itself, receives only the public job description
   and title, and every phrase it returns must appear verbatim in that posting.
-  Features with their own switch send more: resume rewrites, refine and grounded
-  cover letters send resume bullets; drafting a reply sends resume bullets and the
-  email being answered; `INBOX_LLM=on` sends up to 6,000 characters of an email
-  body to classify it. Contact details, EEO answers and salary expectations are
-  not sent. A local provider (Ollama, LM Studio) keeps all of it on your computer.
+  Features with their own switch send more: `RESUME_REWRITE=suggest` (rewrites
+  and refine) sends resume bullets with their role lines; `COVER_LETTER_MODE=grounded`
+  sends the resume's summary, headline and bullets and the master cover letter's
+  paragraphs; drafting a reply sends resume bullets and the reply's subject and
+  flagged sentence; `INBOX_LLM=on` sends up to 6,000 characters of an email body
+  to sort it; `RERANK=on` sends resume bullets and the top matches' descriptions
+  to an embeddings model. Your name and contact details are never sent by any of
+  them: lines carrying a name, email address, phone number or profile link are
+  dropped first (`src/llm/identityUnits.js`). Screening answers, EEO answers and
+  salary expectations are not sent. A local provider (Ollama, LM Studio) keeps all
+  of it on your computer.
 - Nothing is submitted to an employer unless you opt in for that run; the
   default mode is `DRY_RUN`.
 
