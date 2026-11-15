@@ -445,3 +445,48 @@ export async function waitForFormOrWayIn(scope, timeoutMs) {
     await new Promise((resolve) => setTimeout(resolve, 400));
   }
 }
+
+/** The longest a run will wait on a wall, whatever the setting (15 minutes). */
+export const MAX_WALL_WAIT_MS = 15 * 60_000;
+
+/**
+ * How long this run may wait on a sign-in / CAPTCHA wall (audit A2), in ms.
+ * Off (0) by default. `options.waitForWallMs` wins (a test or a one-off); the
+ * runtime setting `assistWaitForWallSeconds` applies to a HEADED run only,
+ * because nobody can solve a wall in a window that is not there.
+ */
+export function wallWaitMs({ options = {}, config = {}, headless = false } = {}) {
+  const fromOptions = Number(options.waitForWallMs);
+  const fromConfig = headless ? 0 : Number(config?.runtime?.assistWaitForWallSeconds) * 1000;
+  const ms = Number.isFinite(fromOptions) && options.waitForWallMs != null ? fromOptions : fromConfig;
+  return Number.isFinite(ms) && ms > 0 ? Math.min(ms, MAX_WALL_WAIT_MS) : 0;
+}
+
+/**
+ * Stay on a walled page and look again until the wall is gone (audit A2).
+ *
+ * This never decides the page is fine: it inspects the page again, and the
+ * caller's normal guard check runs on what that inspection returns. A wall
+ * that does not clear within `waitMs` comes back still blocked, with how long
+ * it waited. A cancel request ends the wait at once.
+ *
+ * @returns {Promise<{nav: object, waitedMs: number, cancelled: boolean}>}
+ */
+export async function waitOutWall({ nav, inspectPage, page, url, waitMs, shouldCancel, pollMs = 500 }) {
+  const started = Date.now();
+  let current = nav;
+  if (!(waitMs > 0) || !current?.guard?.blocked) return { nav: current, waitedMs: 0, cancelled: false };
+  while (current.guard?.blocked) {
+    if (shouldCancel?.()) return { nav: current, waitedMs: Date.now() - started, cancelled: true };
+    if (Date.now() - started >= waitMs) break;
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
+    current = await inspectPage(page, url);
+  }
+  return { nav: current, waitedMs: Date.now() - started, cancelled: false };
+}
+
+/** The blocker line for a wall, saying how long the run waited when it did. */
+export function wallBlockerLine(guard, waitedMs = 0, label = 'page blocked') {
+  const waited = waitedMs >= 1000 ? ` — waited ${Math.round(waitedMs / 1000)}s for it to clear` : '';
+  return `${label} (${guard.kind}): ${guard.reason}${waited}`;
+}

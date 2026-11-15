@@ -256,6 +256,8 @@ tenant that sets `searchText: ""` still means "enumerate everything".
 | Jobvite | ◐ generic resolver + selector hints; name-based fields and a file input hidden behind an "Attach" label (hand-written fixture) | ◐ | ◐ | ◐ | — | ◐ `atsMoreFixtures`: a hand-written form, **not captured from a live site** |
 | Generic accessible forms | ✅ semantic field resolver (labels/ARIA/question text; selects, comboboxes, radios, checkboxes, dates, files, conditionals) | ✅ safe Next/Continue only | ✅ | ✅ | unknown required questions block (never guessed). **Assisted fill only — never eligible for auto-submit**, since an unrecognised site is by definition not fixture-verified | ✅ `atsApplicationFixtures` generic case, `validationDetection`, `fieldFiller` |
 
+**Walls.** A sign-in, CAPTCHA or verification page stops the run by default. With `ASSIST_WAIT_FOR_WALL_SECONDS` set (headed runs only, capped at 15 minutes) the run instead stays on the page, looks again, and continues once you have cleared it; a wall that stays ends the run blocked and says how long it waited. Tested on a local fixture whose wall clears mid-run (`waitForWall`).
+
 **Coverage probe.** `npm run coverage:probe` reads the saved form fixtures with the no-side-effects dry run and records, per platform, how many fields auto-fill finds and would answer (System health → Auto-fill coverage). It is measured on local fixtures, first page of each form, and refuses any non-local URL. It says nothing about a real employer's current form.
 
 **Live verification.** None of the ATS rows above has a recorded supervised

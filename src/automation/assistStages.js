@@ -44,7 +44,8 @@ import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { LIFECYCLE } from '../lifecycle.js';
 import {
   SUBMIT_CONFIRMATION_RE, currentUrlOf, isBrowserClosedError, safeCount, shouldWatchForHumanSubmit,
-  stepFingerprint, submitBaseline, unsafeResumeUrl, visibleText, waitForFormOrWayIn, watchForHumanSubmission,
+  stepFingerprint, submitBaseline, unsafeResumeUrl, visibleText, waitForFormOrWayIn, wallBlockerLine, wallWaitMs,
+  waitOutWall, watchForHumanSubmission,
 } from './assistSupport.js';
 
 /**
@@ -70,6 +71,42 @@ export const TRANSITIONS = Object.freeze({
   advance: ['stepStart', 'exhausted'],
   exhausted: [],
 });
+
+/**
+ * A run stopped by the person at a safe checkpoint (shared by every place the
+ * run notices a cancel request).
+ */
+async function cancelRun(r, stepNumber = r.applicationState.currentStep) {
+  const { result, checkpoint, page, url } = r;
+  result.status = LIFECYCLE.CANCELLED;
+  result.note = 'Application run cancelled at a safe checkpoint. Resume to continue from the saved URL.';
+  await checkpoint(APPLICATION_PHASE.CANCELLED, {
+    currentStep: stepNumber,
+    lastUrl: currentUrlOf(page) ?? r.applicationState.lastUrl ?? url,
+    blockers: [],
+  }, 'user requested cancellation');
+  return DONE;
+}
+
+/**
+ * On a wall, wait for the person to clear it when the run was told it may
+ * (audit A2), then hand back the page's CURRENT state: the caller's normal
+ * guard check decides what happens next, so waiting can never skip a guard.
+ * @returns {Promise<{nav: object, waitedMs: number, cancelled: boolean}>}
+ */
+async function settleWall(r, nav, resumeUrl) {
+  const waitMs = wallWaitMs({ options: r.options, config: r.config, headless: r.headless });
+  if (!nav?.guard?.blocked || !waitMs) return { nav, waitedMs: 0, cancelled: false };
+  await r.checkpoint(APPLICATION_PHASE.BLOCKED, {
+    currentStep: r.applicationState.currentStep,
+    lastUrl: nav.url ?? resumeUrl,
+    blockers: [wallBlockerLine(nav.guard)],
+    lastUrlUnsafe: true,
+  }, `waiting up to ${Math.round(waitMs / 1000)}s for you to clear the ${nav.guard.kind} page`);
+  return waitOutWall({
+    nav, inspectPage: r.inspectPage, page: r.page, url: resumeUrl, waitMs, shouldCancel: r.deps.shouldCancel,
+  });
+}
 
 /** Setup states: open resources, check the packet. */
 async function begin(r) {
@@ -278,10 +315,13 @@ async function openApplication(r) {
     blockers: baseBlockers,
   }, result.resumed ? 'resuming last checkpoint URL' : 'opening application URL');
   r.nav = await openPage(page, resumeUrl);
+  const openWait = await settleWall(r, r.nav, resumeUrl);
+  if (openWait.cancelled) return cancelRun(r);
+  r.nav = openWait.nav;
   result.guard = r.nav.guard;
   if (r.nav.guard?.blocked) {
     result.status = LIFECYCLE.ASSIST_BLOCKED;
-    result.blockers = [...baseBlockers, `page blocked (${r.nav.guard.kind}): ${r.nav.guard.reason}`];
+    result.blockers = [...baseBlockers, wallBlockerLine(r.nav.guard, openWait.waitedMs)];
     result.sessionLeftOpen = !headless;
     await checkpoint(APPLICATION_PHASE.BLOCKED, {
       currentStep: r.applicationState.currentStep,
@@ -303,18 +343,9 @@ async function openApplication(r) {
 /** One page of the application. */
 async function stepStart(r) {
   const runStep = r.runStep;
-  const { result, deps, url, headless, checkpoint, inspectPage, baseBlockers, resumeUrl, page } = r;
+  const { result, deps, headless, checkpoint, inspectPage, baseBlockers, resumeUrl, page } = r;
   r.step = {};
-  if (deps.shouldCancel?.()) {
-    result.status = LIFECYCLE.CANCELLED;
-    result.note = 'Application run cancelled at a safe checkpoint. Resume to continue from the saved URL.';
-    await checkpoint(APPLICATION_PHASE.CANCELLED, {
-      currentStep: r.applicationState.currentStep,
-      lastUrl: currentUrlOf(page) ?? r.applicationState.lastUrl ?? url,
-      blockers: [],
-    }, 'user requested cancellation');
-    return DONE;
-  }
+  if (deps.shouldCancel?.()) return cancelRun(r);
   const stepNumber = r.nextStep;
   result.steps = runStep + 1;
   result.currentStep = stepNumber;
@@ -322,10 +353,13 @@ async function stepStart(r) {
   // "Next"/"Continue" click, so the DOM/URL may have changed entirely).
   if (runStep > 0) {
     r.nav = await inspectPage(page, resumeUrl);
+    const stepWait = await settleWall(r, r.nav, resumeUrl);
+    if (stepWait.cancelled) return cancelRun(r, stepNumber);
+    r.nav = stepWait.nav;
     result.guard = r.nav.guard;
     if (r.nav.guard?.blocked) {
       result.status = LIFECYCLE.ASSIST_BLOCKED;
-      result.blockers = [...baseBlockers, `page blocked (${r.nav.guard.kind}): ${r.nav.guard.reason}`];
+      result.blockers = [...baseBlockers, wallBlockerLine(r.nav.guard, stepWait.waitedMs)];
       result.sessionLeftOpen = !headless;
       await checkpoint(APPLICATION_PHASE.BLOCKED, {
         currentStep: stepNumber,
@@ -766,12 +800,14 @@ async function advance(r) {
   // Validate immediately after navigation. ATSes commonly keep the same URL
   // and render inline errors when a step was rejected; a resolved click is
   // therefore not proof that advancing succeeded.
-  const afterAdvance = await inspectPage(page, resumeUrl);
+  const advanced = await inspectPage(page, resumeUrl);
+  const advanceWait = await settleWall(r, advanced, resumeUrl);
+  if (advanceWait.cancelled) return cancelRun(r, stepNumber);
+  const afterAdvance = advanceWait.nav;
   result.guard = afterAdvance.guard;
   if (afterAdvance.guard?.blocked) {
     result.status = LIFECYCLE.ASSIST_BLOCKED;
-    result.blockers = [...baseBlockers,
-      `page blocked (${afterAdvance.guard.kind}): ${afterAdvance.guard.reason}`];
+    result.blockers = [...baseBlockers, wallBlockerLine(afterAdvance.guard, advanceWait.waitedMs)];
     result.sessionLeftOpen = !headless;
     await checkpoint(APPLICATION_PHASE.BLOCKED, {
       currentStep: stepNumber,

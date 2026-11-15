@@ -31,6 +31,7 @@ export const CHANGELOG = Object.freeze([
       improved: [
         'The cover letter is also made as a PDF beside its Word and text copies, so a form whose letter slot takes only PDF no longer stops the run. Editing or restoring a letter removes the old PDF first, so an employer never receives a PDF of text you replaced.',
         'Auto-fill reads application forms built with web components (open shadow roots), where it used to say the form could not be read. The check that holds Submit back while a required question is blank reads them too.',
+        'Auto-fill can wait for you at a sign-in or CAPTCHA page instead of stopping: set ASSIST_WAIT_FOR_WALL_SECONDS and, in a visible browser window, it waits that long for you to clear the page, then carries on. It is off by default, never solves a wall itself, and if the wall stays it stops and says how long it waited.',
         'Auto-fill follows questions that reveal further questions, up to five levels deep on one page, instead of stopping after the first follow-up.',
         'Preparing applications is quicker: the resume tools now start once and stay ready, instead of starting two or three times for every job.',
         'Tailoring knows more section names, such as Career History, Professional Background, Technical Proficiencies and About Me, and a section holding your jobs counts as experience whatever it is called. A heading-like line in capitals or bold ends the section above it.',
