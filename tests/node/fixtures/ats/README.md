@@ -8,3 +8,5 @@ employer's current form works. `docs/SUPPORT_MATRIX.md` keeps "live run: none"
 for every platform until a supervised live run is recorded.
 
 All names and addresses are fictional (example.test).
+
+- `workday_experience.html` — a Workday-shaped "My Experience" step (an "Add" per job and degree that reveals an entry form). Hand-written; used by `repeatedSections.test.js` (audit A3).

@@ -24,6 +24,7 @@ import {
   inspectCurrentPage,
 } from './browser.js';
 import { fillFields, requiredFieldsSatisfied, verifyFilledFields } from './fieldResolver.js';
+import { fillRepeatedSections } from './repeatedSections.js';
 import {
   scanFields, resolveFormScope, detectValidationErrors, unfilledRequiredControls, applicationFields,
   shadowFormControlCount,
@@ -408,6 +409,20 @@ async function fill(r) {
   }
   r.staticUnresolved = fill.unresolved ?? [];
   for (const err of fill.errors ?? []) stepBlockers.push(`field ${err.field}: ${err.error}`);
+
+  // 2a'. Work history and education (audit A3): an "Add" per job and degree,
+  // each filled from the profile and read back. Before the generic pass, so the
+  // new entries' boxes already hold their values when it looks at the page.
+  const history = await fillRepeatedSections(scope, { candidate, dryRun });
+  if (history.sections.some((s) => s.wanted > 0)) {
+    result.repeatedSections = [...(result.repeatedSections ?? []), ...history.sections.map((s) => ({ ...s, step: stepNumber }))];
+  }
+  for (const f of history.filled) {
+    if (f.selector) stepFilledKeys.add(f.selector);
+    completedThisStep.push(f);
+    addFilledResult(f, stepNumber);
+  }
+  for (const err of history.errors) stepBlockers.push(`work history / education: ${err}`);
 
   // 2b. Dynamic, type-aware fill of whatever is actually on the page now.
   // Only the application's own controls: a header search box or a
