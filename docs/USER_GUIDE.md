@@ -98,7 +98,8 @@ The default path never submits. Once it has filled and uploaded everything it ca
 | **Node.js** | **≥ 22.13** | The built-in `node:sqlite` module works without a flag from 22.13 (22.x and 24.x are tested in CI; `.nvmrc` pins 22.13) |
 | **Python** | 3.12 | Resume editing through `python-docx` |
 | **Playwright Chromium** | *`npx playwright install chromium`* | Browser-assisted form filling |
-| MS Word | *optional* | Only for `docx2pdf` PDF export |
+| LibreOffice | *recommended* | Renders the PDF from the .docx and measures the page count the fit uses (`brew install --cask libreoffice`, or libreoffice.org) |
+| MS Word | *optional* | PDF export through `docx2pdf` when LibreOffice is not installed |
 
 ### Installation
 

@@ -25,6 +25,7 @@ export const CHANGELOG = Object.freeze([
     safety: 'Nothing is submitted without your review. That has not changed.',
     groups: {
       improved: [
+        'The PDF of a tailored resume is the Word file itself, rendered by LibreOffice when it is installed, so it has the same pages the fit measured. Without it, the PDF keeps your font, size, margins, italics, underlines and right-aligned dates.',
         'With LibreOffice installed, a tailored resume is fitted to your page limit by its real rendered length, so bullets are no longer left out that did not need to be, and a resume that renders long is caught. Without it, the estimate now reads your fonts and spacing.',
         'Resume check in Master resume: when you upload a resume, JobAgent says what tailoring can work with (sections, jobs, bullets, contact details) and flags what it cannot, such as text boxes or headings it does not know, with an estimated page count.',
         'The optional "Most relevant to this role" line is gone. A tailored resume holds only lines from your master resume, and Compare with master flags any line that is not.',

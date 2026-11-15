@@ -2,11 +2,11 @@
 
 Two converters, tried in order:
 
-1. ``docx2pdf``, which drives Microsoft Word (Windows / macOS only).
-2. LibreOffice (``soffice --convert-to pdf``), which works everywhere including
-   Linux and CI.
+1. LibreOffice (``soffice --convert-to pdf``), which works everywhere including
+   Linux and CI, and is what the page fit measures with (audit R7).
+2. ``docx2pdf``, which drives Microsoft Word (Windows / macOS only).
 
-The second one exists because the first can never succeed on Linux, and
+LibreOffice was added because Word can never succeed on Linux, and
 ``resumeExportPdf`` defaults to ON — so on any machine without Word (this
 includes CI and most Linux desktops) every export failed, silently, and the
 dashboard's preview route turned that into an unexplained error. A missing
@@ -193,8 +193,18 @@ def export_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> 
         pdf_path = docx_path.with_suffix(".pdf")
     pdf_path = Path(pdf_path)
 
-    # 1. Word via docx2pdf. Best fidelity, but Windows/macOS only AND it needs a
-    #    real Word installation, not just the package.
+    # 1. LibreOffice, when installed (audit R7). It renders the DOCX itself,
+    #    headless and within a time limit, and it is the renderer the page fit
+    #    measured (src/resume/pagefit.py), so the PDF has the pages the fit
+    #    counted. Word went first before; its automation hung for its full
+    #    90 s timeout in a non-interactive session (audit Phase 0).
+    fallback = {"exported": False, "reason": "LibreOffice not found"}
+    if find_soffice():
+        fallback = _export_with_libreoffice(docx_path, pdf_path)
+        if fallback["exported"]:
+            return fallback
+
+    # 2. Word via docx2pdf. Windows/macOS only AND it needs a real Word.
     word_reason = None
     try:
         import docx2pdf  # noqa: F401,WPS433 (lazy, optional dependency)
@@ -209,12 +219,6 @@ def export_to_pdf(docx_path: str | Path, pdf_path: str | Path | None = None) -> 
                 "pages": pdf_page_count(pdf_path),
                 "reason": "ok (Word)",
             }
-
-    # 2. LibreOffice. The only converter that can work on Linux/CI, and the
-    #    reason this function is no longer a guaranteed failure there.
-    fallback = _export_with_libreoffice(docx_path, pdf_path)
-    if fallback["exported"]:
-        return fallback
 
     # Neither worked: say so precisely, and name the remedy. The DOCX is already
     # written, so this degrades the preview, never the deliverable.

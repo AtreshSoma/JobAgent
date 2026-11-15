@@ -2103,6 +2103,49 @@ def _verify_layout_invariants(
     return invariants
 
 
+_ALIGN_CSS = {1: "center", 2: "right", 3: "justify"}
+
+
+def _alignment(paragraph):
+    """The paragraph's alignment, from itself or its style chain (python-docx enum value)."""
+    if paragraph.alignment is not None:
+        return int(paragraph.alignment)
+    style = paragraph.style
+    while style is not None:
+        if style.paragraph_format.alignment is not None:
+            return int(style.paragraph_format.alignment)
+        style = style.base_style
+    return None
+
+
+def _right_tab(paragraph, body: str) -> str:
+    """"Title | Employer<tab>Dates" with a right tab stop: the dates go to the right edge."""
+    if "\t" not in body:
+        return body
+    stops = list(paragraph.paragraph_format.tab_stops)
+    style = paragraph.style
+    while not stops and style is not None:
+        stops = list(style.paragraph_format.tab_stops)
+        style = style.base_style
+    head, _, tail = body.rpartition("\t")
+    if not any(stop.alignment == WD_TAB_ALIGNMENT.RIGHT for stop in stops) or "</" in tail:
+        return body.replace("\t", " ")
+    # A real space first, so text extraction reads "Corp Jan 2019", not "CorpJan".
+    return f'{head.replace(chr(9), " ")} <span class="tab-right">{tail}</span>'
+
+
+def _body_font(document) -> tuple[str, float]:
+    """Normal's font family and size, as the document resolves them."""
+    styles = pagefit._Styles(document)
+    probe = document.add_paragraph()
+    try:
+        resolved = pagefit._Para(probe, styles)
+    finally:
+        probe._p.getparent().remove(probe._p)
+    family = next((name for name in (resolved.font,) if name), "calibri")
+    return " ".join(part.capitalize() for part in family.split()), resolved.size_pt
+
+
 def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
     """An ATS-safe HTML rendering of a resume, for printing to PDF (P2-3).
 
@@ -2132,7 +2175,14 @@ def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
 
     def run_html(run) -> str:
         text = html_lib.escape(run.text or "")
-        return f"<strong>{text}</strong>" if text and run.bold else text
+        if not text:
+            return text
+        # Emphasis as the document has it (R7): it was bold only.
+        if run.underline:
+            text = f"<u>{text}</u>"
+        if run.italic:
+            text = f"<em>{text}</em>"
+        return f"<strong>{text}</strong>" if run.bold else text
 
     def inline_html(paragraph) -> str:
         out = []
@@ -2165,7 +2215,7 @@ def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
             in_list = True
         if not bullet:
             close_list()
-        body = inline_html(paragraph)
+        body = _right_tab(paragraph, inline_html(paragraph))
         if bullet:
             # A typed glyph becomes the list marker, so it is not page text,
             # and the completeness check must not look for it either (N9).
@@ -2174,14 +2224,16 @@ def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
             parts.append(f"<li>{body}</li>")
             return
         texts.append(text)
+        align = _ALIGN_CSS.get(_alignment(paragraph))
+        attrs = (f' class="{css}"' if css else "") + (f' style="text-align:{align}"' if align else "")
         if css:
-            parts.append(f'<p class="{css}">{body}</p>')
+            parts.append(f'<p{attrs}>{body}</p>')
         elif _is_section_heading(text):
-            parts.append(f"<h2>{body}</h2>")
+            parts.append(f"<h2{attrs}>{body}</h2>")
         elif _is_role_heading(paragraph):
-            parts.append(f"<h3>{body}</h3>")
+            parts.append(f"<h3{attrs}>{body}</h3>")
         else:
-            parts.append(f"<p>{body}</p>")
+            parts.append(f"<p{attrs}>{body}</p>")
 
     def add_table(table) -> None:
         close_list()
@@ -2229,13 +2281,21 @@ def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
     for paragraph in page_part_paragraphs("footer"):
         add_paragraph(paragraph, css="page-footer")
 
+    # The document's own page, margins, font and size (R7). A fixed 10.5 pt
+    # Calibri on 0.55 in margins made this a different document from the DOCX,
+    # with its own page count.
+    page = pagefit.page_metrics(document)
+    inch = lambda twips: f"{twips / 1440:.2f}".rstrip("0").rstrip(".") + "in"  # noqa: E731
+    font, size = _body_font(document)
     style = (
-        "@page{size:Letter;margin:0.55in 0.6in}"
-        "body{font-family:Calibri,Carlito,Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.3;color:#000}"
-        "h2{font-size:11.5pt;margin:10pt 0 3pt;border-bottom:1px solid #000;text-transform:uppercase;break-after:avoid}"
-        "h3{font-size:10.5pt;margin:6pt 0 2pt;break-after:avoid}"
+        f"@page{{size:{inch(page['width'])} {inch(page['height'])};"
+        f"margin:{inch(page['top'])} {inch(page['right'])} {inch(page['bottom'])} {inch(page['left'])}}}"
+        f"body{{font-family:'{font}',Carlito,Caladea,Arial,Helvetica,sans-serif;font-size:{size:g}pt;"
+        "line-height:1.22;color:#000}"
+        "h2{font-size:1.1em;margin:10pt 0 3pt;border-bottom:1px solid #000;text-transform:uppercase;break-after:avoid}"
+        "h3{font-size:1em;margin:6pt 0 2pt;break-after:avoid}"
         "p{margin:0 0 3pt}ul{margin:0 0 4pt;padding-left:16pt}li{margin:0 0 2pt}"
-        "a{color:inherit;text-decoration:none}.cell{margin-right:18pt}"
+        "a{color:inherit;text-decoration:none}.cell{margin-right:18pt}.tab-right{float:right}"
     )
     title = html_lib.escape(texts[0] if texts else "Resume")
     html = (

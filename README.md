@@ -124,7 +124,8 @@ flowchart TB
 | **Node.js** | **≥ 22.13** | The built-in `node:sqlite` store needs no flag from 22.13. CI tests 22.x and 24.x |
 | **Python** | **3.12** | Resume tailoring through `python-docx` |
 | **Playwright Chromium** | latest | Browser-assisted form filling (a separate download) |
-| Microsoft Word | *optional* | Only for `docx2pdf` PDF export |
+| LibreOffice | *recommended* | Renders the PDF from the .docx and measures the page count the fit uses |
+| Microsoft Word | *optional* | PDF export through `docx2pdf` when LibreOffice is not installed |
 
 ### 2. Install
 
