@@ -31,6 +31,9 @@ export const CHANGELOG = Object.freeze([
         'The dashboard no longer shows command-line instructions for setup. Installing the browser, restarting and reading job descriptions each point to the launcher or a button.',
       ],
       fixed: [
+        'The PDF of your resume now includes a linked email or profile link, contact details in the page header, tables and typed • bullets. Before, it was refused or printed without them.',
+        'A table cell holding a link no longer stops tailoring, and a role line kept in a table keeps its dates at the right edge.',
+        'An accepted rewording of a line that had a link replaces the whole line, and the review says the link is not kept.',
         'Cover letters written with the optional model no longer send your name, email, phone or city to the model provider. Your summary, headline and bullets are still used, and rewrite suggestions, reply drafts and Rank by meaning skip any line that carries contact details too.',
         'Explore JobAgent no longer says tailoring never leaves anything out. A bullet left out to fit two pages is listed in Compare with master, and wording changes only where you accepted a rewording.',
         'The version number is the same everywhere JobAgent shows it.',

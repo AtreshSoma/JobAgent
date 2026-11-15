@@ -1455,7 +1455,11 @@ export function resumeChangeLabel(change = {}) {
   const label = labels[change.type] || change.reason
     || String(change.type ?? 'Recorded an update').replace(/_/g, ' ');
   // These two describe WHAT they did in `after`, and that detail is the point.
-  if (change.type === 'rewrite' && change.before && change.after) return `${label} "${change.before}" became "${change.after}"`;
+  // A rewording cannot keep a link or partial bold from the old line; the
+  // tailor says which, and the review must say it too (R16).
+  if (change.type === 'rewrite' && change.before && change.after) {
+    return `${label} "${change.before}" became "${change.after}"${change.formatting_note ? ` ${change.formatting_note}` : ''}`;
+  }
   return ['normalize_layout', 'fit_to_page_budget'].includes(change.type) && change.after
     ? `${label} (${change.after})`
     : label;

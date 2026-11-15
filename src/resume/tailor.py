@@ -63,6 +63,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
+from docx.enum.text import WD_TAB_ALIGNMENT
+
 from humanizer import humanize
 from jdKeywords import classify_qualification_keywords
 from keywordAudit import read_docx_text
@@ -162,6 +164,31 @@ def _relevance_key(evidence: Sequence[Dict[str, Any]]) -> tuple:
     if not weights:
         return (0, 0, 0)
     return (max(weights), sum(weights), len(weights))
+
+
+def _inline_items(paragraph):
+    """Every run of a paragraph's text, in order, with the link it sits in (or None).
+
+    ``paragraph.runs`` leaves out runs inside a ``w:hyperlink`` (python-docx
+    1.2), while ``paragraph.text`` includes them. Code that read text through
+    ``runs`` therefore lost every linked email, profile URL and portfolio link:
+    the PDF left them out and refused to print (R1), a table cell holding a
+    link failed the flattening check and abandoned the whole tailoring (R10),
+    and an accepted rewrite kept the link text glued to the new wording (N3).
+    Everything that walks a paragraph's runs goes through here.
+    """
+    from docx.text.hyperlink import Hyperlink
+
+    for item in paragraph.iter_inner_content():
+        if isinstance(item, Hyperlink):
+            for run in item.runs:
+                yield run, item
+        else:
+            yield item, None
+
+
+#: Link targets a printed resume may carry. Anything else keeps its text, unlinked.
+_SAFE_LINK_RE = re.compile(r"^(?:https?://|mailto:)", re.IGNORECASE)
 
 
 def _iter_all_paragraphs(document):
@@ -723,21 +750,29 @@ def _semantic_tokens(document) -> Counter:
 
 
 def _copy_cell_content(target, cell) -> None:
-    """Append a cell's text/runs to a body paragraph with formatting intact."""
+    """Append a cell's text/runs to a body paragraph with formatting intact.
+
+    A link is copied as a link (its ``w:hyperlink`` element, whose relationship
+    lives in the same document part), so "Portfolio: example.com/portfolio"
+    keeps both its words and its target.
+    """
+    from docx.text.hyperlink import Hyperlink
+
     wrote = False
     for paragraph in cell.paragraphs:
         if wrote and (paragraph.text or "").strip():
             target.add_run(" ")
-        if paragraph.runs:
-            for run in paragraph.runs:
-                if not run.text:
-                    continue
-                new_run = target.add_run(run.text)
-                if run._r.rPr is not None:
-                    new_run._r.insert(0, deepcopy(run._r.rPr))
-                wrote = True
-        elif (paragraph.text or "").strip():
-            target.add_run(paragraph.text)
+        for item in paragraph.iter_inner_content():
+            if isinstance(item, Hyperlink):
+                if item.text:
+                    target._p.append(deepcopy(item._hyperlink))
+                    wrote = True
+                continue
+            if not item.text:
+                continue
+            new_run = target.add_run(item.text)
+            if item._r.rPr is not None:
+                new_run._r.insert(0, deepcopy(item._r.rPr))
             wrote = True
 
 
@@ -773,9 +808,20 @@ def _flatten_tables_for_ats(document) -> Dict[str, Any] | None:
             # Moving the newly appended node before the table keeps exact table
             # order while producing a normal single-column document flow.
             table._tbl.addprevious(paragraph._p)
+            # "Title | Company" and "Jan 2019 - Present" in two cells is a role
+            # line with right-aligned dates. Two spaces lost the alignment; a
+            # right tab stop at the text width keeps it (R10). Only a dates
+            # column goes right: "Platforms | SQL, Spark, …" is a label and its
+            # list, and other rows keep the plain gap.
+            two_column = len(cells) == 2 and bool(_EMPLOYMENT_DATE_RE.search(cells[1].text or "")) \
+                and len((cells[1].text or "").strip()) <= 40
+            if two_column:
+                section = document.sections[0]
+                width = section.page_width - section.left_margin - section.right_margin
+                paragraph.paragraph_format.tab_stops.add_tab_stop(width, WD_TAB_ALIGNMENT.RIGHT)
             for cell_index, cell in enumerate(cells):
                 if cell_index:
-                    paragraph.add_run("  ")
+                    paragraph.add_run("\t" if two_column else "  ")
                 _copy_cell_content(paragraph, cell)
             row_count += 1
         table._tbl.getparent().remove(table._tbl)
@@ -1466,6 +1512,13 @@ def _section_bounds(document, headings: set[str]) -> tuple[int, int] | None:
     return start + 1, end
 
 
+#: Characters a person types to start a bullet by hand.
+_BULLET_GLYPHS = "•·▪◦"
+_TYPED_BULLET_RE = re.compile(rf"^\s*[{_BULLET_GLYPHS}]\s+")
+#: The same glyph at the start of rendered HTML, after any opening tags.
+_LEADING_GLYPH_HTML_RE = re.compile(rf"^((?:<[^>]+>)*)\s*[{_BULLET_GLYPHS}]\s+")
+
+
 def _is_bullet(paragraph) -> bool:
     style_name = (getattr(paragraph.style, "name", "") or "").lower()
     if "list" in style_name or "bullet" in style_name:
@@ -1473,7 +1526,7 @@ def _is_bullet(paragraph) -> bool:
     ppr = paragraph._p.pPr
     if ppr is not None and ppr.numPr is not None:
         return True
-    return bool(re.match(r"^\s*[•·▪◦]\s+", paragraph.text or ""))
+    return bool(_TYPED_BULLET_RE.match(paragraph.text or ""))
 
 
 def _nonempty_runs(paragraphs: Sequence[Any]) -> List[List[Any]]:
@@ -2057,58 +2110,136 @@ def _verify_layout_invariants(
 def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
     """An ATS-safe HTML rendering of a resume, for printing to PDF (P2-3).
 
-    One column of real text: section headings become <h2>, role lines <h3>,
-    bullets <li>, everything else <p>; bold runs stay bold. No tables, images,
-    headers or footers. Returns the HTML and the paragraph texts it contains,
-    so the caller can check the rendered page holds every one of them.
+    One column of real text, in document order: page-header text first,
+    section headings as <h2>, role lines <h3>, bullets <li>, table rows as one
+    line of cells, everything else <p>, page-footer text last. Bold stays bold
+    and web or mail links stay links.
+
+    Returns the HTML and every text it prints (``texts``), which the caller
+    checks against the rendered page before writing the PDF. Both come from the
+    same walk, so a part of the document the walk misses is missing from the
+    check too only if it is missing from the page, never one without the other.
+    It used to read body paragraphs through ``paragraph.runs``: linked text,
+    tables and page headers were left off the page, and the PDF was refused
+    (R1) or, for tables and headers, written without them and reported ok
+    (N8, N4). Text boxes are still not read (R15).
     """
     import html as html_lib
     from docx import Document
+    from docx.table import Table
+    from docx.text.hyperlink import Hyperlink
 
     document = Document(str(docx_path))
     parts: List[str] = []
     texts: List[str] = []
     in_list = False
 
-    def runs_html(paragraph) -> str:
+    def run_html(run) -> str:
+        text = html_lib.escape(run.text or "")
+        return f"<strong>{text}</strong>" if text and run.bold else text
+
+    def inline_html(paragraph) -> str:
         out = []
-        for run in paragraph.runs:
-            text = html_lib.escape(run.text or "")
-            if not text:
-                continue
-            out.append(f"<strong>{text}</strong>" if run.bold else text)
+        for item in paragraph.iter_inner_content():
+            if isinstance(item, Hyperlink):
+                inner = "".join(run_html(run) for run in item.runs)
+                url = item.url or ""
+                if inner and _SAFE_LINK_RE.match(url):
+                    out.append(f'<a href="{html_lib.escape(url, quote=True)}">{inner}</a>')
+                else:
+                    out.append(inner)
+            else:
+                out.append(run_html(item))
         return "".join(out) or html_lib.escape(paragraph.text or "")
 
-    for paragraph in document.paragraphs:
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            parts.append("</ul>")
+            in_list = False
+
+    def add_paragraph(paragraph, css: str | None = None) -> None:
+        nonlocal in_list
         text = (paragraph.text or "").strip()
         if not text:
-            continue
-        texts.append(text)
-        bullet = _is_bullet(paragraph)
+            return
+        bullet = css is None and _is_bullet(paragraph)
         if bullet and not in_list:
             parts.append("<ul>")
             in_list = True
-        if not bullet and in_list:
-            parts.append("</ul>")
-            in_list = False
-        body = runs_html(paragraph)
+        if not bullet:
+            close_list()
+        body = inline_html(paragraph)
         if bullet:
-            item = re.sub(r"^[•·▪◦]\s+", "", body)
-            parts.append(f"<li>{item}</li>")
+            # A typed glyph becomes the list marker, so it is not page text,
+            # and the completeness check must not look for it either (N9).
+            body = _LEADING_GLYPH_HTML_RE.sub(r"\1", body, count=1)
+            texts.append(_TYPED_BULLET_RE.sub("", text, count=1))
+            parts.append(f"<li>{body}</li>")
+            return
+        texts.append(text)
+        if css:
+            parts.append(f'<p class="{css}">{body}</p>')
         elif _is_section_heading(text):
             parts.append(f"<h2>{body}</h2>")
         elif _is_role_heading(paragraph):
             parts.append(f"<h3>{body}</h3>")
         else:
             parts.append(f"<p>{body}</p>")
-    if in_list:
-        parts.append("</ul>")
+
+    def add_table(table) -> None:
+        close_list()
+        for row in table.rows:
+            cells = []
+            seen = set()
+            for cell in row.cells:
+                if id(cell._tc) in seen:
+                    continue
+                seen.add(id(cell._tc))
+                lines = [p for p in cell.paragraphs if (p.text or "").strip()]
+                if not lines:
+                    continue
+                texts.extend(p.text.strip() for p in lines)
+                cells.append('<span class="cell">' + "<br>".join(inline_html(p) for p in lines) + "</span>")
+            if cells:
+                # Real whitespace between cells: text extraction must read
+                # "Platforms SQL Server", not "PlatformsSQL Server".
+                parts.append('<p class="row">' + " ".join(cells) + "</p>")
+
+    def page_part_paragraphs(kind: str) -> List[Any]:
+        found, seen = [], set()
+        for section in document.sections:
+            candidates = [getattr(section, kind)]
+            if section.different_first_page_header_footer:
+                candidates.insert(0, getattr(section, f"first_page_{kind}"))
+            for part in candidates:
+                if part.is_linked_to_previous:
+                    continue
+                for paragraph in part.paragraphs:
+                    key = (paragraph.text or "").strip()
+                    if key and key not in seen:
+                        seen.add(key)
+                        found.append(paragraph)
+        return found
+
+    for paragraph in page_part_paragraphs("header"):
+        add_paragraph(paragraph, css="page-header")
+    for block in document.iter_inner_content():
+        if isinstance(block, Table):
+            add_table(block)
+        else:
+            add_paragraph(block)
+    close_list()
+    for paragraph in page_part_paragraphs("footer"):
+        add_paragraph(paragraph, css="page-footer")
+
     style = (
         "@page{size:Letter;margin:0.55in 0.6in}"
         "body{font-family:Calibri,Carlito,Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.3;color:#000}"
         "h2{font-size:11.5pt;margin:10pt 0 3pt;border-bottom:1px solid #000;text-transform:uppercase;break-after:avoid}"
         "h3{font-size:10.5pt;margin:6pt 0 2pt;break-after:avoid}"
         "p{margin:0 0 3pt}ul{margin:0 0 4pt;padding-left:16pt}li{margin:0 0 2pt}"
+        "a{color:inherit;text-decoration:none}.cell{margin-right:18pt}"
     )
     title = html_lib.escape(texts[0] if texts else "Resume")
     html = (
@@ -2179,21 +2310,71 @@ def _apply_accepted_rewrites(
             })
             continue
         paragraph = matches[0]
-        runs = paragraph.runs
-        if runs:
-            runs[0].text = rewrite
-            for run in runs[1:]:
-                run.text = ""
-        else:
-            paragraph.add_run(rewrite)
+        note = _rewrite_formatting_note(paragraph, rewrite)
+        _replace_paragraph_text(paragraph, rewrite)
+        if paragraph.text != rewrite:
+            # Cannot happen after _replace_paragraph_text; refuse rather than
+            # write a line nobody accepted.
+            raise RuntimeError("an accepted rewrite did not produce exactly the accepted text")
         replaced[f"paragraph:{original}"] = f"paragraph:{paragraph.text}"
-        changes.append({
+        change = {
             "type": "rewrite", "where": "experience", "before": original, "after": paragraph.text,
             "reason": "verified against the cited master-resume evidence and accepted by you",
             "evidence": item.get("evidence") or [], "source": "accepted_rewrite",
             "task": item.get("task"),
-        })
+        }
+        if note:
+            change["formatting_note"] = note
+        changes.append(change)
     return changes, replaced
+
+
+def _rewrite_formatting_note(paragraph, rewrite: str) -> str | None:
+    """What the original line carried that the rewritten line will not (R16).
+
+    The rewrite takes the first run's formatting. A link in the line goes
+    (its words are not the accepted words), and bold or italic on part of the
+    line cannot be placed on new wording. Said in the review, not silently lost.
+    """
+    notes = []
+    links = [link.text for link in paragraph.hyperlinks if (link.text or "").strip()]
+    if links:
+        names = ", ".join(links)
+        notes.append(f"The original line's link ({names}) is not in the rewording.")
+    looks = {(bool(run.bold), bool(run.italic), bool(run.underline))
+             for run, _link in _inline_items(paragraph) if (run.text or "").strip()}
+    if len(looks) > 1:
+        notes.append("Bold or italic on part of the original line is not kept; the rewording uses the line's first style.")
+    return " ".join(notes) or None
+
+
+def _replace_paragraph_text(paragraph, text: str) -> None:
+    """Make ``paragraph.text`` exactly ``text``: first run's formatting, links removed.
+
+    Writing into run 0 and blanking ``paragraph.runs`` left hyperlink runs
+    alone, so "…on the team blog" + "example.com/post" survived after the
+    accepted wording (N3). Every inline run is accounted for here.
+    """
+    from docx.oxml.ns import qn
+
+    items = list(_inline_items(paragraph))
+    model = next((run for run, _link in items if (run.text or "").strip()), None)
+    for link in list(paragraph._p.findall(qn("w:hyperlink"))):
+        paragraph._p.remove(link)
+    direct = paragraph.runs
+    if direct:
+        direct[0].text = text
+        for run in direct[1:]:
+            run.text = ""
+        return
+    new_run = paragraph.add_run(text)
+    # The line was all link: keep its character formatting, not the link style.
+    if model is not None and model._r.rPr is not None:
+        properties = deepcopy(model._r.rPr)
+        style = properties.find(qn("w:rStyle"))
+        if style is not None:
+            properties.remove(style)
+        new_run._r.insert(0, properties)
 
 
 def tailor_resume(

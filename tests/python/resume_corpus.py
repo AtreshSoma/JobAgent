@@ -334,9 +334,6 @@ EXPECT: Dict[str, Dict] = {
 
 # Checks that fail today, by audit ID. Remove an entry when its fix lands.
 KNOWN: Dict[tuple, str] = {
-    ("hyperlinked_email", "pdf_text_complete"): "R1: docx_to_html skips text inside w:hyperlink",
-    ("hyperlinked_profile_line", "pdf_text_complete"): "R1: docx_to_html skips text inside w:hyperlink",
-    ("link_in_bullet", "pdf_text_complete"): "R1: docx_to_html skips text inside w:hyperlink",
     ("everyday_words", "no_everyday_word_matches"): "R2: go-live, R&D and 'I excel' count as Go, R and Excel",
     ("plural_terms", "plurals_match"): "R3: 'data pipelines' does not evidence 'data pipeline'",
     ("education_first", "structure"): "R4: a dated education line is read as a role",
@@ -344,25 +341,10 @@ KNOWN: Dict[tuple, str] = {
     ("dash_bullets", "structure"): "R5: typed '- ' bullets are not bullets",
     ("dash_bullet_with_date", "structure"): "R5: a typed bullet with a date is read as a role",
     ("other_typed_glyphs", "structure"): "R5: – * ● ■ ➢ bullets are not bullets",
-    ("table_cell_text_and_link", "tailors"): "R10/R11: a table cell mixing text and a link aborts tailoring",
-    ("table_cell_text_and_link", "pdf_text_complete"): "R10/R11: tailoring aborts, so there is no tailored PDF",
-    ("skills_table", "master_pdf_text_complete"): "N8: docx_to_html skips tables, and the check does not notice",
-    ("role_rows_in_table", "master_pdf_text_complete"): "N8: docx_to_html skips tables, and the check does not notice",
-    ("table_cell_text_and_link", "master_pdf_text_complete"): "N8: docx_to_html skips tables (and R1)",
-    ("hyperlinked_email", "master_pdf_text_complete"): "R1: docx_to_html skips text inside w:hyperlink",
-    ("hyperlinked_profile_line", "master_pdf_text_complete"): "R1: docx_to_html skips text inside w:hyperlink",
-    ("link_in_bullet", "master_pdf_text_complete"): "R1: docx_to_html skips text inside w:hyperlink",
-    ("contact_in_header", "pdf_text_complete"): "N4/R15: the PDF leaves out page-header text",
-    ("contact_in_header", "master_pdf_text_complete"): "N4/R15: the PDF leaves out page-header text",
     ("text_box_summary", "pdf_text_complete"): "R15: the PDF leaves out text-box text",
     ("text_box_summary", "master_pdf_text_complete"): "R15: the PDF leaves out text-box text",
     ("other_heading_words", "experience_reordered"): "R14: 'CAREER HISTORY' is not a known heading, so nothing is reordered",
-    ("link_in_bullet", "rewrite_exact"): "N3: a rewrite of a bullet with a link keeps the link text",
     ("georgia_spaced", "estimate_sees_style"): "R6: the page estimate ignores fonts and spacing set on styles",
-    ("hyperlinked_email", "pdf_written"): "R1: the page lacks the linked text, so Chromium refuses the PDF",
-    ("hyperlinked_profile_line", "pdf_written"): "R1: the page lacks the linked text, so Chromium refuses the PDF",
-    ("link_in_bullet", "pdf_written"): "R1: the page lacks the linked text, so Chromium refuses the PDF",
-    ("supported_typed_glyph", "pdf_written"): "N9: '• ' becomes a list marker, the check still wants it, so no PDF",
     ("baseline", "emphasis_skips_headings"): "R8: bold lands on a role line when that is the first mention",
 }
 
