@@ -38,6 +38,7 @@ import { diffResume } from '../../resume/resumeDiff.js';
 import { extractDocxText } from '../../resume/docxText.js';
 import { keptBulletsFor, setKeptBullets } from '../../resume/keepBullets.js';
 import { writeLetterDocx } from '../../resume/tailorRunner.js';
+import { refreshLetterPdf } from '../../apply/letterPdf.js';
 import { masterResumeFile } from '../../profile/workspace.js';
 import { assertInsideDirectory } from '../../utils/pathSafe.js';
 import { writeFileAtomic } from '../../utils/fsSafe.js';
@@ -216,6 +217,11 @@ export async function handleMaterialsRoutes(ctx, req, res, { url, path }) {
     if (existsSync(docxPath) && ctx.deps?.writeLetterDocxFn !== false) {
       try { docx = await (ctx.deps?.writeLetterDocxFn ?? writeLetterDocx)({ text, path: docxPath, root, deps: ctx.deps ?? {} }); }
       catch (err) { ctx.logger?.warn?.(`edited cover letter .docx not refreshed: ${err.message}`); }
+    }
+    // The PDF follows the text too (audit A10): the old one is removed, and a
+    // new one is rendered only from a Word copy that was just refreshed.
+    if (existsSync(docxPath) && ctx.deps?.letterPdfFn !== false) {
+      await (ctx.deps?.letterPdfFn ?? refreshLetterPdf)(file, { regenerate: Boolean(docx), root, env: process.env });
     }
     let version = null;
     if (folder) {

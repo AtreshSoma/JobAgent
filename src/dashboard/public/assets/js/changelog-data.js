@@ -28,6 +28,7 @@ export const CHANGELOG = Object.freeze([
         'Also asked for: a job lists what its requirements name that JobAgent does not look for yet, word for word, with whether your resume shows it and how many postings ask for it. Look for this skill adds it, and jobs are rescored.',
       ],
       improved: [
+        'The cover letter is also made as a PDF beside its Word and text copies, so a form whose letter slot takes only PDF no longer stops the run. Editing or restoring a letter removes the old PDF first, so an employer never receives a PDF of text you replaced.',
         'Auto-fill reads application forms built with web components (open shadow roots), where it used to say the form could not be read. The check that holds Submit back while a required question is blank reads them too.',
         'Auto-fill follows questions that reveal further questions, up to five levels deep on one page, instead of stopping after the first follow-up.',
         'Preparing applications is quicker: the resume tools now start once and stay ready, instead of starting two or three times for every job.',

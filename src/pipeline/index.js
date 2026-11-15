@@ -49,6 +49,7 @@ import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { dateStamp, formatPostedRelative } from '../utils/dates.js';
 import { buildJobPaths } from '../utils/outputPaths.js';
 import { keywordsForJob, tailorResumeForJob, writeLetterDocx } from '../resume/tailorRunner.js';
+import { refreshLetterPdf } from '../apply/letterPdf.js';
 import { composeGroundedLetter, letterSettings } from '../apply/groundedLetter.js';
 import { recordVersion } from '../apply/documentVersions.js';
 import { letterModeFor } from '../apply/letterMode.js';
@@ -899,6 +900,14 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
       } catch (err) {
         logger.warn?.(`cover letter .docx not written: ${err.message}`);
       }
+    }
+    // And as a PDF, for a letter slot that takes only PDF (audit A10). Any PDF
+    // of an earlier text is removed first; a failed render leaves none.
+    const letterPdfFn = deps.letterPdfFn ?? (deps.writeFileImpl ? null : refreshLetterPdf);
+    if (letterPdfFn) {
+      const made = await letterPdfFn(coverLetterPath, { regenerate: Boolean(cover.docxPath), root: config.root, env: deps.env });
+      cover.pdfPath = made?.pdfPath ?? null;
+      if (!cover.pdfPath && cover.docxPath) logger.warn?.(`cover letter PDF not written: ${made?.reason ?? 'unknown'}`);
     }
     logger.event(EVENT_TYPES.COVER_LETTER_GENERATED, {
       jobId: job.id, message: `cover letter (${cover.wordCount} words, ${cover.grounding.mode})`,
