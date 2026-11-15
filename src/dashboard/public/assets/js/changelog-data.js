@@ -31,6 +31,7 @@ export const CHANGELOG = Object.freeze([
       improved: [
         'The cover letter is also made as a PDF beside its Word and text copies, so a form whose letter slot takes only PDF no longer stops the run. Editing or restoring a letter removes the old PDF first, so an employer never receives a PDF of text you replaced.',
         'Auto-fill reads application forms built with web components (open shadow roots), where it used to say the form could not be read. The check that holds Submit back while a required question is blank reads them too.',
+        'What gets interviews now also groups your applications by the kind of role and by whether the resume was tailored, and shows how many interviews became offers. Small groups still show counts only.',
         'Interview prep pack: when an application reaches Interviewing, its page opens one printable sheet with what the posting asks for beside the resume lines that show it, the gaps to prepare for, the posting\'s conditions and what you submitted. It is all quoted; nothing is written for you.',
         'System health checks whether the skills JobAgent looks for cover your saved postings. When fewer than 40% mention five or more of them, jobs may score alike, and it lists the phrases those postings keep asking for.',
         'A job shows the pay its posting states as annual figures, or "Not stated" when it says none, and the list can be sorted by pay (there is no button for it on the board yet). The first re-score after updating reads the pay of jobs already saved.',

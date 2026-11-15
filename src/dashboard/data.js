@@ -18,6 +18,7 @@
  *     UI can show exactly WHY a job ranked where it did.
  */
 
+import { loadRoleFamilies, titleFamilies } from '../profile/roleFamilies.js';
 import { payFields, payLabel } from '../scoring/payFields.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -2361,6 +2362,8 @@ function workspaceItem(row, events, { today, timeZone, history = false }) {
     // Needs an employer account (Workday, Oracle, iCIMS…) or none (Greenhouse…).
     access: applicationAccess(row).kind,
     attentionKind: row.attention?.kind ?? null,
+    // F9: was the resume tailored for this job, or the master sent as it is?
+    resumeKind: row.resumeStatus === 'tailored' ? 'Tailored resume' : 'Master resume',
   };
   item.nextAction = workspaceNextAction(row, stage, followUp);
   if (history) {
@@ -2417,6 +2420,13 @@ function workspaceParts(db, now, config) {
     if (key) perCompany.set(key, (perCompany.get(key) ?? 0) + 1);
   }
   for (const item of items) item.sameCompany = Math.max(0, (perCompany.get(companyKey(item.company)) ?? 1) - 1);
+  // F9: the kind of role each submitted application was for, from its title.
+  try {
+    const taxonomy = loadRoleFamilies(config?.root ?? undefined);
+    for (const item of items) {
+      if (item.appStatus === APP_STATUS.SUBMITTED) item.roleFamily = titleFamilies(item.title ?? '', taxonomy).top?.label ?? null;
+    }
+  } catch { /* the role taxonomy is optional here */ }
   items.sort(workspaceOrder);
   return { rows, items, today, events };
 }

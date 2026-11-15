@@ -1,5 +1,6 @@
 /** The Applications workspace: a board of application stages, outcomes, follow-ups and the numbers behind them. */
 
+import { conversionText } from './conversionText.js';
 import { $, el, fmt, toast } from './dom.js';
 import { state } from './state.js';
 import { api, postJson } from './api.js';
@@ -230,13 +231,10 @@ export function renderMetrics(m, weekly = null) {
     el('span', { class: 'ws-rates-note', text: ' · from outcomes you recorded' })));
 }
 
-const DIM_LABELS = { source: 'Where you found it', ats: 'Application system', scoreBand: 'Fit score', tier: 'Tier', applySpeed: 'Applied after posting' };
-
-/** One conversion cell, in words: "2 of 9 (22%)" or "3 sent; too few to tell". Pure. */
-export function conversionText(cell, minCell = 5) {
-  if (cell.tooFew) return `${cell.submitted} sent; too few to tell (needs ${minCell})`;
-  return `${cell.interviews} of ${cell.submitted} reached an interview (${cell.interviewRate}%)`;
-}
+const DIM_LABELS = {
+  source: 'Where you found it', ats: 'Application system', scoreBand: 'Fit score', tier: 'Tier', applySpeed: 'Applied after posting',
+  roleFamily: 'Kind of role', resume: 'Resume',
+};
 
 /** "What gets interviews" (P2-9), under the numbers, once anything was submitted. */
 export function renderConversion(conversion, metrics) {
@@ -584,3 +582,5 @@ export function installWorkspaceDrag() {
     recordOutcome(id, STAGE_OUTCOME[stage]);
   });
 }
+
+export { conversionText };

@@ -21,8 +21,8 @@ describe('conversion breakdown (P2-9)', () => {
     ];
     const c = conversionBreakdown(items);
     expect(c.source).toEqual([
-      { key: 'greenhouse', submitted: 6, interviews: 3, offers: 0, tooFew: false, interviewRate: 50 },
-      { key: 'lever', submitted: 2, interviews: 1, offers: 1, tooFew: true, interviewRate: null },
+      { key: 'greenhouse', submitted: 6, interviews: 3, offers: 0, tooFew: false, interviewRate: 50, offerRate: null },
+      { key: 'lever', submitted: 2, interviews: 1, offers: 1, tooFew: true, interviewRate: null, offerRate: null },
     ]);
     expect(c.scoreBand.map((r) => r.key)).toEqual(['80-89', '70-79']);
     expect(c.tier.find((r) => r.key === 'Priority').submitted).toBe(6);

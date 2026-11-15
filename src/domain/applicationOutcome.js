@@ -275,6 +275,8 @@ export function conversionBreakdown(items = [], { minCell = MIN_CONVERSION_CELL 
   const dims = {
     source: (i) => i.source, ats: (i) => i.atsPlatform, scoreBand: (i) => scoreBand(i.score), tier: (i) => i.tier,
     applySpeed: (i) => applySpeedBand(i.postedAt, i.appliedAt),
+    // F9: the kind of role (from its title) and whether the resume was tailored.
+    roleFamily: (i) => i.roleFamily, resume: (i) => i.resumeKind,
   };
   const out = {};
   for (const [dim, keyOf] of Object.entries(dims)) {
@@ -290,7 +292,13 @@ export function conversionBreakdown(items = [], { minCell = MIN_CONVERSION_CELL 
       cells.set(key, cell);
     }
     out[dim] = [...cells.values()]
-      .map((c) => ({ ...c, tooFew: c.submitted < minCell, interviewRate: c.submitted >= minCell ? Math.round((c.interviews / c.submitted) * 100) : null }))
+      .map((c) => ({
+        ...c,
+        tooFew: c.submitted < minCell,
+        interviewRate: c.submitted >= minCell ? Math.round((c.interviews / c.submitted) * 100) : null,
+        // Offers out of interviews, under the same small-numbers rule.
+        offerRate: c.submitted >= minCell && c.interviews >= minCell ? Math.round((c.offers / c.interviews) * 100) : null,
+      }))
       .sort((a, b) => b.submitted - a.submitted || a.key.localeCompare(b.key));
   }
   return { minCell, ...out };
