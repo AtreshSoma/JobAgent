@@ -13,6 +13,7 @@ Setup is one calm line instead of a wall of warnings, tailored resumes are fitte
 
 ### Improvements
 
+- Auto-fill follows questions that reveal further questions, up to five levels deep on one page, instead of stopping after the first follow-up.
 - Preparing applications is quicker: the resume tools now start once and stay ready, instead of starting two or three times for every job.
 - Tailoring knows more section names, such as Career History, Professional Background, Technical Proficiencies and About Me, and a section holding your jobs counts as experience whatever it is called. A heading-like line in capitals or bold ends the section above it.
 - The PDF of a tailored resume is the Word file itself, rendered by LibreOffice when it is installed, so it has the same pages the fit measured. Without it, the PDF keeps your font, size, margins, italics, underlines and right-aligned dates.

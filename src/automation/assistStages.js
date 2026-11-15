@@ -47,6 +47,13 @@ import {
   stepFingerprint, submitBaseline, unsafeResumeUrl, visibleText, waitForFormOrWayIn, watchForHumanSubmission,
 } from './assistSupport.js';
 
+/**
+ * Most re-scans of one page after the first fill (audit A7): each pass fills
+ * what the previous answers revealed. Five levels of questions deep is more
+ * than any real form asks; the cap is what stops one that never ends.
+ */
+export const MAX_RESCANS = 4;
+
 /** Returned by a state when the run is over and `r.result` is final. */
 export const DONE = 'done';
 
@@ -381,16 +388,25 @@ async function fill(r) {
   r.dynamicNeedsUser = dyn.needsUser ?? [];
   for (const err of dyn.errors ?? []) stepBlockers.push(`field ${err.label ?? err.field}: ${err.error}`);
 
-  // A checkbox/radio/select can reveal a conditional question. Re-scan
-  // once after applying the first dynamic batch and fill only newly visible
-  // controls (stepFilledKeys prevents duplicate actions).
-  const conditionalScan = applicationFields(await scanFields(scope));
-  const conditional = await fillScannedFields(scope, conditionalScan, {
-    candidate, screeningAnswers, alreadyFilled: stepFilledKeys, dryRun,
-  });
-  for (const f of conditional.filled ?? []) {
-    completedThisStep.push(f);
-    addFilledResult(f, stepNumber);
+  // A checkbox/radio/select can reveal a conditional question, and that
+  // question's answer can reveal another (audit A7). Re-scan after each pass
+  // and fill only newly visible controls (stepFilledKeys prevents duplicate
+  // actions), until a pass fills nothing new or MAX_RESCANS passes are spent,
+  // so a form that keeps revealing fields cannot hold the run forever.
+  const conditional = { filled: [], needsUser: [], errors: [] };
+  for (let pass = 0; pass < MAX_RESCANS; pass += 1) {
+    const conditionalScan = applicationFields(await scanFields(scope));
+    const more = await fillScannedFields(scope, conditionalScan, {
+      candidate, screeningAnswers, alreadyFilled: stepFilledKeys, dryRun,
+    });
+    conditional.filled.push(...(more.filled ?? []));
+    conditional.needsUser.push(...(more.needsUser ?? []));
+    conditional.errors.push(...(more.errors ?? []));
+    for (const f of more.filled ?? []) {
+      completedThisStep.push(f);
+      addFilledResult(f, stepNumber);
+    }
+    if (!(more.filled ?? []).length) break;
   }
   const needsUserByKey = new Map(
     [...r.dynamicNeedsUser, ...(conditional.needsUser ?? [])]
