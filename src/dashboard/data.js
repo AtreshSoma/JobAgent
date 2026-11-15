@@ -18,6 +18,7 @@
  *     UI can show exactly WHY a job ranked where it did.
  */
 
+import { payFields, payLabel } from '../scoring/payFields.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -813,6 +814,9 @@ function boardRow(job, approval, now) {
     employmentCategory: job.employment_category ?? null,
     employmentLabel: EMPLOYMENT_LABELS[job.employment_category] ?? null,
     compensation: job.compensation_text ?? null,
+    // The parsed pay range (audit D6), annual figures; null when none is stated.
+    payMin: job.pay_min ?? null,
+    payMax: job.pay_max ?? null,
     remote: /\bremote\b/.test(haystack),
     // Where the role actually is, resolved once here so the board filter, the
     // coverage stats, and any future column all read the SAME answer rather
@@ -1337,6 +1341,8 @@ const SORTS = {
   // `createdAt` is set on insert and deliberately never updated on
   // re-discovery, so it is a true first-seen timestamp.
   discovered: thenById((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
+  // The top of the stated pay range, highest first; no stated pay last (audit D6).
+  pay: thenById((a, b) => (b.payMax ?? -1) - (a.payMax ?? -1)),
 };
 
 /**
@@ -1878,6 +1884,11 @@ export function jobDetail(db, jobId, deps = {}) {
       return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines, {
         aliases: scoring.evidenceAliases ?? {}, vocabulary: scoringVocabulary(scoring),
       });
+    })(),
+    // The stated pay, parsed (audit D6). "Not stated" is a real answer.
+    pay: (() => {
+      const row = job.pay_checked ? job : { ...job, ...payFields({ compensationText: job.compensation_text, jdText: job.jd_text }) };
+      return { min: row.pay_min ?? null, max: row.pay_max ?? null, period: row.pay_period ?? null, source: row.pay_source ?? null, label: payLabel(row) };
     })(),
     // What the posting's requirement sections name that the vocabulary does
     // not know, word for word, ranked by how many stored postings ask for it

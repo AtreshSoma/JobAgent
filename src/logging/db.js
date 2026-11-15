@@ -9,6 +9,7 @@
  * Tables: jobs, run_log, application_events, approval_queue.
  */
 
+import { payFields } from '../scoring/payFields.js';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
@@ -160,6 +161,8 @@ const SUMMARY_PAGE_ORDERS = Object.freeze({
   posted: "COALESCE(posted_at, '') DESC",
   updated: "COALESCE(updated_at, '') DESC",
   discovered: "COALESCE(created_at, '') DESC",
+  // The top of the stated pay range; rows that state none come last (audit D6).
+  pay: 'COALESCE(pay_max, -1) DESC',
 });
 
 /** All jobs-table columns except jd_text (see listJobsSummary). */
@@ -174,6 +177,7 @@ const JOB_SUMMARY_COLUMNS = [
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at', 'discovery_mode', 'search_query', 'decision_reason',
   'link_state', 'link_checked_at',
+  'pay_min', 'pay_max', 'pay_period', 'pay_currency', 'pay_source',
 ];
 
 /**
@@ -250,6 +254,7 @@ const JOB_COLUMNS = [
   'assist_filled_count', 'assist_blockers', 'notes', 'submitted_confirmation',
   'created_at', 'updated_at',
   'summary_only', 'scoring_fingerprint',
+  'pay_min', 'pay_max', 'pay_period', 'pay_currency', 'pay_source', 'pay_checked',
   // Which search produced the row, and the phrase it was asked for. Omitted
   // from a patch, they keep their stored value — which is what lets a role
   // search update a posting's text without claiming a row the profile owns.
@@ -529,6 +534,21 @@ export const MIGRATIONS = Object.freeze([
       addColumnIfMissing(db, 'jobs', 'enrich_error', 'TEXT');
     },
   },
+  {
+    version: 5,
+    name: 'the stated pay range, parsed and stored',
+    up(db) {
+      // Annual min and max, the period it was stated in, the currency and where
+      // it was read. `pay_checked` marks a row whose pay has been read (even when
+      // it states none), so the backfill visits each row once.
+      addColumnIfMissing(db, 'jobs', 'pay_min', 'INTEGER');
+      addColumnIfMissing(db, 'jobs', 'pay_max', 'INTEGER');
+      addColumnIfMissing(db, 'jobs', 'pay_period', 'TEXT');
+      addColumnIfMissing(db, 'jobs', 'pay_currency', 'TEXT');
+      addColumnIfMissing(db, 'jobs', 'pay_source', 'TEXT');
+      addColumnIfMissing(db, 'jobs', 'pay_checked', 'INTEGER');
+    },
+  },
 ]);
 
 /** Highest schema version this code knows how to produce. */
@@ -751,6 +771,12 @@ export class Database {
     const now = nowIso();
 
     const record = { ...job };
+    // The stated pay (audit D6) is read whenever the pay field AND the posting
+    // text are both written, so the two sources are weighed as one. A patch that
+    // carries only one of them leaves pay to the backfill, which has both.
+    if (record.pay_checked === undefined && record.compensation_text !== undefined && record.jd_text !== undefined) {
+      Object.assign(record, payFields({ compensationText: record.compensation_text, jdText: record.jd_text ?? '' }));
+    }
     record.created_at = job.created_at ?? now;
     record.updated_at = now;
 
@@ -900,6 +926,44 @@ export class Database {
    */
   getReusableWorkdayDetail(id) {
     return this.getReusableDetail(id);
+  }
+
+  /**
+   * Read the stated pay of every row that has not been read yet (audit D6), in
+   * batches, once. A cursor on rowid keeps each batch cheap; a row is marked
+   * checked even when it states no pay, so it is never visited again.
+   * @param {{batch?: number}} [options]
+   * @returns {{checked: number, stated: number}}
+   */
+  backfillPay({ batch = 500 } = {}) {
+    const take = Number.isFinite(batch) && batch > 0 ? Math.floor(batch) : 500;
+    const select = this.prepareCached(
+      'SELECT rowid AS r, id, compensation_text, jd_text FROM jobs WHERE rowid > ? AND pay_checked IS NULL ORDER BY rowid LIMIT ?',
+    );
+    const update = this.prepareCached(
+      `UPDATE jobs SET pay_min = @pay_min, pay_max = @pay_max, pay_period = @pay_period,
+         pay_currency = @pay_currency, pay_source = @pay_source, pay_checked = 1 WHERE id = @id`,
+    );
+    let cursor = 0;
+    let checked = 0;
+    let stated = 0;
+    for (;;) {
+      const rows = select.all(cursor, take);
+      if (!rows.length) break;
+      this.transaction(() => {
+        for (const row of rows) {
+          const f = payFields({ compensationText: row.compensation_text ?? '', jdText: row.jd_text ?? '' });
+          update.run({
+            id: row.id, pay_min: f.pay_min, pay_max: f.pay_max, pay_period: f.pay_period,
+            pay_currency: f.pay_currency, pay_source: f.pay_source,
+          });
+          checked += 1;
+          if (f.pay_min !== null) stated += 1;
+        }
+      });
+      cursor = rows[rows.length - 1].r;
+    }
+    return { checked, stated };
   }
 
   /**

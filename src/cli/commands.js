@@ -361,6 +361,15 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     counters.jobs_rescored += 1;
   }
 
+  // Read the stated pay of any row that has not been read yet (audit D6). The
+  // re-score has just visited every row, so this is the natural place to catch
+  // up a store written before the pay columns existed.
+  if (typeof db.backfillPay === 'function') {
+    const pay = db.backfillPay();
+    counters.pay_checked = pay.checked;
+    counters.pay_stated = pay.stated;
+  }
+
   logger?.event?.(EVENT_TYPES.SCORE_EXPLAINED, {
     message: `re-score complete: ${counters.jobs_rescored} rescored, `
       + `${counters.jobs_excluded} excluded, ${counters.jobs_skipped_protected} protected`,

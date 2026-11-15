@@ -484,6 +484,8 @@ export function detailSections(job) {
     text: `Sponsorship: ${job.sponsorship ?? 'unknown'}`,
   }));
   if (job.employmentLabel) chips.append(el('span', { class: 'chip', text: job.employmentLabel }));
+  // Pay is shown even when the posting states none: "Not stated" is an answer.
+  if (job.pay) chips.append(el('span', { class: 'chip', title: 'Pay as the posting states it, as annual figures', text: `Pay: ${job.pay.label}` }));
   chips.append(el('span', { class: `chip st-${job.appStatus}`, text: statusLabel(job) }));
   if (job.decisionReason) {
     chips.append(el('span', { class: 'chip', title: 'Why you closed this job', text: `reason: ${reasonLabel(job.decisionReason)}` }));
