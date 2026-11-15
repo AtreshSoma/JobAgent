@@ -1,6 +1,6 @@
 {
   "name": "job-agent",
-  "version": "0.2.0",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "description": "Local-first automated job search, resume tailoring, and human-approved application assistant.",

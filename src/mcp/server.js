@@ -17,6 +17,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
 import { applicationsWorkspace, boardPage, jobDetail, recordOutcome, setJobNote } from '../dashboard/data.js';
 import { OUTCOME_VALUES } from '../domain/applicationOutcome.js';
+import { PACKAGE_VERSION } from '../version.js';
 
 /** The complete tool list. Nothing outside it may ever be registered. */
 export const MCP_TOOLS = Object.freeze([
@@ -42,7 +43,7 @@ function jobSummary(j) {
  * @param {{ db: object, config: object, env?: NodeJS.ProcessEnv, now?: () => Date }} args
  */
 export function createMcpServer({ db, config, env = process.env, now = () => new Date() }) {
-  const server = new McpServer({ name: 'jobagent', version: '0.2.0' });
+  const server = new McpServer({ name: 'jobagent', version: PACKAGE_VERSION });
 
   server.registerTool('search_jobs', {
     title: 'Search jobs',
