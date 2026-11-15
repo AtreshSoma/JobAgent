@@ -10,6 +10,7 @@
 import { OUTCOME_EVENT, replayOutcomes } from '../domain/applicationOutcome.js';
 import { freshnessModelFor, scoreJob } from './scorer.js';
 import { classifySponsorship } from './sponsorshipClassifier.js';
+import { masterResumeLines } from '../resume/evidenceMap.js';
 
 export const GHOSTED_DAYS = 30;
 const POSITIVE = new Set(['interviewing', 'offer', 'hired']);
@@ -34,7 +35,10 @@ export function buildSamples(db, config, { now = new Date() } = {}) {
       jdText: row.jd_text ?? '', postedAt: row.posted_at, applicantCount: row.applicant_count, employmentType: row.employment_type,
     };
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
-    const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel: freshnessModelFor(config) });
+    const score = scoreJob(job, {
+      scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel: freshnessModelFor(config),
+      evidenceLines: masterResumeLines(config.root),
+    });
     samples.push({ jobId: row.id, positive, breakdown: score.breakdown });
   }
   return samples;

@@ -23,6 +23,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { llmSettings } from '../llm/client.js';
+import { withoutContactLines } from '../llm/identityUnits.js';
 import { runTask, SYSTEM_UNTRUSTED_RULE } from '../llm/task.js';
 import { profileTerms, verifyRewrite } from './claimVerifier.js';
 import { keywordsForJob, readMasterUnits, vocabularyFromScoring } from './tailorRunner.js';
@@ -151,7 +152,7 @@ export async function proposeRewrites({ db, job, config, env = process.env, now 
   } catch (err) {
     return { ok: false, error: `Could not read the master resume: ${err.message}` };
   }
-  const bullets = units.filter((u) => u.kind === 'bullet').slice(0, MAX_BULLETS);
+  const bullets = withoutContactLines(units.filter((u) => u.kind === 'bullet'), config?.candidate).slice(0, MAX_BULLETS);
   if (!bullets.length) return { ok: false, error: 'The master resume has no bullet points to reword.' };
 
   // Requirement phrases: verified verbatim against the posting, else the
@@ -317,7 +318,7 @@ export async function refineRewrites({ db, job, config, instruction, env = proce
   } catch (err) {
     return { ok: false, error: `Could not read the master resume: ${err.message}` };
   }
-  const bullets = units.filter((u) => u.kind === 'bullet').slice(0, MAX_BULLETS);
+  const bullets = withoutContactLines(units.filter((u) => u.kind === 'bullet'), config?.candidate).slice(0, MAX_BULLETS);
   const result = await runTask(REFINE_TASK, { instruction: text, bullets }, { settings: settings.llm, deps });
   if (!result.ok) return { ok: false, error: `Could not apply that: ${result.error}` };
 

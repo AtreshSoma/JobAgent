@@ -1,14 +1,16 @@
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const app = ['dom.js', 'profile.js'].map((file) =>
   readFileSync(new URL(`../../src/dashboard/public/assets/js/${file}`, import.meta.url), 'utf8')
 ).join('\n').replace(/^export /gm, '');
 const between = (start, end) => app.slice(app.indexOf(start), app.indexOf(end));
 let browser;
-beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
+beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); });
 afterAll(async () => { await browser?.close(); });
+skipWithoutBrowser(() => browser);
 
 it('preserves user-written answer punctuation through rendering and Save all answers', async () => {
   const page = await browser.newPage();

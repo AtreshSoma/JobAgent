@@ -10,7 +10,7 @@
 import { dismissQuestion, markQuestionAnswered, reopenQuestion } from '../../apply/questionQueue.js';
 import { adoptResumeEvidence, readProfile, readScreeningAnswers, upsertScreeningAnswer, writeProfile, writeScreeningAnswers } from '../../config/profileStore.js';
 import { buildBackground, profileFromResume } from '../../profile/fromResume.js';
-import { acknowledgeResumeMismatch, activateProfile, createPersonProfile, deleteProfile as deleteSearchProfile, listProfiles as listSearchProfiles, mergeIntoActiveProfile, migrateLegacyCandidate, proposeProfileFromResume, readActiveProfile, readProfile as readSearchProfile, refreshBackgroundFromResume, resumeProfileToReuse, saveProfile as saveSearchProfile, updatePersonProfile } from '../../profile/store.js';
+import { acknowledgeResumeMismatch, activateProfile, createPersonProfile, deleteProfile as deleteSearchProfile, listProfiles as listSearchProfiles, mergeIntoActiveProfile, migrateLegacyCandidate, watchSkillInActiveProfile, proposeProfileFromResume, readActiveProfile, readProfile as readSearchProfile, refreshBackgroundFromResume, resumeProfileToReuse, saveProfile as saveSearchProfile, updatePersonProfile } from '../../profile/store.js';
 import { masterResumeFile, workspacePaths } from '../../profile/workspace.js';
 import { extractDocxText } from '../../resume/docxText.js';
 import { copyFileSync, mkdirSync } from 'node:fs';
@@ -310,6 +310,31 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
         return sendJson(res, 200, { choice, changed: true, ...merged, activated: summary, warning });
       }
       throw new Error('choice must be one of: create, keep, merge');
+    });
+  }
+
+  // A skill a posting asks for that your vocabulary lacks, added at your
+  // request (R12). Only a phrase the job's own posting contains is accepted.
+  if (req.method === 'POST' && path === '/api/search-profiles/watch-skill') {
+    const body = await readBody(req);
+    if (ctx.runState.running) {
+      return sendJson(res, 409, { error: `a ${ctx.runState.phase} run is in progress — try again when it finishes` });
+    }
+    return ctx.saving(res, () => {
+      const root = ctx.requireConfigRoot();
+      const job = body.jobId ? ctx.db.getJob(String(body.jobId)) : null;
+      const phrase = String(body.phrase ?? '').trim();
+      if (!job || !phrase || !String(job.jd_text ?? '').toLowerCase().includes(phrase.toLowerCase())) {
+        throw Object.assign(new Error('that phrase is not in this job\'s posting'), { statusCode: 400 });
+      }
+      const result = watchSkillInActiveProfile(root, phrase);
+      let warning = null;
+      if (result.added) {
+        activateProfile(root, result.id);
+        warning = ctx.reloadConfig();
+        if (!warning) ctx.scheduleRescore();
+      }
+      return sendJson(res, 200, { ...result, warning });
     });
   }
 

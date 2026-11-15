@@ -15,6 +15,7 @@ import { detectAts } from '../../src/apply/atsDetector.js';
 import { requiredFieldsSatisfied } from '../../src/automation/fieldResolver.js';
 import { unfilledRequiredControls } from '../../src/automation/domScanner.js';
 import { unreviewedSensitiveAnswers } from '../../src/automation/applyRunner.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 describe('ATS allowlist and detection', () => {
   it('never auto-submits on an unrecognised (generic) ATS, but still offers assisted fill', () => {
@@ -72,8 +73,9 @@ describe('required fields', () => {
   });
 
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('reads blank required controls from the live DOM', async () => {
     const page = await browser.newPage();

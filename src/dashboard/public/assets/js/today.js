@@ -16,6 +16,7 @@ import { freshnessOf } from './format.js';
 import { loadBoard } from './board.js';
 import { applyAppsLayout, openApplicationDetail } from './workspace.js';
 import { signInStrip } from './signin.js';
+import { setupCard } from './setup.js';
 
 /* ─────────────────────────── Today ───────────────────────────
  * The landing view: at most ten jobs, each with the ONE next action that
@@ -163,7 +164,7 @@ export const BROWSER_NOTICE = {
   code: 'browser_unavailable',
   severity: 'error',
   message: 'Auto-fill can’t start: the Playwright browser isn’t installed.',
-  fix: 'Run `npx playwright install chromium` in the JobAgent folder, then retry.',
+  fix: 'Close JobAgent and open it again from its launcher, and say yes when it offers to download the browser (about 150 MB). Then retry.',
 };
 export const BROWSER_MISSING = /Executable doesn't exist|playwright install/i;
 
@@ -193,9 +194,9 @@ export function setSystemNotices(list) {
   }
   state.systemNotices = notices;
   const unavailable = notices.some((n) => n.code === 'browser_unavailable');
-  // The template notice gates Prepare, so its items are part of what the open
-  // job shows: a fixed value must drop out of that box, not wait for a click.
-  const templated = JSON.stringify(notices.find((n) => n.code === 'profile_placeholders')?.items ?? null);
+  // The setup card gates Prepare, so its progress is part of what the open job
+  // shows: a fixed value must drop out of that box, not wait for a click.
+  const templated = JSON.stringify(notices.find((n) => n.code === 'profile_placeholders')?.setup ?? null);
   const changed = unavailable !== state.browserUnavailable || templated !== state.templatedItems;
   state.browserUnavailable = unavailable;
   state.templatedItems = templated;
@@ -235,16 +236,13 @@ export function renderNotices() {
   const host = $('systemNotices');
   host.textContent = '';
   for (const notice of state.systemNotices ?? []) {
+    // Unfinished setup is progress, not an error: one line, steps on request.
+    if (notice.code === 'profile_placeholders' && notice.setup) { host.append(setupCard(notice)); continue; }
     host.append(el('div', { class: `notice ${notice.severity === 'error' ? 'is-error' : 'is-warn'}`, role: 'status' },
       el('span', { class: 'notice-mark', 'aria-hidden': 'true', text: '!' }),
       el('div', { class: 'notice-body' },
         el('b', { text: notice.message }),
-        notice.fix ? fixLine(notice.fix) : null,
-        notice.items?.length ? placeholderList(notice.items) : null),
-      NOTICE_ACTION[notice.code] ? el('div', { class: 'notice-actions' },
-        ...NOTICE_ACTION[notice.code].map(([action, label], i) => el('button', {
-          type: 'button', class: i === 0 ? 'small primary' : 'small', 'data-action': action, text: label,
-        }))) : null));
+        notice.fix ? fixLine(notice.fix) : null)));
   }
 }
 
@@ -259,27 +257,6 @@ export function renderNotices() {
 export function prepareBlockedNotice() {
   return (state.systemNotices ?? []).find((n) => n.code === 'profile_placeholders') ?? null;
 }
-
-/** One line per template value: the field, what it still says, and where to fix it. */
-export function placeholderList(items = []) {
-  const list = el('ul', { class: 'notice-items' });
-  for (const item of items) {
-    list.append(el('li', {},
-      el('b', { text: item.label }),
-      ` still says “${item.value}”. Fix it in `,
-      el('b', { text: item.where }),
-      '.',
-      fixLine(item.how)));
-  }
-  return list;
-}
-
-/** Notice code -> the dialog that resolves it. */
-export const NOTICE_ACTION = {
-  // The resume already states every value the template left behind, so the
-  // one-click fix comes first; the editor stays for anything it cannot know.
-  profile_placeholders: [['fill-profile-from-resume', 'Fill from my resume'], ['open-profile', 'Edit profile…']],
-};
 
 /** Why an Auto-fill control is unavailable, or null when it can be used. */
 export function autofillBlockedReason() {
@@ -516,7 +493,7 @@ export const NOTICE_CHECK = { browser_unavailable: 'browser', profile_placeholde
 
 /** Check id -> the control that fixes it. */
 export const SETUP_FIX = {
-  browser: { kind: 'copy' },
+  browser: { kind: 'text' },
   profile: { action: 'open-profile', label: 'Open application profile' },
   'profile-placeholders': { action: 'open-profile', label: 'Open application profile' },
   'profile-active': { action: 'open-master', label: 'Open master resume' },
@@ -546,7 +523,7 @@ export function renderSetupChecklist() {
       el('div', { class: 'setup-text' },
         el('b', { text: check.label ?? check.id }),
         check.detail ? el('div', { class: 'faint clamp-2', title: check.detail, text: check.detail }) : null,
-        fix.kind === 'copy' && check.fix ? fixLine(check.fix) : null));
+        fix.kind === 'text' ? el('div', { class: 'faint', text: 'Close JobAgent and open it again from its launcher, and say yes when it offers to download the browser (about 150 MB). Then retry.' }) : null));
     if (fix.action) {
       item.append(el('button', { type: 'button', class: 'small', 'data-action': fix.action, text: fix.label }));
     }

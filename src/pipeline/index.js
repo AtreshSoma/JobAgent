@@ -39,6 +39,7 @@ import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob, freshnessModelFor } from '../scoring/scorer.js';
 import { explainScore, TIERS } from '../scoring/explainScore.js';
 import { scoringFingerprint } from '../scoring/fingerprint.js';
+import { masterResumeLines } from '../resume/evidenceMap.js';
 import { compareJobsForQueue } from '../scoring/jobRanking.js';
 import { generateCoverLetter } from '../apply/coverLetter.js';
 import { buildApplicationPacket, writePacket, packetOwner } from '../apply/applicationPacket.js';
@@ -147,6 +148,8 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
    * incremental skip may reuse one. See src/scoring/fingerprint.js.
    */
   const configFingerprint = scoringFingerprint(config);
+  // The master resume's lines: the evidence gaps are judged against (R13).
+  const evidenceLines = masterResumeLines(config.root);
 
   logger.event(EVENT_TYPES.SEARCH_START, { message: 'Starting search' });
   // Preload the set of already-APPLIED job ids ONCE (cheap) rather than issuing
@@ -454,7 +457,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     // 2. Sponsorship + 3. Score + 4. Tier.
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
     const score = scoreJob(job, {
-      scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel,
+      scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel, evidenceLines,
     });
     // A posting whose TITLE gave no signal reached scoring only because the
     // gate now defers instead of rejecting. That recovers real roles, but such
@@ -783,13 +786,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     // prefer PDF). Best-effort: requires Word/docx2pdf, falls back silently.
     // outputDir/outputFilename route the tailored docx straight into the
     // professional job folder with a clean, candidate-named filename.
-    // The per-job "Most relevant to this role" focus line is OFF by default
-    // (it read awkwardly near the header); opt back in with
-    // config.runtime.resumeFocusLine === true.
     const tailored = await tailorFn({
       job, score, config,
       options: {
-        addSummaryLine: config?.runtime?.resumeFocusLine === true,
         exportPdf: config?.runtime?.resumeExportPdf !== false,
         outputDir: outPaths.folder,
         outputFilename: `${outPaths.resumeBase}.docx`,
@@ -814,7 +813,6 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
       ? {
           changes: tailored.changes ?? [],
           gaps: tailored.gaps ?? [],
-          summaryLine: tailored.summaryLine ?? null,
           qualifications: tailored.qualifications ?? {},
           selectedContent: tailored.selectedContent ?? {},
           rewritePolicy: tailored.rewritePolicy ?? null,
@@ -1388,6 +1386,7 @@ export function rescoreStale({ db, config, now = new Date(), fingerprint, limit 
   const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
   if (!raw || !config?.scoring) return out;
   const current = fingerprint ?? scoringFingerprint(config);
+  const evidenceLines = masterResumeLines(config.root);
   // AGE IS A VERDICT INPUT TOO. Retention used to be enforced only when a
   // source re-listed the posting, so a row nobody rediscovered (no run for
   // weeks, a source that stopped listing it) stayed "scored" forever — the
@@ -1440,7 +1439,7 @@ export function rescoreStale({ db, config, now = new Date(), fingerprint, limit 
       fields = { status: 'discarded', discard_reason: exclusion.reason, scoring_fingerprint: current };
     } else {
       const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
-      const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel });
+      const score = scoreJob(job, { scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel, evidenceLines });
       const titleVerdict = vocab ? classifyTitleFit(job.title, vocab).verdict : null;
       const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });
       const unread = isUnjudgeable(job, tier, titleVerdict);

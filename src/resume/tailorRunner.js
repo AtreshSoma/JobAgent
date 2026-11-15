@@ -24,6 +24,9 @@ import {
 } from './pythonEnv.js';
 import { masterResumeFile } from '../profile/workspace.js';
 import { docxToPdfViaChromium, pdfEngine } from './chromiumPdf.js';
+import { PythonPool } from './pythonWorker.js';
+import { masterResumeLines } from './evidenceMap.js';
+import { gapVocabulary, resolveCategories, scoringVocabulary } from '../scoring/scorer.js';
 
 /**
  * The active person's master resume (never overwritten by tailoring). Each
@@ -96,21 +99,8 @@ export function mergeTerms(base = [], extra = []) {
  * @returns {string[]}
  */
 export function vocabularyFromScoring(scoring = {}) {
-  const kw = scoring.keywords ?? {};
-  const seen = new Set();
-  const out = [];
-  const add = (term) => {
-    const key = String(term ?? '').toLowerCase().trim();
-    if (!key || seen.has(key)) return;
-    seen.add(key);
-    out.push(term);
-  };
-  for (const term of Array.isArray(scoring.marketSkills) ? scoring.marketSkills : []) add(term);
-  for (const list of Object.values(kw)) {
-    if (!Array.isArray(list)) continue;
-    for (const term of list) add(term);
-  }
-  return out;
+  // One list with the scorer's evidence context (src/scoring/scorer.js).
+  return scoringVocabulary(scoring);
 }
 
 /**
@@ -135,7 +125,6 @@ export function pageBudget(value) {
  * @param {object} args.config loadConfig bundle (uses config.root, humanizerPatterns)
  * @param {object} [args.options]
  * @param {boolean} [args.options.exportPdf=false] also export a PDF (best-effort)
- * @param {boolean} [args.options.addSummaryLine=false]
  * @param {boolean} [args.options.enableRewrites=false] recorded but intentionally disabled by Python
  * @param {object} [args.deps]
  * @param {Function} [args.deps.spawnImpl] override child_process.spawn (testing)
@@ -143,7 +132,7 @@ export function pageBudget(value) {
  * @param {number} [args.deps.timeoutMs=60000]
  * @returns {Promise<{
  *   tailored: boolean, output_path: string, pdf_path: string|null,
- *   audit: object|null, emphasized: number|null, summaryLine: string|null,
+ *   audit: object|null, emphasized: number|null,
  *   warning: string|null, usedFallback: boolean
  * }>}
  */
@@ -158,7 +147,6 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     pdfWarning: null,
     audit: null,
     emphasized: null,
-    summaryLine: null,
     changes: [],
     gaps: [],
     qualifications: {},
@@ -166,6 +154,7 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     rewritePolicy: null,
     invariants: null,
     limitations: [],
+    skippedSteps: [],
     validation: null,
     atsReport: null,
     warning: null,
@@ -218,6 +207,12 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     keywords: mergeTerms(keywordsForJob(score), llmPhrases),
     // Vocabulary + ATS rules drive the deterministic ATS readiness report.
     vocabulary: mergeTerms(vocabularyFromScoring(config.scoring), llmPhrases),
+    // ONE EVIDENCE CHECK (audit R13): the master resume's lines exactly as the
+    // scorer read them, its vocabulary and the terms that can be a gap, so the
+    // packet lists the gaps the score lists. LLM phrases stay out of these.
+    evidence_lines: masterResumeLines(root),
+    evidence_vocabulary: scoringVocabulary(config.scoring ?? {}),
+    gap_terms: gapVocabulary(config.scoring ?? {}, resolveCategories(config.scoring ?? {}, config.candidate ?? {})),
     // Grounded requirement classification. Only phrases verified verbatim
     // against this posting are sent, and Python applies them to ORDERING
     // priority only — never to resume content.
@@ -232,8 +227,10 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     evidence_aliases: config.scoring?.evidenceAliases ?? {},
     ats_config: config.atsResume ?? {},
     patterns: config.humanizerPatterns ?? {},
-    add_summary_line: options.addSummaryLine === true,
     enable_rewrites: options.enableRewrites === true,
+    // Check the page fit against LibreOffice's render when it is installed
+    // (R6). runtime.resumeMeasurePages: false keeps the estimate only.
+    measure_pages: config.runtime?.resumeMeasurePages !== false,
     // RESUME_PDF_ENGINE=chromium: no Word/LibreOffice attempt; Chromium below.
     export_pdf: options.exportPdf === true && pdfEngine(deps.env ?? process.env) !== 'chromium',
     // Hard length target. The tailor omits whole low-relevance bullets from the
@@ -309,9 +306,8 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
       : null,
     audit: response.audit ?? null,
     emphasized: response.emphasized ?? null,
-    summaryLine: response.summary_line ?? null,
     // Structured, evidence-backed record of every tailoring action (skill
-    // reorders with before/after, emphasis evidence, focus line) plus the JD
+    // reorders with before/after, emphasis evidence) plus the JD
     // requirements the resume does NOT support (reported, never inserted).
     changes: response.changes ?? [],
     gaps: response.gaps ?? [],
@@ -320,6 +316,9 @@ export async function tailorResumeForJob({ job, score, config, options = {}, dep
     rewritePolicy: response.rewrite_policy ?? null,
     invariants: response.invariants ?? null,
     limitations: response.limitations ?? [],
+    // Optional steps left out because their result failed a check (R11); the
+    // rest of the tailoring was kept. Listed in the review.
+    skippedSteps: response.skipped_steps ?? [],
     validation: response.validation ?? null,
     atsReport: response.ats_report ?? null,
     // Audit trail for the optional grounded requirement expansion: which
@@ -358,6 +357,19 @@ export async function resumeHtml(docxPath, { root, deps = {} } = {}) {
   return { html: response.html, texts: response.texts ?? [] };
 }
 
+/**
+ * What tailoring will be able to work with in a resume (audit F4): sections,
+ * jobs, bullets and contact details found; tables, text boxes, typed bullets,
+ * links and unknown headings flagged; an estimated page count. Read-only.
+ *
+ * @returns {Promise<object>} see src/resume/readiness.py
+ */
+export async function resumeReadiness(docxPath, { root, atsConfig = null, deps = {} } = {}) {
+  const response = await invokePython({ mode: 'readiness', docx_path: docxPath, ats_config: atsConfig ?? {} }, { ...deps, root });
+  if (!response?.ok || !response.readiness) throw new Error(response?.error ?? 'could not check the resume');
+  return response.readiness;
+}
+
 /** Write a cover letter's text as a plain .docx (P1-3). Resolves the path. */
 export async function writeLetterDocx({ text, path, root, deps = {} } = {}) {
   const response = await invokePython({ mode: 'letter_docx', text, path }, { ...deps, root });
@@ -366,14 +378,59 @@ export async function writeLetterDocx({ text, path, root, deps = {} } = {}) {
 }
 
 /** Spawn the python CLI, feed it the request JSON, and parse its JSON reply. */
-function invokePython(request, deps = {}) {
+/**
+ * One pool of long-lived `tailor_cli.py --serve` workers per interpreter
+ * (R17). JOB_AGENT_PYTHON_WORKERS sets its size (1-4, default 2);
+ * JOB_AGENT_PYTHON_WORKER=off starts a fresh interpreter per request, as before.
+ */
+const POOLS = new Map();
+
+function workerPool(exe, env, platform) {
+  if (!POOLS.has(exe)) {
+    POOLS.set(exe, new PythonPool({
+      size: Number(env.JOB_AGENT_PYTHON_WORKERS) || 2,
+      spawn: () => spawn(exe, [scriptPath(), '--serve'], pythonSpawnOptions(env, platform)),
+      kill: (child) => killProcessTree(child, { platform }),
+    }));
+  }
+  return POOLS.get(exe);
+}
+
+/** Let every Python worker go (shutdown, tests). */
+export async function closePythonWorkers() {
+  const pools = [...POOLS.values()];
+  POOLS.clear();
+  await Promise.all(pools.map((p) => p.close()));
+}
+
+async function invokePython(request, deps = {}) {
+  const env = deps.env ?? process.env;
+  const platform = deps.platform ?? process.platform;
+  if (!deps.spawnImpl && String(env.JOB_AGENT_PYTHON_WORKER ?? '').toLowerCase() !== 'off') {
+    const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({
+      exportPdf: request.export_pdf === true, measurePages: request.measure_pages === true,
+    });
+    try {
+      return await workerPool(pythonExe(env, { root: deps.root, platform }), env, platform).request(request, { timeoutMs });
+    } catch (err) {
+      // A worker that could not start or died is not the request's fault:
+      // try once in a fresh interpreter. A timeout is the request's own.
+      if (/timed out/.test(err.message)) throw err;
+    }
+  }
+  return invokePythonOnce(request, deps);
+}
+
+function invokePythonOnce(request, deps = {}) {
   const spawnImpl = deps.spawnImpl ?? spawn;
   const env = deps.env ?? process.env;
   const platform = deps.platform ?? process.platform;
   // Longer than Python's own PDF conversion limits when a PDF is requested,
   // so Python reports "conversion timed out" itself instead of Node killing a
   // healthy tailor mid-export and discarding the DOCX it already wrote.
-  const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({ exportPdf: request.export_pdf === true });
+  const timeoutMs = deps.timeoutMs ?? pythonTimeoutMs({
+    exportPdf: request.export_pdf === true, measurePages: request.measure_pages === true,
+  });
   const script = scriptPath();
 
   return new Promise((resolve, reject) => {

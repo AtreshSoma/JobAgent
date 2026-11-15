@@ -10,6 +10,8 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Sequence
 
+import evidence
+
 
 def read_docx_text(path: str | Path) -> str:
     """Extract all text (paragraphs + tables) from a .docx file."""
@@ -71,12 +73,6 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
-def _phrase_pattern(phrase: str) -> re.Pattern:
-    """Boundary-aware matcher so short skills do not match inside other words."""
-    escaped = re.escape(_normalize(phrase))
-    return re.compile(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", re.IGNORECASE)
-
-
 def _evidence_terms(
     keyword: str,
     evidence_aliases: Mapping[str, Sequence[str]] | None,
@@ -107,7 +103,11 @@ def audit_keywords(
     can support a JD term (for example, PySpark supports Spark) without claiming
     that genuinely absent technologies are present.
     """
-    haystack = _normalize(resume_text)
+    # Line by line and in the original case: the one evidence check
+    # (src/resume/evidence.py) needs both to tell "R and Python" from "R&D".
+    lines = (resume_text or "").splitlines()
+    keywords = list(keywords)
+    vocabulary = [str(k) for k in keywords]
     present: List[str] = []
     missing: List[str] = []
     seen = set()
@@ -117,8 +117,9 @@ def audit_keywords(
             continue
         seen.add(key)
         supported = any(
-            _phrase_pattern(term).search(haystack)
+            evidence.shows(term, line, vocabulary=vocabulary)
             for term in _evidence_terms(str(kw), evidence_aliases)
+            for line in lines
         )
         (present if supported else missing).append(kw)
     return {"present": present, "missing": missing}

@@ -63,6 +63,28 @@ export function releaseForTag(tag, packageVersion, releases = CHANGELOG) {
   return { release };
 }
 
+/**
+ * Whether the version is the same everywhere it is written (audit X6):
+ * package.json is the source, and the lockfile and the newest versioned
+ * changelog entry must match it. Used by `npm run verify`.
+ *
+ * @param {object} args
+ * @param {string} args.packageVersion package.json "version"
+ * @param {Array<string|undefined>} [args.lockVersions] package-lock.json's root versions
+ * @param {object[]} [args.releases]
+ * @returns {{ ok: true, version: string, error?: undefined } | { error: string, ok?: undefined }}
+ */
+export function versionAgreement({ packageVersion, lockVersions = [], releases = CHANGELOG }) {
+  const newest = releases.find((r) => /^v\d+\.\d+\.\d+$/.test(String(r?.version ?? '')));
+  if (!newest) return { error: 'no changelog entry carries a vMAJOR.MINOR.PATCH version' };
+  if (`v${packageVersion}` !== newest.version) {
+    return { error: `package.json ${packageVersion} does not match the newest changelog entry ${newest.version}` };
+  }
+  const stale = lockVersions.filter((v) => v !== undefined && v !== packageVersion);
+  if (stale.length) return { error: `package-lock.json says ${stale.join(', ')}, package.json says ${packageVersion}; run npm install` };
+  return { ok: true, version: newest.version };
+}
+
 function main(argv) {
   if (argv.includes('--changelog')) {
     writeFileSync(new URL('CHANGELOG.md', ROOT), changelogMarkdown());

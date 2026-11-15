@@ -4,6 +4,9 @@ python-docx==1.2.0
 pytest==9.2.0
 python-dotenv==1.2.4
 
+# Python lint (`npm run lint` runs it when installed; CI uses this pin).
+ruff==0.17.5
+
 # Optional PDF export (used by src/resume/pdfExport.py).
 # docx2pdf relies on MS Word on Windows; safe to omit if unavailable.
 docx2pdf==0.1.8

@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { openDatabase } from '../../src/logging/db.js';
 import {
   todayQueue, dashboardSections, dashboardStats, boardPage, BOARD_FIELDS, MAX_PAGE_LIMIT,
-  classifyAttention, explainStatus, buildReports, buildDocuments, buildMasterResume, placeholderFixes,
+  classifyAttention, explainStatus, buildReports, buildDocuments, buildMasterResume, BROWSER_INSTALL_FIX,
 } from '../../src/dashboard/data.js';
 
 const NOW = new Date('2026-09-22T15:00:00.000Z');
@@ -53,8 +53,11 @@ describe('A1 — GET /api/today contract (todayQueue)', () => {
     expect(today.systemNotices).toEqual([{
       code: 'browser_unavailable', severity: 'error',
       message: 'Auto-fill can’t start: the Playwright browser is not installed',
-      fix: 'npx playwright install chromium',
+      fix: BROWSER_INSTALL_FIX,
     }]);
+    // No command line in the dashboard (S1): the launcher offers the download.
+    expect(BROWSER_INSTALL_FIX).toMatch(/launcher/);
+    expect(BROWSER_INSTALL_FIX).not.toMatch(/npx|npm run/);
     db.close();
   });
 
@@ -65,17 +68,18 @@ describe('A1 — GET /api/today contract (todayQueue)', () => {
     db.close();
   });
 
-  it('reports template profile values as one notice', () => {
+  it('reports template profile values as one setup notice, not an error', () => {
     const db = openDatabase({ path: ':memory:' });
     const config = { candidate: { identity: { fullName: 'Jane Doe' }, contact: { email: 'you@example.com' } } };
     const notices = todayQueue(db, { now: NOW, config }).systemNotices;
     expect(notices).toHaveLength(1);
-    expect(notices[0]).toMatchObject({ code: 'profile_placeholders', severity: 'error' });
-    expect(notices[0].fix).toMatch(/profile/i);
+    expect(notices[0]).toMatchObject({ code: 'profile_placeholders', severity: 'info' });
+    expect(notices[0].message).toMatch(/^Finish setup to apply: 11 of 13 done$/);
+    expect(notices[0].fix).toMatch(/on hold/i);
     db.close();
   });
 
-  it('says WHERE each template value is fixed, not just its name', () => {
+  it('says WHERE each value is fixed: a screen and a field, never a file or a command (S1)', () => {
     const db = openDatabase({ path: ':memory:' });
     const config = {
       profile: { id: 'casey' },
@@ -93,26 +97,26 @@ describe('A1 — GET /api/today contract (todayQueue)', () => {
       },
     };
     const [notice] = todayQueue(db, { now: NOW, config }).systemNotices;
-    const byLabel = Object.fromEntries(notice.items.map((i) => [i.label, i]));
+    const items = notice.setup.groups.flatMap((g) => g.items);
+    const byKey = Object.fromEntries(items.map((i) => [i.key, i]));
 
-    // candidate.json is regenerated on activation, so it is never the answer.
-    expect(notice.items.every((i) => i.where !== 'config/candidate.json')).toBe(true);
-    // Every one of these is fixed on a screen: the Saved answer it is filled from.
-    expect(notice.items.every((i) => !/\.json$/.test(i.where))).toBe(true);
-    expect(byLabel['work authorization status']).toMatchObject({
-      where: 'Application profile → Saved answers', value: 'US Citizen | Green Card | H-1B | OPT | ...',
+    // Three stored copies of work authorization are one thing to answer.
+    expect(byKey.authorization).toMatchObject({
+      done: false, personOnly: true, fix: { editor: 'answers', field: 'work_authorization' },
     });
-    expect(byLabel['work authorization status'].how).toMatch(/"work_authorization"/);
-    expect(byLabel['years of experience (used in the cover letter)'].how).toMatch(/"years_experience"/);
-    expect(byLabel['cover-letter sponsorship sentence'].how).toMatch(/"work_authorization"/);
+    expect(byKey.authorization.values).toContain('US Citizen | Green Card | H-1B | OPT | ...');
+    expect(byKey.yearsExperience).toMatchObject({ done: false, fix: { editor: 'answers', field: 'years_experience' } });
+    expect(JSON.stringify(notice)).not.toMatch(/\.json|npm run|npx /);
     db.close();
   });
 
-  it('sends a form-editable field to the Application profile', () => {
-    expect(placeholderFixes([{ path: 'contact.email', label: 'email', value: 'you@example.com', file: 'config/candidate.json' }]))
-      .toEqual([expect.objectContaining({ where: 'Application profile' })]);
-    expect(placeholderFixes([{ path: 'answers[id=x].answer', label: 'screening answer "x"', value: 'YOUR answer', file: 'config/screening_answers.json' }]))
-      .toEqual([expect.objectContaining({ where: 'Application profile → Saved answers' })]);
+  it('sends a form-editable field to its box in Your details', () => {
+    const db = openDatabase({ path: ':memory:' });
+    const config = { candidate: { contact: { email: 'you@example.com' } } };
+    const [notice] = todayQueue(db, { now: NOW, config }).systemNotices;
+    const email = notice.setup.groups.find((g) => g.key === 'contact').items.find((i) => i.key === 'email');
+    expect(email).toMatchObject({ done: false, fix: { editor: 'details', field: 'contact.email' } });
+    db.close();
   });
 });
 

@@ -159,7 +159,9 @@ export function diffResume({ master = [], tailored = [], omitted = [], rewrites 
   let section = '';
   const pushAdded = (index) => {
     for (const t of addedAfter.get(index) ?? []) {
-      rows.push({ status: 'added', text: t, section, flags: /most relevant to this role/i.test(t) ? ['focus line'] : ['not in master'] });
+      // The tailor adds nothing (the focus line went with audit R9), so any
+      // added line deserves a second look.
+      rows.push({ status: 'added', text: t, section, flags: ['not in master'] });
     }
   };
   pushAdded(-1);

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 
 import { boardPage } from '../dashboard/data.js';
 import { embed, embedSettings } from '../llm/embeddings.js';
+import { withoutContactLines } from '../llm/identityUnits.js';
 import { readMasterUnits } from '../resume/tailorRunner.js';
 import { writeFileAtomic } from '../utils/fsSafe.js';
 import { workspacePaths } from '../profile/workspace.js';
@@ -36,7 +37,10 @@ export async function rerank({ db, config, env = process.env, topN = 50, now = n
   const root = config?.root ?? null;
   const cfg = embedSettings(env, { root });
   if (!cfg.enabled) throw Object.assign(new Error(cfg.reason), { statusCode: 409 });
-  const bullets = (await (deps.readMasterUnitsFn ?? readMasterUnits)({ root, deps })).filter((u) => u.kind === 'bullet');
+  const bullets = withoutContactLines(
+    (await (deps.readMasterUnitsFn ?? readMasterUnits)({ root, deps })).filter((u) => u.kind === 'bullet'),
+    config?.candidate,
+  );
   if (!bullets.length) throw Object.assign(new Error('The master resume has no bullets to compare with.'), { statusCode: 422 });
   const jobs = boardPage(db, { limit: topN, sort: 'score', now }).jobs.slice(0, topN);
   const jobTexts = jobs.map((j) => `${j.title}\n${String(db.getJob(j.id)?.jd_text ?? '').slice(0, 2000)}`);

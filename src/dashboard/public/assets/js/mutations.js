@@ -7,6 +7,8 @@ import { loadSections, loadStats, shiftViewCount } from './analytics.js';
 import { captureRowFocus, loadBoard, restoreRowFocus, rowFor, scheduleBoardReload } from './board.js';
 import { cssEscape, isAggregatorUrl, loadDetail, renderDetail, selectJob } from './detail.js';
 import { autofillBlockedReason, loadToday, prepareBlockedNotice, scheduleTodayReload } from './today.js';
+import { revealSetupCard } from './setup.js';
+import { openMasterResume } from './master.js';
 import { offerUndo } from './selection.js';
 import { pollRun } from './runs.js';
 import { loadWorkspace, scheduleWorkspaceReload } from './workspace.js';
@@ -160,7 +162,7 @@ export async function autofillOne(id) {
 
 export async function prepareOne(id) {
   if (state.running) { toast('A run is in progress — wait for it to finish.', 'bad'); return; }
-  if (prepareBlockedNotice()) { toast('Prepare is off until the template values in the notice at the top of the page are replaced.', 'bad'); return; }
+  if (prepareBlockedNotice()) { toast('Prepare is off until setup is finished. The setup card shows what is left.', 'bad'); revealSetupCard(); return; }
   state.prepareFailures.delete(id);
   try {
     await postJson('/api/prepare-batch', { jobIds: [id] });
@@ -273,6 +275,13 @@ export async function fillProfileFromResume() {
     scheduleTodayReload();
     scheduleBoardReload();
   } catch (err) {
+    // A fresh install has no search profile to fill yet. Creating one from
+    // the resume is a screen away, so go there rather than stop at an error.
+    if (/no search profile is active/i.test(err.message)) {
+      toast('Create a profile from your resume first: the Master resume window offers it.', 'bad');
+      await openMasterResume();
+      return;
+    }
     toast(err.message, 'bad');
   }
 }

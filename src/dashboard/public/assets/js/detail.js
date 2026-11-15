@@ -6,7 +6,7 @@ import { state } from './state.js';
 import { api, postJson } from './api.js';
 import { sponsorshipEvidence, sponsorshipTitle, statusLabel } from './board.js';
 import { openDialog, placeToasts } from './dialogs.js';
-import { autofillBlockedReason, BROWSER_MISSING, placeholderList, prepareBlockedNotice } from './today.js';
+import { autofillBlockedReason, BROWSER_MISSING, prepareBlockedNotice } from './today.js';
 import { rewritesSection } from './rewrites.js';
 import { versionsSection } from './versions.js';
 
@@ -851,7 +851,37 @@ export function fitCard(job) {
   }
   const evidence = (job.evidence ?? []).filter((e) => !String(job.title ?? '').toLowerCase().includes(String(e.term).toLowerCase()));
   if (!unread && evidence.length) card.append(evidenceList(evidence));
+  if (!unread && job.unlistedRequirements?.length) card.append(unlistedRequirementsList(job));
   return card;
+}
+
+/**
+ * What this posting's requirements name that JobAgent does not look for (R12):
+ * word for word, with whether your resume shows it and how many stored
+ * postings ask for it. "Look for this skill" adds it to the profile; nothing
+ * else changes, and it claims nothing about you.
+ */
+export function unlistedRequirementsList(job) {
+  const items = job.unlistedRequirements;
+  const list = el('ul', { class: 'unlisted' });
+  for (const item of items) {
+    const facts = [
+      item.preferred ? 'preferred' : 'required',
+      item.inResume ? 'in your resume' : 'not in your resume',
+      item.postings != null ? `in ${item.postings} stored posting${item.postings === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(' · ');
+    list.append(el('li', {},
+      el('b', { text: item.phrase }), ' ', el('span', { class: 'muted', text: facts }),
+      el('button', {
+        type: 'button', class: 'small ghost', 'data-action': 'watch-skill', 'data-id': job.id, 'data-phrase': item.phrase,
+        'aria-label': `Look for ${item.phrase} in postings`, text: 'Look for this skill',
+      })));
+  }
+  return el('details', { class: 'fitcard-evidence', 'data-key': 'unlisted' },
+    el('summary', { text: `Also asked for, not in what JobAgent looks for (${items.length})` }),
+    el('p', { class: 'muted fineprint', text: 'Taken word for word from this posting\'s requirements. Adding one makes '
+      + 'every posting that asks for it count it, and lists it as a gap where your resume does not show it.' }),
+    list);
 }
 
 /**
@@ -1115,7 +1145,7 @@ export function actionPlan(job) {
     // offering a retry that is certain to fail the same way.
     if (state.browserUnavailable || BROWSER_MISSING.test(job.statusReason ?? '')) {
       return {
-        text: 'Auto-fill could not start a browser. Install it once (npx playwright install chromium in the JobAgent folder), then retry.',
+        text: 'Auto-fill could not start a browser. Close JobAgent and open it again from its launcher, and say yes when it offers to download the browser (about 150 MB). Then retry.',
         buttons: [autofillButton(job.id, '↻ Retry auto-fill'), openPosting()],
       };
     }
@@ -1204,7 +1234,7 @@ export const UNDO_LABEL = Object.freeze({
 });
 
 /** Hover text on a Prepare control while template text blocks it. */
-const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. The box below lists each value and where to fix it.';
+const PREPARE_BLOCKED_TITLE = 'Off until setup is finished. The setup card at the top of the page lists what is left.';
 
 /**
  * Why this job cannot be prepared, shown where Prepare is clicked and kept
@@ -1214,12 +1244,15 @@ const PREPARE_BLOCKED_TITLE = 'Off until your profile holds no template text. Th
 export function prepareProblemBox(jobId) {
   const blocked = prepareBlockedNotice();
   if (blocked) {
+    // Why, in one line, and a way to the card that fixes it. The card holds
+    // the steps; repeating them here is how the old notice reached 19 lines.
+    const left = (blocked.setup?.groups ?? []).flatMap((g) => g.items).filter((i) => !i.done).map((i) => i.label);
     return el('div', { class: 'attention prepare-problem', role: 'status' },
       el('span', { class: 'mark', text: '!' }),
       el('div', {},
-        el('b', { text: 'Prepare is off: your profile still holds template text.' }),
-        el('div', { text: 'Replace each value below with your real, truthful one. This box clears once they are all fixed.' }),
-        blocked.items?.length ? placeholderList(blocked.items) : null));
+        el('b', { text: 'Prepare is off until setup is finished.' }),
+        left.length ? el('div', { text: `Still to fill in: ${left.slice(0, 4).join(', ')}${left.length > 4 ? `, and ${left.length - 4} more` : ''}.` }) : null,
+        el('button', { type: 'button', class: 'small', 'data-action': 'open-setup', text: 'Finish setup' })));
   }
   const failure = state.prepareFailures?.get(jobId);
   if (failure) {
@@ -1448,11 +1481,18 @@ export function resumeChangeLabel(change = {}) {
     fit_to_page_budget: 'Omitted the least relevant bullets from the oldest roles to hold the page limit.',
     rewrite: 'Used a rewording you accepted, backed by your own resume text.',
     rewrite_skipped: 'Skipped a rewording you accepted: that bullet is no longer in your master resume.',
+    step_skipped: 'Left out one tailoring step because its result failed a check. Everything else was tailored as usual.',
   };
   const label = labels[change.type] || change.reason
     || String(change.type ?? 'Recorded an update').replace(/_/g, ' ');
   // These two describe WHAT they did in `after`, and that detail is the point.
-  if (change.type === 'rewrite' && change.before && change.after) return `${label} "${change.before}" became "${change.after}"`;
+  // A rewording cannot keep a link or partial bold from the old line; the
+  // tailor says which, and the review must say it too (R16).
+  if (change.type === 'rewrite' && change.before && change.after) {
+    return `${label} "${change.before}" became "${change.after}"${change.formatting_note ? ` ${change.formatting_note}` : ''}`;
+  }
+  // Which step was left out is the point of a skipped step (R11).
+  if (change.type === 'step_skipped' && change.where) return `${label} (${change.where})`;
   return ['normalize_layout', 'fit_to_page_budget'].includes(change.type) && change.after
     ? `${label} (${change.after})`
     : label;

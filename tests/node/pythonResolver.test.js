@@ -86,14 +86,14 @@ describe('tailor bridge', () => {
   const base = { job: { company: 'Acme', title: 'DE', jdText: '' }, score: {}, config: { root }, options: { llmAssist: false } };
 
   it('decodes a multi-byte character split across two chunks', async () => {
-    const bytes = Buffer.from(JSON.stringify({ ok: true, output_path: out, summary_line: '84.51°' }));
+    const bytes = Buffer.from(JSON.stringify({ ok: true, output_path: out, gaps: [{ keyword: '84.51°' }] }));
     const cut = bytes.indexOf(Buffer.from('°')) + 1; // inside the 2-byte sequence
     let opts = null;
     const r = await tailorResumeForJob({
       ...base,
       deps: { spawnImpl: (_exe, _args, o) => { opts = o; return fakeChild({ chunks: [bytes.subarray(0, cut), bytes.subarray(cut)] }); } },
     });
-    expect(r.summaryLine).toBe('84.51°');
+    expect(r.gaps[0].keyword).toBe('84.51°');
     expect(opts.env.PYTHONUTF8).toBe('1');
   });
 

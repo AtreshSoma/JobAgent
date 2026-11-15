@@ -38,6 +38,7 @@ import { withRetry } from '../utils/retryHandler.js';
 import { htmlToText, parseJsonLdJobs } from './normalize.js';
 import { ENRICHMENT_DEFAULTS } from '../config/userSettings.js';
 import { safeFetch } from '../utils/safeFetch.js';
+import { masterResumeLines } from '../resume/evidenceMap.js';
 
 const TIMEOUT_MS = 20_000;
 /** Below this, a stored jd_text is a teaser rather than a real description. */
@@ -198,7 +199,7 @@ export function judgeEnriched(row, got, { config, vocab, now, fingerprint }) {
   const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
   const score = scoreJob(job, {
     scoring: config.scoring, sponsorship, candidate: config.candidate, now,
-    freshnessModel: freshnessModelFor(config),
+    freshnessModel: freshnessModelFor(config), evidenceLines: masterResumeLines(config.root),
   });
   const titleVerdict = classifyTitleFit(job.title, vocab).verdict;
   const { tier, explanation } = explainScore(score, config.scoring, { titleVerdict, candidate: config.candidate });

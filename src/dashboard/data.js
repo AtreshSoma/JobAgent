@@ -41,7 +41,7 @@ import {
   allowedOutcomes, applicationMetrics, conversionBreakdown, canRecordOutcome, daysBetween, isIsoDay, replayFollowUps, replayOutcomes, stageOf,
   NO_OUTCOME_EXPORT, outcomeEventsByJob, outcomeExport, weeklySummary,
 } from '../domain/applicationOutcome.js';
-import { findPlaceholders } from '../config/placeholders.js';
+import { setupProgress } from '../config/setupProgress.js';
 import { csvCell } from '../reports/csv.js';
 import { masterResumeFile, workspacePaths } from '../profile/workspace.js';
 import { letterModeFor } from '../apply/letterMode.js';
@@ -50,8 +50,17 @@ import { extractHiddenClauses } from '../scoring/hiddenClauses.js';
 import { applicationAccess, openQuestionsFor, signInGroups } from '../apply/autofillReadiness.js';
 import { loadQuestionQueue } from '../apply/questionQueue.js';
 import { evidenceFor, masterResumeLines } from '../resume/evidenceMap.js';
+import { scoringVocabulary } from '../scoring/scorer.js';
+import { corpusFrequency, requirementPhrases } from '../scoring/requirementPhrases.js';
 import { employerHistory } from './employerHistory.js';
 import { preferenceProposals } from './preferenceProposals.js';
+
+/**
+ * How to install the form-filling browser, without a command line (S1). The
+ * launchers check for it on every start and offer the download
+ * (scripts/prepareLaunch.mjs), so that is the way in from the dashboard.
+ */
+export const BROWSER_INSTALL_FIX = 'Close JobAgent and open it again from its launcher, and say yes when it offers to download the browser (about 150 MB). Then retry.';
 
 // The status vocabulary and the pure per-row rules moved to src/domain so the
 // tracker, reports and CLI can use them without importing this whole data
@@ -203,7 +212,7 @@ function explainStatusRaw(job = {}, appStatus = '', approval = null) {
   switch (appStatus) {
     case APP_STATUS.NEEDS_DESCRIPTION:
       return 'The source gave only a title and no job description, so this row has NOT been judged on fit. '
-        + 'Any score shown is provisional. Run `npm run enrich` to fetch the descriptions, after which it '
+        + 'Any score shown is provisional. Data quality → Read descriptions now fetches them, after which it '
         + 'will be scored properly.';
     case APP_STATUS.SUBMIT_UNVERIFIED:
       // Two very different ways to land here: our own click with no proof it
@@ -273,7 +282,7 @@ export function classifyAttention(job = {}, appStatus = '') {
   };
   if (ENVIRONMENT_FAILURE_RE.test(reason)) return {
     kind: 'setup_browser', label: SETUP_BROWSER_LABEL,
-    summary: 'Auto-fill can’t start: the Playwright browser is not installed. Run: npx playwright install chromium, then retry.',
+    summary: `Auto-fill can’t start: the Playwright browser is not installed. ${BROWSER_INSTALL_FIX}`,
     retryable: true,
   };
   if (/captcha|verification challenge|human verification/.test(reason)) return {
@@ -1129,7 +1138,15 @@ function computeDashboardStats(db, now, timeZone = null) {
     stats.totals.blockedSetup = (db.listAttentionBlockers?.() ?? [])
       .filter((row) => isEnvironmentFailure(row)).length;
   } catch { stats.totals.blockedSetup = 0; }
-  stats.nextActions = buildNextActions(stats.totals, stats.views.best);
+  // Has any search ever run? A stored job says so; so does a logged run that
+  // found nothing. Without this, a fresh install was told "nothing new has been
+  // found in the last 24 hours" before it had ever looked.
+  let searched = stats.totals.jobsTracked > 0;
+  if (!searched) {
+    try { searched = (db.listRunLogs?.({ limit: 1 }) ?? []).length > 0; } catch { searched = false; }
+  }
+  stats.everSearched = searched;
+  stats.nextActions = buildNextActions(stats.totals, stats.views.best, { everSearched: searched });
   return stats;
 }
 
@@ -1138,7 +1155,7 @@ function computeDashboardStats(db, now, timeZone = null) {
  * board filter that shows exactly those jobs.
  * @returns {Array<{ text: string, filter: object|null }>}
  */
-export function buildNextActions(totals, strongUntriaged = 0) {
+export function buildNextActions(totals, strongUntriaged = 0, { everSearched = true } = {}) {
   const actions = [];
   /*
    * Each entry carries BOTH a full sentence and its parts.
@@ -1211,9 +1228,8 @@ export function buildNextActions(totals, strongUntriaged = 0) {
     add({
       count: setup,
       verb: SETUP_BROWSER_LABEL,
-      detail: 'auto-fill cannot start until it is installed: npx playwright install chromium',
-      text: `${setup} auto-fill(s) could not start because the Playwright browser is not installed — run `
-        + '"npx playwright install chromium", then retry',
+      detail: 'auto-fill cannot start until it is installed: open JobAgent again from its launcher, which offers to download it',
+      text: `${setup} auto-fill(s) could not start because the Playwright browser is not installed. ${BROWSER_INSTALL_FIX}`,
       filter: { view: 'blocked' },
       kind: 'system',
     });
@@ -1270,7 +1286,16 @@ export function buildNextActions(totals, strongUntriaged = 0) {
   // A plain "0 discovered today" right after midnight is normal and not worth a
   // warning (this avoids the confusing "0 discovered today" vs "many posted
   // last 24h" mismatch users saw).
-  if ((totals.discoveredLast24h ?? totals.discoveredToday) === 0) {
+  if (!everSearched) {
+    add({
+      count: null,
+      verb: 'Run your first search',
+      detail: 'No search has run yet. Finding and scoring jobs works before setup is finished.',
+      text: 'No search has run yet. Run your first search to fill the board',
+      filter: null,
+      kind: 'system',
+    });
+  } else if ((totals.discoveredLast24h ?? totals.discoveredToday) === 0) {
     add({
       count: null,
       verb: 'Find new jobs',
@@ -1705,6 +1730,23 @@ function boardPageRows(db, filters = {}) {
 }
 
 /**
+ * How many recent stored postings mention a phrase (R12), from a sample of the
+ * 2,000 newest descriptions, kept for ten minutes per database.
+ */
+const FREQUENCY = new WeakMap();
+function postingFrequency(db) {
+  const raw = db?.db && typeof db.db.prepare === 'function' ? db.db : null;
+  if (!raw) return null;
+  const hit = FREQUENCY.get(db);
+  if (hit && Date.now() - hit.at < 600_000) return hit.frequency;
+  const texts = raw.prepare("SELECT jd_text FROM jobs WHERE jd_text IS NOT NULL AND jd_text <> '' ORDER BY created_at DESC LIMIT 2000")
+    .all().map((r) => r.jd_text);
+  const frequency = corpusFrequency(texts);
+  FREQUENCY.set(db, { at: Date.now(), frequency });
+  return frequency;
+}
+
+/**
  * Full detail for one job: board row + packet summary (blockers, prefill plan,
  * screening answers, uploads) read from the packet JSON when present.
  *
@@ -1832,7 +1874,25 @@ export function jobDetail(db, jobId, deps = {}) {
       if (!root) return null;
       const lines = masterResumeLines(root);
       if (!lines.length) return null;
-      return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines);
+      const scoring = deps.config?.scoring ?? {};
+      return evidenceFor([...jsonList(job.matched_keywords), ...jsonList(job.missing_keywords)], lines, {
+        aliases: scoring.evidenceAliases ?? {}, vocabulary: scoringVocabulary(scoring),
+      });
+    })(),
+    // What the posting's requirement sections name that the vocabulary does
+    // not know, word for word, ranked by how many stored postings ask for it
+    // (R12). The person can add one to what is looked for.
+    unlistedRequirements: (() => {
+      try {
+        const scoring = deps.config?.scoring ?? {};
+        const root = deps.root ?? deps.config?.root ?? null;
+        return requirementPhrases(job.jd_text ?? '', {
+          vocabulary: scoringVocabulary(scoring),
+          aliases: scoring.evidenceAliases ?? {},
+          resumeLines: root ? masterResumeLines(root) : [],
+          frequency: postingFrequency(db),
+        });
+      } catch { return []; }
     })(),
     openQuestions: (() => {
       const root = deps.root ?? deps.config?.root ?? null;
@@ -2806,85 +2866,25 @@ export function systemNotices(rows = [], config = null, { browserAvailable = nul
       code: 'browser_unavailable',
       severity: 'error',
       message: 'Auto-fill can’t start: the Playwright browser is not installed',
-      fix: 'npx playwright install chromium',
+      fix: BROWSER_INSTALL_FIX,
     });
   }
   if (config) {
-    let found = null;
-    try { found = findPlaceholders(config); } catch { found = null; }
-    if (found && !found.ok) {
-      const labels = [...new Set(found.placeholders.map((p) => p.label))];
-      const shown = labels.slice(0, 5).join(', ') + (labels.length > 5 ? `, and ${labels.length - 5} more` : '');
+    let setup;
+    try { setup = setupProgress(config); } catch { setup = null; }
+    if (setup && !setup.ok) {
+      // One setup card, not one line per stored copy (S1). `setup.ok` is
+      // findPlaceholders(config).ok, so applying is held exactly as before.
       notices.push({
         code: 'profile_placeholders',
-        severity: 'error',
-        message: labels.length === 1
-          ? `Replace 1 template value before applying: ${shown}.`
-          : `Replace ${labels.length} template values before applying: ${shown}.`,
-        fix: 'Applications stay on hold until these are real. Each line below says where to fix it: the '
-          + 'Application profile, your saved search profile, or the cover-letter settings.',
-        // Per field: what it says now and WHERE the fix sticks. The old notice
-        // said only "Settings → Application profile", which cannot edit work
-        // authorization or the cover letter, so following it changed nothing
-        // and Prepare kept refusing with no visible reason.
-        items: placeholderFixes(found.placeholders, { profileId: config.profile?.id ?? null }),
+        severity: 'info',
+        message: `Finish setup to apply: ${setup.done} of ${setup.total} done`,
+        fix: 'Applying stays on hold until these hold your real details. Finding and scoring jobs keep working.',
+        setup,
       });
     }
   }
   return notices;
-}
-
-/** Candidate fields the Application profile dialog edits (src/config/profileStore.js PROFILE_FIELDS). */
-const APPLICATION_PROFILE_PATH = /^(identity\.(fullName|preferredName|links\.linkedin)|contact\.(email|phone)|location\.(city|state|zip))$/;
-
-/**
- * Where each template value is actually fixed.
- *
- * `findPlaceholders` reports candidate fields as living in config/candidate.json,
- * but that file is regenerated from the active search profile on every
- * activation: an edit made there is overwritten. So each field is pointed at the
- * place that keeps it, a screen wherever one exists: the Application profile
- * fields, the Saved answer it is filled from (src/config/answerFallbacks.js), or
- * the master resume. Only a fact with no screen at all names a file.
- *
- * @param {Array<{path: string, label: string, value: string, file: string}>} placeholders
- * @param {{profileId?: string|null}} [options]
- * @returns {Array<{label: string, value: string, where: string, how: string}>}
- */
-export function placeholderFixes(placeholders = [], { profileId = null } = {}) {
-  const id = profileId || '<profile-id>';
-  const profileFile = `config/profiles/${id}.json`;
-  const activate = `\`npm run profiles activate ${id}\``;
-  return placeholders.map(({ path = '', label, value, file }) => {
-    let where;
-    let how;
-    if (file === 'config/candidate.json' && APPLICATION_PROFILE_PATH.test(path)) {
-      where = 'Application profile';
-      how = 'Open the account menu, choose Application profile, and fill in this field.';
-    } else if (file === 'config/candidate.json' && path.startsWith('workAuthorization.')) {
-      // Filled from this answer at load time (src/config/answerFallbacks.js).
-      where = 'Application profile → Saved answers';
-      how = 'Answer "work_authorization" with your real status. This value is filled from it.';
-    } else if (file === 'config/candidate.json') {
-      // Work history and education: what the resume already states.
-      where = 'Master resume';
-      how = `Use "Fill from my resume" in this notice, or edit the background section of ${profileFile} and run ${activate}.`;
-    } else if (file === 'config/screening_answers.json') {
-      where = 'Application profile → Saved answers';
-      how = 'Open the account menu, choose Application profile, and replace this answer.';
-    } else if (path === 'yearsOfExperience') {
-      where = 'Application profile → Saved answers';
-      how = 'Answer "years_experience", for example 8 years. This value is filled from it.';
-    } else if (path === 'template.sponsorshipNote') {
-      // Built from the stated status when sponsorship is required.
-      where = 'Application profile → Saved answers';
-      how = 'Answer "work_authorization" with your real status. The sentence is written from it.';
-    } else {
-      where = file;
-      how = `Set ${path} in ${file} to your real value.`;
-    }
-    return { label, value: String(value ?? ''), where, how };
-  });
 }
 
 /**
@@ -3271,7 +3271,6 @@ export function buildDocuments(db, {
         tailoring: tailoring ? {
           changes,
           gaps,
-          summaryLine: tailoring.summaryLine ?? null,
           changeCount: changes.length,
           gapCount: gaps.length,
           pageCount: tailoring.pageCount ?? null,

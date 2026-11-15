@@ -162,6 +162,9 @@ export function getRuntimeSettings(env = process.env) {
     assistMaxSteps: Math.max(1, Number.parseInt(env.ASSIST_MAX_STEPS ?? '8', 10) || 8),
     // Also export a PDF next to each tailored .docx resume (most ATS prefer PDF).
     resumeExportPdf: String(env.RESUME_EXPORT_PDF ?? 'true').trim().toLowerCase() !== 'false',
+    // Fit tailored resumes to the page limit by LibreOffice's render, when it
+    // is installed, instead of the estimate alone (audit R6).
+    resumeMeasurePages: String(env.RESUME_MEASURE_PAGES ?? 'true').trim().toLowerCase() !== 'false',
     // ── Freshness (prioritize recent postings) ──────────────────────────────
     // Primary recency window for discovered jobs. One of:
     //   LAST_24_HOURS | LAST_3_DAYS | LAST_7_DAYS | LAST_14_DAYS | LAST_30_DAYS | ALL

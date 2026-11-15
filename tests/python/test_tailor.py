@@ -64,108 +64,6 @@ def test_tailor_does_not_fabricate_missing_keywords(sample_resume, tmp_path, hum
     assert "redshift" not in tailored_text
 
 
-def test_summary_line_only_lists_present_keywords(sample_resume, tmp_path, humanizer_patterns):
-    out_dir = tmp_path / "output"
-    job = {"company": "Acme", "title": "DE"}
-    result = tailor_resume(
-        sample_resume, out_dir, job,
-        keywords=["azure", "snowflake"],
-        patterns=humanizer_patterns,
-        add_summary_line=True,
-    )
-    assert result["summary_line"] is not None
-    assert "azure" in result["summary_line"].lower()
-    assert "snowflake" not in result["summary_line"].lower()
-
-
-def test_focus_line_anchored_above_core_competencies(tmp_path, humanizer_patterns):
-    """The per-job focus line is inserted just above CORE COMPETENCIES."""
-    from docx import Document
-
-    doc = Document()
-    doc.add_paragraph("ATRESH SOMAYAJULA")
-    doc.add_paragraph("PROFESSIONAL SUMMARY")
-    doc.add_paragraph("Built medallion pipelines on Azure Databricks with PySpark and Delta Lake.")
-    doc.add_paragraph("CORE COMPETENCIES")
-    doc.add_paragraph("Azure, PySpark, Power BI, Delta Lake")
-    master = tmp_path / "MASTER_RESUME.docx"
-    doc.save(str(master))
-
-    out_dir = tmp_path / "output"
-    job = {"company": "Acme", "title": "Senior Data Engineer"}
-    result = tailor_resume(
-        master, out_dir, job,
-        keywords=["azure", "pyspark", "snowflake"],
-        patterns=humanizer_patterns,
-        add_summary_line=True,
-    )
-
-    texts = [p.text for p in Document(result["output_path"]).paragraphs]
-    focus_idx = next(
-        i for i, t in enumerate(texts) if t.lower().startswith("most relevant to this role")
-    )
-    cc_idx = next(i for i, t in enumerate(texts) if t.strip().lower() == "core competencies")
-    # The focus line sits immediately above the CORE COMPETENCIES heading.
-    assert focus_idx < cc_idx
-    # Honest: present keywords are listed, missing ones never appear.
-    assert "azure" in texts[focus_idx].lower()
-    assert "pyspark" in texts[focus_idx].lower()
-    assert "snowflake" not in texts[focus_idx].lower()
-
-
-# REGRESSION (2026-08): the focus line had no length cap. Verified on a real,
-# buzzword-dense JD that matched every configured keyword category at once —
-# the generated line named 31 terms in one sentence, which reads as a keyword
-# dump, not a highlight, to a human reviewer.
-def test_focus_line_caps_at_a_readable_length(sample_resume, tmp_path, humanizer_patterns):
-    out_dir = tmp_path / "output"
-    job = {"company": "Acme", "title": "DE"}
-    # 8 terms all genuinely present in `sample_resume`'s text — more than the cap.
-    many_present = ["azure", "databricks", "pyspark", "power bi", "dax", "delta lake", "finance", "data engineer"]
-    result = tailor_resume(
-        sample_resume, out_dir, job,
-        keywords=many_present,
-        patterns=humanizer_patterns,
-        add_summary_line=True,
-    )
-    line = result["summary_line"].lower()
-    named = [k for k in many_present if k in line]
-    assert len(named) <= 6, f"focus line named {len(named)} terms, reads as a keyword dump: {line!r}"
-    # And it reads like a sentence a person would write, not a raw comma dump.
-    assert ", and " in line or line.count(",") == 0
-
-
-# REGRESSION (2026-08): "fabric" and "microsoft fabric" are each other's
-# configured alias, but both could be ranked into the focus line side by side
-# ("...microsoft fabric, fabric, and adf") — reads like a typo, not a highlight.
-def test_focus_line_collapses_alias_duplicates(tmp_path, humanizer_patterns):
-    from docx import Document
-
-    doc = Document()
-    doc.add_paragraph("Priya Raghunathan")
-    doc.add_paragraph("Built pipelines on Azure Databricks with PySpark and Apache Spark.")
-    master = tmp_path / "MASTER_RESUME.docx"
-    doc.save(str(master))
-
-    out_dir = tmp_path / "output"
-    job = {"company": "Acme", "title": "DE"}
-    result = tailor_resume(
-        master, out_dir, job,
-        keywords=["databricks", "spark", "pyspark"],
-        evidence_aliases={"spark": ["pyspark", "apache spark", "databricks"], "databricks": ["spark"]},
-        patterns=humanizer_patterns,
-        add_summary_line=True,
-    )
-    import re
-    line = result["summary_line"].lower()
-    # "databricks" and "spark" are configured aliases of each other — only the
-    # higher-ranked one should be named, not both. Word-boundary check because
-    # "spark" is a raw substring of "pyspark" (a different, non-aliased term
-    # that legitimately gets to appear on its own).
-    named = {t for t in ("databricks", "spark") if re.search(rf"(?<![a-z0-9]){t}(?![a-z0-9])", line)}
-    assert len(named) <= 1, f"alias duplicates both named: {line!r}"
-
-
 # ── evidence-based tailoring (2026-07 upgrade) ──────────────────────────────
 
 def _tokens(text):
@@ -217,14 +115,10 @@ def test_tailored_resume_never_contains_unsupported_requirements(
         sample_resume_with_competencies, out_dir, job,
         keywords=["pyspark", "azure databricks"] + unsupported,
         patterns=humanizer_patterns,
-        add_summary_line=True,
     )
     master_tokens = _tokens(read_docx_text(sample_resume_with_competencies))
-    # The focus line adds only a fixed label; its keywords must come from the master.
-    label_tokens = _tokens("Most relevant to this role")
     tailored_tokens = _tokens(read_docx_text(result["output_path"]))
-    assert tailored_tokens <= master_tokens | label_tokens, (
-        f"invented tokens: {tailored_tokens - master_tokens - label_tokens}")
+    assert tailored_tokens <= master_tokens, f"invented tokens: {tailored_tokens - master_tokens}"
     # Unsupported requirements are reported as gaps — never added.
     gap_keywords = {g["keyword"] for g in result["gaps"]}
     for kw in unsupported:
@@ -279,12 +173,10 @@ def test_changes_log_traces_every_action_to_evidence(sample_resume_with_competen
         sample_resume_with_competencies, out_dir, job,
         keywords=["pyspark"],
         patterns=humanizer_patterns,
-        add_summary_line=True,
     )
     types = {c["type"] for c in result["changes"]}
     assert "reorder_skills" in types
     assert "emphasize" in types
-    assert "focus_line" in types
     for change in result["changes"]:
         assert change.get("evidence"), f"change without evidence: {change}"
         assert change.get("reason"), f"change without reason: {change}"
@@ -395,7 +287,6 @@ def test_unsupported_technology_and_metric_are_required_gaps_never_inserted(
         },
         keywords=["terraform", "40%", "tableau"],
         patterns=humanizer_patterns,
-        add_summary_line=True,
         enable_rewrites=True,
     )
     tailored = read_docx_text(result["output_path"]).lower()
@@ -426,7 +317,6 @@ def test_provenance_and_invariants_cover_every_mutation(tmp_path, humanizer_patt
         },
         keywords=["sql", "python", "tableau", "kafka"],
         patterns=humanizer_patterns,
-        add_summary_line=True,
     )
     for change in result["changes"]:
         assert "before" in change and change["before"] is not None
@@ -467,7 +357,6 @@ def test_duplicate_protection_is_idempotent_and_preserves_docx_layout(
         job,
         keywords=["sql", "python", "tableau", "kafka"],
         patterns=humanizer_patterns,
-        add_summary_line=True,
     )
     second = tailor_resume(
         first["output_path"],
@@ -475,11 +364,9 @@ def test_duplicate_protection_is_idempotent_and_preserves_docx_layout(
         job,
         keywords=["sql", "python", "tableau", "kafka"],
         patterns=humanizer_patterns,
-        add_summary_line=True,
     )
     doc = Document(second["output_path"])
     texts = [paragraph.text for paragraph in doc.paragraphs]
-    assert sum(text.lower().startswith("most relevant to this role:") for text in texts) == 1
     assert sum(text.count("Built SQL pipelines with tested data-quality controls.") for text in texts) == 1
     standalone_styles = [
         paragraph.style.name for paragraph in doc.paragraphs
@@ -496,7 +383,6 @@ def test_duplicate_protection_is_idempotent_and_preserves_docx_layout(
     # pass produced a document whose bullets no longer matched each other.
     assert standalone_styles == ["List Bullet"] * len(standalone_styles)
     assert second["invariants"]["duplicate_protection_passed"] is True
-    assert not any(change["type"] == "focus_line" for change in second["changes"])
 
 
 def test_refuses_to_overwrite_master_resume(tmp_path, humanizer_patterns):
@@ -624,6 +510,10 @@ def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path
     a document that only half-filled the page still started page 2 at the break
     and ran to a third page. Length is now solved by dropping content, and only
     ever whole bullets, worst-first, from the oldest role.
+
+    Sized to what LibreOffice renders (2026-11-15): three pages before the fit.
+    It used 12 repetitions per bullet, five pages in LibreOffice, which no fit
+    could bring to two; only the old estimate thought it could.
     """
     from docx import Document
 
@@ -633,17 +523,17 @@ def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path
     doc.add_paragraph("Senior Data Engineer")
     doc.add_paragraph("Acme - Remote - March 2022 - Present")
     for index in range(12):
-        doc.add_paragraph((f"Delivered SQL and Python platform outcome {index}. " * 12), style="List Bullet")
+        doc.add_paragraph((f"Delivered SQL and Python platform outcome {index}. " * 6), style="List Bullet")
     doc.add_paragraph("Data Engineer")
     doc.add_paragraph("Example - Remote - January 2020 - February 2022")
     doc.add_paragraph("Built reliable data pipelines.", style="List Bullet")
     for index in range(6):
-        doc.add_paragraph((f"Maintained unrelated legacy reporting {index}. " * 12), style="List Bullet")
+        doc.add_paragraph((f"Maintained unrelated legacy reporting {index}. " * 6), style="List Bullet")
     doc.add_paragraph("BI Developer")
     doc.add_paragraph("Older Co - Remote - January 2018 - December 2019")
     doc.add_paragraph("Built reliable analytics models.", style="List Bullet")
     for index in range(6):
-        doc.add_paragraph((f"Produced routine monthly spreadsheets {index}. " * 12), style="List Bullet")
+        doc.add_paragraph((f"Produced routine monthly spreadsheets {index}. " * 6), style="List Bullet")
     master = tmp_path / "DENSE_PAGING_MASTER.docx"
     doc.save(master)
 
@@ -677,7 +567,7 @@ def test_dense_resume_is_trimmed_to_the_page_budget_without_hard_breaks(tmp_path
     assert omitted, "nothing was trimmed from an over-long resume"
     assert all("Delivered SQL and Python platform outcome" not in text for text in omitted)
     assert any("Produced routine monthly spreadsheets" in text for text in omitted)
-    assert "Delivered SQL and Python platform outcome 0. " * 12 in " ".join(texts)
+    assert "Delivered SQL and Python platform outcome 0. " * 6 in " ".join(texts)
 
     # Whole bullets only — nothing shortened, reworded, or merged.
     assert all(text in {t for t in texts} or True for text in omitted)
@@ -782,10 +672,10 @@ def test_layout_artifacts_from_a_previous_pass_are_repaired(tmp_path, humanizer_
 def test_page_estimate_tracks_real_word_pagination(tmp_path, humanizer_patterns):
     """The geometry model must scale with content and honour the page budget.
 
-    The constants in tailor.py are FITTED: ten variants of a real tailored
-    resume were rendered through Word and their true page counts recorded. This
-    pins the properties that fit depends on, so a change to the model fails here
-    rather than in someone's application.
+    The estimate is calibrated against LibreOffice (src/resume/pagefit.py,
+    tests/python/test_pagefit.py, which pins these same resumes to measured
+    page counts). These bounds were "between one and two pages" for 40 bullets,
+    checked against the estimate itself; LibreOffice renders them as 3.07.
     """
     from docx import Document
 
@@ -805,8 +695,8 @@ def test_page_estimate_tracks_real_word_pagination(tmp_path, humanizer_patterns)
         return Document(str(path))
 
     assert estimate_page_count(resume(4)) < 1.0
-    assert 1.0 < estimate_page_count(resume(40)) < 2.0
-    assert estimate_page_count(resume(80)) > 2.0
+    assert abs(estimate_page_count(resume(40)) - 3.07) < 0.15
+    assert estimate_page_count(resume(80)) > 5.0
     # Strictly monotonic in content: more text can never estimate as fewer pages.
     counts = [estimate_page_count(resume(n)) for n in (4, 12, 24, 40, 80)]
     assert counts == sorted(counts)

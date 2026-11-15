@@ -11,7 +11,6 @@ Request (stdin JSON):
       "output_dir": "resumes/output",
       "job": {"company": "...", "title": "...", "jd_text": "..."},
       "keywords": ["azure", "databricks", ...],
-      "add_summary_line": true,
       "export_pdf": false
     }
 
@@ -22,7 +21,6 @@ Response (stdout JSON):
       "pdf_path": null,
       "audit": {"present": [...], "missing": [...]},
       "emphasized": 3,
-      "summary_line": "Relevant strengths for this role: ...",
       "error": null
     }
 
@@ -39,6 +37,20 @@ from pathlib import Path
 # Make sibling modules (tailor, keywordAudit, humanizer, pdfExport) importable
 # regardless of the current working directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+
+def _section_headings(ats_config: dict):
+    names = (ats_config or {}).get("sectionHeadings") or {}
+    return {kind: list(v) for kind, v in names.items() if isinstance(v, list) and v} or None
+
+
+def _page_measurer(request: dict):
+    """LibreOffice's page count for the fit, unless turned off or not installed."""
+    if request.get("measure_pages") is False:
+        return None
+    import pagefit
+
+    return pagefit.measure_document if pagefit.measurement_available() else None
 
 
 def _run(request: dict) -> dict:
@@ -70,6 +82,16 @@ def _run(request: dict) -> dict:
             return {"ok": False, "error": "docx_path is required"}
         return {"ok": True, **docx_to_html(request["docx_path"])}
 
+    if request.get("mode") == "readiness":
+        # What tailoring will be able to work with in this resume (F4). Read-only.
+        from readiness import readiness
+
+        if not request.get("docx_path"):
+            return {"ok": False, "error": "docx_path is required"}
+        return {"ok": True, "readiness": readiness(
+            request["docx_path"], section_headings=_section_headings(request.get("ats_config")),
+        )}
+
     if request.get("mode") == "units":
         # The master's paragraphs as citable evidence units (P1-2). Read-only.
         if not request.get("master_path"):
@@ -84,7 +106,6 @@ def _run(request: dict) -> dict:
     vocabulary = request.get("vocabulary") or []
     evidence_aliases = request.get("evidence_aliases") or {}
     ats_config = request.get("ats_config") or {}
-    add_summary_line = bool(request.get("add_summary_line", False))
     export_pdf = bool(request.get("export_pdf", False))
 
     if not master_path:
@@ -98,7 +119,6 @@ def _run(request: dict) -> dict:
         job,
         keywords,
         request.get("patterns") or {},
-        add_summary_line=add_summary_line,
         max_pages=int(request.get("max_pages") if request.get("max_pages") is not None else 2),
         required_markers=ats_config.get("requiredMarkers"),
         preferred_markers=ats_config.get("preferredMarkers"),
@@ -114,6 +134,14 @@ def _run(request: dict) -> dict:
         accepted_rewrites=request.get("accepted_rewrites") or None,
         # Bullets the person pinned for this job: never omitted to fit the page.
         keep_bullets=request.get("keep_bullets") or None,
+        # The score's evidence, so the packet lists the score's gaps (R13).
+        evidence_lines=request.get("evidence_lines") or None,
+        evidence_vocabulary=request.get("evidence_vocabulary"),
+        gap_terms=request.get("gap_terms"),
+        # The rendered length decides the page fit when LibreOffice is here (R6).
+        measure_pages=_page_measurer(request),
+        # Extra section names for this install (R14).
+        section_headings=_section_headings(ats_config),
     )
 
     pdf_path = None
@@ -166,7 +194,6 @@ def _run(request: dict) -> dict:
         "page_count": page_count,
         "audit": result.get("audit"),
         "emphasized": result.get("emphasized"),
-        "summary_line": result.get("summary_line"),
         "changes": result.get("changes", []),
         "gaps": result.get("gaps", []),
         "qualifications": result.get("qualifications", {}),
@@ -174,6 +201,7 @@ def _run(request: dict) -> dict:
         "rewrite_policy": result.get("rewrite_policy", {}),
         "invariants": result.get("invariants", {}),
         "limitations": result.get("limitations", []),
+        "skipped_steps": result.get("skipped_steps", []),
         "validation": validation,
         "ats_report": ats_report,
         "error": None,
@@ -220,16 +248,45 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"invalid JSON request: {err}"}))
         return 0
 
-    try:
-        response = _run(request)
-    except FileNotFoundError as err:
-        response = {"ok": False, "error": str(err)}
-    except Exception as err:  # noqa: BLE001 - report any failure to the caller
-        response = {"ok": False, "error": f"{type(err).__name__}: {err}"}
+    print(json.dumps(_answer(request)))
+    return 0
 
-    print(json.dumps(response))
+
+def _answer(request: dict) -> dict:
+    try:
+        return _run(request)
+    except FileNotFoundError as err:
+        return {"ok": False, "error": str(err)}
+    except Exception as err:  # noqa: BLE001 - report any failure to the caller
+        return {"ok": False, "error": f"{type(err).__name__}: {err}"}
+
+
+def serve() -> int:
+    """Answer one JSON request per line until stdin closes (audit R17).
+
+    Each request ran in a fresh interpreter that imported python-docx and the
+    tailor again: two or three starts per job. A worker started once answers
+    request after request. Every reply is one line carrying the request's
+    ``_id``. Anything a module prints while working goes to stderr, so it can
+    never be mistaken for a reply.
+    """
+    replies = sys.stdout
+    sys.stdout = sys.stderr
+    for line in sys.stdin:
+        if not line.strip():
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError as err:
+            replies.write(json.dumps({"ok": False, "error": f"invalid JSON request: {err}"}) + "\n")
+            replies.flush()
+            continue
+        request_id = request.pop("_id", None) if isinstance(request, dict) else None
+        response = _answer(request if isinstance(request, dict) else {})
+        replies.write(json.dumps({"_id": request_id, **response}) + "\n")
+        replies.flush()
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(serve() if "--serve" in sys.argv[1:] else main())

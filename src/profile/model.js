@@ -240,6 +240,9 @@ export function normalizeProfile(input = {}) {
       },
       skillsToKeep: distinct(intent.skillsToKeep, LIMITS.skills),
       skillsToGrow: distinct(intent.skillsToGrow, LIMITS.skills),
+      // Skills to look for in postings that the role families do not list,
+      // each one added by the person from a posting that named it (R12).
+      watchSkills: distinct(intent.watchSkills, LIMITS.skills),
       excludedLocations: distinct(intent.excludedLocations, LIMITS.locations),
       excludedEmployers: distinct(intent.excludedEmployers, LIMITS.list),
       excludedTerms: distinct(intent.excludedTerms, LIMITS.list),

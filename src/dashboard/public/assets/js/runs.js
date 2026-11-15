@@ -438,7 +438,7 @@ export async function openRuns() {
   if (!data) {
     // An older server: say so once, and stop offering the entry points.
     for (const node of document.querySelectorAll('[data-action="open-runs"]')) node.hidden = true;
-    body.append(el('div', { class: 'muted', text: 'Run history needs a newer dashboard server. Restart it with "npm run dashboard".' }));
+    body.append(el('div', { class: 'muted', text: 'Run history needs a newer dashboard server. Close JobAgent and open it again from its launcher.' }));
     return;
   }
   const runs = (data.runs ?? []).map(normalizeRun);

@@ -167,8 +167,10 @@ export function pythonEnv(env = process.env) {
 export const PYTHON_PDF_BUDGET_SECONDS = 180;
 
 /** Node-side timeout for a Python call, with head-room over its PDF budget. */
-export function pythonTimeoutMs({ exportPdf = false, baseMs = 60_000 } = {}) {
-  return exportPdf ? baseMs + (PYTHON_PDF_BUDGET_SECONDS + 30) * 1000 : baseMs;
+export function pythonTimeoutMs({ exportPdf = false, measurePages = false, baseMs = 60_000 } = {}) {
+  // A measured page fit runs up to eight LibreOffice renders (R6): give it the
+  // PDF budget too, so a slow first start is not mistaken for a hung tailor.
+  return exportPdf || measurePages ? baseMs + (PYTHON_PDF_BUDGET_SECONDS + 30) * 1000 : baseMs;
 }
 
 /**

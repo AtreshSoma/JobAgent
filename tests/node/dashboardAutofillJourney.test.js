@@ -15,6 +15,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 
 import { editJson, launchBrowser, startTestDashboard } from './helpers/dashboardPage.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const ORIGIN = 'https://careers.fixture.test';
 
@@ -81,7 +82,8 @@ describe('Auto-fill from the dashboard button', () => {
   let sitePage;
 
   beforeAll(async () => {
-    browser = await launchBrowser();
+    browser = await launchOrSkip(launchBrowser);
+    if (!browser) return;
     siteContext = await browser.newContext();
     await siteContext.route(`${ORIGIN}/**`, (route) => {
       const path = new URL(route.request().url()).pathname;
@@ -118,6 +120,7 @@ describe('Auto-fill from the dashboard button', () => {
     await browser?.close();
     await dash?.stop();
   }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   const resumePath = () => join(dash.root, 'resumes', 'base', 'MASTER_RESUME.docx');
   const packet = () => ({

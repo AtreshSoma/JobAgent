@@ -11,6 +11,7 @@ import { recordAssistResult } from '../../src/cli/commands.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { APPLICATION_PHASE } from '../../src/apply/applicationState.js';
 import { LIFECYCLE } from '../../src/lifecycle.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const FORM = `<form><label>Email <input id="email" type="email"></label>
   <button id="submit" type="button">Submit application</button></form>
@@ -21,8 +22,9 @@ const FORM = `<form><label>Email <input id="email" type="email"></label>
 
 describe('human-submit detection', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('the watcher fires on a confirmation page and stops when the page closes', async () => {
     const page = await browser.newPage();

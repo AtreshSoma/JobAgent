@@ -40,6 +40,7 @@ import { classifyEmployment } from '../scoring/employmentClassifier.js';
 import { scoreJob, freshnessModelFor } from '../scoring/scorer.js';
 import { explainScore } from '../scoring/explainScore.js';
 import { scoringFingerprint } from '../scoring/fingerprint.js';
+import { masterResumeLines } from '../resume/evidenceMap.js';
 import { assistApply } from '../automation/applyRunner.js';
 import { packetOwnershipCheck } from '../apply/applicationPacket.js';
 import { EVENT_TYPES } from '../logging/jobLogger.js';
@@ -340,6 +341,7 @@ export async function runRescore({ config, db, logger, deps = {} } = {}) {
     const sponsorship = classifySponsorship(job, config.scoring.sponsorship);
     const score = scoreJob(job, {
       scoring: config.scoring, sponsorship, candidate: config.candidate, now, freshnessModel: freshnessModelFor(config),
+      evidenceLines: masterResumeLines(config.root),
     });
     const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
     db.upsertJob({
@@ -449,7 +451,7 @@ export async function ingestUrl({ config, db, logger, url, deps = {} } = {}) {
   // penalty and reason, not only as a caveat.
   const score = scoreJob(job, {
     scoring: config.scoring, sponsorship, candidate: config.candidate, now, exclusions: config.exclusions,
-    freshnessModel: freshnessModelFor(config),
+    freshnessModel: freshnessModelFor(config), evidenceLines: masterResumeLines(config.root),
   });
   const { tier, explanation } = explainScore(score, config.scoring, { candidate: config.candidate });
   const fullExplanation = caveat ? `${caveat} ${explanation}` : explanation;

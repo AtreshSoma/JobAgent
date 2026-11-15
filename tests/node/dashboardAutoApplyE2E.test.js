@@ -4,14 +4,16 @@ import { chromium } from 'playwright';
 import { openDatabase } from '../../src/logging/db.js';
 import { startDashboard } from '../../src/dashboard/server.js';
 import { PROJECT_ROOT } from '../../src/config/loadConfig.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 describe('dashboard Auto-fill browser flow', () => {
   let browser;
 
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); });
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); });
   // Full-suite Windows runs can take longer to reap Chromium after every
   // context has closed, especially while Python tests are running in parallel.
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   it('fills an Unconfirmed-sponsorship job for review without entering Auto-submit precheck', async () => {
     const db = openDatabase({ path: ':memory:' });

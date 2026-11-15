@@ -180,9 +180,12 @@ export function deriveFromProfile(rawProfile, { taxonomy, root, maxVariations = 
   // Gap vocabulary: every skill the candidate's own families know about. A JD
   // asking for one the profile cannot evidence is a real, reportable gap — in
   // any field, which `scoring.keywords` could never be.
-  const marketSkills = [...new Set(
-    families.flatMap((f) => tax.families?.[f.id]?.skills ?? []),
-  )];
+  // Plus the skills the person asked to watch for, from postings that named
+  // them outside this vocabulary (R12).
+  const marketSkills = [...new Set([
+    ...families.flatMap((f) => tax.families?.[f.id]?.skills ?? []),
+    ...(profile.searchIntent?.watchSkills ?? []),
+  ])];
 
   return {
     profile,

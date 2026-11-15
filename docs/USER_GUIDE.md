@@ -67,7 +67,7 @@ The default path never submits. Once it has filled and uploaded everything it ca
 <tr><th width="46%">The one automated path</th><th width="54%">Every gate it has to clear</th></tr>
 <tr valign="top">
 <td><code>applyRunner.tryAutoSubmit</code><br><br>It exists so a clean, verified, explicitly authorized application can finish without a second trip to the keyboard. Nothing else.<br><br><code>npm run verify</code> asserts these gates are still in place.</td>
-<td>✅ You opted in <b>for that specific run</b> (<code>options.autoSubmit === true</code>, and the dashboard asks every time)<br>✅ Zero blockers, every required field filled<br>✅ Truthful sponsorship answers<br>✅ A confidently identified submit button<br>✅ Daily cap not yet reached (<code>MAX_APPLICATIONS_PER_DAY</code>, default 15, counted in <b>your</b> time zone)<br>✅ A fixture-verified ATS — an unrecognised (<code>generic</code>) site is fill-only, never auto-submitted<br>✅ The packet was approved <b>before</b> the run started, and belongs to the active candidate<br>✅ Every visible required control on the live page has a value<br>✅ No sponsorship or legal answer was chosen live that you had not reviewed in the packet</td>
+<td>✅ You opted in <b>for that specific run</b> (<code>options.autoSubmit === true</code>, and the dashboard asks every time)<br>✅ Zero blockers, every required field filled<br>✅ Truthful sponsorship answers<br>✅ A confidently identified submit button<br>✅ Daily cap not yet reached (<code>MAX_APPLICATIONS_PER_DAY</code>, default 15, counted in <b>your</b> time zone)<br>✅ A fixture-verified ATS — an unrecognised (<code>generic</code>) site is fill-only, never auto-submitted<br>✅ A recorded supervised live run on that ATS in <code>config/verified_live_ats.json</code> (none yet, so final Auto-submit is refused on every ATS; see <a href="LIVE_VERIFICATION.md">LIVE_VERIFICATION.md</a>)<br>✅ The packet was approved <b>before</b> the run started, and belongs to the active candidate<br>✅ Every visible required control on the live page has a value<br>✅ No sponsorship or legal answer was chosen live that you had not reviewed in the packet</td>
 </tr>
 </table>
 
@@ -98,7 +98,8 @@ The default path never submits. Once it has filled and uploaded everything it ca
 | **Node.js** | **≥ 22.13** | The built-in `node:sqlite` module works without a flag from 22.13 (22.x and 24.x are tested in CI; `.nvmrc` pins 22.13) |
 | **Python** | 3.12 | Resume editing through `python-docx` |
 | **Playwright Chromium** | *`npx playwright install chromium`* | Browser-assisted form filling |
-| MS Word | *optional* | Only for `docx2pdf` PDF export |
+| LibreOffice | *recommended* | Renders the PDF from the .docx and measures the page count the fit uses (`brew install --cask libreoffice`, or libreoffice.org) |
+| MS Word | *optional* | PDF export through `docx2pdf` when LibreOffice is not installed |
 
 ### Installation
 
@@ -353,7 +354,7 @@ flowchart TD
 
 **Auto-preparation scope.** Only Priority and Apply tiers get prepared automatically. Queue-tier jobs are prepared only when you pick them yourself with "Prepare selected".
 
-**Two-page resume discipline.** The tailor repairs layout artifacts like manual page breaks, merged role blocks, and blank filler, then holds the result to two pages by dropping whole low-relevance bullets from the oldest roles. It never shortens or rewords a claim, and never drops a role, its dates, or its last bullet. Whatever it omitted is listed for review. There is an optional per-job "Most relevant to this role" focus line, but it is **off by default** (`config.runtime.resumeFocusLine === true`).
+**Two-page resume discipline.** The tailor repairs layout artifacts like manual page breaks, merged role blocks, and blank filler, then holds the result to two pages by dropping whole low-relevance bullets from the oldest roles. It never shortens or rewords a claim, and never drops a role, its dates, or its last bullet. Whatever it omitted is listed for review. Nothing is added: the optional "Most relevant to this role" line was removed. With LibreOffice installed, the page count is **measured**: the tailor renders the resume and leaves out the fewest bullets that bring it within the limit (set `RESUME_MEASURE_PAGES=false` to use the estimate only). Without it, an estimate that reads the document's own fonts and spacing decides, calibrated to within about a tenth of a page of LibreOffice.
 
 </details>
 
@@ -891,6 +892,8 @@ npm run test:coverage  # the same, with the coverage gate CI enforces
 npm run test:py        # Python test suite (pytest, needs `python` on PATH)
 ```
 
+In the dashboard, the same export is **System health → Backups → Export everything**: one file in `exports/`, offered as a download, encrypted when you give a passphrase.
+
 <details>
 <summary><b>🧰 Maintenance scripts, and a typical phase-by-phase session</b></summary>
 
@@ -931,15 +934,16 @@ A `prepare-apps` run prints a `cover_letter_generated` and an `approval_required
 | Feature | Switch | What is sent to the provider | How it is kept honest |
 | --- | --- | --- | --- |
 | Job requirement phrases | `LLM_ASSIST=on` | The posting and its title | Every phrase must appear **verbatim in the posting**; anything else is dropped |
-| Rewrite suggestions | `RESUME_REWRITE=suggest` | Your resume bullets and the requirement phrases | See below; you accept each one |
-| Grounded cover letters | `COVER_LETTER_MODE=grounded` | Your resume bullets, the company and role | Each paragraph is checked like a rewrite; fewer than two pass, the template is used |
-| Drafted email replies | `LLM_ASSIST=on` and `INBOX=imap` | Your bullets and one sentence of the email | Checked like a letter; never sent by JobAgent |
-| Reply classification | `LLM_ASSIST=on` and `INBOX=imap` | The email text | Only for mail the rules could not classify; kept only if its evidence is quoted verbatim |
+| Rewrite suggestions | `RESUME_REWRITE=suggest` | Your resume bullets (up to 40) with their role lines, the requirement phrases, and any instruction you type to refine them | See below; you accept each one |
+| Grounded cover letters | `COVER_LETTER_MODE=grounded` | The company and role, the requirement phrases, your resume's summary, headline and bullets (up to 60) with their role lines, and your master cover letter's paragraphs | Each paragraph is checked like a rewrite; fewer than two pass, the template is used |
+| Drafted email replies | `LLM_ASSIST=on` and `INBOX=imap` | Your bullets (up to 40), the employer and role, and the reply's subject and the sentence it was flagged on | Checked like a letter; never sent by JobAgent |
+| Reply sorting | `INBOX_LLM=on` (with `LLM_ASSIST=on` and `INBOX=imap`) | The subject and up to 6,000 characters of the email | Only for mail the rules could not sort; kept only if its evidence is quoted verbatim |
+| Rank by meaning | `RERANK=on` and an embeddings model | Your resume bullets, and the title and first 2,000 characters of each of your top 50 matches | Generates no text; the fit score still decides tiers |
 
 > [!IMPORTANT]
 > **Why rewrites and letters cannot invent experience.** The model must cite the resume lines it relies on. A deterministic checker (`src/resume/claimVerifier.js`) then refuses any suggestion with a number, tool, employer, product or certification that is not in the cited lines or your profile, any stronger claim of ownership ("contributed" never becomes "led"), any evidence borrowed from a different job, and any large change in length. **The job posting is never evidence:** a skill the posting asks for that your resume does not mention is refused, however natural it would sound. Refused suggestions are shown with the reason and cannot be accepted, and nothing reaches a resume until you accept it, after which the application goes back to review.
 
-**Privacy boundary.** With only `LLM_ASSIST=on`, just the public posting is sent. Turning on rewrites, grounded letters or drafted replies also sends **your resume bullets** to the provider you chose. Your contact details, EEO answers and salary expectations are never sent. Use `ollama` or `lmstudio` to keep it all local.
+**Privacy boundary.** With only `LLM_ASSIST=on`, just the public posting is sent. Turning on rewrites, grounded letters, drafted replies or rank by meaning also sends **your own resume text** (bullets, and for letters your summary and headline too) to the provider you chose. Your name and contact details are never sent by any feature: a line carrying your name, an email address, a phone number or your own profile links is dropped before a request is built (`src/llm/identityUnits.js`). Screening answers, EEO answers and salary expectations are never sent either. Use **Ollama** (`ollama`) or **LM Studio** (`lmstudio`) to keep it all local.
 
 **Never on the submit path.** No model is consulted when an application is filled or submitted.
 

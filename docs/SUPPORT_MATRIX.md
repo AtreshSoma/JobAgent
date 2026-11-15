@@ -176,8 +176,14 @@ their *search*. Individual posting URLs you paste in are always fine.
 
 Keyless aggregators were measured as substitutes and rejected on yield, not
 principle: Arbeitnow returned 3 on-target rows of 175 (predominantly Germany),
-Remotive 0 of 34, The Muse 0 of 20. Adding them would cost requests and add
-noise. **Adzuna** is the one keyed aggregator worth enabling — it supports
+and Remotive 0 of 34. Adding them would cost requests and add noise.
+
+The Muse also returned nothing on target in that first probe. It was added to
+cross-company search later, with its categories taken from the active profile's
+role families, and it is enabled by default; it remains low-yield (see its row
+in the discovery table).
+
+**Adzuna** is the one keyed aggregator worth enabling — it supports
 `max_days_old=1`, which is exactly the last-24h question. It ships disabled,
 because without `ADZUNA_APP_ID` / `ADZUNA_APP_KEY` it can return nothing: add
 a free key to `.env` and set `enabled: true` on `adzuna-aggregator` in

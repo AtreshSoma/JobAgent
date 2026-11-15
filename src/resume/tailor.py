@@ -19,23 +19,22 @@ Tailoring actions (all honest, content-preserving):
      is bracket-aware, so a qualified skill like
      "Dimensional Modeling (Kimball, Inmon)" moves as ONE item. Pure permutation
      of existing items — nothing is added, removed, or reworded.
-  5. Optionally insert a "most relevant to this role" line built ONLY from
-     keywords that are both requested by the job AND already present in the
-     resume. It is anchored just above the CORE COMPETENCIES / PROFESSIONAL
-     SUMMARY heading so ATS parsers see the job's own terminology up top.
-  6. Flatten layout tables into single-column paragraphs in the generated copy,
+  5. Flatten layout tables into single-column paragraphs in the generated copy,
      preserving their exact text/runs so ATS parsers read content in order.
-  7. Repair layout artifacts: manual page breaks (which freeze pagination and
+  6. Repair layout artifacts: manual page breaks (which freeze pagination and
      leave half-empty pages), role blocks a previous pass folded into one
      paragraph (which cost the first bullet of every role its formatting),
      runs of blank filler, and `mailto:` prefixes left in visible text. These
      arrive from OUTSIDE too — a tailored copy saved back over the master
      carries them into every later run — so they are cleaned on the way in.
-  8. Fit the result to a page budget (2 pages by default) by OMITTING whole
+  7. Fit the result to a page budget (2 pages by default) by OMITTING whole
      low-relevance bullets from the oldest roles, worst-first, never dropping a
      role, heading, date, or a role's last bullet, and never shortening or
      rewording anything. Omissions are listed in `changes` for review.
-  9. Save the result to a per-job .docx in the job's output folder.
+  8. Save the result to a per-job .docx in the job's output folder.
+
+Nothing is ever added: the optional "Most relevant to this role" line was
+removed (audit R9), because it was text the master never contained.
 
 Free-form rewriting is intentionally disabled. Without a claim-level evidence
 map, even plausible wording changes can silently invent scope, ownership,
@@ -55,7 +54,6 @@ If a keyword is requested but missing from the resume, it is reported as a gap
 """
 from __future__ import annotations
 
-import math
 import re
 from collections import Counter
 from copy import deepcopy
@@ -63,7 +61,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
-from humanizer import humanize
+from docx.enum.text import WD_TAB_ALIGNMENT
+
+import evidence
+import pagefit
 from jdKeywords import classify_qualification_keywords
 from keywordAudit import read_docx_text
 
@@ -113,14 +114,6 @@ def output_filename(company: str, title: str, now: datetime | None = None) -> st
     return f"{_slug(company)}_{_slug(title)}_{_date_stamp(now)}.docx"
 
 
-def _phrase_pattern(phrase: str) -> re.Pattern:
-    """Boundary-aware matcher that remains tolerant of tech punctuation."""
-    return re.compile(
-        rf"(?<![a-z0-9]){re.escape((phrase or '').strip())}(?![a-z0-9])",
-        re.IGNORECASE,
-    )
-
-
 def _keyword_details(qualifications: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return {
         re.sub(r"\s+", " ", str(item.get("keyword", "")).lower()).strip(): item
@@ -133,11 +126,16 @@ def _matches_for_text(
     text: str,
     keywords: Sequence[str],
     qualification_details: Dict[str, Dict[str, Any]],
+    *,
+    in_list: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Return grounded keyword evidence for one existing resume fragment."""
+    """Return grounded keyword evidence for one existing resume fragment.
+
+    ``in_list``: ``text`` is one item of a skills list (src/resume/evidence.py).
+    """
     matched: List[Dict[str, Any]] = []
     for keyword in keywords:
-        if not keyword or not _phrase_pattern(str(keyword)).search(text or ""):
+        if not keyword or not evidence.shows(str(keyword), text or "", vocabulary=keywords, in_list=in_list):
             continue
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         detail = qualification_details.get(key, {})
@@ -164,6 +162,31 @@ def _relevance_key(evidence: Sequence[Dict[str, Any]]) -> tuple:
     return (max(weights), sum(weights), len(weights))
 
 
+def _inline_items(paragraph):
+    """Every run of a paragraph's text, in order, with the link it sits in (or None).
+
+    ``paragraph.runs`` leaves out runs inside a ``w:hyperlink`` (python-docx
+    1.2), while ``paragraph.text`` includes them. Code that read text through
+    ``runs`` therefore lost every linked email, profile URL and portfolio link:
+    the PDF left them out and refused to print (R1), a table cell holding a
+    link failed the flattening check and abandoned the whole tailoring (R10),
+    and an accepted rewrite kept the link text glued to the new wording (N3).
+    Everything that walks a paragraph's runs goes through here.
+    """
+    from docx.text.hyperlink import Hyperlink
+
+    for item in paragraph.iter_inner_content():
+        if isinstance(item, Hyperlink):
+            for run in item.runs:
+                yield run, item
+        else:
+            yield item, None
+
+
+#: Link targets a printed resume may carry. Anything else keeps its text, unlinked.
+_SAFE_LINK_RE = re.compile(r"^(?:https?://|mailto:)", re.IGNORECASE)
+
+
 def _iter_all_paragraphs(document):
     """Yield body and table-cell paragraphs once each."""
     seen = set()
@@ -184,25 +207,6 @@ def _iter_all_paragraphs(document):
 #: human reviewer's eye to a handful of decisive matches. Past this, bolding
 #: stops meaning anything and the page reads as keyword-stuffed.
 _MAX_EMPHASIZED_TERMS = 12
-
-#: Most terms named in the single "Most relevant to this role" line.
-#:
-#: REGRESSION GUARD. This line had no cap at all. Verified against a real,
-#: buzzword-dense JD (a role that legitimately touched every configured
-#: keyword category at once): the generated line named 31 terms in one
-#: sentence — "Most relevant to this role: data engineer, senior data
-#: engineer, azure, microsoft fabric, fabric, adf, synapse, databricks..." —
-#: which reads as a keyword dump, not a highlight, to any human reviewer.
-#:
-#: This is deliberately much smaller than _MAX_EMPHASIZED_TERMS: bolding is
-#: distributed across a whole two-page document and stays absorbable at 12,
-#: but this list sits in ONE sentence, so it needs to read like something a
-#: person would actually write. It costs nothing for ATS keyword coverage —
-#: every term still appears verbatim in the resume's actual content (that is
-#: WHY it was eligible for "present" in the first place); this line is a
-#: human-facing highlight, not the mechanism that gets a term recognized.
-_MAX_FOCUS_LINE_TERMS = 6
-
 
 def _merge_spans(spans: Sequence[tuple]) -> List[tuple]:
     """Merge overlapping/adjacent (start, end) ranges, left to right."""
@@ -291,6 +295,77 @@ def _bold_spans_in_run(paragraph, run, spans: Sequence[tuple]) -> int:
     return bolded
 
 
+def _section_of(paragraph) -> str | None:
+    """The nearest recognized section heading above a paragraph (normalized), or None.
+
+    A paragraph in a table cell is placed by the heading above its table.
+    """
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    node = paragraph._p
+    while node.getparent() is not None and node.getparent().tag != qn("w:body"):
+        node = node.getparent()
+    for sibling in node.itersiblings(preceding=True):
+        if sibling.tag != qn("w:p"):
+            continue
+        text = (Paragraph(sibling, paragraph._parent).text or "").strip()
+        if text and _is_section_heading(text):
+            return _norm_heading(text)
+    return None
+
+
+def _emphasis_allowed(paragraph) -> bool:
+    """Bold may go on a bullet, or on a line in the summary or skills section."""
+    text = (paragraph.text or "").strip()
+    if not text or _is_section_heading(text) or _is_role_heading(paragraph):
+        return False
+    if _is_bullet(paragraph):
+        return True
+    section = _section_of(paragraph)
+    if section is None:
+        return False
+    parts = [part.strip() for part in re.split(r"\s*(?:&|/|\band\b|,)\s*", section) if part.strip()]
+    return any(part in _SUMMARY_HEADINGS or part in _COMPETENCY_HEADINGS for part in parts)
+
+
+def _merge_identical_runs(paragraph) -> int:
+    """Join neighbouring runs that hold plain text and look exactly the same.
+
+    The visible text and formatting are unchanged; only Word's invisible run
+    boundaries go. Spell-check markers between such runs are dropped too.
+    """
+    from lxml import etree
+    from docx.oxml.ns import qn
+
+    def plain(run) -> bool:
+        children = [child.tag for child in run]
+        return children.count(qn("w:t")) == 1 and all(tag in (qn("w:t"), qn("w:rPr")) for tag in children)
+
+    def looks(run) -> bytes:
+        properties = run.find(qn("w:rPr"))
+        return etree.tostring(properties) if properties is not None else b""
+
+    merged = 0
+    previous = None
+    for child in list(paragraph._p):
+        if child.tag == qn("w:proofErr"):
+            paragraph._p.remove(child)
+            continue
+        if child.tag != qn("w:r") or not plain(child):
+            previous = None
+            continue
+        if previous is not None and looks(previous) == looks(child):
+            kept = previous.find(qn("w:t"))
+            kept.text = (kept.text or "") + (child.find(qn("w:t")).text or "")
+            kept.set(qn("xml:space"), "preserve")
+            paragraph._p.remove(child)
+            merged += 1
+        else:
+            previous = child
+    return merged
+
+
 def _emphasize(
     document,
     keywords: List[str],
@@ -329,38 +404,50 @@ def _emphasize(
     mutations: List[Dict[str, Any]] = []
     emphasized_terms: set = set()
 
-    paragraphs = list(_iter_all_paragraphs(document))
+    # Only the summary, skills and bullets take bold (R8). The first mention
+    # anywhere used to win, so a term went bold in a role line ("Airflow
+    # Platform Engineer | Example Corp"), a heading or the name.
+    paragraphs = [para for para in _iter_all_paragraphs(document) if _emphasis_allowed(para)]
+    # Word splits text into runs for reasons nobody sees ("Tuned Sp" + "ark"):
+    # join runs that look the same, so a split term is found and bolded.
+    for para in paragraphs:
+        _merge_identical_runs(para)
     for keyword in ordered_keywords:
         if len(emphasized_terms) >= max_terms:
             break
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         if key in emphasized_terms:
             continue
-        pattern = _phrase_pattern(str(keyword))
         placed = False
         for para in paragraphs:
             if placed:
                 break
-            if _norm_heading(para.text).startswith("most relevant to this role:"):
-                continue
-            for run in list(para.runs):
-                text = run.text or ""
-                if not text:
-                    continue
-                match = pattern.search(text)
-                if not match:
-                    continue
+            runs = list(para.runs)
+            bounds = []
+            cursor = 0
+            for run in runs:
+                bounds.append((cursor, cursor + len(run.text or "")))
+                cursor += len(run.text or "")
+            # Matched against the whole line, so the context rules for an
+            # everyday term see the sentence, not one run of it.
+            text = "".join(run.text or "" for run in runs)
+            for start, end in evidence.occurrences(str(keyword), text, vocabulary=ordered_keywords):
+                index = next((i for i, (left, right) in enumerate(bounds) if left <= start and end <= right), None)
+                if index is None:
+                    continue  # spans runs that look different: left alone
+                run = runs[index]
                 # Already bold in the master: nothing to do, but the term is
                 # spent so we do not hunt for another occurrence.
                 if run.bold is True:
                     placed = True
                     break
-                added = _bold_spans_in_run(para, run, [(match.start(), match.end())])
+                offset = bounds[index][0]
+                added = _bold_spans_in_run(para, run, [(start - offset, end - offset)])
                 if not added:
                     continue
                 count += added
                 mutations.append({
-                    "text": match.group(0),
+                    "text": text[start:end],
                     "paragraph": (para.text or "").strip(),
                     "before_bold": run.bold,
                     "after_bold": True,
@@ -442,20 +529,48 @@ def _set_cell_text_preserving(cell, text: str) -> None:
         para.add_run(text)
 
 
-_COMPETENCY_HEADINGS = {
-    "core competencies", "technical skills", "skills", "key skills",
-    "areas of expertise", "technologies",
+#: Section names by kind (R14). "Career History", "Professional Background"
+#: and "Technical Proficiencies" were unknown, so nothing under them was
+#: reordered and nothing said so. More names per install: ats_resume.json
+#: "sectionHeadings" (see _section_heading_overrides).
+_HEADING_KINDS: Dict[str, set] = {
+    "summary": {
+        "professional summary", "summary", "profile", "career summary", "about me", "about",
+        "executive summary", "professional profile", "overview", "summary of qualifications",
+        "objective", "career objective", "personal statement", "qualifications summary",
+    },
+    "experience": {
+        "professional experience", "work experience", "experience", "employment history",
+        "career history", "professional background", "work history", "employment",
+        "career experience", "professional history", "relevant experience",
+    },
+    "skills": {
+        "core competencies", "technical skills", "skills", "key skills", "areas of expertise",
+        "technologies", "technical proficiencies", "technical expertise", "competencies",
+        "core skills", "skill set", "skills and tools", "tools", "technical summary",
+    },
+    "education": {
+        "education", "academic background", "education and training", "academic qualifications",
+    },
+    "other": {
+        "certifications", "projects", "selected projects", "publications", "awards",
+        "additional information",
+        # Secondary experience blocks. Unrecognised, "EARLIER EXPERIENCE" read as
+        # body text inside the role above it.
+        "earlier experience", "additional experience", "other experience",
+        "volunteer experience", "volunteering", "leadership",
+        "honors", "honors and awards", "licenses", "training", "languages", "interests", "references",
+    },
 }
-_SECTION_HEADINGS = _COMPETENCY_HEADINGS | {
-    "professional summary", "summary", "profile", "career summary",
-    "professional experience", "work experience", "experience", "employment history",
-    "education", "certifications", "projects", "selected projects", "publications",
-    "awards", "additional information",
-    # Secondary experience blocks. Unrecognised, "EARLIER EXPERIENCE" read as
-    # body text inside the role above it.
-    "earlier experience", "additional experience", "other experience",
-    "relevant experience", "volunteer experience", "volunteering", "leadership",
-    "honors", "honors and awards", "licenses", "training", "languages",
+_COMPETENCY_HEADINGS = set(_HEADING_KINDS["skills"])
+_SECTION_HEADINGS = set().union(*_HEADING_KINDS.values())
+
+
+#: Sections whose dated lines are not jobs (R4). Experience-like sections
+#: (and projects or volunteering, which read as roles) are not listed.
+_NON_ROLE_SECTIONS = _HEADING_KINDS["summary"] | _HEADING_KINDS["skills"] | _HEADING_KINDS["education"] | {
+    "certifications", "licenses", "training", "languages", "interests", "references",
+    "honors", "honors and awards", "awards", "publications", "additional information",
 }
 
 
@@ -505,15 +620,17 @@ def _reorder_competencies(
             if len(value_cell.paragraphs) != 1:
                 continue
             nonempty_runs = [
-                run for run in value_cell.paragraphs[0].runs if (run.text or "")
+                run for run, _link in _inline_items(value_cell.paragraphs[0]) if (run.text or "")
             ]
-            if len(nonempty_runs) > 1:
+            # A link in the cell cannot be rebuilt into one run without
+            # losing it (R16): leave the cell as it is.
+            if len(nonempty_runs) > 1 or value_cell.paragraphs[0].hyperlinks:
                 continue
             before_items = _split_skill_list(value_cell.text)
             if len(before_items) < 2:
                 continue
             evidence_by_item = {
-                item: _matches_for_text(item, keywords, qualification_details)
+                item: _matches_for_text(item, keywords, qualification_details, in_list=True)
                 for item in before_items
             }
             indexed = list(enumerate(before_items))
@@ -589,18 +706,10 @@ def _parse_competency_line(text: str) -> tuple | None:
 def _is_competency_paragraph(paragraph) -> bool:
     """Structural test for a skills line, independent of document position.
 
-    Position-independent on purpose: inserting the focus line shifts paragraph
-    indexes, and the content-unit invariant must classify a line identically
-    before and after tailoring.
-
-    The generated focus line ("Most relevant to this role: a, b, c") is itself
-    shaped like a competency list, so it is excluded explicitly — the invariant
-    accounts for it as a whole inserted paragraph, and decomposing it here would
-    make the before/after unit counts disagree.
+    Position-independent on purpose: the content-unit invariant must classify a
+    line identically before and after tailoring, wherever reordering moved it.
     """
     if _is_bullet(paragraph):
-        return False
-    if _norm_heading(paragraph.text).startswith("most relevant to this role:"):
         return False
     return _parse_competency_line(paragraph.text) is not None
 
@@ -639,7 +748,7 @@ def _reorder_competency_paragraphs(
         label, _sep, before_items = parsed
 
         evidence_by_item = {
-            item: _matches_for_text(item, keywords, qualification_details)
+            item: _matches_for_text(item, keywords, qualification_details, in_list=True)
             for item in before_items
         }
         indexed = list(enumerate(before_items))
@@ -672,12 +781,14 @@ def _reorder_competency_paragraphs(
             continue
         item_end = item_start + len(joined)
 
+        # Offsets over EVERY run, linked or not, because `full` includes link
+        # text; only a run outside a link is ever rewritten (R16).
         target_run = None
         run_offset = 0
-        for run in paragraph.runs:
+        for run, link in _inline_items(paragraph):
             run_text = run.text or ""
             run_end = run_offset + len(run_text)
-            if run_offset <= item_start and item_end <= run_end:
+            if link is None and run_offset <= item_start and item_end <= run_end:
                 target_run = (run, run_offset)
                 break
             run_offset = run_end
@@ -723,21 +834,29 @@ def _semantic_tokens(document) -> Counter:
 
 
 def _copy_cell_content(target, cell) -> None:
-    """Append a cell's text/runs to a body paragraph with formatting intact."""
+    """Append a cell's text/runs to a body paragraph with formatting intact.
+
+    A link is copied as a link (its ``w:hyperlink`` element, whose relationship
+    lives in the same document part), so "Portfolio: example.com/portfolio"
+    keeps both its words and its target.
+    """
+    from docx.text.hyperlink import Hyperlink
+
     wrote = False
     for paragraph in cell.paragraphs:
         if wrote and (paragraph.text or "").strip():
             target.add_run(" ")
-        if paragraph.runs:
-            for run in paragraph.runs:
-                if not run.text:
-                    continue
-                new_run = target.add_run(run.text)
-                if run._r.rPr is not None:
-                    new_run._r.insert(0, deepcopy(run._r.rPr))
-                wrote = True
-        elif (paragraph.text or "").strip():
-            target.add_run(paragraph.text)
+        for item in paragraph.iter_inner_content():
+            if isinstance(item, Hyperlink):
+                if item.text:
+                    target._p.append(deepcopy(item._hyperlink))
+                    wrote = True
+                continue
+            if not item.text:
+                continue
+            new_run = target.add_run(item.text)
+            if item._r.rPr is not None:
+                new_run._r.insert(0, deepcopy(item._r.rPr))
             wrote = True
 
 
@@ -773,9 +892,20 @@ def _flatten_tables_for_ats(document) -> Dict[str, Any] | None:
             # Moving the newly appended node before the table keeps exact table
             # order while producing a normal single-column document flow.
             table._tbl.addprevious(paragraph._p)
+            # "Title | Company" and "Jan 2019 - Present" in two cells is a role
+            # line with right-aligned dates. Two spaces lost the alignment; a
+            # right tab stop at the text width keeps it (R10). Only a dates
+            # column goes right: "Platforms | SQL, Spark, …" is a label and its
+            # list, and other rows keep the plain gap.
+            two_column = len(cells) == 2 and bool(_EMPLOYMENT_DATE_RE.search(cells[1].text or "")) \
+                and len((cells[1].text or "").strip()) <= 40
+            if two_column:
+                section = document.sections[0]
+                width = section.page_width - section.left_margin - section.right_margin
+                paragraph.paragraph_format.tab_stops.add_tab_stop(width, WD_TAB_ALIGNMENT.RIGHT)
             for cell_index, cell in enumerate(cells):
                 if cell_index:
-                    paragraph.add_run("  ")
+                    paragraph.add_run("\t" if two_column else "  ")
                 _copy_cell_content(paragraph, cell)
             row_count += 1
         table._tbl.getparent().remove(table._tbl)
@@ -831,7 +961,40 @@ def _is_role_heading(paragraph) -> bool:
     # date ("Led the March 2021 migration…"). Long prose lines are the same.
     if _is_bullet(paragraph) or len(text) > 160:
         return False
-    return bool(_EMPLOYMENT_DATE_RE.search(text))
+    if not _EMPLOYMENT_DATE_RE.search(text):
+        return False
+    return not _in_non_role_section(paragraph)
+
+
+def _non_role_heading(text: str) -> bool:
+    """A heading whose section holds no employment: education, skills, summary…"""
+    normalized = _norm_heading(text)
+    if normalized in _NON_ROLE_SECTIONS:
+        return True
+    parts = [part.strip() for part in re.split(r"\s*(?:&|/|\band\b|,)\s*", normalized) if part.strip()]
+    return len(parts) > 1 and all(part in _NON_ROLE_SECTIONS for part in parts)
+
+
+def _in_non_role_section(paragraph) -> bool:
+    """Is the nearest section heading above this paragraph one that holds no roles?
+
+    A dated line is a role only in a section that can hold one. Role detection
+    used to scan every paragraph, so "B.S. Computer Science, …, 2012 - 2016"
+    was a role, and when education came first it became the CURRENT role:
+    the page fit's never-drop protection guarded an education line and the
+    real current role's required evidence was omitted (R4). With no heading
+    above at all (a resume without headings), dated lines stay roles.
+    """
+    from docx.oxml.ns import qn
+    from docx.text.paragraph import Paragraph
+
+    for sibling in paragraph._p.itersiblings(preceding=True):
+        if sibling.tag != qn("w:p"):
+            continue
+        text = (Paragraph(sibling, paragraph._parent).text or "").strip()
+        if text and _is_section_heading(text):
+            return _non_role_heading(text)
+    return False
 
 
 def _remove_paragraph(paragraph) -> None:
@@ -1097,81 +1260,9 @@ def _normalize_layout(document) -> Dict[str, Any] | None:
 
 
 # ── page-fit geometry ────────────────────────────────────────────────────────
-# Letter page, in twips (1/1440 inch), used when a document declares no size.
-_DEFAULT_PAGE = {"width": 12240, "height": 15840, "left": 1080, "right": 1080, "top": 864, "bottom": 864}
-# Average glyph advance as a fraction of point size, and the line box as a
-# multiple of it, for the Calibri/Aptos-class fonts this template uses.
-#
-# These are FITTED, not guessed: ten variants of a real tailored résumé (from
-# eight bullets short of it to twelve bullets past it) were rendered through
-# Word and their true page counts recorded. These values are the pair that
-# separates every measured 2-page document from the 3-page one, with the
-# decision boundary landing on exactly 2.0. Re-run tests/python's calibration
-# case if the template's font ever changes.
-_AVG_CHAR_EM = 0.42
-_LINE_LEADING = 1.20
-_DEFAULT_FONT_HALF_POINTS = 22  # 11pt, python-docx's template default
-
-
-def _page_metrics(document) -> Dict[str, int]:
-    section = document.sections[0] if document.sections else None
-    metrics = dict(_DEFAULT_PAGE)
-    if section is not None:
-        for key, value in (
-            ("width", section.page_width), ("height", section.page_height),
-            ("left", section.left_margin), ("right", section.right_margin),
-            ("top", section.top_margin), ("bottom", section.bottom_margin),
-        ):
-            if value is not None:
-                metrics[key] = int(value.twips)
-    metrics["usable_width"] = max(1, metrics["width"] - metrics["left"] - metrics["right"])
-    metrics["usable_height"] = max(1, metrics["height"] - metrics["top"] - metrics["bottom"])
-    return metrics
-
-
-def _font_half_points(paragraph) -> int:
-    for run in paragraph.runs:
-        if run.font.size is not None:
-            return int(run.font.size.pt * 2)
-    if paragraph.style is not None and getattr(paragraph.style.font, "size", None) is not None:
-        return int(paragraph.style.font.size.pt * 2)
-    return _DEFAULT_FONT_HALF_POINTS
-
-
-def _paragraph_height(paragraph, usable_width: int) -> int:
-    """Estimate one paragraph's rendered height in twips."""
-    half_points = _font_half_points(paragraph)
-    point_size = half_points / 2
-    char_width = max(1.0, _AVG_CHAR_EM * point_size * 20)
-    indent = 0
-    fmt = paragraph.paragraph_format
-    for value in (fmt.left_indent, fmt.right_indent):
-        if value is not None:
-            indent += max(0, int(value.twips))
-    width = max(char_width * 8, usable_width - indent)
-    text = paragraph.text or ""
-    lines = max(1, math.ceil(len(text) * char_width / width)) if text.strip() else 1
-    line_height = point_size * 20 * _LINE_LEADING
-    before = int(fmt.space_before.twips) if fmt.space_before is not None else 0
-    after = int(fmt.space_after.twips) if fmt.space_after is not None else 0
-    return int(lines * line_height + before + after)
-
-
-def estimate_page_count(document) -> float:
-    """Estimated pages as a float (1.4 means "spills onto a second page").
-
-    An estimate is the right tool here: converting to PDF needs Microsoft Word,
-    which is optional in this project, and a résumé's geometry is simple enough
-    (single column, no floats, no tables after flattening) that a line-count
-    model is accurate to within a line per paragraph. It is used to DECIDE
-    whether to trim, so being slightly conservative only means a tidier page.
-    """
-    metrics = _page_metrics(document)
-    total = sum(
-        _paragraph_height(paragraph, metrics["usable_width"])
-        for paragraph in document.paragraphs
-    )
-    return total / metrics["usable_height"]
+# The estimate and the LibreOffice measurement live in src/resume/pagefit.py
+# (audit R6): style- and font-aware, calibrated against LibreOffice renders.
+estimate_page_count = pagefit.estimate_page_count
 
 
 # A bullet that states a measured result: a number with a unit, a currency
@@ -1196,6 +1287,10 @@ def _norm_bullet(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
+#: Most LibreOffice renders one page fit may run (each takes about a second).
+_MAX_FIT_MEASUREMENTS = 8
+
+
 def _fit_to_pages(
     document,
     *,
@@ -1204,8 +1299,17 @@ def _fit_to_pages(
     qualification_details: Dict[str, Dict[str, Any]],
     min_bullets_per_role: int = 1,
     keep_bullets: Sequence[str] | None = None,
+    measure: Any = None,
 ) -> tuple[Dict[str, Any] | None, List[str]]:
     """Trim the résumé to `max_pages` by omitting the LEAST VALUABLE bullets.
+
+    MEASURED, NOT ONLY ESTIMATED (R6). With ``measure`` (a document -> pages
+    callable; LibreOffice in practice, see src/resume/pagefit.py), the estimate
+    only proposes how many bullets to leave out. The real page count then
+    decides, by a short search over that same order: the fewest bullets that
+    bring the rendered document within budget. Bullets the estimate would have
+    dropped needlessly are kept, and a document the estimate thought fit but
+    renders long is trimmed. Without ``measure`` it works on the estimate alone.
 
     Value is not just keyword overlap. Each bullet is scored on three things a
     reviewer actually weighs, and the lowest-value bullets go first:
@@ -1227,8 +1331,14 @@ def _fit_to_pages(
         LONGER rather than thinner, and a limitation says so: losing a real,
         relevant achievement costs more than a third page.
     """
-    if max_pages <= 0 or estimate_page_count(document) <= max_pages:
+    if max_pages <= 0:
         return None, []
+    if estimate_page_count(document) <= max_pages:
+        if measure is None:
+            return None, []
+        first = measure(document)
+        if first is None or first <= max_pages:
+            return None, []
 
     pinned = {_norm_bullet(text) for text in (keep_bullets or []) if str(text or "").strip()}
     roles: List[Dict[str, Any]] = []
@@ -1291,13 +1401,63 @@ def _fit_to_pages(
             candidates.append((item["value"], -(total_roles - role_index), -item["position"], role, item))
     candidates.sort(key=lambda entry: entry[:3])
 
+    # Every candidate in leave-out order. `apply(k)` sets exactly the first k
+    # aside, from a snapshot of the body, so a search can put bullets back.
+    body = document.element.body
+    original = list(body)
+    order = [entry[4]["paragraph"]._p for entry in candidates]
+
+    def apply(k: int) -> None:
+        gone = {id(node) for node in order[:k]}
+        for child in list(body):
+            body.remove(child)
+        for child in original:
+            if id(child) not in gone:
+                body.append(child)
+
+    k = 0
+    while k < len(order) and estimate_page_count(document) > max_pages:
+        k += 1
+        apply(k)
+
+    pages = None
+    measurements = 0
+    if measure is not None:
+        seen: Dict[int, Any] = {}
+
+        def pages_at(n: int):
+            nonlocal measurements
+            if n not in seen:
+                apply(n)
+                seen[n] = measure(document)
+                measurements += 1
+            return seen[n]
+
+        at_estimate = pages_at(k)
+        if at_estimate is not None:
+            if at_estimate <= max_pages:
+                lo, hi = 0, k  # the estimate may have trimmed more than needed
+            elif pages_at(len(order)) is not None and pages_at(len(order)) > max_pages:
+                lo = hi = len(order)  # cannot fit within the rules: leave all candidates out
+            else:
+                lo, hi = k + 1, len(order)
+            while lo < hi and measurements < _MAX_FIT_MEASUREMENTS:
+                mid = (lo + hi) // 2
+                result = pages_at(mid)
+                if result is None:
+                    break
+                if result <= max_pages:
+                    hi = mid
+                else:
+                    lo = mid + 1
+            k = hi
+            pages = pages_at(k)
+        apply(k)
+
     dropped: List[Dict[str, Any]] = []
-    for _value, _age, _pos, role, item in candidates:
-        if estimate_page_count(document) <= max_pages:
-            break
+    for _value, _age, _pos, role, item in candidates[:k]:
         paragraph = item["paragraph"]
         raw = paragraph.text or ""
-        _remove_paragraph(paragraph)
         reasons = []
         reasons.append("matches no requirement in this posting" if not item["terms"]
                        else f"only matches {', '.join(item['terms'][:3])}")
@@ -1315,24 +1475,28 @@ def _fit_to_pages(
         })
 
     estimated = estimate_page_count(document)
+    length = f"{pages} page(s), measured" if pages is not None else f"an estimated {estimated:.1f} pages"
+    if not dropped and pages is not None and pages <= max_pages:
+        return None, []  # the estimate thought it long; the render says it fits
     if not dropped:
         return None, [
-            f"The résumé is an estimated {estimated:.1f} pages, over the {max_pages}-page target. "
+            f"The résumé is {length}, over the {max_pages}-page target. "
             "Nothing was left out: every remaining bullet is recent, measured, or evidences a "
             "requirement of this posting. Shorten wording in the master resume if length matters."
         ]
 
     limitations: List[str] = []
-    if estimated > max_pages:
+    if (pages if pages is not None else estimated) > max_pages:
         limitations.append(
-            f"Still an estimated {estimated:.1f} pages after leaving out {len(dropped)} bullet(s). "
+            f"Still {length} after leaving out {len(dropped)} bullet(s). "
             "The rest were kept on purpose (recent, measured, or required by this posting)."
         )
     return {
         "type": "fit_to_page_budget",
         "where": "PROFESSIONAL EXPERIENCE bullets",
         "before": f"content estimated at more than {max_pages} page(s)",
-        "after": f"{len(dropped)} lowest-value bullet(s) omitted; estimated {estimated:.1f} page(s)",
+        "after": f"{len(dropped)} lowest-value bullet(s) omitted; "
+                 + (f"{pages} page(s), measured by LibreOffice" if pages is not None else f"estimated {estimated:.1f} page(s)"),
         "evidence": [{
             "max_pages": max_pages,
             "omitted": dropped,
@@ -1340,6 +1504,9 @@ def _fit_to_pages(
             "min_bullets_per_role": min_bullets_per_role,
             "pinned": len(pinned),
             "text_changed": False,
+            "pages": pages if pages is not None else round(estimated, 2),
+            "measured_by": "LibreOffice" if pages is not None else None,
+            "measurements": measurements,
         }],
         "reason": (
             f"a {max_pages}-page résumé is the target; the bullets omitted are the ones with the "
@@ -1433,20 +1600,69 @@ def _protect_headings(document) -> Dict[str, Any] | None:
     }
 
 
-# Headings we prefer to anchor the per-job focus line above (in priority order).
-# Placed just before the first match so the job's own terminology sits near the
-# top of the resume, where ATS keyword parsers weigh it most.
-_FOCUS_ANCHORS = ("core competencies", "professional summary", "professional experience")
-
-
 def _norm_heading(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").strip().lower())
 
 
-_SUMMARY_HEADINGS = {"professional summary", "summary", "profile", "career summary"}
-_EXPERIENCE_HEADINGS = {
-    "professional experience", "work experience", "experience", "employment history",
-}
+_SUMMARY_HEADINGS = _HEADING_KINDS["summary"]
+_EXPERIENCE_HEADINGS = _HEADING_KINDS["experience"]
+
+
+class _section_heading_overrides:
+    """Add a person's own section names (ats_resume.json "sectionHeadings") for one tailoring.
+
+    The heading tables are module-level, read by many helpers; this widens them
+    for the duration of a call and puts them back after, so a long-lived
+    worker serving several people never carries one person's names over.
+    """
+
+    def __init__(self, headings: Dict[str, Sequence[str]] | None):
+        self.headings = {kind: {_norm_heading(n) for n in names or [] if str(n).strip()}
+                         for kind, names in (headings or {}).items() if kind in _HEADING_KINDS}
+        self.saved = None
+
+    def __enter__(self):
+        tables = [_SECTION_HEADINGS, _COMPETENCY_HEADINGS, _NON_ROLE_SECTIONS, *_HEADING_KINDS.values()]
+        self.saved = [(table, set(table)) for table in tables]
+        for kind, names in self.headings.items():
+            _HEADING_KINDS[kind].update(names)
+            _SECTION_HEADINGS.update(names)
+            if kind == "skills":
+                _COMPETENCY_HEADINGS.update(names)
+            if kind in ("summary", "skills", "education"):
+                _NON_ROLE_SECTIONS.update(names)
+        return self
+
+    def __exit__(self, *exc):
+        for table, before in self.saved:
+            table.clear()
+            table.update(before)
+        return False
+
+
+def _looks_like_heading(paragraph) -> bool:
+    """A short line set like a heading: capitals, a Heading style, or all bold.
+
+    Ends the section above it even when its name is unknown, so one section's
+    lines never run on into the next (R14).
+    """
+    text = (paragraph.text or "").strip()
+    if not text or len(text) > 40 or len(text.split()) > 5 or re.search(r"[\d@|:,.;]", text):
+        return False
+    if _is_bullet(paragraph):
+        return False
+    style = (getattr(paragraph.style, "name", "") or "").lower()
+    if style.startswith("heading") or style == "title":
+        return True
+    letters = [c for c in text if c.isalpha()]
+    if letters and all(c.isupper() for c in letters) and len(letters) >= 4:
+        return True
+    runs = [run for run in paragraph.runs if (run.text or "").strip()]
+    return bool(runs) and all(run.bold for run in runs)
+
+
+def _ends_section(paragraph) -> bool:
+    return _is_section_heading(paragraph.text) or _looks_like_heading(paragraph)
 
 
 def _section_bounds(document, headings: set[str]) -> tuple[int, int] | None:
@@ -1457,13 +1673,45 @@ def _section_bounds(document, headings: set[str]) -> tuple[int, int] | None:
         None,
     )
     if start is None:
+        # The section holding the jobs is experience, whatever it is called (R14).
+        if headings is _EXPERIENCE_HEADINGS:
+            return _experience_bounds_by_roles(paragraphs)
         return None
     end = len(paragraphs)
     for index in range(start + 1, len(paragraphs)):
-        if _is_section_heading(paragraphs[index].text):
+        if _ends_section(paragraphs[index]):
             end = index
             break
     return start + 1, end
+
+
+def _experience_bounds_by_roles(paragraphs) -> tuple[int, int] | None:
+    """The section around the first job line, when no heading names experience."""
+    first_role = next((i for i, p in enumerate(paragraphs) if _is_role_heading(p)), None)
+    if first_role is None:
+        return None
+    start = 0
+    for index in range(first_role - 1, 0, -1):  # index 0 is the name line
+        if _ends_section(paragraphs[index]):
+            start = index + 1
+            break
+    end = len(paragraphs)
+    for index in range(first_role + 1, len(paragraphs)):
+        if _ends_section(paragraphs[index]) and not _is_role_heading(paragraphs[index]):
+            end = index
+            break
+    return start, end
+
+
+#: Characters a person types to start a bullet by hand. Only "• · ▪ ◦" were
+#: known, so "- ", "– ", "* ", "● ", "■ " and "➢ " lines were never bullets:
+#: never reordered or trimmed, and one with a date in it ("- Led the March
+#: 2021 migration") became a role heading (R5). Whitespace must follow the
+#: glyph, so "-5%" and "*Required" stay text.
+_BULLET_GLYPHS = re.escape("•·▪◦‣⁃○●■□◆◇►▸▹➢➤✓✔-–—*")
+_TYPED_BULLET_RE = re.compile(rf"^\s*[{_BULLET_GLYPHS}]\s+(?=\S)")
+#: The same glyph at the start of rendered HTML, after any opening tags.
+_LEADING_GLYPH_HTML_RE = re.compile(rf"^((?:<[^>]+>)*)\s*[{_BULLET_GLYPHS}]\s+(?=\S)")
 
 
 def _is_bullet(paragraph) -> bool:
@@ -1473,18 +1721,15 @@ def _is_bullet(paragraph) -> bool:
     ppr = paragraph._p.pPr
     if ppr is not None and ppr.numPr is not None:
         return True
-    return bool(re.match(r"^\s*[•·▪◦]\s+", paragraph.text or ""))
+    return bool(_TYPED_BULLET_RE.match(paragraph.text or ""))
 
 
 def _nonempty_runs(paragraphs: Sequence[Any]) -> List[List[Any]]:
-    """Return movable paragraph groups without moving spacers/focus lines."""
+    """Return movable paragraph groups without moving blank spacers."""
     groups: List[List[Any]] = []
     current: List[Any] = []
     for paragraph in paragraphs:
-        is_focus_line = _norm_heading(paragraph.text).startswith(
-            "most relevant to this role:"
-        )
-        if (paragraph.text or "").strip() and not is_focus_line:
+        if (paragraph.text or "").strip():
             current.append(paragraph)
         elif current:
             groups.append(current)
@@ -1634,91 +1879,6 @@ def _prioritize_existing_content(
     return changes, selected, movable_nodes
 
 
-def _collapse_alias_duplicates(
-    ranked: Sequence[str], evidence_aliases: Dict[str, Any] | None
-) -> List[str]:
-    """Keep only the first (highest-ranked) term from each alias group.
-
-    Verified on a real dense JD: "fabric" and "microsoft fabric" — configured
-    as each other's alias in scoring.json — both matched and both ranked near
-    the top, so a naive top-N selection put them side by side in the same
-    sentence ("...microsoft fabric, fabric, and adf"). That reads as a typo to
-    a human, not a highlight. Since they mean the same thing, only the
-    highest-ranked one needs to be said once.
-    """
-    aliases = evidence_aliases or {}
-    kept: List[str] = []
-    kept_keys: set = set()
-    for term in ranked:
-        key = re.sub(r"\s+", " ", str(term).lower()).strip()
-        if key in kept_keys:
-            continue
-        related = {
-            re.sub(r"\s+", " ", str(a).lower()).strip() for a in (aliases.get(key) or [])
-        }
-        if related & kept_keys:
-            continue
-        kept.append(term)
-        kept_keys.add(key)
-    return kept
-
-
-def _join_naturally(items: Sequence[str]) -> str:
-    """Join like a person would write it: "a", "a and b", "a, b, and c"."""
-    items = list(items)
-    if len(items) <= 1:
-        return "".join(items)
-    if len(items) == 2:
-        return f"{items[0]} and {items[1]}"
-    return f"{', '.join(items[:-1])}, and {items[-1]}"
-
-
-def _insert_focus_line(
-    document, present: List[str], patterns: Dict[str, Any] | None
-) -> tuple[str, bool]:
-    """Insert a per-job focus line built only from ``present`` keywords.
-
-    ``present`` is already ranked most-decisive-first and capped by the caller
-    (see ``_MAX_FOCUS_LINE_TERMS``) — this function only renders it, so it
-    never has to decide what to drop.
-
-    The line is anchored above the first matching heading in ``_FOCUS_ANCHORS``
-    (falling back to the top of the document). Returns ``(text, inserted)``.
-    An existing focus line is reused to prevent duplicate content.
-    """
-    label = "Most relevant to this role"
-    text = humanize(f"{label}: {_join_naturally(present)}.", patterns or {})
-
-    for paragraph in document.paragraphs:
-        if _norm_heading(paragraph.text).startswith(_norm_heading(label) + ":"):
-            return paragraph.text, False
-
-    anchor = None
-    for para in document.paragraphs:
-        if _norm_heading(para.text) in _FOCUS_ANCHORS:
-            anchor = para
-            break
-
-    if anchor is not None:
-        new_para = anchor.insert_paragraph_before()
-    elif document.paragraphs:
-        new_para = document.paragraphs[0].insert_paragraph_before()
-    else:
-        new_para = document.add_paragraph()
-
-    # Bold the label, italicize the keyword list, so it reads as a deliberate
-    # tailoring cue rather than body copy.
-    head, sep, rest = text.partition(":")
-    if sep:
-        run_label = new_para.add_run(head + ":")
-        run_label.bold = True
-        run_kw = new_para.add_run(rest)
-        run_kw.italic = True
-    else:
-        new_para.add_run(text).italic = True
-    return text, True
-
-
 def _evidence_terms(
     keyword: str,
     evidence_aliases: Dict[str, Sequence[str]] | None,
@@ -1743,6 +1903,7 @@ def _audit_supported_keywords(
     resume_text: str,
     keywords: Sequence[str],
     evidence_aliases: Dict[str, Sequence[str]] | None = None,
+    vocabulary: Sequence[str] | None = None,
 ) -> Dict[str, Any]:
     """Boundary-aware audit used for mutation decisions.
 
@@ -1754,21 +1915,17 @@ def _audit_supported_keywords(
     missing: List[str] = []
     supported_by: Dict[str, List[Dict[str, str]]] = {}
     seen = set()
+    keywords = [str(k) for k in keywords]
+    lines = resume_text.splitlines()
+    alias_map = {term: _evidence_terms(term, evidence_aliases)[1:] for term in keywords}
     for keyword in keywords:
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         if not key or key in seen:
             continue
         seen.add(key)
-        matches: List[Dict[str, str]] = []
-        for term in _evidence_terms(str(keyword), evidence_aliases):
-            for line in resume_text.splitlines():
-                clean = re.sub(r"\s+", " ", line).strip()
-                if clean and _phrase_pattern(term).search(clean):
-                    matches.append({
-                        "matched_term": term,
-                        "resume_text": clean[:300],
-                    })
-                    break
+        matches = evidence.find_evidence(
+            str(keyword), lines, aliases=alias_map, vocabulary=keywords if vocabulary is None else vocabulary,
+        )
         target = present if matches else missing
         target.append(keyword)
         if matches:
@@ -1870,20 +2027,11 @@ def _resume_evidence(
     evidence_aliases: Dict[str, Sequence[str]] | None = None,
 ) -> List[Dict[str, str]]:
     """Return compact exact master-resume excerpts supporting a term."""
-    found: List[Dict[str, str]] = []
-    for term in _evidence_terms(keyword, evidence_aliases):
-        for line in resume_text.splitlines():
-            clean = re.sub(r"\s+", " ", line).strip()
-            if clean and _phrase_pattern(term).search(clean):
-                found.append({
-                    "keyword": keyword,
-                    "matched_term": term,
-                    "resume_text": clean[:300],
-                })
-                break
-        if len(found) == 3:
-            break
-    return found
+    aliases = {keyword: _evidence_terms(keyword, evidence_aliases)[1:]}
+    return [
+        {"keyword": keyword, **item}
+        for item in evidence.find_evidence(keyword, resume_text.splitlines(), aliases=aliases, limit=3)
+    ]
 
 
 def _content_units(document) -> List[str]:
@@ -1931,12 +2079,9 @@ def _verify_truth_invariants(
     source_nodes: Sequence[Any],
     source_styles: Dict[Any, str],
     movable_nodes: set,
-    inserted_focus_text: str | None,
 ) -> Dict[str, Any]:
     """Fail closed if tailoring changed claims, role scope, or formatting."""
     expected_units = Counter(source_units)
-    if inserted_focus_text:
-        expected_units[f"paragraph:{inserted_focus_text}"] += 1
     actual_units = Counter(_content_units(document))
     text_units_preserved = actual_units == expected_units
 
@@ -1952,12 +2097,11 @@ def _verify_truth_invariants(
         sum(node is candidate for candidate in output_nodes) == 1
         for node in source_nodes
     )
+    # A source paragraph that is gone has no style (None), which fails here
+    # cleanly instead of crashing inside the generator.
+    output_styles = {paragraph._p: paragraph.style.name or "" for paragraph in document.paragraphs}
     paragraph_styles_preserved = all(
-        source_styles[node] == next(
-            paragraph.style.name or ""
-            for paragraph in document.paragraphs
-            if paragraph._p is node
-        )
+        source_styles[node] == output_styles.get(node)
         for node in source_nodes
     )
 
@@ -2054,61 +2198,223 @@ def _verify_layout_invariants(
     return invariants
 
 
+def _text_box_paragraphs(paragraph) -> List[Any]:
+    """Paragraphs inside the text boxes anchored in ``paragraph``, each once.
+
+    Word stores a text box twice, as a drawing and as a VML fallback inside
+    mc:Fallback; the fallback copy is skipped.
+    """
+    from docx.text.paragraph import Paragraph
+
+    found = []
+    for node in paragraph._p.iter():
+        if not str(node.tag).endswith("}txbxContent"):
+            continue
+        if any(str(a.tag).endswith("}Fallback") for a in node.iterancestors()):
+            continue
+        for child in node:
+            if str(child.tag).endswith("}p"):
+                found.append(Paragraph(child, paragraph._parent))
+    return found
+
+
+_ALIGN_CSS = {1: "center", 2: "right", 3: "justify"}
+
+
+def _alignment(paragraph):
+    """The paragraph's alignment, from itself or its style chain (python-docx enum value)."""
+    if paragraph.alignment is not None:
+        return int(paragraph.alignment)
+    style = paragraph.style
+    while style is not None:
+        if style.paragraph_format.alignment is not None:
+            return int(style.paragraph_format.alignment)
+        style = style.base_style
+    return None
+
+
+def _right_tab(paragraph, body: str) -> str:
+    """"Title | Employer<tab>Dates" with a right tab stop: the dates go to the right edge."""
+    if "\t" not in body:
+        return body
+    stops = list(paragraph.paragraph_format.tab_stops)
+    style = paragraph.style
+    while not stops and style is not None:
+        stops = list(style.paragraph_format.tab_stops)
+        style = style.base_style
+    head, _, tail = body.rpartition("\t")
+    if not any(stop.alignment == WD_TAB_ALIGNMENT.RIGHT for stop in stops) or "</" in tail:
+        return body.replace("\t", " ")
+    # A real space first, so text extraction reads "Corp Jan 2019", not "CorpJan".
+    return f'{head.replace(chr(9), " ")} <span class="tab-right">{tail}</span>'
+
+
+def _body_font(document) -> tuple[str, float]:
+    """Normal's font family and size, as the document resolves them."""
+    styles = pagefit._Styles(document)
+    probe = document.add_paragraph()
+    try:
+        resolved = pagefit._Para(probe, styles)
+    finally:
+        probe._p.getparent().remove(probe._p)
+    family = next((name for name in (resolved.font,) if name), "calibri")
+    return " ".join(part.capitalize() for part in family.split()), resolved.size_pt
+
+
 def docx_to_html(docx_path: str | Path) -> Dict[str, Any]:
     """An ATS-safe HTML rendering of a resume, for printing to PDF (P2-3).
 
-    One column of real text: section headings become <h2>, role lines <h3>,
-    bullets <li>, everything else <p>; bold runs stay bold. No tables, images,
-    headers or footers. Returns the HTML and the paragraph texts it contains,
-    so the caller can check the rendered page holds every one of them.
+    One column of real text, in document order: page-header text first,
+    section headings as <h2>, role lines <h3>, bullets <li>, table rows as one
+    line of cells, everything else <p>, page-footer text last. Bold stays bold
+    and web or mail links stay links.
+
+    Returns the HTML and every text it prints (``texts``), which the caller
+    checks against the rendered page before writing the PDF. Both come from the
+    same walk, so a part of the document the walk misses is missing from the
+    check too only if it is missing from the page, never one without the other.
+    It used to read body paragraphs through ``paragraph.runs``: linked text,
+    tables and page headers were left off the page, and the PDF was refused
+    (R1) or, for tables and headers, written without them and reported ok
+    (N8, N4). Text boxes are still not read (R15).
     """
     import html as html_lib
     from docx import Document
+    from docx.table import Table
+    from docx.text.hyperlink import Hyperlink
 
     document = Document(str(docx_path))
     parts: List[str] = []
     texts: List[str] = []
     in_list = False
 
-    def runs_html(paragraph) -> str:
+    def run_html(run) -> str:
+        text = html_lib.escape(run.text or "")
+        if not text:
+            return text
+        # Emphasis as the document has it (R7): it was bold only.
+        if run.underline:
+            text = f"<u>{text}</u>"
+        if run.italic:
+            text = f"<em>{text}</em>"
+        return f"<strong>{text}</strong>" if run.bold else text
+
+    def inline_html(paragraph) -> str:
         out = []
-        for run in paragraph.runs:
-            text = html_lib.escape(run.text or "")
-            if not text:
-                continue
-            out.append(f"<strong>{text}</strong>" if run.bold else text)
+        for item in paragraph.iter_inner_content():
+            if isinstance(item, Hyperlink):
+                inner = "".join(run_html(run) for run in item.runs)
+                url = item.url or ""
+                if inner and _SAFE_LINK_RE.match(url):
+                    out.append(f'<a href="{html_lib.escape(url, quote=True)}">{inner}</a>')
+                else:
+                    out.append(inner)
+            else:
+                out.append(run_html(item))
         return "".join(out) or html_lib.escape(paragraph.text or "")
 
-    for paragraph in document.paragraphs:
+    def close_list() -> None:
+        nonlocal in_list
+        if in_list:
+            parts.append("</ul>")
+            in_list = False
+
+    def add_paragraph(paragraph, css: str | None = None) -> None:
+        nonlocal in_list
         text = (paragraph.text or "").strip()
         if not text:
-            continue
-        texts.append(text)
-        bullet = _is_bullet(paragraph)
+            return
+        bullet = css is None and _is_bullet(paragraph)
         if bullet and not in_list:
             parts.append("<ul>")
             in_list = True
-        if not bullet and in_list:
-            parts.append("</ul>")
-            in_list = False
-        body = runs_html(paragraph)
+        if not bullet:
+            close_list()
+        body = _right_tab(paragraph, inline_html(paragraph))
         if bullet:
-            item = re.sub(r"^[•·▪◦]\s+", "", body)
-            parts.append(f"<li>{item}</li>")
+            # A typed glyph becomes the list marker, so it is not page text,
+            # and the completeness check must not look for it either (N9).
+            body = _LEADING_GLYPH_HTML_RE.sub(r"\1", body, count=1)
+            texts.append(_TYPED_BULLET_RE.sub("", text, count=1))
+            parts.append(f"<li>{body}</li>")
+            return
+        texts.append(text)
+        align = _ALIGN_CSS.get(_alignment(paragraph))
+        attrs = (f' class="{css}"' if css else "") + (f' style="text-align:{align}"' if align else "")
+        if css:
+            parts.append(f'<p{attrs}>{body}</p>')
         elif _is_section_heading(text):
-            parts.append(f"<h2>{body}</h2>")
+            parts.append(f"<h2{attrs}>{body}</h2>")
         elif _is_role_heading(paragraph):
-            parts.append(f"<h3>{body}</h3>")
+            parts.append(f"<h3{attrs}>{body}</h3>")
         else:
-            parts.append(f"<p>{body}</p>")
-    if in_list:
-        parts.append("</ul>")
+            parts.append(f"<p{attrs}>{body}</p>")
+
+    def add_table(table) -> None:
+        close_list()
+        for row in table.rows:
+            cells = []
+            seen = set()
+            for cell in row.cells:
+                if id(cell._tc) in seen:
+                    continue
+                seen.add(id(cell._tc))
+                lines = [p for p in cell.paragraphs if (p.text or "").strip()]
+                if not lines:
+                    continue
+                texts.extend(p.text.strip() for p in lines)
+                cells.append('<span class="cell">' + "<br>".join(inline_html(p) for p in lines) + "</span>")
+            if cells:
+                # Real whitespace between cells: text extraction must read
+                # "Platforms SQL Server", not "PlatformsSQL Server".
+                parts.append('<p class="row">' + " ".join(cells) + "</p>")
+
+    def page_part_paragraphs(kind: str) -> List[Any]:
+        found, seen = [], set()
+        for section in document.sections:
+            candidates = [getattr(section, kind)]
+            if section.different_first_page_header_footer:
+                candidates.insert(0, getattr(section, f"first_page_{kind}"))
+            for part in candidates:
+                if part.is_linked_to_previous:
+                    continue
+                for paragraph in part.paragraphs:
+                    key = (paragraph.text or "").strip()
+                    if key and key not in seen:
+                        seen.add(key)
+                        found.append(paragraph)
+        return found
+
+    for paragraph in page_part_paragraphs("header"):
+        add_paragraph(paragraph, css="page-header")
+    for block in document.iter_inner_content():
+        if isinstance(block, Table):
+            add_table(block)
+        else:
+            add_paragraph(block)
+            # A text box's text, right after the paragraph it is anchored in
+            # (R15): it was left off the page, and out of the check.
+            for box_paragraph in _text_box_paragraphs(block):
+                add_paragraph(box_paragraph, css="text-box")
+    close_list()
+    for paragraph in page_part_paragraphs("footer"):
+        add_paragraph(paragraph, css="page-footer")
+
+    # The document's own page, margins, font and size (R7). A fixed 10.5 pt
+    # Calibri on 0.55 in margins made this a different document from the DOCX,
+    # with its own page count.
+    page = pagefit.page_metrics(document)
+    inch = lambda twips: f"{twips / 1440:.2f}".rstrip("0").rstrip(".") + "in"  # noqa: E731
+    font, size = _body_font(document)
     style = (
-        "@page{size:Letter;margin:0.55in 0.6in}"
-        "body{font-family:Calibri,Carlito,Arial,Helvetica,sans-serif;font-size:10.5pt;line-height:1.3;color:#000}"
-        "h2{font-size:11.5pt;margin:10pt 0 3pt;border-bottom:1px solid #000;text-transform:uppercase;break-after:avoid}"
-        "h3{font-size:10.5pt;margin:6pt 0 2pt;break-after:avoid}"
+        f"@page{{size:{inch(page['width'])} {inch(page['height'])};"
+        f"margin:{inch(page['top'])} {inch(page['right'])} {inch(page['bottom'])} {inch(page['left'])}}}"
+        f"body{{font-family:'{font}',Carlito,Caladea,Arial,Helvetica,sans-serif;font-size:{size:g}pt;"
+        "line-height:1.22;color:#000}"
+        "h2{font-size:1.1em;margin:10pt 0 3pt;border-bottom:1px solid #000;text-transform:uppercase;break-after:avoid}"
+        "h3{font-size:1em;margin:6pt 0 2pt;break-after:avoid}"
         "p{margin:0 0 3pt}ul{margin:0 0 4pt;padding-left:16pt}li{margin:0 0 2pt}"
+        "a{color:inherit;text-decoration:none}.cell{margin-right:18pt}.tab-right{float:right}"
     )
     title = html_lib.escape(texts[0] if texts else "Resume")
     html = (
@@ -2179,115 +2485,173 @@ def _apply_accepted_rewrites(
             })
             continue
         paragraph = matches[0]
-        runs = paragraph.runs
-        if runs:
-            runs[0].text = rewrite
-            for run in runs[1:]:
-                run.text = ""
-        else:
-            paragraph.add_run(rewrite)
+        note = _rewrite_formatting_note(paragraph, rewrite)
+        _replace_paragraph_text(paragraph, rewrite)
+        if paragraph.text != rewrite:
+            # Cannot happen after _replace_paragraph_text; refuse rather than
+            # write a line nobody accepted.
+            raise RuntimeError("an accepted rewrite did not produce exactly the accepted text")
         replaced[f"paragraph:{original}"] = f"paragraph:{paragraph.text}"
-        changes.append({
+        change = {
             "type": "rewrite", "where": "experience", "before": original, "after": paragraph.text,
             "reason": "verified against the cited master-resume evidence and accepted by you",
             "evidence": item.get("evidence") or [], "source": "accepted_rewrite",
             "task": item.get("task"),
-        })
+        }
+        if note:
+            change["formatting_note"] = note
+        changes.append(change)
     return changes, replaced
 
 
-def tailor_resume(
-    master_path: str | Path,
-    output_dir: str | Path,
-    job: Dict[str, Any],
-    keywords: Iterable[str],
-    patterns: Dict[str, Any] | None = None,
+def _rewrite_formatting_note(paragraph, rewrite: str) -> str | None:
+    """What the original line carried that the rewritten line will not (R16).
+
+    The rewrite takes the first run's formatting. A link in the line goes
+    (its words are not the accepted words), and bold or italic on part of the
+    line cannot be placed on new wording. Said in the review, not silently lost.
+    """
+    notes = []
+    links = [link.text for link in paragraph.hyperlinks if (link.text or "").strip()]
+    if links:
+        names = ", ".join(links)
+        notes.append(f"The original line's link ({names}) is not in the rewording.")
+    looks = {(bool(run.bold), bool(run.italic), bool(run.underline))
+             for run, _link in _inline_items(paragraph) if (run.text or "").strip()}
+    if len(looks) > 1:
+        notes.append("Bold or italic on part of the original line is not kept; the rewording uses the line's first style.")
+    return " ".join(notes) or None
+
+
+def _replace_paragraph_text(paragraph, text: str) -> None:
+    """Make ``paragraph.text`` exactly ``text``: first run's formatting, links removed.
+
+    Writing into run 0 and blanking ``paragraph.runs`` left hyperlink runs
+    alone, so "…on the team blog" + "example.com/post" survived after the
+    accepted wording (N3). Every inline run is accounted for here.
+    """
+    from docx.oxml.ns import qn
+
+    items = list(_inline_items(paragraph))
+    model = next((run for run, _link in items if (run.text or "").strip()), None)
+    for link in list(paragraph._p.findall(qn("w:hyperlink"))):
+        paragraph._p.remove(link)
+    direct = paragraph.runs
+    if direct:
+        direct[0].text = text
+        for run in direct[1:]:
+            run.text = ""
+        return
+    new_run = paragraph.add_run(text)
+    # The line was all link: keep its character formatting, not the link style.
+    if model is not None and model._r.rPr is not None:
+        properties = deepcopy(model._r.rPr)
+        style = properties.find(qn("w:rStyle"))
+        if style is not None:
+            properties.remove(style)
+        new_run._r.insert(0, properties)
+
+
+#: Steps tailoring can do without, in the order they run, with how the review names them.
+#: Table flattening is not here: a failure there still falls back to the master.
+_OPTIONAL_STEPS: Dict[str, str] = {
+    "rewrites": "your accepted rewordings",
+    "prioritize": "reordering the summary and bullets",
+    "competency_tables": "reordering skills tables",
+    "competency_lines": "reordering skills lines",
+    "emphasize": "bolding the posting's terms",
+    "normalize_layout": "layout cleanup",
+    "fit": "fitting to the page limit",
+    "protect_headings": "keeping headings with their text",
+}
+
+
+class _StepFailed(RuntimeError):
+    """An optional tailoring step whose result failed a check."""
+
+    def __init__(self, step: str, error: Exception):
+        super().__init__(f"{step}: {error}")
+        self.step = step
+        self.error = error
+
+
+def _build_tailored(
+    master_path: Path,
     *,
-    max_pages: int = 2,
-    add_summary_line: bool = False,
-    required_markers: Iterable[str] | None = None,
-    preferred_markers: Iterable[str] | None = None,
-    evidence_aliases: Dict[str, Sequence[str]] | None = None,
-    enable_rewrites: bool = False,
-    now: datetime | None = None,
-    output_name: str | None = None,
-    llm_qualifications: Dict[str, Sequence[str]] | None = None,
-    accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
-    keep_bullets: Sequence[str] | None = None,
+    skip: set,
+    present: Sequence[str],
+    qualification_details: Dict[str, Dict[str, Any]],
+    accepted_rewrites: Sequence[Dict[str, Any]] | None,
+    max_pages: int,
+    keep_bullets: Sequence[str] | None,
+    check_each_step: bool = False,
+    measure_pages: Any = None,
 ) -> Dict[str, Any]:
-    """Create a tailored resume for ``job`` and return a result dict.
+    """One tailoring pass over a fresh copy of the master, without the ``skip`` steps.
 
-    The function may reorder exact existing content and change emphasis. It
-    never rewrites claims on its own: the only reworded text it writes is
-    ``accepted_rewrites`` (evidence-verified and accepted by a person).
-    ``enable_rewrites`` is accepted only so callers get an explicit policy
-    response; it does not enable free-form rewriting.
-
-    Returns the output path plus qualification audit, selected content,
-    provenance records, gaps, rewrite policy, and verified invariants.
-    Raises FileNotFoundError if the master is missing.
+    A step that raises is reported as ``_StepFailed``. With ``check_each_step``,
+    each content step is also followed by the full truth invariants, and the
+    page fit by the layout invariants, so a step that silently broke one is
+    pinned too. The final checks are not attributed: they raise a plain
+    RuntimeError, as before.
     """
     from docx import Document
-
-    master_path = Path(master_path)
-    if not master_path.exists():
-        raise FileNotFoundError(f"Master resume not found: {master_path}")
-
-    keywords = list(keywords)
-    resume_text = read_docx_text(master_path)
-    audit = _audit_supported_keywords(resume_text, keywords, evidence_aliases)
-    qualifications = classify_qualification_keywords(
-        job.get("jd_text", ""),
-        keywords,
-        required_markers=list(required_markers or _DEFAULT_REQUIRED_MARKERS),
-        preferred_markers=list(preferred_markers or _DEFAULT_PREFERRED_MARKERS),
-    )
-    # Grounded requirement classification from the optional LLM layer.
-    # Marker-based classification depends on a posting having explicit
-    # "Required/Preferred qualifications" headings. Many real postings are a
-    # single blob whose only cue is an inline "(Databricks preferred)", leaving
-    # every term unclassified and the ranking with no requirement signal at all.
-    # The LLM read the same posting and labelled them; applying that here only
-    # changes ORDERING PRIORITY, never content, so a wrong label can at worst
-    # order two supported skills suboptimally.
-    qualifications = _apply_llm_qualifications(qualifications, llm_qualifications)
-    qualifications["audit"] = _qualification_audit(qualifications, audit)
-    qualification_details = _keyword_details(qualifications)
 
     # Open the master read-only: we load it, mutate the in-memory copy, and save
     # to a NEW path. The master file on disk is never written.
     document = Document(str(master_path))
+    state: Dict[str, Any] = {"movable_nodes": set()}
+
+    def run(name, fn, *args, check=None, **kwargs):
+        if name in skip:
+            return None
+        try:
+            out = fn(*args, **kwargs)
+            if check is not None:
+                check()
+            return out
+        except RuntimeError as err:
+            raise _StepFailed(name, err) from err
+
     # Accepted, evidence-verified rewrites (P1-2) are applied first, and the
     # invariant baseline is updated for exactly those units: every other unit
     # must still survive byte-for-byte, and these must be the accepted text.
-    rewrite_changes, rewritten_units = _apply_accepted_rewrites(document, accepted_rewrites)
+    rewrite_changes, rewritten_units = run("rewrites", _apply_accepted_rewrites, document, accepted_rewrites) or ([], {})
     source_units = _content_units(document)
     source_nodes = [paragraph._p for paragraph in document.paragraphs]
     source_styles = {
         paragraph._p: paragraph.style.name or "" for paragraph in document.paragraphs
     }
+
+    def truth():
+        return _verify_truth_invariants(
+            document, source_units=source_units, source_nodes=source_nodes,
+            source_styles=source_styles, movable_nodes=state["movable_nodes"],
+        )
+
     changes: List[Dict[str, Any]] = list(rewrite_changes)
+    selected_content: Dict[str, Any] = {"summary": [], "experience": []}
+    prioritized = run("prioritize", _prioritize_existing_content, document, present, qualification_details)
+    if prioritized:
+        content_changes, selected_content, state["movable_nodes"] = prioritized
+        changes.extend(content_changes)
+        if check_each_step:
+            try:
+                truth()
+            except RuntimeError as err:
+                raise _StepFailed("prioritize", err) from err
 
-    content_changes, selected_content, movable_nodes = _prioritize_existing_content(
-        document, audit["present"], qualification_details
-    )
-    changes.extend(content_changes)
-
-    competency_changes = _reorder_competencies(
-        document, audit["present"], qualification_details
-    )
-    changes.extend(competency_changes)
-
+    check = truth if check_each_step else None
+    changes.extend(run("competency_tables", _reorder_competencies, document, present, qualification_details,
+                       check=check) or [])
     # Paragraph-based CORE COMPETENCIES ("Data Platforms:  Azure Databricks, …").
     # Table-only handling above missed this extremely common layout entirely.
-    competency_changes = _reorder_competency_paragraphs(
-        document, audit["present"], qualification_details
-    )
-    changes.extend(competency_changes)
+    changes.extend(run("competency_lines", _reorder_competency_paragraphs, document, present, qualification_details,
+                       check=check) or [])
 
-    emphasized, emphasis_evidence, emphasis_mutations = _emphasize(
-        document, audit["present"], qualification_details
-    )
+    emphasized, emphasis_evidence, emphasis_mutations = run(
+        "emphasize", _emphasize, document, present, qualification_details, check=check,
+    ) or (0, [], [])
     if emphasized:
         changes.append({
             "type": "emphasize",
@@ -2308,8 +2672,219 @@ def tailor_resume(
             "source": "master_resume",
         })
 
-    summary_line = None
-    focus_line_inserted = False
+
+    invariants = truth()
+
+    table_change = _flatten_tables_for_ats(document)
+    if table_change:
+        changes.append(table_change)
+
+    # ── layout phase ─────────────────────────────────────────────────────────
+    # Runs AFTER the truth invariants above, because these steps are allowed to
+    # change the document's SHAPE (page breaks, blank filler, how many bullets a
+    # 2017 role shows) while the checks above pin its CLAIMS. Everything the
+    # layout phase may do is re-verified by `_verify_layout_invariants`.
+    layout_change = run("normalize_layout", _normalize_layout, document)
+    if layout_change:
+        changes.append(layout_change)
+
+    units_before_fit = _content_units(document)
+
+    def omitted_by(fit_change):
+        return (fit_change or {}).get("evidence", [{}])[0].get("omitted", [])
+
+    def layout(fit_change):
+        return _verify_layout_invariants(
+            document, units_before_fit=units_before_fit, omitted=omitted_by(fit_change), max_pages=max_pages,
+        )
+
+    fitted = run("fit", _fit_to_pages, document, max_pages=max_pages, keywords=present,
+                 qualification_details=qualification_details, keep_bullets=keep_bullets, measure=measure_pages)
+    fit_change, fit_limitations = fitted or (None, [])
+    if fitted is not None and check_each_step:
+        try:
+            layout(fit_change)
+        except RuntimeError as err:
+            raise _StepFailed("fit", err) from err
+    if fit_change:
+        changes.append(fit_change)
+
+    pagination_change = run("protect_headings", _protect_headings, document)
+    if pagination_change:
+        changes.append(pagination_change)
+
+    invariants.update(layout(fit_change))
+    # A measured length outranks the estimate (R6).
+    measured = ((fit_change or {}).get("evidence") or [{}])[0].get("measured_by")
+    if measured:
+        invariants["measured_pages"] = fit_change["evidence"][0]["pages"]
+        invariants["within_page_budget"] = max_pages <= 0 or invariants["measured_pages"] <= max_pages
+    invariants["table_text_preserved"] = True
+    invariants["tables_removed_for_ats"] = len(document.tables) == 0
+    invariants["page_breaks_stabilized"] = True
+    invariants["role_context_text_preserved"] = True
+    invariants["ats_safe_structure_preserved"] = (
+        invariants["paragraph_styles_preserved"]
+        and invariants["protected_content_order_preserved"]
+        and invariants["tables_removed_for_ats"]
+    )
+    if not invariants["ats_safe_structure_preserved"]:
+        raise RuntimeError("ATS-safe structure invariant failed before save")
+    return {
+        "document": document, "changes": changes, "rewrite_changes": rewrite_changes,
+        "rewritten_units": rewritten_units, "selected_content": selected_content,
+        "emphasized": emphasized, "invariants": invariants, "fit_limitations": fit_limitations,
+    }
+
+
+def tailor_resume(
+    master_path: str | Path,
+    output_dir: str | Path,
+    job: Dict[str, Any],
+    keywords: Iterable[str],
+    patterns: Dict[str, Any] | None = None,
+    *,
+    max_pages: int = 2,
+    required_markers: Iterable[str] | None = None,
+    preferred_markers: Iterable[str] | None = None,
+    evidence_aliases: Dict[str, Sequence[str]] | None = None,
+    enable_rewrites: bool = False,
+    now: datetime | None = None,
+    output_name: str | None = None,
+    llm_qualifications: Dict[str, Sequence[str]] | None = None,
+    accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
+    keep_bullets: Sequence[str] | None = None,
+    evidence_lines: Sequence[str] | None = None,
+    evidence_vocabulary: Sequence[str] | None = None,
+    gap_terms: Sequence[str] | None = None,
+    measure_pages: Any = None,
+    section_headings: Dict[str, Sequence[str]] | None = None,
+) -> Dict[str, Any]:
+    """Create a tailored resume for ``job`` and return a result dict.
+
+    ``section_headings`` adds section names by kind (summary, experience,
+    skills, education, other) for this call (R14).
+    """
+    with _section_heading_overrides(section_headings):
+        return _tailor_resume(
+            master_path, output_dir, job, keywords, patterns, max_pages=max_pages,
+            required_markers=required_markers, preferred_markers=preferred_markers,
+            evidence_aliases=evidence_aliases, enable_rewrites=enable_rewrites, now=now,
+            output_name=output_name, llm_qualifications=llm_qualifications,
+            accepted_rewrites=accepted_rewrites, keep_bullets=keep_bullets,
+            evidence_lines=evidence_lines, evidence_vocabulary=evidence_vocabulary,
+            gap_terms=gap_terms, measure_pages=measure_pages,
+        )
+
+
+def _tailor_resume(
+    master_path: str | Path,
+    output_dir: str | Path,
+    job: Dict[str, Any],
+    keywords: Iterable[str],
+    patterns: Dict[str, Any] | None = None,
+    *,
+    max_pages: int = 2,
+    required_markers: Iterable[str] | None = None,
+    preferred_markers: Iterable[str] | None = None,
+    evidence_aliases: Dict[str, Sequence[str]] | None = None,
+    enable_rewrites: bool = False,
+    now: datetime | None = None,
+    output_name: str | None = None,
+    llm_qualifications: Dict[str, Sequence[str]] | None = None,
+    accepted_rewrites: Sequence[Dict[str, Any]] | None = None,
+    keep_bullets: Sequence[str] | None = None,
+    evidence_lines: Sequence[str] | None = None,
+    evidence_vocabulary: Sequence[str] | None = None,
+    gap_terms: Sequence[str] | None = None,
+    measure_pages: Any = None,
+) -> Dict[str, Any]:
+    """The body of tailor_resume, with the heading tables already set.
+
+    ``measure_pages`` (document -> pages, or None when it cannot say) makes the
+    page fit check the rendered length instead of trusting the estimate (R6);
+    tailor_cli passes LibreOffice's when it is installed.
+
+    The three ``evidence_``/``gap_`` options make the packet's gaps the score's
+    gaps (audit R13): the runner sends the master resume's lines exactly as the
+    scorer read them, the scorer's vocabulary (context for everyday terms) and
+    the terms that can be a gap at all (skills, never a job title). Without
+    them the tailor reads the master itself, as before.
+
+    The function may reorder exact existing content and change emphasis. It
+    never rewrites claims on its own: the only reworded text it writes is
+    ``accepted_rewrites`` (evidence-verified and accepted by a person).
+    ``enable_rewrites`` is accepted only so callers get an explicit policy
+    response; it does not enable free-form rewriting.
+
+    Returns the output path plus qualification audit, selected content,
+    provenance records, gaps, rewrite policy, and verified invariants.
+    Raises FileNotFoundError if the master is missing.
+    """
+    master_path = Path(master_path)
+    if not master_path.exists():
+        raise FileNotFoundError(f"Master resume not found: {master_path}")
+
+    keywords = list(keywords)
+    resume_text = "\n".join(str(line) for line in evidence_lines) if evidence_lines else read_docx_text(master_path)
+    audit = _audit_supported_keywords(resume_text, keywords, evidence_aliases, evidence_vocabulary)
+    qualifications = classify_qualification_keywords(
+        job.get("jd_text", ""),
+        keywords,
+        required_markers=list(required_markers or _DEFAULT_REQUIRED_MARKERS),
+        preferred_markers=list(preferred_markers or _DEFAULT_PREFERRED_MARKERS),
+        vocabulary=evidence_vocabulary,
+    )
+    # Grounded requirement classification from the optional LLM layer.
+    # Marker-based classification depends on a posting having explicit
+    # "Required/Preferred qualifications" headings. Many real postings are a
+    # single blob whose only cue is an inline "(Databricks preferred)", leaving
+    # every term unclassified and the ranking with no requirement signal at all.
+    # The LLM read the same posting and labelled them; applying that here only
+    # changes ORDERING PRIORITY, never content, so a wrong label can at worst
+    # order two supported skills suboptimally.
+    qualifications = _apply_llm_qualifications(qualifications, llm_qualifications)
+    qualifications["audit"] = _qualification_audit(qualifications, audit)
+    qualification_details = _keyword_details(qualifications)
+
+    # Each optional step runs in _build_tailored. A step whose result fails a
+    # check is skipped and the copy is rebuilt from the master without it (R11):
+    # one bad step used to discard the whole tailoring. The truth and layout
+    # invariants are unchanged and still run on the final document; anything
+    # they reject that no single optional step explains still fails closed.
+    # The first pass checks once at the end, as before. Only when that fails is
+    # the pass repeated with a check after every step, to find which one to
+    # leave out, so a resume that tailors cleanly pays nothing extra.
+    skipped: Dict[str, str] = {}
+    diagnose = False
+    for _attempt in range(len(_OPTIONAL_STEPS) + 2):
+        try:
+            built = _build_tailored(
+                master_path, skip=set(skipped), present=audit["present"],
+                qualification_details=qualification_details, accepted_rewrites=accepted_rewrites,
+                max_pages=max_pages, keep_bullets=keep_bullets, check_each_step=diagnose,
+                measure_pages=measure_pages,
+            )
+            break
+        except _StepFailed as failed:
+            if failed.step in skipped:
+                raise failed.error from failed
+            skipped[failed.step] = str(failed.error)
+        except RuntimeError:
+            if diagnose:
+                raise
+            diagnose = True
+    else:  # pragma: no cover - every optional step skipped and still failing
+        raise RuntimeError("tailoring could not finish with any combination of steps")
+
+    document = built["document"]
+    changes = built["changes"]
+    rewrite_changes = built["rewrite_changes"]
+    rewritten_units = built["rewritten_units"]
+    selected_content = built["selected_content"]
+    emphasized = built["emphasized"]
+    invariants = built["invariants"]
+
     limitations = [
         (
             f"{len([c for c in rewrite_changes if c['type'] == 'rewrite'])} bullet(s) use a rewording you "
@@ -2336,72 +2911,26 @@ def tailor_resume(
             "single-column ATS-safe layout without changing their words."
         ),
     ]
-    if add_summary_line and audit["present"]:
-        indexed_present = list(enumerate(audit["present"]))
-        ranked_present = [
-            keyword for _index, keyword in sorted(
-                indexed_present,
-                key=lambda pair: (
-                    -_QUALIFICATION_WEIGHT.get(
-                        qualification_details.get(
-                            re.sub(r"\s+", " ", str(pair[1]).lower()).strip(), {}
-                        ).get("classification", "unclassified"),
-                        1,
-                    ),
-                    pair[0],
-                ),
-            )
-        ]
-        # Collapse alias-equivalent terms (e.g. "fabric"/"microsoft fabric")
-        # BEFORE capping, so the limited slots aren't spent twice on the same
-        # skill, then cap AFTER ranking so a long list still surfaces its most
-        # decisive (required-first) terms rather than an arbitrary prefix. The
-        # audit evidence below is built from this same list, so what a
-        # reviewer sees in `changes` always matches what the line actually says.
-        ranked_present = _collapse_alias_duplicates(ranked_present, evidence_aliases)
-        ranked_present = ranked_present[:_MAX_FOCUS_LINE_TERMS]
-        summary_line, focus_line_inserted = _insert_focus_line(
-            document, ranked_present, patterns
-        )
-        if focus_line_inserted:
-            focus_evidence = []
-            for keyword in ranked_present:
-                key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
-                detail = qualification_details.get(key, {})
-                focus_evidence.append({
-                    "keyword": keyword,
-                    "qualification": detail.get("classification", "unclassified"),
-                    "master_resume_evidence": _resume_evidence(
-                        resume_text, str(keyword), evidence_aliases
-                    ),
-                    "jd_evidence": detail.get("jd_evidence", []),
-                })
-            changes.append({
-                "type": "focus_line",
-                "where": "above the first recognized resume section",
-                "before": "",
-                "after": summary_line,
-                "evidence": focus_evidence,
-                "reason": (
-                    "surfaces only terms already evidenced in the master resume, with "
-                    "required terms listed first"
-                ),
-                "source": "master_resume",
-            })
-        else:
-            limitations.append(
-                "An existing 'Most relevant to this role' line was reused; a duplicate was not inserted."
-            )
-
     # Requirements the resume does NOT evidence. Reported, never inserted.
     gaps = []
     has_jd_text = bool((job.get("jd_text") or "").strip())
+    gap_keys = None if gap_terms is None else {_norm_kw(term) for term in gap_terms}
+    title = str(job.get("title") or "")
+    title_vocabulary = keywords if evidence_vocabulary is None else evidence_vocabulary
     for keyword in audit.get("missing", []):
         key = re.sub(r"\s+", " ", str(keyword).lower()).strip()
         detail = qualification_details.get(key, {})
+        if gap_keys is not None:
+            # The scorer's rules (R13): a job title or an industry is not a
+            # skill you can be missing, and a gap is something the posting's
+            # body or its title asks for.
+            if key not in gap_keys:
+                continue
+            if not detail.get("jd_evidence") and not evidence.shows(str(keyword), title, vocabulary=title_vocabulary):
+                continue
         # Stored score keywords can outlive a later JD refresh. Never display a
         # purported gap when the current non-empty JD has no occurrence/evidence.
-        if has_jd_text and not detail.get("jd_evidence"):
+        elif has_jd_text and not detail.get("jd_evidence"):
             continue
         gaps.append({
             "keyword": keyword,
@@ -2437,61 +2966,26 @@ def tailor_resume(
             "A rewrite was requested but deliberately not performed because supported rewriting is unavailable."
         )
 
-    invariants = _verify_truth_invariants(
-        document,
-        source_units=source_units,
-        source_nodes=source_nodes,
-        source_styles=source_styles,
-        movable_nodes=movable_nodes,
-        inserted_focus_text=summary_line if focus_line_inserted else None,
-    )
-
-    table_change = _flatten_tables_for_ats(document)
-    if table_change:
-        changes.append(table_change)
-
-    # ── layout phase ─────────────────────────────────────────────────────────
-    # Runs AFTER the truth invariants above, because these steps are allowed to
-    # change the document's SHAPE (page breaks, blank filler, how many bullets a
-    # 2017 role shows) while the checks above pin its CLAIMS. Everything the
-    # layout phase may do is re-verified by `_verify_layout_invariants`.
-    layout_change = _normalize_layout(document)
-    if layout_change:
-        changes.append(layout_change)
-
-    units_before_fit = _content_units(document)
-    fit_change, fit_limitations = _fit_to_pages(
-        document,
-        max_pages=max_pages,
-        keywords=audit["present"],
-        qualification_details=qualification_details,
-        keep_bullets=keep_bullets,
-    )
-    if fit_change:
-        changes.append(fit_change)
-    limitations.extend(fit_limitations)
-
-    pagination_change = _protect_headings(document)
-    if pagination_change:
-        changes.append(pagination_change)
-
-    invariants.update(_verify_layout_invariants(
-        document,
-        units_before_fit=units_before_fit,
-        omitted=(fit_change or {}).get("evidence", [{}])[0].get("omitted", []),
-        max_pages=max_pages,
-    ))
-    invariants["table_text_preserved"] = True
-    invariants["tables_removed_for_ats"] = len(document.tables) == 0
-    invariants["page_breaks_stabilized"] = True
-    invariants["role_context_text_preserved"] = True
-    invariants["ats_safe_structure_preserved"] = (
-        invariants["paragraph_styles_preserved"]
-        and invariants["protected_content_order_preserved"]
-        and invariants["tables_removed_for_ats"]
-    )
-    if not invariants["ats_safe_structure_preserved"]:
-        raise RuntimeError("ATS-safe structure invariant failed before save")
+    limitations.extend(built["fit_limitations"])
+    skipped_steps = [
+        {"step": name, "label": _OPTIONAL_STEPS[name], "reason": reason} for name, reason in skipped.items()
+    ]
+    for item in skipped_steps:
+        changes.append({
+            "type": "step_skipped",
+            "where": item["label"],
+            "before": f"{item['label']} was attempted",
+            "after": "left out; the rest of the tailoring was kept",
+            "evidence": [{"step": item["step"], "check_failed": item["reason"]}],
+            "reason": "its result failed a check, so the resume was rebuilt without that step",
+            "source": "master_resume",
+        })
+    if skipped_steps:
+        limitations.append(
+            f"Skipped {len(skipped_steps)} tailoring step(s) whose result failed a check: "
+            + ", ".join(item["label"] for item in skipped_steps)
+            + ". Everything else was tailored as usual."
+        )
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -2510,11 +3004,11 @@ def tailor_resume(
         "audit": audit,
         "qualifications": qualifications,
         "emphasized": emphasized,
-        "summary_line": summary_line,
         "changes": changes,
         "gaps": gaps,
         "selected_content": selected_content,
         "rewrite_policy": rewrite_policy,
         "invariants": invariants,
         "limitations": limitations,
+        "skipped_steps": skipped_steps,
     }

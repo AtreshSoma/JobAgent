@@ -14,6 +14,7 @@ import { chromium } from 'playwright';
 import { applicationFields, detectValidationErrors, scanFields } from '../../src/automation/domScanner.js';
 import { findAdvanceControl, APPLY_START_RE, NOT_APPLY_START_RE } from '../../src/automation/navigator.js';
 import { assistApply } from '../../src/automation/applyRunner.js';
+import { launchOrSkip, skipWithoutBrowser } from './helpers/browser.js';
 
 const ORIGIN = 'https://careers.acme.test';
 
@@ -92,8 +93,9 @@ const packetFor = (url) => ({
 
 describe('from a posting into its application', () => {
   let browser;
-  beforeAll(async () => { browser = await chromium.launch({ headless: true }); }, 30_000);
+  beforeAll(async () => { browser = await launchOrSkip(() => chromium.launch({ headless: true })); }, 30_000);
   afterAll(async () => { await browser?.close(); }, 30_000);
+  skipWithoutBrowser(() => browser);
 
   async function run(url, maxSteps = 2) {
     const context = await browser.newContext();

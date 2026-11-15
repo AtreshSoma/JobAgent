@@ -79,7 +79,8 @@ describe('tailorResumeForJob', () => {
         setImmediate(() => {
           child.stdout.emit('data', Buffer.from(JSON.stringify({
             ok: true, output_path: outputPath, pdf_path: null,
-            audit: { emphasized: ['spark'] }, emphasized: 1, summary_line: 'Tailored for Acme',
+            audit: { emphasized: ['spark'] }, emphasized: 1,
+            skipped_steps: [{ step: 'fit', label: 'fitting to the page limit', reason: 'layout invariant failed' }],
             ats_report: { match_score: 78, band: 'strong', tier1: { missing: [] } },
           }) + '\n'));
           child.emit('close', 0);
@@ -107,10 +108,11 @@ describe('tailorResumeForJob', () => {
     expect(r.tailored).toBe(true);
     expect(r.usedFallback).toBe(false);
     expect(r.output_path).toBe(outputPath);
-    expect(r.summaryLine).toBe('Tailored for Acme');
     expect(r.warning).toBe(null);
     // The ATS report flows through to the caller.
     expect(r.atsReport).toMatchObject({ match_score: 78, band: 'strong' });
+    // A step rolled back on its own (R11) is reported, and the job is still tailored.
+    expect(r.skippedSteps).toEqual([{ step: 'fit', label: 'fitting to the page limit', reason: 'layout invariant failed' }]);
     // The request carried the grounding vocabulary + ATS config to Python.
     const sent = JSON.parse(written);
     expect(sent.vocabulary).toContain('Databricks');

@@ -202,7 +202,7 @@ export const STACK = Object.freeze([
   { part: 'Validation', what: 'Ajv with JSON Schemas', why: 'Config files and model output are both checked against schemas.', kind: 'core' },
   { part: 'Logging', what: 'pino, with secret redaction', why: 'Structured logs plus a durable event row for every decision.', kind: 'core' },
   { part: 'Resume engine', what: 'Python 3.12 or newer with python-docx', why: 'Edits Word documents while preserving their formatting.', kind: 'core' },
-  { part: 'PDF export', what: 'Word, then LibreOffice, then headless Chromium', why: 'One of the three exists on every platform.', kind: 'core' },
+  { part: 'PDF export', what: 'LibreOffice, then Word, then headless Chromium', why: 'One of the three exists on every platform.', kind: 'core' },
   { part: 'Extension', what: 'Manifest V3, Chrome and Edge', why: 'Fills the tab you already have open.', kind: 'optional' },
   { part: 'Model access', what: 'Plain fetch to an OpenAI-compatible endpoint; the Anthropic SDK; Ollama; LM Studio', why: 'Loaded only when LLM assist is on.', kind: 'optional' },
   { part: 'Assistant access', what: 'Model Context Protocol SDK over stdio', why: 'Loaded only by `npm run mcp`.', kind: 'optional' },
@@ -353,7 +353,7 @@ export const TRACES = Object.freeze([
       { name: 'Emphasize', detail: 'A matched keyword is bolded where your resume already uses it, by splitting the text run so only the phrase is bold. The number of emphasized terms is capped. An optional line lists terms that are both requested and already present; it is the only new sentence, and it passes through the humanizer.', files: ['src/resume/tailor.py', 'src/resume/humanizer.py', 'config/humanizer_patterns.json'] },
       { name: 'Make it ATS-safe', detail: 'Layout tables are flattened to single-column paragraphs in the copy, keeping their exact text, and manual page breaks that leave half-empty pages are repaired.', files: ['src/resume/tailor.py'] },
       { name: 'Check the result', detail: 'A validator confirms the document opens, has contact details and core sections. A linter reports constructs parsers choke on. A report estimates keyword match and density and lists gaps, each conditioned on you actually having the experience.', files: ['src/resume/validate.py', 'src/resume/atsLint.py', 'src/resume/atsReport.py', 'src/resume/keywordAudit.py'] },
-      { name: 'Export a PDF', detail: 'Word is tried first, then LibreOffice. If neither exists, the document is rendered to plain HTML and printed with headless Chromium, after checking the page contains every paragraph of the source.', files: ['src/resume/pdfExport.py', 'src/resume/chromiumPdf.js', 'src/resume/pdfPreview.js'] },
+      { name: 'Export a PDF', detail: 'LibreOffice is tried first: it renders the .docx itself, and it is what the page fit measured. Then Word. If neither exists, the document is rendered to HTML in its own font, size and margins and printed with headless Chromium, after checking the page contains every paragraph of the source.', files: ['src/resume/pdfExport.py', 'src/resume/chromiumPdf.js', 'src/resume/pdfPreview.js'] },
     ],
     notes: [
       { title: 'When something is missing', items: ['No Python, no master resume, or a tailoring error: the packet falls back to the master resume and carries a warning you see before approving.', 'A resume with a warning is not eligible for auto-fill until you have looked at it.'] },

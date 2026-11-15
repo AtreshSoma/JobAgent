@@ -164,13 +164,40 @@ $('profileBody').addEventListener('focusout', (event) => {
  * details form, one queued question at a time, and the saved-answer list. A
  * single "Save" spanning all three would leave it unclear what a click writes.
  */
-export async function openProfile() {
+export async function openProfile({ focus = null } = {}) {
   const body = $('profileBody');
   const stop = slowProgress(body, 'Loading your application profile…');
   profileMessage('');
   openDialog($('dlgProfile'));
   // Opening starts from what is stored: nothing typed before is still on screen.
   try { await renderProfile({ keep: false }); } finally { stop(); }
+  if (focus) focusProfileField(focus);
+}
+
+/**
+ * Scroll to one field and put the cursor in it: where a setup-card item sends you.
+ * `editor` is 'details' (a box in Your details, by its data-path) or 'answers'
+ * (a Saved answer, by id; the list is opened first). An answer that no longer
+ * exists lands on the Saved answers list instead of nowhere.
+ *
+ * @param {{editor?: string, field?: string}} focus
+ * @returns {boolean} whether the exact field was found
+ */
+export function focusProfileField({ editor = 'details', field = '' } = {}) {
+  const body = $('profileBody');
+  let target;
+  if (editor === 'answers') {
+    body.querySelector('details.pf-saved')?.setAttribute('open', '');
+    target = field ? body.querySelector(`[data-a-answer="${cssEscape(field)}"]`) : null;
+    if (!target) $('pfAnswers')?.scrollIntoView({ block: 'start' });
+  } else {
+    target = field ? body.querySelector(`[data-path="${cssEscape(field)}"]`) : null;
+    if (!target) $('pfDetails')?.scrollIntoView({ block: 'start' });
+  }
+  if (!target) return false;
+  target.scrollIntoView({ block: 'center' });
+  target.focus({ preventScroll: true });
+  return true;
 }
 
 export function profileMessage(text, tone = 'muted') {
@@ -767,9 +794,39 @@ export async function renderBackups(host) {
   if (info.available) {
     section.append(el('button', { type: 'button', class: 'small', 'data-action': 'backup-now', text: 'Back up now' }));
   }
-  section.append(el('p', { class: 'muted', text: 'Every job list, with its decisions, notes and applications, is copied daily and checked. '
-    + 'To move everything to another computer in one file, run "npm run export" in the JobAgent folder.' }));
+  section.append(el('p', { class: 'muted', text: 'Every job list, with its decisions, notes and applications, is copied daily and checked.' }));
+  // Everything in one file, to move to another computer (S1: was a command line).
+  const form = el('form', { class: 'export-form', 'data-submit': 'export-bundle' },
+    el('h4', { text: 'Move to another computer' }),
+    el('p', { class: 'muted', text: 'One file with every job list, your settings, answers and master resumes. '
+      + 'It holds your personal data. Your API keys are never included.' }),
+    el('label', { for: 'exportPass', text: 'Passphrase (optional, encrypts the file)' }),
+    el('input', { type: 'password', id: 'exportPass', autocomplete: 'new-password', minlength: '8' }),
+    el('div', { class: 'row-gap' },
+      el('button', { type: 'submit', class: 'small', id: 'exportBtn', text: 'Export everything' }),
+      el('span', { id: 'exportStatus', role: 'status', class: 'muted' })));
+  section.append(form);
   host.append(section);
+}
+
+/** Export everything to one file, then offer it as a download. */
+export async function exportEverything() {
+  const status = $('exportStatus');
+  const passphrase = $('exportPass')?.value ?? '';
+  status.className = 'muted';
+  status.textContent = 'Exporting…';
+  try {
+    const r = await postJson('/api/export/bundle', { passphrase });
+    $('exportPass').value = '';
+    status.textContent = '';
+    status.append(
+      `${r.encrypted ? 'Encrypted. Without the passphrase it cannot be opened. ' : 'Not encrypted: keep it private. '}`,
+      el('a', { href: `/api/export/bundle/${encodeURIComponent(r.name)}`, download: r.name, text: `Download ${r.name}` }),
+      ` (${humanBytes(r.bytes)})`);
+  } catch (err) {
+    status.className = 'st-blocked';
+    status.textContent = err.message;
+  }
 }
 
 /** Back up now, then refresh the sentence. */

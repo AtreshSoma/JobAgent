@@ -10,6 +10,8 @@
  *      one legitimate submit path — applyRunner's tryAutoSubmit — must remain
  *      strictly behind the explicit per-run `options.autoSubmit === true`
  *      opt-in. By default the assistant fills and stops before Submit.
+ *   5. The version in package.json, package-lock.json and the newest
+ *      changelog entry agree.
  *
  * Exits with code 0 when healthy, 1 when any check fails. Read-only: it never
  * writes or deletes anything.
@@ -24,6 +26,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 
 import { loadConfig } from '../src/config/loadConfig.js';
 import { openDatabase } from '../src/logging/db.js';
+import { versionAgreement } from './releaseNotes.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -143,6 +146,16 @@ check('submit path is opt-in gated (safety)', () => {
     throw new Error('tryAutoSubmit no longer short-circuits when the opt-in flag is absent');
   }
   return 'submission requires options.autoSubmit === true per run';
+});
+
+check('version is set in one place', () => {
+  // package.json is the source; the lockfile and the newest changelog entry
+  // must agree with it (audit X6: they said 0.2.0 and v0.2.2).
+  const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
+  const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8'));
+  const result = versionAgreement({ packageVersion: pkg.version, lockVersions: [lock.version, lock.packages?.['']?.version] });
+  if (result.error) throw new Error(result.error);
+  return result.version;
 });
 
 let failed = 0;
