@@ -7,10 +7,10 @@
  * Returns NOT_HANDLED when no route here matched, so server.js tries the next
  * module; anything else means the request was answered.
  */
-import { dismissQuestion, markQuestionAnswered, reopenQuestion } from '../../apply/questionQueue.js';
+import { dismissQuestion, loadQuestionQueue, markQuestionAnswered, reopenQuestion, suggestPatterns } from '../../apply/questionQueue.js';
 import { adoptResumeEvidence, readProfile, readScreeningAnswers, upsertScreeningAnswer, writeProfile, writeScreeningAnswers } from '../../config/profileStore.js';
 import { buildBackground, profileFromResume } from '../../profile/fromResume.js';
-import { acknowledgeResumeMismatch, activateProfile, createPersonProfile, deleteProfile as deleteSearchProfile, listProfiles as listSearchProfiles, mergeIntoActiveProfile, migrateLegacyCandidate, watchSkillInActiveProfile, proposeProfileFromResume, readActiveProfile, readProfile as readSearchProfile, refreshBackgroundFromResume, resumeProfileToReuse, saveProfile as saveSearchProfile, updatePersonProfile } from '../../profile/store.js';
+import { acknowledgeResumeMismatch, activateProfile, createPersonProfile, deleteProfile as deleteSearchProfile, listProfiles as listSearchProfiles, mergeIntoActiveProfile, migrateLegacyCandidate, saveSkillExperienceInActiveProfile, watchSkillInActiveProfile, proposeProfileFromResume, readActiveProfile, readProfile as readSearchProfile, refreshBackgroundFromResume, resumeProfileToReuse, saveProfile as saveSearchProfile, updatePersonProfile } from '../../profile/store.js';
 import { masterResumeFile, workspacePaths } from '../../profile/workspace.js';
 import { extractDocxText } from '../../resume/docxText.js';
 import { copyFileSync, mkdirSync } from 'node:fs';
@@ -402,6 +402,45 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
         type: body.type,
       }, { question: body.question, replace: body.replace === true });
       if (body.key) markQuestionAnswered(root, String(body.key), { answerId: saved.id, now: ctx.nowDate() });
+      return sendJson(res, 200, { ...saved, warning: ctx.reloadConfig(), ...ctx.profileState() });
+    });
+  }
+  // "Same as this earlier question" (A5): the new wording joins an answer the
+  // person already saved. The answer, its type and its safety checks are the
+  // existing entry's; only a pattern is added.
+  if (req.method === 'POST' && path === '/api/profile/questions/same-as') {
+    const body = await readBody(req);
+    return ctx.saving(res, () => {
+      const root = ctx.requireConfigRoot();
+      const queue = loadQuestionQueue(root);
+      const asked = (queue.questions ?? []).find((q) => q.key === String(body.key ?? ''));
+      if (!asked) throw new Error('that question is no longer in the queue');
+      const current = readScreeningAnswers(root);
+      const entry = (current.answers ?? []).find((a) => a.id === String(body.answerId ?? ''));
+      if (!entry) throw new Error(`there is no saved answer "${body.answerId}"`);
+      const added = suggestPatterns(asked.label).filter((p) => !(entry.patterns ?? []).includes(p));
+      if (!added.length) throw new Error('that wording is already covered by this answer');
+      const saved = upsertScreeningAnswer(root, {
+        id: entry.id, patterns: [...(entry.patterns ?? []), ...added], answer: entry.answer, type: entry.type,
+      }, { question: asked.label, replace: true });
+      markQuestionAnswered(root, asked.key, { answerId: entry.id, now: ctx.nowDate() });
+      return sendJson(res, 200, { ...saved, addedPatterns: added, warning: ctx.reloadConfig(), ...ctx.profileState() });
+    });
+  }
+  // A number of years with a skill, confirmed by the person (A6). Saved in the
+  // active profile so it survives activation; later forms are answered with it.
+  if (req.method === 'POST' && path === '/api/profile/skill-experience') {
+    const body = await readBody(req);
+    return ctx.saving(res, () => {
+      const root = ctx.requireConfigRoot();
+      let saved;
+      try {
+        saved = saveSkillExperienceInActiveProfile(root, body.subject, body.answer);
+      } catch (err) {
+        throw Object.assign(err, { statusCode: 400 });
+      }
+      activateProfile(root, saved.id);
+      if (body.key) markQuestionAnswered(root, String(body.key), { answerId: 'skill_experience', now: ctx.nowDate() });
       return sendJson(res, 200, { ...saved, warning: ctx.reloadConfig(), ...ctx.profileState() });
     });
   }

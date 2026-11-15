@@ -16,6 +16,8 @@ Setup is one calm line instead of a wall of warnings, tailored resumes are fitte
 
 - The cover letter is also made as a PDF beside its Word and text copies, so a form whose letter slot takes only PDF no longer stops the run. Editing or restoring a letter removes the old PDF first, so an employer never receives a PDF of text you replaced.
 - Auto-fill reads application forms built with web components (open shadow roots), where it used to say the form could not be read. The check that holds Submit back while a required question is blank reads them too.
+- A question an employer words differently from one you answered can reuse your answer: the Questions list offers "Same answer" for a close match. Sponsorship, work authorization, pay, skill years, history, health, age, other countries and employer-specific questions are never offered.
+- For "years of experience with X", the Questions list suggests a number from the roles in your work history that mention X, and shows which roles it counted. It is saved only when you confirm, never typed onto a form before.
 - Auto-fill can wait for you at a sign-in or CAPTCHA page instead of stopping: set ASSIST_WAIT_FOR_WALL_SECONDS and, in a visible browser window, it waits that long for you to clear the page, then carries on. It is off by default, never solves a wall itself, and if the wall stays it stops and says how long it waited.
 - Auto-fill follows questions that reveal further questions, up to five levels deep on one page, instead of stopping after the first follow-up.
 - Preparing applications is quicker: the resume tools now start once and stay ready, instead of starting two or three times for every job.

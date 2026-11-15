@@ -93,6 +93,9 @@ import { loadConfig } from '../config/loadConfig.js';
 import { findPlaceholders, isPlaceholderValue } from '../config/placeholders.js';
 import { runEnrichment } from '../search/enrich.js';
 import { PROFILE_FIELDS, readProfile, readScreeningAnswers } from '../config/profileStore.js';
+import { skillYearsFromHistory } from '../apply/skillYears.js';
+import { similarAnswered } from '../apply/questionSimilarity.js';
+import { experienceSubject } from '../apply/screeningQA.js';
 import { recordUnansweredQuestions, suggestAnswerId, suggestPatterns, summarizeQuestionQueue } from '../apply/questionQueue.js';
 import { evaluateAutoApplyBatch } from '../apply/autoApplyEligibility.js';
 import { loadLiveVerifiedAts } from '../apply/liveVerification.js';
@@ -800,11 +803,23 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
         ...questions,
         // Suggested id/patterns are computed here, so the browser never has to
         // reimplement the matcher's tokenizing rules and get them subtly wrong.
-        open: questions.open.map((q) => ({
-          ...q,
-          suggestedId: suggestAnswerId(q.label),
-          suggestedPatterns: suggestPatterns(q.label),
-        })),
+        open: questions.open.map((q) => {
+          // A6: a "years with X" question carries the number the work history
+          // supports and the roles behind it, for the person to confirm.
+          const subject = experienceSubject(q.label);
+          const suggestion = subject ? skillYearsFromHistory(subject, config?.candidate?.workHistory) : null;
+          // A5: an already-answered question this one is worded like, offered for
+          // one confirmation. Only an answer that still exists is offered.
+          const similar = q.kind === 'general' ? similarAnswered(q.label, questions.resolved) : null;
+          const similarTo = similar && screening.answers.some((a) => a.id === similar.answerId) ? similar : null;
+          return {
+            ...q,
+            suggestedId: suggestAnswerId(q.label),
+            suggestedPatterns: suggestPatterns(q.label),
+            ...(suggestion ? { suggestedExperience: { subject, ...suggestion } } : {}),
+            ...(similarTo ? { similarTo } : {}),
+          };
+        }),
       },
     };
   }

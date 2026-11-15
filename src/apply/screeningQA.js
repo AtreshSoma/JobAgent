@@ -12,6 +12,7 @@
  */
 
 import { normalizeText, normalizeForMatch, wholeWordIn } from '../utils/textNormalize.js';
+import { skillYearsFromHistory } from './skillYears.js';
 
 /**
  * SPONSORSHIP TRUTH IS A PROPERTY OF THE PERSON, NOT A CONSTANT.
@@ -334,12 +335,16 @@ export function answerScreeningQuestion(question, screeningAnswers, { choices, c
         subject,
       };
     }
+    // A6: the number the work history supports, offered with the roles it came
+    // from. It is a SUGGESTION: the question still goes to the person.
+    const suggestion = skillYearsFromHistory(subject, candidate?.workHistory);
     return {
       ...askUser(defaults),
       // Like the inverted sponsorship case, this must reach the human even when
       // defaults.unknownAction is 'skip': a blank is honest, a guess is not.
       action: 'ask_user',
       subject,
+      ...(suggestion ? { suggestion } : {}),
       reason: `asks how long you have worked with "${subject}" — add it to `
         + 'candidate.skillExperience or answer it yourself; your career total does not apply',
     };

@@ -100,6 +100,18 @@ export function distinct(values, max = LIMITS.list) {
   return out;
 }
 
+/** A skill -> duration map: bounded, text only, keys lower-cased. */
+function cleanSkillExperience(map) {
+  if (!map || typeof map !== 'object' || Array.isArray(map)) return {};
+  const out = {};
+  for (const [skill, years] of Object.entries(map).slice(0, 80)) {
+    const key = String(skill ?? '').trim().toLowerCase().slice(0, 60);
+    const value = String(years ?? '').replace(/\s+/g, ' ').trim().slice(0, 40);
+    if (key && value) out[key] = value;
+  }
+  return out;
+}
+
 /**
  * Normalize anything profile-shaped into the canonical structure.
  *
@@ -207,6 +219,9 @@ export function normalizeProfile(input = {}) {
           highlights: distinct(w?.highlights, 20),
         }))
         : [],
+      // Years with a named skill, as the person confirmed them (audit A6). The
+      // only honest source for "how many years of experience with X?".
+      skillExperience: cleanSkillExperience(background.skillExperience),
       leadership: {
         hasManaged: bool(background.leadership?.hasManaged),
         evidence: distinct(background.leadership?.evidence, 20),
@@ -450,6 +465,7 @@ export function toCandidateConfig(profile, { expandedRoles = [], anchorRoles, ad
     yearsExperience: background.yearsExperience,
     domainExperience: distinct([...background.industries, ...intent.industries], LIMITS.industries),
     workHistory: background.workHistory.length ? background.workHistory : [],
+    skillExperience: background.skillExperience ?? {},
     education: background.education,
     salaryPreference: {
       display: intent.compensation.display,

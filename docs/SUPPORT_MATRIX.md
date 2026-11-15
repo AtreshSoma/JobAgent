@@ -258,6 +258,8 @@ tenant that sets `searchText: ""` still means "enumerate everything".
 
 **Walls.** A sign-in, CAPTCHA or verification page stops the run by default. With `ASSIST_WAIT_FOR_WALL_SECONDS` set (headed runs only, capped at 15 minutes) the run instead stays on the page, looks again, and continues once you have cleared it; a wall that stays ends the run blocked and says how long it waited. Tested on a local fixture whose wall clears mid-run (`waitForWall`).
 
+**Questions.** A question that matches no saved answer goes to the Questions list. Two helpers there only ever *suggest*: "same answer" for a close rewording of one you already answered (strict match; sensitive, pay, skill-years, other-country and employer-specific questions are excluded), and a years-with-a-skill number worked out from your work history. Both wait for one confirmation. Tested in `questionSimilarity` and `skillYears`.
+
 **Coverage probe.** `npm run coverage:probe` reads the saved form fixtures with the no-side-effects dry run and records, per platform, how many fields auto-fill finds and would answer (System health → Auto-fill coverage). It is measured on local fixtures, first page of each form, and refuses any non-local URL. It says nothing about a real employer's current form.
 
 **Live verification.** None of the ATS rows above has a recorded supervised
