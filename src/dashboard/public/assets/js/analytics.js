@@ -156,7 +156,9 @@ export function renderTabs() {
   const views = filtered ?? state.stats?.views ?? {};
   const host = $('tabs');
   const keptFocus = host.contains(document.activeElement);
-  host.textContent = '';
+  // Everything but the glass lens (glass.js): it stays, so its glide to the
+  // new tab is not cut off by the rebuild that selecting a tab causes.
+  for (const node of [...host.childNodes]) if (!node.classList?.contains('glass-lens')) node.remove();
   // Each list view carries its own stages: discovery under Jobs, application
   // work under Applications. The header nav shows the waiting application
   // work as one number, so it is visible from anywhere.
@@ -189,7 +191,11 @@ export function renderTabs() {
       title: filtered
         ? `${fmt(count)} of these match the filters you have set`
         : `${fmt(count)} job(s)`,
-    }, label, el('span', { class: `badge${count === 0 ? ' zero' : ''}`, text: fmt(count) })));
+    },
+    // The label reserves its selected (heavier) width, so choosing a tab never
+    // nudges the tabs after it sideways (app.css, .tab-label).
+    el('span', { class: 'tab-label', 'data-text': label, text: label }),
+    el('span', { class: `badge${count === 0 ? ' zero' : ''}`, text: fmt(count) })));
   }
   // Name the panel after whichever tab is currently showing in it.
   $('boardwrap').setAttribute('aria-labelledby', `tab-${state.activeTab}`);

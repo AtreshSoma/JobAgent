@@ -505,6 +505,8 @@ export async function loadHealthChecks() {
   setSystemNotices(state.today?.systemNotices ?? []);
 }
 
+const joinLabels = (items) => (items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items.at(-1)}`);
+
 export function renderSetupChecklist() {
   const host = $('setupChecklist');
   if (!host) return;
@@ -518,13 +520,23 @@ export function renderSetupChecklist() {
   const list = el('ul', { class: 'setup-list' });
   for (const check of failing) {
     const fix = SETUP_FIX[check.id] ?? { action: 'open-health', label: 'See details' };
+    // A check that names its empty fields gets them in words, and its button
+    // opens the profile AT them, each marked until it is filled.
+    const fields = Array.isArray(check.fields) ? check.fields : [];
+    const detail = fields.length ? `Missing: ${joinLabels(fields.map((f) => f.label))}` : check.detail;
     const item = el('li', {},
       el('span', { class: 'setup-mark', 'aria-hidden': 'true' }),
       el('div', { class: 'setup-text' },
         el('b', { text: check.label ?? check.id }),
-        check.detail ? el('div', { class: 'faint clamp-2', title: check.detail, text: check.detail }) : null,
+        detail ? el('div', { class: 'faint clamp-2', title: detail, text: detail }) : null,
         fix.kind === 'text' ? el('div', { class: 'faint', text: 'Close JobAgent and open it again from its launcher, and say yes when it offers to download the browser (about 150 MB). Then retry.' }) : null));
-    if (fix.action) {
+    if (fix.action === 'open-profile' && fields.length) {
+      item.append(el('button', {
+        type: 'button', class: 'small primary', 'data-action': 'setup-fix', 'data-editor': 'details',
+        'data-field': fields[0].path, 'data-fields': fields.map((f) => f.path).join(' '),
+        text: fields.length === 1 ? `Fill in ${fields[0].label}` : `Fill in ${fields.length} fields`,
+      }));
+    } else if (fix.action) {
       item.append(el('button', { type: 'button', class: 'small', 'data-action': fix.action, text: fix.label }));
     }
     list.append(item);

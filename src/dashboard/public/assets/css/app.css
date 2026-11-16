@@ -70,8 +70,6 @@
   --glass-strong: rgba(17, 22, 30, .9);
   --glass-line: rgba(160, 190, 230, .12);
   --glass-hi: rgba(255, 255, 255, .05);
-  --lg-spec: rgba(255, 255, 255, .13);
-  --lg-shade: rgba(0, 0, 0, .5);
   --lg-rim-top: rgba(255, 255, 255, .2);
   --lg-rim-bottom: rgba(255, 255, 255, .03);
   --lg-channel: rgba(0, 0, 0, .28);
@@ -213,8 +211,6 @@
   --glass-strong: rgba(255, 255, 255, .9);
   --glass-line: rgba(16, 24, 40, .09);
   --glass-hi: rgba(255, 255, 255, .8);
-  --lg-spec: rgba(255, 255, 255, .92);
-  --lg-shade: rgba(16, 24, 40, .18);
   --lg-rim-top: rgba(255, 255, 255, 1);
   --lg-rim-bottom: rgba(16, 24, 40, .13);
   --lg-channel: rgba(16, 24, 40, .055);
@@ -279,8 +275,6 @@
     --glass-strong: rgba(255, 255, 255, .9);
     --glass-line: rgba(16, 24, 40, .09);
     --glass-hi: rgba(255, 255, 255, .8);
-    --lg-spec: rgba(255, 255, 255, .92);
-    --lg-shade: rgba(16, 24, 40, .18);
     --lg-rim-top: rgba(255, 255, 255, 1);
     --lg-rim-bottom: rgba(16, 24, 40, .13);
     --lg-channel: rgba(16, 24, 40, .055);
@@ -1185,8 +1179,18 @@ button.stat:hover { background: none; border-color: transparent; }
 .tab .badge {
   background: var(--chip); color: var(--text-dim); border-radius: var(--r-full);
   padding: 0 6px; font-size: var(--fs-xs); min-width: 18px; text-align: center; line-height: 17px;
+  /* One weight whether or not its tab is selected, so the count never changes width. */
+  font-weight: 600; font-variant-numeric: tabular-nums;
 }
 .tab .badge.zero { background: transparent; color: var(--text-faint); padding: 0 2px; min-width: 0; }
+/* The selected weight's width, held by an invisible copy, so the row never
+   shifts when the weight changes. */
+.tab-label { display: inline-flex; flex-direction: column; align-items: center; }
+.tab-label::after {
+  /* `/ ""`: no alternative text, so a screen reader does not hear the label twice. */
+  content: attr(data-text) / ""; font-weight: 620; height: 0; overflow: hidden; visibility: hidden;
+  user-select: none; pointer-events: none;
+}
 .tab[aria-selected="true"] .badge:not(.zero) { background: var(--accent); color: var(--accent-ink); }
 .tab.urgent .badge { background: var(--warn); color: var(--on-warn); }
 
@@ -3058,9 +3062,61 @@ kbd {
 /* Two columns on a laptop, one on a phone — an application form's contact
    block is short fields, and a single column of thirteen is a lot of scroll. */
 .pf-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0 var(--s3); }
-.pf-cell input { margin-bottom: 4px; }
+.pf-cell input, .pf-cell select { margin-bottom: 4px; width: 100%; }
 .pf-cell .fineprint { margin-bottom: var(--s3); }
 .pf-req { color: var(--warn); }
+
+/* Missing fields: red until filled. The box, its label and a small tag carry
+   it together, so it is never colour alone. Filling it turns the tag to a calm
+   "Ready to save" at once; the red fades rather than snapping off. */
+.pf-cell input, .pf-cell select { transition: border-color .2s ease, box-shadow .2s ease, background-color .2s ease; }
+.pf-cell.is-missing input, .pf-cell.is-missing select {
+  border-color: var(--bad);
+  background-color: color-mix(in srgb, var(--bad-soft) 55%, var(--surface));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 14%, transparent);
+}
+.pf-cell.is-missing input:focus-visible, .pf-cell.is-missing select:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 30%, transparent);
+}
+.pf-cell.is-missing > label { color: var(--bad); }
+.pf-need {
+  display: inline-block; margin-left: 8px; padding: 1px 8px; vertical-align: 1px;
+  border-radius: var(--r-full); font-size: var(--fs-xs); font-weight: 600; line-height: 1.5;
+  color: var(--bad); background: var(--bad-soft);
+  transition: color .2s ease, background-color .2s ease;
+}
+.pf-cell.is-filled .pf-need { color: var(--good); background: color-mix(in srgb, var(--good) 12%, transparent); }
+/* Arriving from the checklist: one ring that spreads and fades. */
+.pf-cell.is-arrived input, .pf-cell.is-arrived select { animation: pf-arrive .9s cubic-bezier(.23, 1, .32, 1) .15s 1; }
+@keyframes pf-arrive {
+  from { box-shadow: 0 0 0 0 color-mix(in srgb, var(--bad) 45%, transparent); }
+  to { box-shadow: 0 0 0 12px color-mix(in srgb, var(--bad) 0%, transparent); }
+}
+
+/* The list at the top: what is left, each name a jump to its box. */
+.pf-missing {
+  margin: 0 0 var(--s4); padding: var(--s3) var(--s4);
+  border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--line)); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--bad-soft) 45%, var(--surface));
+}
+.pf-missing p { margin: 4px 0 0; }
+.pf-missing-head { display: flex; align-items: baseline; gap: var(--s2); flex-wrap: wrap; }
+.pf-missing-count { font-size: var(--fs-sm); color: var(--bad); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pf-missing-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--s2); }
+.pf-missing-chip {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 45%, var(--line)); border-radius: var(--r-full);
+  background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-sm); cursor: pointer;
+  transition: border-color .2s ease, background-color .2s ease, color .2s ease, transform .12s cubic-bezier(.23, 1, .32, 1);
+}
+.pf-missing-chip::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--bad); transition: background-color .2s ease; }
+.pf-missing-chip:hover { border-color: var(--bad); }
+.pf-missing-chip:active { transform: scale(.97); }
+.pf-missing-chip.is-done { border-color: color-mix(in srgb, var(--good) 45%, var(--line)); color: var(--text-muted); }
+.pf-missing-chip.is-done::before { background: var(--good); }
+@media (prefers-reduced-motion: reduce) {
+  .pf-cell.is-arrived input, .pf-cell.is-arrived select { animation: none; }
+}
 
 .pf-saved summary { font-size: var(--fs-md); font-weight: 650; cursor: pointer; margin-bottom: var(--s3); }
 .pf-answer {
@@ -4101,10 +4157,11 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
     0 1px 2px var(--lg-shade),
     0 4px 10px -4px var(--lg-shade),
     0 12px 24px -14px var(--lg-shade);
-  transition:
-    transform .44s cubic-bezier(.32, 1.32, .46, 1),
-    width .44s cubic-bezier(.32, 1.32, .46, 1),
-    height .3s ease, opacity .2s ease;
+  /* The glide is a compositor animation started from glass.js (transform
+     only, a spring); the size is set at once and played back as a scale from
+     this corner. Only the fade in and out is a transition. */
+  transform-origin: 0 0;
+  transition: opacity .18s ease;
 }
 /* A soft caustic where the light enters the drop. */
 .glass-lens::after {
@@ -4113,17 +4170,18 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
   opacity: .6;
 }
 .glass-lens.is-off { opacity: 0; }
-/* On its way between two options it stretches, then settles. */
-.glass-lens.is-moving { animation: lens-stretch .44s cubic-bezier(.3, .8, .4, 1); }
-@keyframes lens-stretch { 38% { scale: 1.07 .9; } 72% { scale: .99 1.02; } }
 .seg[data-glass] .glass-lens { border-radius: var(--r-xs); }
 
 /* Options over the lens: the lens is the selection, so the option itself goes clear. */
 .viewswitch[data-glass] button[aria-pressed="true"],
 .tabs[data-glass] .tab[aria-selected="true"] { background: transparent; box-shadow: none; border-color: transparent; }
-.viewswitch[data-glass] button:not([aria-pressed="true"]):hover,
-.tabs[data-glass] .tab:not([aria-selected="true"]):hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
-.viewswitch[data-glass] button, .tabs[data-glass] .tab { transition: color .2s ease, background-color .2s ease; }
+/* No hover wash where the lens is arriving: two fills in one place read as a flicker. */
+.viewswitch[data-glass] button:not([aria-pressed="true"]):not(.is-lensed):hover,
+.tabs[data-glass] .tab:not([aria-selected="true"]):not(.is-lensed):hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+/* The option the lens is under takes its selected ink as the lens sets off,
+   not a press later when the app confirms it. */
+.viewswitch[data-glass] button.is-lensed, .tabs[data-glass] .tab.is-lensed { color: var(--text); }
+.viewswitch[data-glass] button, .tabs[data-glass] .tab { transition: color .16s ease, background-color .16s ease; }
 /* The "Posted" segments filter the board, so their lens is tinted with the accent. */
 .seg[data-glass] button[aria-pressed="true"] { background: transparent; border-color: transparent; color: var(--accent-ink); }
 .seg[data-glass] button[aria-pressed="true"]:hover { background: transparent; }
@@ -4168,7 +4226,6 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
 }
 @media (prefers-reduced-motion: reduce) {
   .glass-lens { transition: none; }
-  .glass-lens.is-moving { animation: none; }
 }
 
 /* Back to top: appears in the docked pager once the list is two screens deep. */

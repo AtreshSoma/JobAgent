@@ -9,7 +9,7 @@ import { formIsDirty, isEdited, restoreForm, saveOnlyOnPurpose, snapshotForm, wi
 import {
   parseAnswerError, validateAnswerText, validateEmail, validatePatterns, validatePhone, validateRequired, validateYears,
 } from './validate.js';
-import { scheduleTodayReload, setSystemNotices } from './today.js';
+import { loadHealthChecks, scheduleTodayReload, setSystemNotices } from './today.js';
 import { miniTable } from './reports.js';
 
 /* ─────────────────── application profile + question queue ─────────────────── */
@@ -127,6 +127,7 @@ $('profileBody').addEventListener('input', (event) => {
   const target = event.target;
   if (target.matches?.('[data-path]')) {
     if (!detailError(target)?.hidden && !detailProblem(target)) setDetailError(target, '');
+    remarkCell(target);
     refreshDetailsSave();
     return;
   }
@@ -168,10 +169,54 @@ export async function openProfile({ focus = null } = {}) {
   const body = $('profileBody');
   const stop = slowProgress(body, 'Loading your application profile…');
   profileMessage('');
+  // What the setup checklist sent the person here to fill: marked until filled.
+  asked = new Set(focus?.fields ?? []);
   openDialog($('dlgProfile'));
   // Opening starts from what is stored: nothing typed before is still on screen.
   try { await renderProfile({ keep: false }); } finally { stop(); }
-  if (focus) focusProfileField(focus);
+  if (focus) {
+    // The first asked-for field that has a box here; a field kept elsewhere
+    // (the job titles) is named in the notice at the top instead.
+    const field = (focus.fields ?? []).find((p) => body.querySelector(`[data-path="${cssEscape(p)}"]`)) ?? focus.field;
+    focusProfileField({ ...focus, field });
+  }
+}
+
+/* ─────────────────── missing fields, marked until filled ───────────────────
+   A required box that is empty, or one the setup checklist named, is drawn in
+   red with a "Missing" tag. Typing into it turns the tag to "Ready to save";
+   clearing it again brings the red back. Saving redraws from the server, and a
+   box that is now filled carries no mark at all. A mark never blocks a save:
+   saving the boxes that are done is always allowed. */
+
+/** Paths the setup checklist asked for when it opened the dialog. */
+let asked = new Set();
+
+/** Required profile fields the doctor last reported empty: {path, label}[]. */
+function doctorMissing() {
+  const check = (state.health?.checks ?? []).find((c) => c.id === 'profile' && c.status === 'fail');
+  return Array.isArray(check?.fields) ? check.fields : [];
+}
+
+const reducedMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** Re-mark one box from what is in it now. */
+function remarkCell(control) {
+  const cell = control.closest('.pf-cell[data-need]');
+  if (!cell) return;
+  const filled = control.value.trim() !== '';
+  cell.classList.toggle('is-missing', !filled);
+  cell.classList.toggle('is-filled', filled);
+  const tag = cell.querySelector('.pf-need');
+  if (tag) tag.textContent = filled ? 'Ready to save' : 'Missing';
+  // The count at the top follows the boxes.
+  const left = $('profileBody').querySelectorAll('.pf-cell.is-missing').length;
+  const count = $('pfMissingCount');
+  if (count) count.textContent = left ? `${left} to fill` : 'All filled, save to keep them';
+  for (const chip of $('profileBody').querySelectorAll('.pf-missing-chip[data-go]')) {
+    const box = $('profileBody').querySelector(`.pf-cell [data-path="${cssEscape(chip.dataset.go)}"]`);
+    chip.classList.toggle('is-done', Boolean(box?.value.trim()));
+  }
 }
 
 /**
@@ -195,8 +240,16 @@ export function focusProfileField({ editor = 'details', field = '' } = {}) {
     if (!target) $('pfDetails')?.scrollIntoView({ block: 'start' });
   }
   if (!target) return false;
-  target.scrollIntoView({ block: 'center' });
+  target.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
   target.focus({ preventScroll: true });
+  // One soft pulse says "this one" as the box arrives.
+  const cell = target.closest('.pf-cell');
+  if (cell) {
+    cell.classList.remove('is-arrived');
+    void cell.offsetWidth;
+    cell.classList.add('is-arrived');
+    cell.addEventListener('animationend', () => cell.classList.remove('is-arrived'), { once: true });
+  }
   return true;
 }
 
@@ -250,6 +303,8 @@ export async function renderProfile({ keep = true, committed = null } = {}) {
   body.append(renderProfileFields(data.profile));
   body.append(renderSavedAnswers(data.screening));
   restoreForm(body, pending);
+  // Carried-over typing may already fill a marked box.
+  for (const control of body.querySelectorAll('.pf-cell[data-need] [data-path]')) remarkCell(control);
   rejudgeProfileForm();
   renderHealthProfileFlag();
 }
@@ -416,51 +471,87 @@ export function renderProfileFields(profile) {
   // State what is actually true of BOTH tiers. Saying "every field has a value"
   // while three optional boxes were blank was an overclaim in exactly the place
   // the page exists to be trusted.
-  const missing = profile.missing ?? [];
-  const blankOptional = (profile.fields ?? []).filter((f) => !f.required && !f.filled).length;
+  const fields = profile.fields ?? [];
+  // What to mark: a required box that is empty (or still template text), and
+  // any box the doctor or the setup checklist named.
+  const named = new Set([...doctorMissing().map((f) => f.path), ...asked]);
+  const unanswered = (f) => !f.filled || f.placeholder === true;
+  const marked = new Set(fields.filter((f) => unanswered(f) && (f.required || named.has(f.path))).map((f) => f.path));
+  // Named but kept outside this form (the job titles live in the search profile).
+  const formPaths = new Set(fields.map((f) => f.path));
+  const elsewhere = doctorMissing().filter((f) => !formPaths.has(f.path));
+
+  const blankOptional = fields.filter((f) => !f.required && !f.filled && !marked.has(f.path)).length;
   const optionalNote = blankOptional
     ? ` ${blankOptional} optional field(s) are blank — a form asking for one gets nothing.`
     : '';
-  section.append(el('div', { class: missing.length ? 'attention' : 'evidence-note' },
-    missing.length ? el('span', { class: 'mark', text: '!' }) : null,
-    el('div', {}, missing.length
-      ? `${missing.length} required field(s) are empty, so every application leaves them blank — `
-        + `which is what turns an auto-fill run into "blocked".${optionalNote}`
-      : `Every required field has a value, typed onto forms exactly as written here.${optionalNote}`)));
+  if (marked.size || elsewhere.length) {
+    const chips = el('div', { class: 'pf-missing-chips' });
+    for (const f of fields.filter((x) => marked.has(x.path))) {
+      chips.append(el('button', {
+        type: 'button', class: 'pf-missing-chip', 'data-action': 'pf-field', 'data-go': f.path,
+        title: `Go to ${f.label}`, text: f.label,
+      }));
+    }
+    section.append(el('div', { class: 'pf-missing', role: 'group', 'aria-labelledby': 'pfMissingTitle' },
+      el('div', { class: 'pf-missing-head' },
+        el('b', { id: 'pfMissingTitle', text: 'Fill these in to apply' }),
+        el('span', { class: 'pf-missing-count', id: 'pfMissingCount', 'aria-live': 'polite', text: `${marked.size} to fill` })),
+      el('p', { class: 'fineprint muted', text: 'Every application leaves an empty one blank, which is what stops an auto-fill run. Press a name to go to it.' }),
+      marked.size ? chips : null,
+      elsewhere.length
+        ? el('p', { class: 'fineprint muted', text: `Also missing: ${joinWords(elsewhere.map((f) => f.label))}. Set ${elsewhere.length === 1 ? 'it' : 'them'} from the profile menu, Edit profile.` })
+        : null));
+  } else {
+    section.append(el('div', { class: 'evidence-note' },
+      el('div', {}, `Every required field has a value, typed onto forms exactly as written here.${optionalNote}`)));
+  }
 
   section.append(el('p', { class: 'fineprint muted pf-hint', id: 'pfLegend' },
     el('span', { class: 'pf-req', 'aria-hidden': 'true', text: '* ' }),
     'Required by most application forms. Everything else is optional.'));
 
   const grid = el('div', { class: 'pf-grid' });
-  for (const field of profile.fields ?? []) {
-    const cell = el('div', { class: 'pf-cell' });
+  for (const field of fields) {
+    const need = marked.has(field.path);
+    const cell = el('div', { class: `pf-cell${need ? ' is-missing' : ''}`, 'data-need': need ? '' : null });
     const errorId = `pf-err-${field.field}`;
     cell.append(el('label', { for: `pf-${field.field}` },
       field.label,
       field.required
         ? el('span', { class: 'pf-req', title: 'Required by most application forms', text: ' *' })
-        : el('span', { class: 'opt', text: ' (optional)' })));
+        : el('span', { class: 'opt', text: ' (optional)' }),
+      need ? el('span', { class: 'pf-need', text: 'Missing' }) : null));
     // A value that is still the shipped template text ("Your City") is not the
     // person's answer. It is shown as grey placeholder text in an EMPTY box, so
     // it reads as "fill this in" and is never submitted as if it were theirs.
     const template = field.placeholder === true;
-    cell.append(el('input', {
-      type: field.type === 'url' ? 'url' : 'text',
+    // What the field rules above need: its name in messages, whether it is
+    // required, and which format check applies.
+    const common = {
       id: `pf-${field.field}`, 'data-path': field.path,
-      value: template ? '' : (field.value ?? ''),
-      placeholder: template ? field.value : null,
-      'data-template': template ? '' : null,
-      // What the field rules above need: its name in messages, whether it is
-      // required, and which format check applies.
       'data-label': field.label,
       'data-required': field.required ? '' : null,
       'data-kind': field.field,
       'aria-describedby': errorId,
-      // type=email/tel would let the browser block a save with its own bubble,
-      // which hides the specific message under the box. The rules live here and on the server.
-      inputmode: field.type === 'tel' ? 'tel' : null,
-    }));
+    };
+    if (field.type === 'choice') {
+      // A question with fixed answers (visa sponsorship): a choice, never free text.
+      cell.append(el('select', common, ...(field.options ?? []).map((o) => el('option', {
+        value: o.value, selected: o.value === (field.value ?? '') ? true : null, text: o.label,
+      }))));
+    } else {
+      cell.append(el('input', {
+        ...common,
+        type: field.type === 'url' ? 'url' : 'text',
+        value: template ? '' : (field.value ?? ''),
+        placeholder: template ? field.value : null,
+        'data-template': template ? '' : null,
+        // type=email/tel would let the browser block a save with its own bubble,
+        // which hides the specific message under the box. The rules live here and on the server.
+        inputmode: field.type === 'tel' ? 'tel' : null,
+      }));
+    }
     cell.append(el('p', { class: 'field-error', id: errorId, hidden: true }));
     if (field.hint) cell.append(el('div', { class: 'faint fineprint', text: field.hint }));
     grid.append(cell);
@@ -604,8 +695,20 @@ export async function saveProfileDetails() {
     await renderProfile({ committed: '[data-path]' });
     // A saved value can clear a template notice and turn Prepare back on.
     scheduleTodayReload();
+    // ...and take its line off the setup checklist now, not on the next visit.
+    if (doctorMissing().length) loadHealthChecks();
   } catch (err) {
     profileMessage(err.message, 'st-blocked');
+    // A refusal about one box is also said under that box, with the cursor on it.
+    const fields = err.body?.fields ?? {};
+    let first = null;
+    for (const [path, message] of Object.entries(fields)) {
+      const input = $('profileBody').querySelector(`[data-path="${cssEscape(path)}"]`);
+      if (!input) continue;
+      setDetailError(input, message);
+      first ??= input;
+    }
+    first?.focus();
   }
 }
 

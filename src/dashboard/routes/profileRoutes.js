@@ -355,7 +355,11 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
         throw new Error('send { values: { "<field path>": "<value>" } }');
       }
       const saved = writeProfile(root, body.values);
-      return sendJson(res, 200, { ...saved, warning: ctx.reloadConfig(), profile: readProfile(root) });
+      const warning = ctx.reloadConfig();
+      // Sponsorship and work authorization feed every verdict ("Verify
+      // sponsorship", eligibility), so jobs judged on the old answer are re-scored.
+      if (!warning && saved.changed.some((p) => p.startsWith('workAuthorization.'))) ctx.scheduleRescore();
+      return sendJson(res, 200, { ...saved, warning, profile: readProfile(root) });
     });
   }
   if (req.method === 'POST' && path === '/api/profile/adopt') {

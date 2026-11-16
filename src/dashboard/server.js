@@ -451,6 +451,10 @@ export function createDashboardServer({ config: bootConfig, db, logger, deps = {
     try {
       const loader = deps.loadConfigImpl ?? loadConfig;
       config = loader({ root, loadEnv: false });
+      // The doctor's verdict was about the old files: a profile box just filled
+      // must leave the setup checklist on the next look, not 30 seconds later.
+      healthCache = null;
+      healthCacheAt = 0;
       // This process's own write is now loaded; only a LATER change by another
       // process should trigger followExternalChanges.
       if (dbPath) seenActivation = activationStamp(root);

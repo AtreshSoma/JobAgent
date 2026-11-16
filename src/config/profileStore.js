@@ -62,9 +62,71 @@ export const PROFILE_FIELDS = Object.freeze([
   { field: 'linkedin', path: 'identity.links.linkedin', label: 'LinkedIn URL', type: 'url' },
   { field: 'github', path: 'identity.links.github', label: 'GitHub URL', type: 'url', hint: 'Optional. Mostly asked by software and data roles; leave blank if it does not apply.' },
   { field: 'portfolio', path: 'identity.links.portfolio', label: 'Portfolio / website', type: 'url' },
+  // Both are required by the doctor's profile check, and until now neither had
+  // a box anywhere in the dashboard: "Open application profile" sent the person
+  // to a form that could not fix what the setup checklist said was missing.
+  {
+    field: 'workAuthStatus', path: 'workAuthorization.status', label: 'Work authorization', required: true,
+    hint: 'How you can work here today, for example US citizen, green card or H-1B. Forms receive it as written.',
+  },
+  {
+    field: 'requiresSponsorship', path: 'workAuthorization.requiresSponsorship', label: 'Visa sponsorship', required: true,
+    type: 'choice',
+    options: [
+      { value: '', label: 'Not answered yet' },
+      { value: 'no', label: 'No, I will not need sponsorship' },
+      { value: 'yes', label: 'Yes, now or in the future' },
+    ],
+    hint: 'Only you can answer this. JobAgent never guesses it, and your saved sponsorship answer must agree.',
+  },
 ]);
 
 const PROFILE_PATHS = new Set(PROFILE_FIELDS.map((f) => f.path));
+
+const STATUS_PATH = 'workAuthorization.status';
+const SPONSOR_PATH = 'workAuthorization.requiresSponsorship';
+/** What the profile model writes when no status was given: not an answer. */
+const UNSTATED_STATUS = 'Unspecified';
+
+/** The form's word for a sponsorship value ('yes' | 'no' | ''). */
+function sponsorshipWord(value) {
+  if (value === true) return 'yes';
+  if (value === false) return 'no';
+  return '';
+}
+
+/**
+ * A form value as candidate.json stores it. Sponsorship is a tri-state
+ * boolean (null = not stated, never "no"); a cleared status falls back to the
+ * model's own "Unspecified" so the schema's non-empty rule still holds.
+ */
+function storedValue(path, raw) {
+  const text = String(raw ?? '').replace(/\s+/g, ' ').trim();
+  if (path === SPONSOR_PATH) {
+    const word = text.toLowerCase();
+    if (word === 'yes' || word === 'true') return true;
+    if (word === 'no' || word === 'false') return false;
+    if (word === '') return null;
+    throw new Error('Visa sponsorship must be yes, no, or left unanswered');
+  }
+  if (path === STATUS_PATH && text === '') return UNSTATED_STATUS;
+  return text;
+}
+
+/** What a field shows in the form, read from candidate.json. */
+function formValue(spec, candidate) {
+  if (spec.path === SPONSOR_PATH) {
+    return sponsorshipWord(candidate?.workAuthorization?.requiresSponsorship ?? candidate?.sponsorshipRequired);
+  }
+  if (spec.path === STATUS_PATH) {
+    const status = String(candidate?.workAuthorization?.status ?? '').trim();
+    return status === UNSTATED_STATUS ? '' : status;
+  }
+  // Read through the SAME resolver the filler uses, so what this page shows
+  // as "filled" is what a form would actually receive — never a value that
+  // exists in the file but the filler cannot reach.
+  return valueForField(spec.field, candidate) ?? '';
+}
 
 /** Longest value accepted in a profile box — these are form fields, not essays. */
 const MAX_PROFILE_VALUE_CHARS = 300;
@@ -143,10 +205,7 @@ export function readProfile(root) {
     return { path, exists: true, fields: [], missing: [], error: err.message };
   }
   const fields = PROFILE_FIELDS.map((spec) => {
-    // Read through the SAME resolver the filler uses, so what this page shows
-    // as "filled" is what a form would actually receive — never a value that
-    // exists in the file but the filler cannot reach.
-    const value = valueForField(spec.field, candidate) ?? '';
+    const value = formValue(spec, candidate);
     return { ...spec, value: String(value), filled: String(value).trim().length > 0 };
   });
   return {
@@ -170,16 +229,39 @@ export function writeProfile(root, values = {}) {
   const candidate = existsSync(path) ? readJson(path) : templateCandidate(root);
 
   const changed = [];
+  /** path -> the value as stored, for the write-through below. */
+  const stored = {};
   for (const [key, raw] of Object.entries(values)) {
     if (!PROFILE_PATHS.has(key)) {
       throw new Error(`"${key}" is not an editable profile field`);
     }
-    const value = String(raw ?? '').replace(/\s+/g, ' ').trim();
-    if (value.length > MAX_PROFILE_VALUE_CHARS) {
+    const value = storedValue(key, raw);
+    if (typeof value === 'string' && value.length > MAX_PROFILE_VALUE_CHARS) {
       throw new Error(`${key} is too long (${value.length} characters, limit ${MAX_PROFILE_VALUE_CHARS})`);
     }
-    if (getPath(candidate, key) !== value) changed.push(key);
+    stored[key] = value;
+    if ((getPath(candidate, key) ?? null) !== value) changed.push(key);
     setPath(candidate, key, value);
+    // The top-level mirror the schema also requires (see candidate.schema.json).
+    if (key === SPONSOR_PATH) candidate.sponsorshipRequired = value;
+  }
+
+  // A sponsorship setting that contradicts a saved screening answer would put
+  // two different statements on employers' forms. The answers editor already
+  // refuses a contradicting answer; this is the same rule from the other side.
+  if (changed.includes(SPONSOR_PATH) && typeof stored[SPONSOR_PATH] === 'boolean') {
+    const screening = readScreeningAnswers(root);
+    const check = validateScreeningAnswers(
+      { defaults: screening.defaults, answers: screening.answers },
+      { requiresSponsorship: stored[SPONSOR_PATH] },
+    );
+    if (!check.valid) {
+      const id = /^answer "([^"]+)"/.exec(check.error ?? '')?.[1];
+      const message = `Your saved answer${id ? ` "${id}"` : ''} says you `
+        + `${stored[SPONSOR_PATH] ? 'will not' : 'will'} need sponsorship. Change that answer under `
+        + 'Saved answers first, so both say the same thing.';
+      throw Object.assign(new Error(`Not saved. ${message}`), { fields: { [SPONSOR_PATH]: message } });
+    }
   }
 
   // The template carries an explanatory _note; once the user has edited the
@@ -191,7 +273,7 @@ export function writeProfile(root, values = {}) {
   writeFileAtomic(path, `${JSON.stringify(candidate, null, 2)}\n`);
   // candidate.json is a GENERATED VIEW when a search profile is active, so
   // writing only here is a save that quietly expires. See `writeThroughToProfile`.
-  const profile = changed.length ? writeThroughToProfile(root, values) : null;
+  const profile = changed.length ? writeThroughToProfile(root, stored) : null;
   return { path, backup, changed, profile };
 }
 
@@ -212,8 +294,12 @@ export function writeProfile(root, values = {}) {
  * save: candidate.json is already correct on disk and is what the filler reads;
  * the profile is reported back so the caller can surface the discrepancy.
  *
+ * Work authorization is the one exception: the profile keeps it under
+ * `searchIntent.workAuthorization` (src/profile/model.js), so those two paths
+ * are mapped there.
+ *
  * @param {string} root
- * @param {Record<string, string>} values the same dotted paths writeProfile took
+ * @param {Record<string, string|boolean|null>} values dotted path -> value as stored
  * @returns {{id: string, written: boolean, error?: string}|null} null when no
  *   profile is active (candidate.json is then the source of truth already)
  */
@@ -227,9 +313,14 @@ function writeThroughToProfile(root, values) {
   if (!active) return null;
   try {
     const next = JSON.parse(JSON.stringify(active));
-    for (const [key, raw] of Object.entries(values)) {
+    for (const [key, value] of Object.entries(values)) {
       if (!PROFILE_PATHS.has(key)) continue;
-      setPath(next, key, String(raw ?? '').replace(/\s+/g, ' ').trim());
+      if (key.startsWith('workAuthorization.')) {
+        // The profile's own word for "not stated" is an empty status.
+        setPath(next, `searchIntent.${key}`, key === STATUS_PATH && value === UNSTATED_STATUS ? '' : value);
+      } else {
+        setPath(next, key, value);
+      }
     }
     const saved = saveProfile(root, next);
     return { id: saved.id, written: true };

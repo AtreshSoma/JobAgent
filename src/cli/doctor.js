@@ -383,9 +383,13 @@ export async function runDoctor({ root = PROJECT_ROOT, env = process.env, deps =
       checks.push(makeCheck('profile', 'Candidate profile (required fields)', SEVERITY.PASS,
         'all required fields present'));
     } else {
-      checks.push(makeCheck('profile', 'Candidate profile (required fields)', SEVERITY.FAIL,
-        `missing: ${required.map((g) => `${g.label} (${g.path})`).join(', ')}`,
-        'Add the missing value(s) to config/candidate.json. Never guess — only enter true information.'));
+      checks.push({
+        ...makeCheck('profile', 'Candidate profile (required fields)', SEVERITY.FAIL,
+          `missing: ${required.map((g) => `${g.label} (${g.path})`).join(', ')}`,
+          'Add the missing value(s) to config/candidate.json. Never guess — only enter true information.'),
+        // The paths, so the dashboard can open its form at exactly these boxes.
+        fields: required.map((g) => ({ path: g.path, label: g.label })),
+      });
     }
 
     // Presence is not plausibility. Every required field can be filled and every

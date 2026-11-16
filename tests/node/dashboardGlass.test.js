@@ -60,6 +60,42 @@ describe('liquid glass switches', { timeout: 120_000 }, () => {
     }
   });
 
+  it('sets off on the press, glides on transform alone, and keeps tab widths steady', async (ctx) => {
+    if (!available) return ctx.skip();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`${dash.url}/`);
+      await waitUntilConnected(page);
+      await page.locator('.viewswitch [data-view="board"]').click();
+      await expect.poll(() => offset(page, '#tabs', '.tab[aria-selected="true"]'), { timeout: 5_000 }).toEqual({ x: 0, w: 0, shown: true });
+      const lens = page.locator('#tabs > .glass-lens');
+      // The lens fades in as the tab row comes out of hiding; let that finish.
+      await page.waitForTimeout(400);
+      const widths = () => page.locator('#tabs .tab').evaluateAll((tabs) => tabs.map((t) => t.offsetWidth));
+      const before = await widths();
+      const target = page.locator('#tabs .tab').nth(3);
+      const box = await target.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      await page.mouse.down();
+      // Still pressed: nothing is selected yet, and the lens is already on its way.
+      await page.waitForTimeout(60);
+      expect(await target.getAttribute('aria-selected')).toBe('false');
+      const glides = await lens.evaluate((el) => el.getAnimations().map((a) => Object.keys(a.effect.getKeyframes()[0]).filter((k) => !['offset', 'easing', 'composite', 'computedOffset'].includes(k))));
+      expect(glides.length).toBe(1);
+      // Only transform is animated: it runs off the main thread.
+      expect(glides[0]).toEqual(['transform']);
+      await page.mouse.up();
+      expect(await target.getAttribute('aria-selected')).toBe('true');
+      await expect.poll(() => offset(page, '#tabs', '.tab[aria-selected="true"]'), { timeout: 5_000 }).toEqual({ x: 0, w: 0, shown: true });
+      // The heavier selected label never pushes the row sideways.
+      expect(await widths()).toEqual(before);
+      // The tab row was rebuilt by the selection; the lens is the same one.
+      expect(await page.locator('#tabs > .glass-lens').count()).toBe(1);
+    } finally {
+      await page.close();
+    }
+  });
+
   it('moves at once when the reader prefers reduced motion', async (ctx) => {
     if (!available) return ctx.skip();
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });

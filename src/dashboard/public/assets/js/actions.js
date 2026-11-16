@@ -14,7 +14,7 @@ import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection,
 import { openDocuments, openReports } from './reports.js';
 import { openDataQuality, saveFreshness, startEnrichment, stopEnrichment, toggleEnrichment } from './dataQuality.js';
 import { adoptResumeSelection, chooseResumeProfile, openMasterResume, openMergePicker, reconsiderResumeChoice, renderMasterResume, restoreMasterVersion, selectedAdoptTitles, submitMergeSelection } from './master.js';
-import { backupNow, download, exportEverything, openHealth, openProfile, confirmSkillYears, sameAsQuestion, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
+import { backupNow, download, exportEverything, focusProfileField, openHealth, openProfile, confirmSkillYears, sameAsQuestion, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
 import { applyRunGate, openRuns, pollRun, setRunDetails } from './runs.js';
 import { closeMainMenu, toggleMenu } from './menus.js';
 import { applyViewPrefs, hiddenColumns, onFilterChange, savePreference, setFilterSheet, syncThemeControl } from './main.js';
@@ -237,7 +237,14 @@ export const ACTIONS = {
     openProfile();
   },
   // The setup card (S1): each item opens the screen that fixes it, at its field.
-  'setup-fix': (target) => openProfile({ focus: { editor: target.dataset.editor, field: target.dataset.field } }),
+  'setup-fix': (target) => openProfile({
+    focus: {
+      editor: target.dataset.editor, field: target.dataset.field,
+      fields: (target.dataset.fields ?? '').split(' ').filter(Boolean),
+    },
+  }),
+  // The "Fill these in" list at the top of the profile: each name goes to its box.
+  'pf-field': (target) => focusProfileField({ editor: 'details', field: target.dataset.go }),
   'setup-toggle': (target) => toggleSetupCard(target.dataset.force ?? null),
   'open-setup': (target) => {
     closeDialog(target?.closest?.('dialog:not(#dlgDetail)'));
