@@ -79,4 +79,28 @@ describe('liquid glass switches', { timeout: 120_000 }, () => {
       await context.close();
     }
   });
+
+  it('asks for a search only when one is due, and offers the way back up on a long list', async (ctx) => {
+    if (!available) return ctx.skip();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    try {
+      await page.goto(`${dash.url}/`);
+      await waitUntilConnected(page);
+      // The test workspace has never searched: Find jobs says so.
+      await expect.poll(() => page.locator('.split.menu').getAttribute('data-stale')).toBe('');
+      expect(await page.locator('#btnDiscover').getAttribute('title')).toMatch(/^No search has run yet\. /);
+      // After a recent search it rests, and its own description comes back.
+      // A string, so the test runner does not rewrite the page's own import().
+      await page.evaluate(`import('/assets/js/analytics.js').then((m) => m.renderHealth({
+        lastDiscoveryAt: new Date(Date.now() - 3600000).toISOString(), totals: { postedLast7d: 1 },
+      }))`);
+      expect(await page.locator('.split.menu').getAttribute('data-stale')).toBeNull();
+      expect(await page.locator('#btnDiscover').getAttribute('title')).toMatch(/^Search every configured job board/);
+      // Back to top lives in the docked pager, hidden at the top of the page.
+      expect(await page.locator('.pagerbar .to-top').count()).toBe(1);
+      expect(await page.locator('.pagerbar .to-top').isHidden()).toBe(true);
+    } finally {
+      await page.close();
+    }
+  });
 });

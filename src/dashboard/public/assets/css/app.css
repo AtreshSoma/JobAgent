@@ -699,6 +699,44 @@ button.icon { padding: 4px 7px; }
   .split.menu:has(> .split-main:active:not(:disabled)), .split.menu:has(> .split-toggle:active) { transform: none; }
 }
 
+/* ── Find jobs, the page's one primary action ──
+   The only solid, saturated control in the header: contrast, not a louder hue,
+   is what draws the eye (orange already means "needs your attention" here, so
+   an orange button would read as a warning and blunt every real one). The
+   pointer still lights the glass; the rim still catches the light. */
+.split.menu { box-shadow: 0 1px 2px rgba(2, 8, 20, .18), 0 8px 18px -8px color-mix(in srgb, var(--accent) 60%, transparent); }
+.split.menu::before {
+  background:
+    radial-gradient(70% 130% at var(--gx) -10%, rgba(255, 255, 255, .34), transparent 70%),
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 86%, white 14%), var(--accent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 72%, black 28%), inset 0 1px 0 rgba(255, 255, 255, .3);
+}
+.split.menu > .split-main, .split.menu > .split-toggle,
+.split.menu > .split-main .ic, .split.menu .split-chev { color: var(--accent-ink); }
+.split.menu > .split-toggle::before { background: color-mix(in srgb, var(--accent-ink) 32%, transparent); }
+@media (hover: hover) and (pointer: fine) {
+  .split.menu > .split-main:hover:not(:disabled), .split.menu > .split-toggle:hover { background: color-mix(in srgb, var(--accent-ink) 12%, transparent); }
+}
+.split.menu > .split-toggle[aria-expanded="true"],
+.split.menu > .split-main:focus-visible, .split.menu > .split-toggle:focus-visible { background: color-mix(in srgb, var(--accent-ink) 14%, transparent); }
+.split.menu > .split-main:disabled, .split.menu > .split-main:disabled .ic { color: color-mix(in srgb, var(--accent-ink) 78%, var(--accent)); }
+/* A search is due (the last one is over a day old, or there has not been one):
+   an amber dot, the colour that means "needs you" everywhere on this page, and
+   a soft ring that calls three times and then rests. */
+.split.menu[data-stale] > .split-main::after {
+  content: ''; position: absolute; top: 5px; right: 4px; width: 7px; height: 7px; border-radius: 50%;
+  background: #ffb224; box-shadow: 0 0 0 2px var(--accent);
+}
+.split.menu[data-stale] { animation: cta-call 1.8s cubic-bezier(.2, .8, .2, 1) 1.2s 3; }
+@keyframes cta-call {
+  0% { box-shadow: 0 1px 2px rgba(2, 8, 20, .18), 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent); }
+  100% { box-shadow: 0 1px 2px rgba(2, 8, 20, .18), 0 0 0 12px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .split.menu[data-stale] { animation: none; } }
+@media (prefers-reduced-transparency: reduce) {
+  .split.menu::before { background: var(--accent); }
+}
+
 /* Menu items with a second line explaining what the action costs. */
 .menu-pop .mi-title { display: block; font-weight: 600; }
 .menu-pop .mi-sub { display: block; font-size: var(--fs-xs); color: var(--text-faint); margin-top: 1px; }
@@ -4132,3 +4170,10 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
   .glass-lens { transition: none; }
   .glass-lens.is-moving { animation: none; }
 }
+
+/* Back to top: appears in the docked pager once the list is two screens deep. */
+.pagerbar .to-top { display: inline-flex; align-items: center; gap: 6px; }
+.pagerbar .to-top[hidden] { display: none; }
+.pagerbar .to-top .ic { width: 14px; height: 14px; }
+.pagerbar .to-top:not([hidden]) { animation: menu-in .18s cubic-bezier(.2, .8, .2, 1); }
+@media (prefers-reduced-motion: reduce) { .pagerbar .to-top:not([hidden]) { animation: none; } }

@@ -105,6 +105,17 @@ export function renderHealth(stats) {
     class: `stat stat-fresh${stale ? ' is-stale' : ''}`,
     title: stale ? 'Your last search was over a day ago. Find jobs runs a new one.' : 'When discovery last found anything',
   }, el('span', { class: 'l', text: last ? 'Searched' : 'No search yet' }), last ? el('b', { text: last }) : null));
+  // Find jobs asks for attention only when a search is due.
+  const cta = document.querySelector('.split.menu');
+  const due = stale || !last;
+  if (cta) {
+    cta.toggleAttribute('data-stale', due);
+    const button = cta.querySelector('#btnDiscover');
+    if (button) {
+      button.dataset.baseTitle ??= button.title;
+      button.title = due ? `${last ? `Your last search was ${last}.` : 'No search has run yet.'} ${button.dataset.baseTitle}` : button.dataset.baseTitle;
+    }
+  }
   for (const fact of HEALTH_FACTS) host.append(statNode(fact, stats));
 
   const attention = el('div', { class: 'health-attn' });

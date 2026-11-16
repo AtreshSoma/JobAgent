@@ -476,6 +476,25 @@ installWorkspaceDrag();
 glassLens(document.querySelector('.viewswitch'), 'button[aria-pressed="true"]');
 glassLens($('tabs'), '.tab[aria-selected="true"]');
 for (const seg of document.querySelectorAll('.seg')) glassLens(seg, 'button[aria-pressed="true"]');
+
+// Back to top: on a long list, the way up is offered once you are two screens deep.
+{
+  const bar = document.querySelector('.pagerbar');
+  if (bar) {
+    const top = el('button', { type: 'button', class: 'small ghost to-top', hidden: true, title: 'Back to the top of the list' });
+    top.append(el('span', { text: 'Back to top' }));
+    top.addEventListener('click', () => {
+      const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollTo({ top: 0, behavior: still ? 'instant' : 'smooth' });
+      $('main')?.focus({ preventScroll: true });
+    });
+    bar.append(top);
+    let frame = 0;
+    const sync = () => { frame = 0; top.hidden = window.scrollY < window.innerHeight * 2; };
+    window.addEventListener('scroll', () => { if (!frame) frame = requestAnimationFrame(sync); }, { passive: true });
+    sync();
+  }
+}
 installPalette(dispatchAction);
 setView(['board', 'applications'].includes(readPreference('view')) ? readPreference('view') : 'today', { save: false });
 applyViewPrefs();
