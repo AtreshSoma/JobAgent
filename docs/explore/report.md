@@ -149,7 +149,11 @@ No library was added.
 | --- | --- | --- |
 | `exploreContent.test.js` | 48 | 109 |
 | `explorePage.test.js` | 20 | 31 |
-| Full suite, lint, type-check, verify | See the final message | |
+| Full suite (`npm test`) | 3,512 passed | 3,583 passed, 1 failed |
+| Lint | 0 errors, 12 warnings | 0 errors, 12 warnings |
+| Type-check, `npm run verify` | clean, healthy | clean, healthy |
+
+The one failure is `gapAgreement.test.js`, which reads the owner's live `config/scoring.json` (modified in this working tree, not by this work). It passes in a clean worktree of this branch (9 of 9), as the audit's decisions log already records.
 
 ## 9. Known limitations
 

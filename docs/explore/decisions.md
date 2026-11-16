@@ -23,10 +23,14 @@ Format: date, ID, decision, why. Decisions marked **Pending owner** are proposal
 | 2026-11-15 | E17 | Review tooling lives in `docs/explore/tools/` (`shoot.mjs`, `trace.mjs`) and is linted with the repo | The matrix is re-shot after every major change, so the scripts belong with the work |
 | 2026-11-15 | E18 | The second critique pass (detector and browser evidence) was finished from its saved results after its agent stopped on a usage limit. Three of its sweeps did not run and are listed in the critique, section 5 | Reported, not hidden. They are covered again in step 5 on the new page |
 
+| 2026-11-16 | E3 | Owner decided: 4 Implemented, 4 Optional, 2 Planned, labelled by the code | Owner decision; tested in `exploreContent.test.js` |
+| 2026-11-16 | E10 | Owner decided: the whole route moves to just after the Problem | Owner decision |
+| 2026-11-16 | E5 | Owner decided: sponsorship stays out of the main story and lives in the Score's "What if" and under the hood | Owner decision |
+| 2026-11-16 | E19 | No CSS `scroll-behavior: smooth`; in-page links glide from script | It broke ScrollTrigger's measurements after a resize (the owner's screenshot) |
+| 2026-11-16 | E20 | The signals play across a longer hold (1.1 stages) and end on the cleared state; the finished, reduced-motion picture is "approved by you" | The owner asked for the earlier, richer signal motion; the end state is what the person has done |
+| 2026-11-16 | E21 | Page column `clamp(78rem, 70vw, 96rem)` | A 2000px window was framed in empty margin |
+| 2026-11-16 | E22 | Under the hood keeps its own type (V6 deferred) | A full restyle of `deep.js` is a separate piece of work |
+
 ## Where to resume
 
-Stopped at the approval gate (brief step 3). Written so far: `critique.md`, `truth-audit.md`, `storyboard.md`, this log, the static preview in `preview/` with 28 screenshots in `preview/shots/`, and the before evidence in `before/`. The page itself is unchanged.
-
-Baseline before any change: Explore suites 68 passed (48 content, 20 page); lint 0 errors, 12 warnings. Performance baseline in `before/trace.json`.
-
-On approval, implement in the order: truth and content (`content-overview.js`, `content-deep.js`, per-field data and tests), scenes, motion, polish.
+Done and committed on `explore-product-film` (not pushed): see `report.md`. Open items: V6 (Under the hood restyle), the 120 ms build task on load, Safari and Firefox runs.
