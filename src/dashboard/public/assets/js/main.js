@@ -41,6 +41,7 @@ import { installPalette } from './palette.js';
 import { closeMainMenu } from './menus.js';
 import { installWorkspaceDrag } from './workspace.js';
 import { announcePendingSwitch, loadProfiles } from './profiles.js';
+import { glassLens } from './glass.js';
 
 /* ────────────────────── keyboard support ────────────────────── */
 
@@ -471,6 +472,10 @@ placeDetail();
 // Today is the landing view unless the user last chose the board.
 state.appsLayout = readPreference('appsLayout') === 'list' ? 'list' : 'kanban';
 installWorkspaceDrag();
+// The switches' selected option is a glass lens that slides between options.
+glassLens(document.querySelector('.viewswitch'), 'button[aria-pressed="true"]');
+glassLens($('tabs'), '.tab[aria-selected="true"]');
+for (const seg of document.querySelectorAll('.seg')) glassLens(seg, 'button[aria-pressed="true"]');
 installPalette(dispatchAction);
 setView(['board', 'applications'].includes(readPreference('view')) ? readPreference('view') : 'today', { save: false });
 applyViewPrefs();

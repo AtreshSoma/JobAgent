@@ -70,6 +70,11 @@
   --glass-strong: rgba(17, 22, 30, .9);
   --glass-line: rgba(160, 190, 230, .12);
   --glass-hi: rgba(255, 255, 255, .05);
+  --lg-spec: rgba(255, 255, 255, .13);
+  --lg-shade: rgba(0, 0, 0, .5);
+  --lg-rim-top: rgba(255, 255, 255, .2);
+  --lg-rim-bottom: rgba(255, 255, 255, .03);
+  --lg-channel: rgba(0, 0, 0, .28);
   /* Liquid Glass (Find jobs): fill, blue-to-cyan tint, edge, rim, inner
      shade, the pointer's light, hover wash and drop. */
   --lg-fill: rgba(255, 255, 255, .06);
@@ -83,8 +88,9 @@
   --lg-drop: 0 1px 2px rgba(2, 5, 12, .4), 0 6px 16px rgba(2, 5, 12, .35);
   /* A faint wash of the accent behind the whole page, so the glass has
      something to refract. At these opacities it reads as light, not colour. */
-  --ambient-a: rgba(77, 159, 255, .07);
-  --ambient-b: rgba(92, 200, 232, .04);
+  --ambient-a: rgba(77, 159, 255, .1);
+  --ambient-b: rgba(92, 200, 232, .06);
+  --ambient-c: rgba(62, 207, 142, .05);
 
   /* elevation */
   /* Tinted to the surface hue, not pure black.
@@ -207,6 +213,11 @@
   --glass-strong: rgba(255, 255, 255, .9);
   --glass-line: rgba(16, 24, 40, .09);
   --glass-hi: rgba(255, 255, 255, .8);
+  --lg-spec: rgba(255, 255, 255, .92);
+  --lg-shade: rgba(16, 24, 40, .18);
+  --lg-rim-top: rgba(255, 255, 255, 1);
+  --lg-rim-bottom: rgba(16, 24, 40, .13);
+  --lg-channel: rgba(16, 24, 40, .055);
   --lg-fill: rgba(255, 255, 255, .6);
   --lg-tint-a: rgba(22, 104, 214, .14);
   --lg-tint-b: rgba(14, 134, 168, .06);
@@ -216,8 +227,9 @@
   --lg-spec: rgba(255, 255, 255, .85);
   --lg-hover: rgba(22, 104, 214, .07);
   --lg-drop: 0 1px 2px rgba(16, 24, 40, .08), 0 6px 16px rgba(16, 24, 40, .1);
-  --ambient-a: rgba(22, 104, 214, .06);
-  --ambient-b: rgba(14, 134, 168, .04);
+  --ambient-a: rgba(22, 104, 214, .09);
+  --ambient-b: rgba(14, 134, 168, .06);
+  --ambient-c: rgba(18, 150, 95, .05);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
   --dock-shade: rgba(16, 24, 40, .14);
   --shadow: 0 8px 24px rgba(16, 24, 40, .12);
@@ -267,6 +279,11 @@
     --glass-strong: rgba(255, 255, 255, .9);
     --glass-line: rgba(16, 24, 40, .09);
     --glass-hi: rgba(255, 255, 255, .8);
+    --lg-spec: rgba(255, 255, 255, .92);
+    --lg-shade: rgba(16, 24, 40, .18);
+    --lg-rim-top: rgba(255, 255, 255, 1);
+    --lg-rim-bottom: rgba(16, 24, 40, .13);
+    --lg-channel: rgba(16, 24, 40, .055);
     --lg-fill: rgba(255, 255, 255, .6);
     --lg-tint-a: rgba(22, 104, 214, .14);
     --lg-tint-b: rgba(14, 134, 168, .06);
@@ -276,8 +293,9 @@
     --lg-spec: rgba(255, 255, 255, .85);
     --lg-hover: rgba(22, 104, 214, .07);
     --lg-drop: 0 1px 2px rgba(16, 24, 40, .08), 0 6px 16px rgba(16, 24, 40, .1);
-    --ambient-a: rgba(22, 104, 214, .06);
-    --ambient-b: rgba(14, 134, 168, .04);
+    --ambient-a: rgba(22, 104, 214, .09);
+    --ambient-b: rgba(14, 134, 168, .06);
+    --ambient-c: rgba(18, 150, 95, .05);
     --shadow-sm: 0 1px 2px rgba(16, 24, 40, .08);
     --dock-shade: rgba(16, 24, 40, .14);
     --shadow: 0 8px 24px rgba(16, 24, 40, .12);
@@ -312,7 +330,10 @@ body::before {
   content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
   background:
     radial-gradient(900px 420px at 50% -120px, var(--ambient-a), transparent 70%),
-    radial-gradient(640px 360px at 100% 0, var(--ambient-b), transparent 70%);
+    radial-gradient(640px 360px at 100% 0, var(--ambient-b), transparent 70%),
+    /* Behind the switches and the filter bar, for their glass to frost. */
+    radial-gradient(720px 380px at 12% 26%, var(--ambient-c), transparent 70%),
+    radial-gradient(560px 300px at 46% 34%, var(--ambient-a), transparent 72%);
 }
 
 /* The browser's own surfaces belong to the palette too. */
@@ -4004,3 +4025,110 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
 .answer-draft button { margin-top: 8px; }
 .answer-draft [role="status"] { margin-top: 6px; }
 .answer-draft ul.plan { margin: 6px 0 0; }
+
+/* ─────────────────── Liquid glass ───────────────────
+   The switches and the filter bar are made of one material: a translucent
+   pane that blurs and brightens what is behind it, lit along its top edge and
+   shaded along its bottom, with a 1px rim. A switch is a recessed glass
+   channel; its selected option is a raised glass lens that slides between
+   options (glass.js). Text never sits on the blur alone: every pane keeps
+   enough of its own surface colour to hold body contrast.
+
+   No backdrop-filter: what is behind these panes is the page's fixed ambient
+   light (body::before), a smooth gradient that a translucent fill already
+   frosts, and a blur over the scrolling board would recomposite on every
+   scroll (see "frosts only the header" in workbenchUx.test.js). */
+[data-glass] { position: relative; isolation: isolate; }
+[data-glass] > :not(.glass-lens) { position: relative; z-index: 1; }
+
+/* The channel. */
+.viewswitch[data-glass], .tabs[data-glass], .seg[data-glass] {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(var(--lg-channel), var(--lg-channel)) padding-box,
+    linear-gradient(color-mix(in srgb, var(--surface-2) 45%, transparent), color-mix(in srgb, var(--surface-2) 45%, transparent)) padding-box,
+    linear-gradient(180deg, var(--lg-rim-bottom), var(--lg-rim-top)) border-box;
+  box-shadow: inset 0 1px 2px color-mix(in srgb, var(--lg-shade) 60%, transparent), inset 0 -1px 0 var(--lg-spec);
+}
+
+/* The lens. */
+.glass-lens {
+  position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none;
+  border-radius: var(--r-full);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--raised) 86%, transparent), color-mix(in srgb, var(--raised) 66%, transparent));
+  box-shadow:
+    inset 0 1px 0 var(--lg-spec),
+    inset 0 -1px 0 color-mix(in srgb, var(--lg-shade) 45%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--lg-rim-top) 70%, var(--glass-line)),
+    0 1px 2px var(--lg-shade),
+    0 4px 10px -4px var(--lg-shade),
+    0 12px 24px -14px var(--lg-shade);
+  transition:
+    transform .44s cubic-bezier(.32, 1.32, .46, 1),
+    width .44s cubic-bezier(.32, 1.32, .46, 1),
+    height .3s ease, opacity .2s ease;
+}
+/* A soft caustic where the light enters the drop. */
+.glass-lens::after {
+  content: ''; position: absolute; inset: 1px; border-radius: inherit; pointer-events: none;
+  background: radial-gradient(130% 90% at 28% 0%, var(--lg-spec), transparent 58%);
+  opacity: .6;
+}
+.glass-lens.is-off { opacity: 0; }
+/* On its way between two options it stretches, then settles. */
+.glass-lens.is-moving { animation: lens-stretch .44s cubic-bezier(.3, .8, .4, 1); }
+@keyframes lens-stretch { 38% { scale: 1.07 .9; } 72% { scale: .99 1.02; } }
+.seg[data-glass] .glass-lens { border-radius: var(--r-xs); }
+
+/* Options over the lens: the lens is the selection, so the option itself goes clear. */
+.viewswitch[data-glass] button[aria-pressed="true"],
+.tabs[data-glass] .tab[aria-selected="true"] { background: transparent; box-shadow: none; border-color: transparent; }
+.viewswitch[data-glass] button:not([aria-pressed="true"]):hover,
+.tabs[data-glass] .tab:not([aria-selected="true"]):hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.viewswitch[data-glass] button, .tabs[data-glass] .tab { transition: color .2s ease, background-color .2s ease; }
+/* The "Posted" segments filter the board, so their lens is tinted with the accent. */
+.seg[data-glass] button[aria-pressed="true"] { background: transparent; border-color: transparent; color: var(--accent-ink); }
+.seg[data-glass] button[aria-pressed="true"]:hover { background: transparent; }
+.seg[data-glass] .glass-lens {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, white 12%), var(--accent));
+}
+
+/* The filter bar: one pane of glass, with its fields set in as inlays. */
+.filterbar {
+  border: 1px solid transparent;
+  background:
+    linear-gradient(color-mix(in srgb, var(--surface) 62%, transparent), color-mix(in srgb, var(--surface) 62%, transparent)) padding-box,
+    linear-gradient(180deg, var(--lg-rim-top), var(--lg-rim-bottom)) border-box;
+  box-shadow:
+    inset 0 1px 0 var(--lg-spec),
+    0 1px 2px color-mix(in srgb, var(--lg-shade) 55%, transparent),
+    0 18px 36px -26px var(--lg-shade);
+}
+.filters select, .filters .searchfield, .filters input[type=text], .filterbar .filter-toggle, .filterbar .toggle {
+  background-color: color-mix(in srgb, var(--surface-2) 58%, transparent);
+  border-color: var(--glass-line);
+  box-shadow: inset 0 1px 0 var(--lg-spec), 0 1px 1px color-mix(in srgb, var(--lg-shade) 40%, transparent);
+  transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+}
+.filters select:hover, .filters .searchfield:hover, .filterbar .filter-toggle:hover, .filterbar .toggle:hover {
+  background-color: color-mix(in srgb, var(--surface-2) 80%, transparent);
+}
+.filters select:focus-visible, .filterbar .filter-toggle:focus-visible {
+  border-color: var(--accent); box-shadow: inset 0 1px 0 var(--lg-spec), 0 0 0 3px var(--accent-soft);
+}
+/* A control that is filtering keeps its accent through the glass. */
+.filters select.on, .filterbar .toggle:has(input:checked) { background-color: var(--accent-soft); border-color: var(--accent); }
+.filterbar .filter-toggle[aria-expanded="true"] { background-color: color-mix(in srgb, var(--accent-soft) 80%, transparent); border-color: var(--accent); }
+
+/* Where glass would cost legibility, it is a plain surface. */
+@media (prefers-reduced-transparency: reduce) {
+  .viewswitch[data-glass], .tabs[data-glass], .seg[data-glass] { background: var(--surface-2); border-color: var(--line-soft); }
+  .glass-lens { background: var(--raised); }
+  .glass-lens::after { display: none; }
+  .filterbar { background: var(--surface); border-color: var(--line-soft); }
+  .filters select, .filters .searchfield, .filters input[type=text], .filterbar .filter-toggle, .filterbar .toggle { background-color: var(--surface-2); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .glass-lens { transition: none; }
+  .glass-lens.is-moving { animation: none; }
+}
