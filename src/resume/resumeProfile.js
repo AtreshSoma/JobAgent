@@ -38,7 +38,7 @@ import { loadRoleFamilies } from '../profile/roleFamilies.js';
  */
 const SECTION_PATTERNS = [
   { kind: 'skills', re: /^(technical\s+)?(skills|core\s+competenc(y|ies)|technical\s+summary|expertise|technologies)$/i },
-  { kind: 'experience', re: /^((professional|work|relevant|earlier|additional|previous)\s+)?experience$/i },
+  { kind: 'experience', re: /^((professional|work|relevant|earlier|additional|previous)\s+){0,2}experience$/i },
   { kind: 'experience', re: /^(employment|work)\s+history$/i },
   { kind: 'summary', re: /^(professional\s+)?(summary|profile|objective|about)$/i },
   // "Education and Professional Development", "Education & Training".
@@ -48,7 +48,7 @@ const SECTION_PATTERNS = [
   // Sections nothing extracts from. They still have to be RECOGNISED, or the
   // section above swallows them: an unrecognised "Honors and Awards" made the
   // last job's experience run on through every award line beneath it.
-  { kind: 'other', re: /^(honou?rs|awards|achievements|publications|presentations|patents|volunteer(ing)?(\s+experience)?|languages|interests|hobbies|references|affiliations|memberships|activities|leadership|professional\s+(development|affiliations|memberships)|training|courses)(\s*(and|&)\s*[a-z ]+)?$/i },
+  { kind: 'other', re: /^(honou?rs|awards|achievements|publications|presentations|patents|volunteer(ing)?(\s+(work\s+)?experience|\s+work)?|languages|interests|hobbies|references|affiliations|memberships|activities|leadership|professional\s+(development|affiliations|memberships)|training|courses)(\s*(and|&)\s*[a-z ]+)?$/i },
 ];
 
 /** A heading is short; a paragraph of prose that happens to start with "Experience" is not. */
@@ -149,11 +149,17 @@ const SENIORITY_RE = /^(senior|sr\.?|lead|principal|staff|junior|jr\.?|associate
 
 /** Classify one line as a section heading, or null. */
 function headingKind(line) {
-  const text = line.trim().replace(/[:•\-–—]+$/, '').trim();
+  // A drawing anchor's position number can arrive glued on ("123456789EXPERIENCE:").
+  const text = line.trim().replace(/[:•\-–—]+$/, '').trim().replace(/^\d{6,}(?=[A-Za-z])/, '');
   if (!text || text.length > MAX_HEADING_CHARS) return null;
-  for (const { kind, re } of SECTION_PATTERNS) {
-    if (re.test(text)) return kind;
-  }
+  const match = (candidate) => SECTION_PATTERNS.find(({ re }) => re.test(candidate))?.kind ?? null;
+  const direct = match(text);
+  if (direct) return direct;
+  // Detail after a comma names an employer or place, not the section:
+  // "Projects, Example Organisation". A digit means a date or a sentence, so a
+  // role line like "Skills Lead, Acme, 2019" is never read this way.
+  const comma = text.indexOf(',');
+  if (comma > 0 && !/\d/.test(text)) return match(text.slice(0, comma).trim());
   return null;
 }
 
@@ -268,6 +274,34 @@ function titlesFromHeadline(sections) {
 }
 
 /**
+ * Split a skills line at commas, semicolons, bullets and pipes that are NOT
+ * inside brackets, so "Databases (SQL, NoSQL), Kafka" is two items, not
+ * "Databases (SQL" and "NoSQL)". An unclosed bracket stays open to the end of
+ * the line, which keeps its text together rather than shredding it.
+ * (tailor.py `_split_skill_list` follows the same rule.)
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function splitOutsideBrackets(text) {
+  const pieces = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of String(text ?? '')) {
+    if (ch === '(' || ch === '[') depth += 1;
+    else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
+    if (depth === 0 && /[,;•|]/.test(ch)) {
+      pieces.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  pieces.push(current);
+  return pieces;
+}
+
+/**
  * Skills from a "Category: a, b, c" skills section.
  *
  * Only the skills section is read. Harvesting terms from bullet prose produced
@@ -280,8 +314,9 @@ function skillsFromSections(sections) {
     for (const line of section.lines) {
       // "Cloud & Platform: Azure Databricks, Microsoft Fabric, ..."
       const body = line.includes(':') ? line.slice(line.indexOf(':') + 1) : line;
-      for (const piece of body.split(/[,;•|]/)) {
-        const skill = piece.replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+      for (const piece of splitOutsideBrackets(body)) {
+        // Bracketed detail is dropped, and so is a bracket left open to the end of the line.
+        const skill = piece.replace(/[([][^)\]]*[)\]]/g, ' ').replace(/[([][^)\]]*$/, ' ').replace(/\s+/g, ' ').trim();
         // One to four words, no sentence punctuation. "Delta Live Tables" yes,
         // "building scalable pipelines for the enterprise" no.
         if (!skill || skill.length < 2 || skill.length > 40) continue;

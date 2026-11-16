@@ -152,6 +152,13 @@ export function paragraphsFromDocumentXml(xml) {
     // Deleted revisions and instruction text are not part of the document.
     .replace(/<w:delText\b[\s\S]*?<\/w:delText>/g, '')
     .replace(/<w:instrText\b[\s\S]*?<\/w:instrText>/g, '')
+    // A drawing's position numbers ("<wp:posOffset>123456789</wp:posOffset>",
+    // "<wp:align>top</wp:align>") sit in the same paragraph as the text beside
+    // it. Stripping only the tags glued them onto the heading, and
+    // "123456789EXPERIENCE:" matched no section (2026-11-12).
+    // The 2010 "wp14" size and relative-position elements write "0" the same way
+    // (the heading read "00EXPERIENCE:").
+    .replace(/<(wp|wp14):(posOffset|align|pctWidth|pctHeight|pctPosHOffset|pctPosVOffset)\b[^>]*>[\s\S]*?<\/\1:\2>/g, '')
     .replace(/<w:tab\b[^>]*>/g, '\t')
     .replace(/<w:(?:br|cr)\b[^>]*>/g, '\n')
     // Paragraph and table-cell/row ends are the only real line breaks.
