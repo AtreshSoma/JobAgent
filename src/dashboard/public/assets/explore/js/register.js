@@ -97,7 +97,13 @@ export function register() {
         type: 'button', class: 'ex-reg-row', 'aria-expanded': String(open), 'aria-controls': open ? id : null,
         onClick: () => choose(c, { focus: true }),
         // A mouse only has to pass over a name to read about it; the keyboard and touch press.
-        onPointerenter: (event) => { if (event.pointerType === 'mouse' && matchMedia('(min-width: 1000px)').matches) choose(c); },
+        // Only a mouse that MOVES chooses: when the arrow keys redraw the list, a new
+        // row appears under a resting pointer and the browser reports it as entered,
+        // which snapped the keyboard's choice straight back to the row under the mouse.
+        onPointermove: (event) => {
+          if (event.pointerType !== 'mouse' || !(event.movementX || event.movementY)) return;
+          if (matchMedia('(min-width: 1000px)').matches) choose(c);
+        },
         onKeydown: (event) => {
           const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
           if (!step) return;

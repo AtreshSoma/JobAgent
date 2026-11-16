@@ -364,9 +364,20 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
       expect(await reg.locator('.ex-reg-detail').textContent()).toContain('refused on every application system');
       await expect.poll(() => reg.getByRole('button', { name: /^Final auto-submit/ }).getAttribute('aria-expanded')).toBe('true');
       await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
+      // The mouse is still resting on "Final auto-submit" from the click. The key
+      // redraws the list under it, and the choice must not snap back to the row
+      // under the pointer: only a mouse that moves chooses by hovering.
       await page.keyboard.press('ArrowUp');
       await expect.poll(() => reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
       await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
+      await page.waitForTimeout(300);
+      expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
+      // A mouse that moves still reads a name by passing over it.
+      const names = await reg.locator('.ex-reg-row-name').allTextContents();
+      const other = names.findIndex((n) => n !== 'Coverage check' && n !== 'Final auto-submit');
+      const box = await reg.locator('.ex-reg-row').nth(other).boundingBox();
+      await page.mouse.move(box.x + 12, box.y + box.height / 2, { steps: 5 });
+      await expect.poll(() => reg.locator('.ex-reg-detail-name').textContent()).toBe(names[other]);
 
       // A count is a filter: Planned shows only what is not built, and says so.
       await reg.locator('.ex-reg-stat[data-status="planned"]').click();
