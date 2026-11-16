@@ -215,7 +215,7 @@
   border: var(--rule-hair) solid var(--color-rule-strong); border-radius: var(--radius-pill); cursor: pointer;
   transition: border-color var(--dur-short) var(--ease-out);
 }
-.ex-chrome-field::after { content: ''; position: absolute; right: .85rem; top: 50%; width: .45em; height: .45em; margin-top: -.38em; border-right: 2px solid var(--color-ink-2); border-bottom: 2px solid var(--color-ink-2); rotate: 45deg; pointer-events: none; }
+.ex-chrome-field::after { content: ''; position: absolute; right: .85rem; top: 50%; width: .62em; height: .36em; margin-top: -.16em; background: var(--color-ink-2); clip-path: polygon(0 0, 100% 0, 50% 100%); pointer-events: none; }
 @media (hover: hover) and (pointer: fine) { .ex .ex-chrome-pick:hover { border-color: var(--color-ink); } }
 
 .ex-scene-inner {
