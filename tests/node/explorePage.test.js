@@ -357,34 +357,36 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
       expect(await reg.locator('.ex-reg-facts dd').allTextContents()).toEqual([first[0].what, first[0].why, first[0].how]);
 
       // Choosing a name spells it out; the arrow keys move through the list.
+      // The register redraws on the next frame, so each read after a press waits for it.
       await reg.locator('.ex-reg-area[data-area="Apply"]').click();
       await reg.getByRole('button', { name: /^Final auto-submit/ }).click();
-      expect(await reg.locator('.ex-reg-detail .ex-status').textContent()).toBe('Experimental');
+      await expect.poll(() => reg.locator('.ex-reg-detail .ex-status').textContent()).toBe('Experimental');
       expect(await reg.locator('.ex-reg-detail').textContent()).toContain('refused on every application system');
-      expect(await reg.getByRole('button', { name: /^Final auto-submit/ }).getAttribute('aria-expanded')).toBe('true');
+      await expect.poll(() => reg.getByRole('button', { name: /^Final auto-submit/ }).getAttribute('aria-expanded')).toBe('true');
+      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
       await page.keyboard.press('ArrowUp');
-      expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
-      expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
+      await expect.poll(() => reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
+      await expect.poll(() => page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
 
       // A count is a filter: Planned shows only what is not built, and says so.
       await reg.locator('.ex-reg-stat[data-status="planned"]').click();
       const planned = CAPABILITIES.filter((c) => c.status === 'planned');
-      expect(await reg.locator('.ex-reg-note').textContent()).toContain('Not built');
-      expect(await reg.locator('.ex-reg-row').count()).toBe(planned.filter((c) => c.area === 'Apply').length || planned.filter((c) => c.area === planned[0].area).length);
-      expect(await reg.locator('.ex-reg-detail .ex-status').textContent()).toBe('Planned');
+      await expect.poll(() => reg.locator('.ex-reg-note').textContent()).toContain('Not built');
+      await expect.poll(() => reg.locator('.ex-reg-row').count()).toBe(planned.filter((c) => c.area === 'Apply').length || planned.filter((c) => c.area === planned[0].area).length);
+      await expect.poll(() => reg.locator('.ex-reg-detail .ex-status').textContent()).toBe('Planned');
       expect(await reg.locator('.ex-reg-detail').textContent()).toContain('Not built.');
       // An area with nothing planned cannot be chosen while the filter is on.
       const empty = CAPABILITY_AREAS.find((a) => !planned.some((c) => c.area === a));
-      expect(await reg.locator(`.ex-reg-area[data-area="${empty}"]`).isDisabled()).toBe(true);
+      await expect.poll(() => reg.locator(`.ex-reg-area[data-area="${empty}"]`).isDisabled()).toBe(true);
       // Pressing the count again clears it.
       await reg.locator('.ex-reg-stat[data-status="planned"]').click();
-      expect(await reg.locator(`.ex-reg-area[data-area="${empty}"]`).isDisabled()).toBe(false);
+      await expect.poll(() => reg.locator(`.ex-reg-area[data-area="${empty}"]`).isDisabled()).toBe(false);
 
       // Questions a newcomer asks: all there, the first already open.
       expect(await page.locator('#faq .ex-faq-q').allTextContents()).toEqual(FAQ.map((item) => item.q));
       expect(await page.locator('#faq details[open]').count()).toBe(1);
       await page.locator('#faq summary').nth(1).click();
-      expect(await page.locator('#faq .ex-faq-a').nth(1).isVisible()).toBe(true);
+      await expect.poll(() => page.locator('#faq .ex-faq-a').nth(1).isVisible()).toBe(true);
     });
   });
 
