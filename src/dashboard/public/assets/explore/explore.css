@@ -487,6 +487,9 @@ body.ex {
 
 /* ───────────────────────── 6. footer ───────────────────────── */
 
+/* The footer is in the document before the page is built; it joins the page once the page is there, so nothing jumps. */
+html:not([data-ready]) .ex-foot { display: none; }
+
 .ex-foot { border-top: 2px solid var(--color-ink); margin: 0 var(--page-pad); padding: var(--space-xl) 0 var(--space-2xl); display: grid; gap: var(--space-sm); }
 .ex-foot-line { font-family: var(--font-display); font-stretch: var(--wdth-station); font-weight: 820; font-size: var(--text-2xl); letter-spacing: -.035em; line-height: 1; }
 .ex-foot-facts { display: flex; flex-wrap: wrap; gap: var(--space-3xs) var(--space-lg); color: var(--color-ink-2); font-size: var(--text-sm); }
@@ -901,10 +904,6 @@ html[data-here="signal"] { --here-c: var(--signal); }
   .ex-sheets { grid-template-columns: minmax(0, 1fr); }
   .ex-facts { grid-template-columns: minmax(0, 1fr); }
   .ex-facts > div + div { border-top: var(--rule-hair) solid var(--color-rule); }
-}
-
-@media (max-width: 760px) {
-  :root { --wdth-display: 100%; --wdth-station: 106%; }
   /* The route stands up: the same seven stops, read downward. */
   .ex-route { --row: 52px; --rule-line: 6px; padding-top: 0; }
   .ex-stop-fact { display: none; }
@@ -919,7 +918,10 @@ html[data-here="signal"] { --here-c: var(--signal); }
   .ex-stop-signal { grid-template-columns: auto minmax(0, 1fr); padding-left: 4px; }
   .ex-route-token { width: var(--row); height: var(--row); transform: translateY(calc(var(--at, 0) * 100%)); }
   .ex .ex-route-again { margin-left: 0; }
+}
 
+@media (max-width: 760px) {
+  :root { --wdth-display: 100%; --wdth-station: 106%; }
   .ex-bars { grid-template-columns: minmax(0, 1fr); }
   .ex-board-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs); }
   .ex-board-out { text-align: left; }
@@ -932,19 +934,22 @@ html[data-here="signal"] { --here-c: var(--signal); }
   .ex-routes { grid-template-columns: minmax(0, 1fr); margin-left: 0; }
   .ex-notes-list { padding-left: 1.6rem; }
   .ex-rule-body, .ex-rule .ex-files { margin-left: 0; }
-  .ex-top-actions .ex-btn { display: none; }
   .ex-top-actions { flex: 0 0 auto; }
 }
 
 /* On a phone the route and the outcome line stand up, so they draw downward,
    and nothing slides in sideways: it all rises. */
-@media (max-width: 760px) and (prefers-reduced-motion: no-preference) {
+@media (max-width: 900px) and (prefers-reduced-motion: no-preference) {
   html[data-ready]:not([data-intro="done"]) .ex-stop::before { transform-origin: center top; animation-name: ex-rail-y; }
 }
 
-@media (max-width: 420px) {
+/* The header takes two rows where one would squeeze it: the brand and the dashboard above, the two views below. */
+@media (max-width: 640px) {
   .ex-top { flex-wrap: wrap; row-gap: 0; padding-top: var(--space-2xs); }
-  .ex-nav { order: 3; flex: 1 0 100%; min-height: 40px; }
+  .ex-brand { flex: 1 1 auto; }
+  .ex-nav { order: 3; flex: 1 0 100%; min-height: 44px; }
+}
+@media (max-width: 420px) {
   .ex-bar { grid-template-columns: minmax(0, 8rem) minmax(0, 1fr) 4.2rem; gap: var(--space-xs); }
   /* Where a field's answer came from drops under its label instead of squeezing it. */
   .ex-field { grid-template-columns: minmax(0, 1fr); }

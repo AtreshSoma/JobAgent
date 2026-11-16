@@ -7,7 +7,8 @@
  * each signal until it is cleared, the scenes hold and play as the page is
  * scrolled (and simply play on a phone, and stand still for reduced motion),
  * the diagrams respond to pointer and keyboard, a deep link lands on its
- * section, the theme is shared with the dashboard, nothing overflows from
+ * section, the story can be told for any of six fields and the choice rides
+ * in the link, the theme is shared with the dashboard, nothing overflows from
  * 320px up, and axe finds no WCAG A/AA problem in either section, theme or width.
  *
  * Self-skips when no browser can launch, like the other browser suites.
@@ -20,7 +21,10 @@ import { join } from 'node:path';
 import { browserUnavailable } from './helpers/browser.js';
 import { launchBrowser, startTestDashboard, waitUntilConnected } from './helpers/dashboardPage.js';
 import { DEEP_TOPICS } from '../../src/dashboard/public/assets/explore/js/content-deep.js';
-import { JOURNEY, CAPABILITIES } from '../../src/dashboard/public/assets/explore/js/content-overview.js';
+import {
+  JOURNEY, CAPABILITIES, CAPABILITY_AREAS, FIELDS, FAQ, SOURCES, TIER_GLOSS, marks, tailorLedger,
+} from '../../src/dashboard/public/assets/explore/js/content-overview.js';
+import { scoreInputs } from '../../src/dashboard/public/assets/explore/js/score-model.js';
 
 const require = createRequire(import.meta.url);
 const AXE_PATH = require.resolve('axe-core/axe.min.js');
@@ -166,7 +170,7 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
 
       // It can be run again, and starts held-free from the first station.
       await route.getByRole('button', { name: 'Run it again' }).click();
-      expect(await live.textContent()).toContain('Found on Greenhouse');
+      expect(await live.textContent()).toContain('Found on the employer’s careers page');
       expect(await approve.isEnabled()).toBe(false);
     });
   });
@@ -201,49 +205,186 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
 
   it('scores, tailors and stops as the code does', async (ctx) => {
     if (!available) return ctx.skip();
+    const field = FIELDS[0];
+    const result = scoreInputs(field.inputs);
     await withExplore(async (page) => {
-      // Score: the number is the model's, and a strong fit can still be held.
+      // Score: the number is the model's, said in plain words, and a strong fit can still be held.
       const score = page.locator('#station-score');
-      expect(await score.locator('.ex-score-num').textContent()).toBe('78');
-      expect(await score.locator('.ex-tier').textContent()).toBe('Apply');
-      await score.getByRole('button', { name: 'Strong fit, sponsorship unknown' }).click();
+      expect(await score.locator('.ex-score-num').textContent()).toBe(String(result.total));
+      expect(await score.locator('.ex-tier').textContent()).toBe(result.tier);
+      expect(await score.locator('.ex-score-gloss').textContent()).toBe(TIER_GLOSS[result.tier]);
+      // The skills marked in the posting are the ones the score counts.
+      expect(await score.locator('.ex-hit').allTextContents()).toEqual([...marks(field.posting.requires), ...marks(field.posting.prefers)]);
+      // What the posting asks for beyond the profile is quoted, and the gap is never claimed.
+      expect(await score.locator('.ex-ask q').allTextContents()).toEqual(field.alsoAsked);
+      expect(await score.locator('.ex-ev .is-gap').textContent()).toContain('never added');
+      await score.getByRole('button', { name: 'Visa needed, posting silent' }).click();
       expect(await score.locator('.ex-tier').textContent()).toBe('Queue');
       expect(await score.locator('.ex-score-note').textContent()).toContain('held in Queue');
+      await score.getByRole('button', { name: 'This job' }).click();
+      expect(await score.locator('.ex-score-num').textContent()).toBe(String(result.total));
 
-      // Tailor: the same bullets on both sheets, reordered, with nothing added.
+      // Tailor: every tailored line is a master line, one is left out and listed, and nothing is added.
       const sheets = page.locator('#station-tailor .ex-sheet');
       const master = await sheets.nth(0).locator('.ex-sheet-text').allTextContents();
       const tailored = await sheets.nth(1).locator('.ex-sheet-text').allTextContents();
-      expect(master).not.toEqual(tailored);
-      expect([...master].sort()).toEqual([...tailored].sort());
+      expect(tailored.length).toBe(master.length - 1);
+      for (const line of tailored) expect(master).toContain(line);
+      expect(tailored).not.toEqual(master.filter((line) => tailored.includes(line)));
       expect(await sheets.nth(0).locator('.ex-kw').count()).toBe(0);
-      expect(await sheets.nth(1).locator('.ex-kw').allTextContents()).toEqual(['Spark', 'Airflow', 'dbt']);
-      expect(await page.locator('#station-tailor .ex-gap').textContent()).toContain('never added');
+      expect(await sheets.nth(1).locator('.ex-kw').count()).toBeGreaterThan(3);
+      const ledger = tailorLedger(field);
+      expect(await page.locator('#station-tailor .ex-compare-cells dd').allTextContents())
+        .toEqual([ledger.same, ledger.moved, ledger.reordered, ledger.reworded, ledger.omitted, ledger.added].map(String));
+      expect(await page.locator('#station-tailor .ex-compare-cells .is-proof').textContent()).toBe('Added0');
+      const left = master.find((line) => !tailored.includes(line));
+      expect(await page.locator('#station-tailor .ex-compare-notes').textContent()).toContain(left);
+      expect(await page.locator('#station-tailor .ex-compare-notes').textContent()).toContain('never added');
 
-      // Fill: the form ends at the stop, and Submit is not a control.
+      // Fill: the form ends at the stop, Submit is not a control, and the open question is left alone.
       const fill = page.locator('#station-fill');
       expect(await fill.locator('.ex-halt-text').textContent()).toBe('JobAgent stops here');
       expect(await fill.getByRole('button').count()).toBe(0);
+      expect(await fill.locator('.ex-field-ask .ex-field-ask').textContent()).toBe('Left for you');
+
+      // Discover: the hidden condition is a tag that opens to its sentence, and folds away again.
+      const tag = page.locator('#station-discover .ex-cond-tag');
+      expect(await tag.textContent()).toBe(field.posting.condition.tag);
+      expect(await tag.getAttribute('aria-expanded')).toBe('true');
+      expect(await page.locator('#discoverCond').textContent()).toContain(field.posting.condition.sentence);
+      await tag.focus();
+      await page.keyboard.press('Enter');
+      expect(await tag.getAttribute('aria-expanded')).toBe('false');
+      expect(await page.locator('#discoverCond').isHidden()).toBe(true);
     });
   });
 
-  it('filters sources and the capability register', async (ctx) => {
+  it('tells the same story for each of six fields, and keeps the choice in the link', async (ctx) => {
     if (!available) return ctx.skip();
     await withExplore(async (page) => {
-      await page.locator('#sources').getByRole('button', { name: 'Needs your key' }).click();
-      expect(await page.locator('.ex-feed-count').textContent()).toBe('2 of 18 source adapters');
-      expect(await page.locator('.ex-source:not(.is-muted) .ex-source-name').allTextContents()).toEqual(['Adzuna', 'Apify actors']);
+      const picks = page.getByRole('radiogroup', { name: /See it for your field/ });
+      expect(await picks.getByRole('radio').count()).toBe(FIELDS.length);
+      expect(await picks.getByRole('radio', { checked: true }).textContent()).toContain('Software Engineer');
 
-      const ledger = page.locator('#ledger');
-      expect(await ledger.locator('.ex-ledger-row').count()).toBe(CAPABILITIES.length);
-      expect(await ledger.locator('details[open]').count()).toBe(1);
-      await ledger.getByRole('button', { name: /^Planned/ }).click();
+      for (const field of FIELDS.slice(1)) {
+        const result = scoreInputs(field.inputs);
+        await picks.getByRole('radio', { name: field.label }).click();
+        // The link carries it, a screen reader hears it, and focus stays on the choice just made.
+        expect(page.url()).toContain(`?field=${field.id}`);
+        expect(await page.getByRole('status').filter({ hasText: 'Showing the example' }).textContent()).toContain(`${field.label}: ${field.job.title} at ${field.job.company}`);
+        expect(await page.evaluate(() => document.activeElement?.dataset.field)).toBe(field.id);
+        // Every chapter is told for that field, with the model's own number.
+        expect(await page.locator('.ex-fcard.is-ours .ex-fcard-title').textContent()).toBe(field.job.title);
+        expect(await page.locator('.ex-fcard.is-ours .ex-fcard-num').textContent()).toBe(String(result.total));
+        expect(await page.locator('#station-score .ex-score-num').textContent()).toBe(String(result.total));
+        expect(await page.locator('#station-score .ex-tier').textContent()).toBe(result.tier);
+        expect(await page.locator('#station-score .ex-posting-title').textContent()).toBe(field.job.title);
+        expect(await page.locator('#station-discover .ex-board-kept .ex-board-title').textContent()).toBe(field.job.title);
+        expect(await page.locator('#station-tailor .ex-sheet-role').first().textContent()).toBe(field.resume.role);
+        expect(await page.locator('#station-fill .ex-field-value').first().textContent()).toBe(field.person.first);
+        expect(await page.locator('#station-track .ex-app-title').textContent()).toBe(field.job.title);
+        expect(await page.locator('.ex-route-job b').textContent()).toBe(field.job.title);
+        expect(await page.locator('#signal-tailor .ex-gate-tag').textContent()).toBe(field.job.title);
+        // The structure never changes: five chapters, two signals.
+        expect(await page.locator('.ex-scene').count()).toBe(JOURNEY.length);
+        expect(await page.locator('.ex-gate').count()).toBe(2);
+      }
+
+      // Arrow keys move between the choices, as in any radio group.
+      await page.keyboard.press('ArrowRight');
+      expect(await picks.getByRole('radio', { checked: true }).textContent()).toContain('Software Engineer');
+      expect(page.url()).not.toContain('field=');
+      await page.keyboard.press('ArrowRight');
+      expect(page.url()).toContain('?field=security');
+
+      // A link inside the page that names no field keeps the one in use.
+      await page.locator('.ex-route').getByRole('link', { name: 'Tailor' }).click();
+      await expect.poll(() => page.url()).toMatch(/#\/overview\/tailor\?field=security$/);
+      // The control in a chapter's corner changes it too, and stays under the hand.
+      const corner = page.locator('#station-tailor').getByLabel('Example');
+      expect(await corner.inputValue()).toBe('security');
+      await corner.selectOption('nursing');
+      expect(page.url()).toMatch(/#\/overview\/tailor\?field=nursing$/);
+      expect(await page.evaluate(() => document.activeElement?.id)).toBe('pick-station-tailor');
+      expect(await page.locator('#station-tailor .ex-sheet-role').first().textContent()).toBe(FIELDS.find((f) => f.id === 'nursing').resume.role);
+
+      // It is remembered for the visit: the page opened again without a field still shows it.
+      await page.goto(`${dash.url}${PAGE}`);
+      await page.reload();
+      await page.waitForSelector('html[data-ready="true"]');
+      expect(await page.locator('.ex-fcard.is-ours .ex-fcard-title').textContent()).toBe(FIELDS.find((f) => f.id === 'nursing').job.title);
+    });
+
+    // A link straight to a chapter for a field lands on it, told for that field.
+    const security = FIELDS.find((f) => f.id === 'security');
+    await withExplore(async (page) => {
+      expect(await page.locator('#station-score .ex-score-num').textContent()).toBe(String(scoreInputs(security.inputs).total));
+      expect(await page.locator('#station-score .ex-posting-title').textContent()).toBe(security.job.title);
+      await expect.poll(() => page.evaluate(() => {
+        const top = document.getElementById('station-score').getBoundingClientRect().top;
+        return top >= 0 && top < window.innerHeight / 2;
+      })).toBe(true);
+    }, { hash: '#/overview/score?field=security' });
+    // A field that does not exist falls back to the first.
+    await withExplore(async (page) => {
+      expect(await page.locator('.ex-fcard.is-ours .ex-fcard-title').textContent()).toBe(FIELDS[0].job.title);
+    }, { hash: '#/overview?field=astronaut' });
+  });
+
+  it('shows where jobs come from at a glance, and explores the register one capability at a time', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withExplore(async (page) => {
+      // Sources: three columns by what the reader has to do, each with its count.
+      const sources = page.locator('#sources');
+      for (const mode of ['on', 'key', 'urls']) {
+        const col = sources.locator(`.ex-src-col[data-mode="${mode}"]`);
+        const list = SOURCES.filter((src) => src.mode === mode);
+        expect(await col.locator('.ex-src-n').textContent()).toBe(String(list.length));
+        expect(await col.locator('.ex-source-name').allTextContents()).toEqual(list.map((src) => src.name));
+      }
+      expect(await sources.locator('.ex-source').count()).toBe(SOURCES.length);
+
+      // The register: counts first, one area's names, one capability spelled out.
+      const reg = page.locator('#ledger');
+      const count = (status) => CAPABILITIES.filter((c) => c.status === status).length;
+      await reg.scrollIntoViewIfNeeded();
+      await expect.poll(() => reg.locator('.ex-reg-stat[data-status="shipped"] .ex-reg-n').textContent()).toBe(String(count('shipped')));
+      const first = CAPABILITIES.filter((c) => c.area === CAPABILITY_AREAS[0]);
+      expect(await reg.locator('.ex-reg-row').count()).toBe(first.length);
+      expect(await reg.locator('.ex-reg-detail').count()).toBe(1);
+      expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe(first[0].name);
+      expect(await reg.locator('.ex-reg-facts dt').allTextContents()).toEqual(['What it does', 'Why it matters', 'How it works']);
+      expect(await reg.locator('.ex-reg-facts dd').allTextContents()).toEqual([first[0].what, first[0].why, first[0].how]);
+
+      // Choosing a name spells it out; the arrow keys move through the list.
+      await reg.locator('.ex-reg-area[data-area="Apply"]').click();
+      await reg.getByRole('button', { name: /^Final auto-submit/ }).click();
+      expect(await reg.locator('.ex-reg-detail .ex-status').textContent()).toBe('Experimental');
+      expect(await reg.locator('.ex-reg-detail').textContent()).toContain('refused on every application system');
+      expect(await reg.getByRole('button', { name: /^Final auto-submit/ }).getAttribute('aria-expanded')).toBe('true');
+      await page.keyboard.press('ArrowUp');
+      expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
+      expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
+
+      // A count is a filter: Planned shows only what is not built, and says so.
+      await reg.locator('.ex-reg-stat[data-status="planned"]').click();
       const planned = CAPABILITIES.filter((c) => c.status === 'planned');
-      expect(await ledger.locator('.ex-ledger-row').count()).toBe(planned.length);
-      expect(await ledger.locator('.ex-ledger-row:visible .ex-status').allTextContents()).toEqual(planned.map(() => 'Planned'));
-      expect(await ledger.locator('.ex-ledger-note').textContent()).toContain('Not built');
-      // Areas with nothing planned step aside; the rest open to show their rows.
-      expect(await ledger.locator('details:visible').count()).toBe(new Set(planned.map((c) => c.area)).size);
+      expect(await reg.locator('.ex-reg-note').textContent()).toContain('Not built');
+      expect(await reg.locator('.ex-reg-row').count()).toBe(planned.filter((c) => c.area === 'Apply').length || planned.filter((c) => c.area === planned[0].area).length);
+      expect(await reg.locator('.ex-reg-detail .ex-status').textContent()).toBe('Planned');
+      expect(await reg.locator('.ex-reg-detail').textContent()).toContain('Not built.');
+      // An area with nothing planned cannot be chosen while the filter is on.
+      const empty = CAPABILITY_AREAS.find((a) => !planned.some((c) => c.area === a));
+      expect(await reg.locator(`.ex-reg-area[data-area="${empty}"]`).isDisabled()).toBe(true);
+      // Pressing the count again clears it.
+      await reg.locator('.ex-reg-stat[data-status="planned"]').click();
+      expect(await reg.locator(`.ex-reg-area[data-area="${empty}"]`).isDisabled()).toBe(false);
+
+      // Questions a newcomer asks: all there, the first already open.
+      expect(await page.locator('#faq .ex-faq-q').allTextContents()).toEqual(FAQ.map((item) => item.q));
+      expect(await page.locator('#faq details[open]').count()).toBe(1);
+      await page.locator('#faq summary').nth(1).click();
+      expect(await page.locator('#faq .ex-faq-a').nth(1).isVisible()).toBe(true);
     });
   });
 
@@ -397,10 +538,10 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
       await expect.poll(() => page.locator('.ex-rail-now').textContent()).toBe('Score');
       await seek('score', 0.98);
       await expect.poll(() => held('score'), { timeout: 5_000 }).toBeLessThan(2);
-      await expect.poll(() => number.textContent(), { timeout: 5_000 }).toBe('78');
+      await expect.poll(() => number.textContent(), { timeout: 5_000 }).toBe(String(scoreInputs(FIELDS[0].inputs).total));
       await expect.poll(() => opacity('#station-score .ex-tier'), { timeout: 5_000 }).toBe(1);
       // Only the moment that is playing is spelled out (once the scrub has caught up with the scroll).
-      await expect.poll(() => page.locator('#station-score .ex-beat.is-on .ex-beat-name').textContent(), { timeout: 5_000 }).toContain('Second opinion');
+      await expect.poll(() => page.locator('#station-score .ex-beat.is-on .ex-beat-name').textContent(), { timeout: 5_000 }).toContain('Also asked for');
       expect(await page.locator('#station-score .ex-beat.is-on').count()).toBe(1);
       // A preset chosen on the held stage is shown at once. The chips ease in at the end of the
       // scene; wait for them to come to rest, because a click on a moving target is retried with
@@ -409,8 +550,27 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
         const style = getComputedStyle(el);
         return Number(style.opacity) === 1 && new DOMMatrix(style.transform).m42 === 0;
       }), { timeout: 5_000 }).toBe(true);
-      await page.locator('#station-score').getByRole('button', { name: 'Right title, thin overlap' }).click();
+      await page.locator('#station-score').getByRole('button', { name: 'Thin match' }).click();
       expect(Number(await number.textContent())).toBeLessThan(60);
+      await page.locator('#station-score').getByRole('button', { name: 'This job' }).click();
+
+      // The number is the sum of the reasons counted so far: part way through, it is below the
+      // total and no verdict is given yet; nothing on the sheet moves as the moments change.
+      const notesHeight = () => page.locator('#station-score .ex-scene-notes').evaluate((el) => Math.round(el.getBoundingClientRect().height));
+      const heights = new Set();
+      for (const at of [0.05, 0.2, 0.35, 0.6, 0.9]) {
+        await seek('score', at);
+        await page.waitForTimeout(1100);
+        heights.add(await notesHeight());
+        const shown = Number(await number.textContent());
+        const sum = await page.locator('#station-score .ex-scorecard').evaluate((card) => {
+          const total = Number(card.querySelector('.ex-score-num').dataset.total);
+          return { total, adding: card.classList.contains('is-adding') };
+        });
+        expect(shown <= sum.total, `at ${at}: ${shown} of ${sum.total}`).toBe(true);
+        expect(sum.adding, `at ${at}: a verdict only once every point is in`).toBe(shown !== sum.total);
+      }
+      expect(heights.size, 'the list of moments keeps its height').toBe(1);
 
       // Discover: three copies of one role end as one row, and every row carries its outcome.
       await seek('discover', 0.02);
@@ -490,7 +650,7 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
         const el = document.querySelector('#station-score .ex-scene-pic');
         window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 200, behavior: 'instant' });
       });
-      await expect.poll(() => page.locator('#station-score .ex-score-num').textContent(), { timeout: 10_000 }).toBe('78');
+      await expect.poll(() => page.locator('#station-score .ex-score-num').textContent(), { timeout: 10_000 }).toBe(String(scoreInputs(FIELDS[0].inputs).total));
       // Every moment stays listed: nothing folds away where nothing holds.
       expect(await page.locator('#station-score .ex-beat-text').first().evaluate((el) => el.offsetHeight)).toBeGreaterThan(0);
       expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
@@ -507,7 +667,8 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
       const hidden = await page.evaluate(() => [...document.querySelectorAll('.ex-demo, .ex-scene-head, .ex-beat, .ex-gate-title, .ex-board-row, .ex-board-out, .ex-field-value, .ex-halt, .ex-event, .ex-fcard, .ex-hood-node')]
         .filter((el) => Number(getComputedStyle(el).opacity) < 1 || getComputedStyle(el).visibility === 'hidden' || getComputedStyle(el).clipPath.startsWith('inset(0px 100%')).length);
       expect(hidden).toBe(0);
-      expect(await page.locator('#station-score .ex-score-num').textContent()).toBe('78');
+      expect(await page.locator('#station-score .ex-score-num').textContent()).toBe(String(scoreInputs(FIELDS[0].inputs).total));
+      expect(await page.locator('#station-score .ex-scorecard').evaluate((el) => el.classList.contains('is-adding'))).toBe(false);
       // The copies that only exist while Discover plays are never shown.
       expect(await page.locator('.ex-board-copy').evaluateAll((els) => els.filter((el) => getComputedStyle(el).visibility !== 'hidden').length)).toBe(0);
     });

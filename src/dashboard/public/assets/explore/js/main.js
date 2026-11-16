@@ -7,11 +7,16 @@
  *   #/overview/<stage>    one scene of the Overview (discover, score, ...)
  *   #/how                 the Technical Deep Dive
  *   #/how/<topic>         one Deep Dive section (see DEEP_TOPICS)
+ *
+ * The Overview's example field rides after the route as `?field=<id>`
+ * (field.js), so `#/overview/score?field=security` is the Score chapter told
+ * for a security analyst.
  */
 import { renderOverview } from './overview.js';
 import { renderDeep } from './deep.js';
 import { prefersReducedMotion } from './dom.js';
-import { sceneLanding, startMotion, stopMotion } from './motion.js';
+import { fieldSwapped, sceneLanding, startMotion, stopMotion } from './motion.js';
+import { adoptFieldFromLink, getField, initField, onFieldChange, syncFieldLink } from './field.js';
 
 const VIEWS = ['overview', 'how'];
 const $ = (id) => document.getElementById(id);
@@ -48,7 +53,7 @@ function toggleTheme() {
 /* ───────────────────────── routing ───────────────────────── */
 
 function parseHash() {
-  const [, view = 'overview', part = null] = location.hash.match(/^#\/([a-z]+)(?:\/([a-z-]+))?$/) ?? [];
+  const [, view = 'overview', part = null] = location.hash.split('?')[0].match(/^#\/([a-z]+)(?:\/([a-z-]+))?$/) ?? [];
   return { view: VIEWS.includes(view) ? view : 'overview', part };
 }
 
@@ -107,7 +112,7 @@ function watchTopics() {
  */
 function watchReveals(root) {
   const targets = [...root.querySelectorAll('[data-reveal]')];
-  if (typeof IntersectionObserver !== 'function') return;
+  if (typeof IntersectionObserver !== 'function') return null;
   document.documentElement.dataset.reveals = 'on';
   const seen = new IntersectionObserver((entries) => {
     for (const entry of entries) {
@@ -123,6 +128,7 @@ function watchReveals(root) {
     }
   }, { rootMargin: '0px 0px -10% 0px', threshold: 0 });
   for (const el of targets) seen.observe(el);
+  return seen;
 }
 
 /**
@@ -131,7 +137,7 @@ function watchReveals(root) {
  * one slides over another, so the one in front (the later one) wins.
  */
 function watchHere(root) {
-  if (typeof IntersectionObserver !== 'function') return;
+  if (typeof IntersectionObserver !== 'function') return null;
   const chapters = [...root.querySelectorAll('.ex-chapter')];
   const crossing = new Set();
   const lineOf = (el) => (el.classList.contains('ex-gate') ? 'signal' : el.classList.contains('ex-never') ? 'board' : (el.dataset.line ?? ''));
@@ -144,6 +150,7 @@ function watchHere(root) {
     if (front) document.documentElement.dataset.here = lineOf(front);
   }, { rootMargin: '-50% 0px -49% 0px' });
   for (const el of chapters) here.observe(el);
+  return here;
 }
 
 /**
@@ -207,14 +214,53 @@ function go(view) {
 
 /* ───────────────────────── boot ───────────────────────── */
 
-renderOverview(views.overview);
-watchReveals(views.overview);
-watchHere(views.overview);
+initField();
+let route = renderOverview(views.overview, getField());
+let watchers = [watchReveals(views.overview), watchHere(views.overview)];
+
+// One polite line for assistive technology when the example field changes.
+const live = document.createElement('p');
+live.className = 'sr-only';
+live.setAttribute('role', 'status');
+document.querySelector('.ex-main').append(live);
+
+/**
+ * Tell the same story for another field: rebuild the Overview with that
+ * field's posting, score, resume and form, and leave the reader where they
+ * were, with the control they used still under their hand.
+ */
+onFieldChange((field, { from }) => {
+  const pick = from?.dataset?.pick ?? null;
+  const before = from?.isConnected ? from.getBoundingClientRect().top : null;
+  const y = window.scrollY;
+  const showing = currentView === 'overview';
+  if (showing) stopMotion();
+  route.stop();
+  for (const watcher of watchers) watcher?.disconnect();
+  route = renderOverview(views.overview, field);
+  watchers = [watchReveals(views.overview), watchHere(views.overview)];
+  if (showing) {
+    startMotion(views.overview);
+    window.scrollTo({ top: y, behavior: 'instant' });
+    const again = pick ? views.overview.querySelector(`[data-pick="${pick}"]`) : null;
+    if (again && before !== null) {
+      window.scrollBy({ top: again.getBoundingClientRect().top - before, behavior: 'instant' });
+      // The control that was used is a new element now; focus goes with it.
+      again.focus({ preventScroll: true });
+    }
+    fieldSwapped(views.overview);
+  }
+  live.textContent = `Showing the example for ${field.label}: ${field.job.title} at ${field.job.company}.`;
+});
 
 for (const button of switches) button.addEventListener('click', () => go(button.dataset.view));
 for (const button of document.querySelectorAll('.theme-toggle')) button.addEventListener('click', toggleTheme);
 matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', syncThemeControl);
-window.addEventListener('hashchange', () => navigate(parseHash(), { fromLink: true }));
+window.addEventListener('hashchange', () => {
+  // A link may name a field; if it names none, the one in use goes back into the address.
+  adoptFieldFromLink();
+  navigate(parseHash(), { fromLink: true });
+});
 
 // Publish the header's real height, so sticky parts and jump targets clear it.
 const topbar = document.querySelector('.ex-top');
@@ -223,6 +269,7 @@ new ResizeObserver(syncTop).observe(topbar);
 syncTop();
 
 syncThemeControl();
+syncFieldLink();
 show(parseHash());
 // A link straight to one section is measured before the typeface has loaded,
 // and the text reflows when it arrives. Align it again then, unless the

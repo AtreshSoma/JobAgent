@@ -10,7 +10,11 @@
  *   - its lifecycle diagram is src/lifecycle.js;
  *   - its command list is the CLI's command table;
  *   - its MCP tool list and API routes are the ones registered;
- *   - its Score Lab gives the same total and tier as the real scorer.
+ *   - its Score Lab gives the same total and tier as the real scorer;
+ *   - each of its six example fields is scored by the real scorer, has its
+ *     conditions read by the real readers, and has a tailored resume the real
+ *     comparison agrees adds nothing;
+ *   - no one profession dominates the examples a first-time visitor sees.
  *
  * A failure here means the page is now wrong, not that the test is fussy.
  */
@@ -26,9 +30,15 @@ import { scoreJob, PREFERRED_SKILL_CREDIT, STRUCTURAL_WEIGHTS, DEFAULT_TRACK_PEN
 import { explainScore } from '../../src/scoring/explainScore.js';
 import { DEFAULT_ELIGIBILITY_PENALTY } from '../../src/scoring/eligibility.js';
 import { FIXTURE_VERIFIED_AUTO_APPLY_ATS } from '../../src/apply/autoApplyEligibility.js';
+import { extractHiddenClauses } from '../../src/scoring/hiddenClauses.js';
+import { extractYearsRequirement, missingCredentials } from '../../src/scoring/eligibility.js';
+import { loadRoleFamilies, titleFamilies } from '../../src/profile/roleFamilies.js';
+import { diffResume } from '../../src/resume/resumeDiff.js';
 
 import {
   STATUS, JOURNEY, GATES, SOURCES, SOURCE_GROUPS, SOURCE_MODES, CAPABILITIES, CAPABILITY_AREAS,
+  FIELDS, DEFAULT_FIELD, HERO, HERO_EXTRAS, SCORE_WHATIFS, SCORE_LEAD_ROWS, TIER_GLOSS, FAQ, CLOSE, BOUNDARIES,
+  marks, plain, tailorLedger, tailorLines,
 } from '../../src/dashboard/public/assets/explore/js/content-overview.js';
 import {
   ARCH_LAYERS, ARCH_NODES, TRACES, LIFECYCLE_GROUPS, LIFECYCLE_STATES, LIFECYCLE_TRANSITIONS,
@@ -248,6 +258,8 @@ describe('Explore JobAgent: the Score Lab agrees with the real scorer', () => {
   const scenarios = [
     ['the default inputs', {}],
     ...PRESETS.map((preset) => [`preset "${preset.name}"`, preset.inputs]),
+    // Every example field on the Overview, and each "what if" laid over it.
+    ...FIELDS.flatMap((field) => SCORE_WHATIFS.map((w) => [`the ${field.label} example, ${w.name}`, { ...field.inputs, ...w.inputs }])),
     ['no skills found at all', { skillsFound: 0, skillsPreferredOnly: 0 }],
     ['every skill found, industry named', { skillsFound: 8, skillsPreferredOnly: 0, domainMatch: true, sponsorship: 'Confirmed' }],
     ['a title that does not match', { titleMatch: false }],
@@ -305,5 +317,205 @@ describe('Explore JobAgent: the tailoring claim matches the tailor (audit X1)', 
     expect(said()).toMatch(/left out/i);
     expect(said()).toMatch(/Compare with master/);
     expect(said()).toMatch(/rewording you accepted|you accepted/i);
+  });
+});
+
+/* ───────────────────────── the six example fields ───────────────────────── */
+
+describe('Explore JobAgent: the story is true for every field', () => {
+  const taxonomy = loadRoleFamilies(ROOT);
+  const lower = (list) => list.map((t) => t.toLowerCase());
+
+  it('offers six fields, software first, each on a role family that exists', () => {
+    expect(FIELDS.map((f) => f.id)).toEqual(['software', 'security', 'regulatory', 'nursing', 'marketing', 'finance']);
+    expect(DEFAULT_FIELD).toBe('software');
+    const families = JSON.parse(read('config', 'role_families.json')).families;
+    for (const field of FIELDS) {
+      expect(Object.keys(families), field.id).toContain(field.family);
+      // The real classifier files the example's job title under that family before any other.
+      const [top] = [...titleFamilies(field.job.title, taxonomy).families].sort((a, b) => b.score - a.score);
+      expect(top?.id, `${field.job.title}`).toBe(field.family);
+    }
+    // "26 job families" is the number in the taxonomy.
+    expect(Object.keys(families).length).toBe(26);
+    expect(HERO.pick.note).toContain('26 ');
+    expect(FAQ.find((item) => /only for tech/i.test(item.q)).a).toContain('26 ');
+  });
+
+  for (const field of FIELDS) {
+    describe(field.label, () => {
+      const skills = lower(field.resume.skills.master);
+      const required = marks(field.posting.requires);
+      const preferred = marks(field.posting.prefers);
+      const postingText = `${plain(field.posting.requires)} ${plain(field.posting.prefers)}`;
+
+      it('marks in the posting exactly the skills its score counts', () => {
+        expect(skills.length).toBe(SCORE_MODEL.profileSkills);
+        expect(required.length + preferred.length).toBe(field.inputs.skillsFound);
+        expect(preferred.length).toBe(field.inputs.skillsPreferredOnly);
+        for (const term of [...required, ...preferred]) expect(skills, term).toContain(term.toLowerCase());
+        // A skill of yours the posting does not name is not marked, and what it asks for beyond your profile is not yours.
+        for (const phrase of [field.gap, ...field.alsoAsked]) expect(skills, phrase).not.toContain(phrase.toLowerCase());
+        // "Also asked for" and the gap are quoted from the posting, word for word.
+        for (const phrase of [field.gap, ...field.alsoAsked]) expect(postingText.toLowerCase(), phrase).toContain(phrase.toLowerCase());
+      });
+
+      it('gives the model\'s score, with a verdict the page can explain', () => {
+        const result = scoreInputs(field.inputs);
+        expect(TIER_GLOSS[result.tier], result.tier).toMatch(/\S/);
+        // The five reasons shown in full and the ones folded together add up to the score.
+        const lead = SCORE_LEAD_ROWS.map((row) => result.rows.find((r) => r.id === row.id));
+        expect(lead.every(Boolean)).toBe(true);
+        const rest = result.rows.filter((r) => !lead.includes(r));
+        const sum = [...lead, ...rest, ...result.penalties].reduce((n, r) => n + r.points, 0);
+        expect(Math.round((Math.max(0, sum) / result.max) * 100)).toBe(result.total);
+        // No example needs a visa: sponsorship is shown as a "what if", not in the main story.
+        expect(field.inputs.needsSponsorship).toBe(false);
+      });
+
+      it('shows a hidden condition the real reader finds, under the label it gives', () => {
+        const [clause] = extractHiddenClauses(field.posting.condition.sentence);
+        expect(clause?.label, field.posting.condition.sentence).toBe(field.posting.condition.tag);
+      });
+
+      it('tailors by reordering and leaving out, and the real comparison agrees nothing was added', () => {
+        const { master, tailored, omitted } = tailorLines(field);
+        // Every tailored line is a master line; the one left out is listed.
+        for (const line of tailored.slice(0, -1)) expect(master, line).toContain(line);
+        expect(omitted.length).toBe(1);
+        expect([...field.resume.skills.tailored].sort()).toEqual([...field.resume.skills.master].sort());
+        const real = diffResume({ master, tailored, omitted }).summary;
+        const page = tailorLedger(field);
+        expect({ same: page.same, moved: page.moved, reordered: page.reordered, reworded: page.reworded, omitted: page.omitted, added: page.added })
+          .toEqual({ same: real.same, moved: real.moved, reordered: real.reordered, reworded: real.reworded, omitted: real.omitted, added: real.added });
+        expect(real.added).toBe(0);
+        // Emphasis only marks terms the posting asks for, in lines that already held them.
+        const asked = lower([...required, ...preferred]);
+        for (const b of field.resume.bullets) for (const term of marks(b.text)) expect(asked, `${term} in "${plain(b.text)}"`).toContain(term.toLowerCase());
+        for (const term of marks(field.resume.summary)) expect(asked, term).toContain(term.toLowerCase());
+      });
+
+      it('backs each matched skill with a resume line that names it', () => {
+        for (const item of field.evidence) {
+          const line = plain(field.resume.bullets.find((b) => b.id === item.bullet).text).toLowerCase();
+          for (const skill of item.skill.split(', ')) expect(line, `${skill} in "${line}"`).toContain(skill.toLowerCase());
+        }
+      });
+
+      it('keeps one posting and sets the others aside with a reason', () => {
+        const kept = field.discover.filter((row) => row.outcome === 'kept');
+        expect(kept.length).toBe(1);
+        expect(kept[0].title).toBe(field.job.title);
+        expect(field.discover.filter((row) => row.outcome === 'merged').length).toBe(1);
+        // An employer's listing carries other kinds of work: at least one row is not this field's.
+        expect(field.discover.some((row) => row.kind !== field.kind)).toBe(true);
+        for (const row of field.discover) expect(row.label, row.title).toMatch(/\S/);
+      });
+    });
+  }
+
+  it('reads the stated requirements its examples show: years, a license, a clearance', () => {
+    const regulatory = FIELDS.find((f) => f.id === 'regulatory');
+    expect(extractYearsRequirement(`Requirements:\n${plain(regulatory.posting.requires)}`).years).toBe(6);
+    expect(regulatory.inputs.eligibility).toBe('stretch1');
+    const nursing = FIELDS.find((f) => f.id === 'nursing');
+    const jd = `Requirements:\n${plain(nursing.posting.requires)}`;
+    expect(missingCredentials(jd, { certifications: ['BLS'] })).toEqual(['an RN license']);
+    expect(missingCredentials(jd, { certifications: ['RN license, Ohio'] })).toEqual([]);
+    const security = FIELDS.find((f) => f.id === 'security');
+    const cleared = security.discover.find((row) => row.outcome === 'excluded');
+    expect(extractHiddenClauses(`${cleared.meta}.`).map((c) => c.kind)).toEqual(['clearance']);
+  });
+
+  it('never lets one profession fill the examples a first-time visitor sees', () => {
+    const first = FIELDS.find((f) => f.id === DEFAULT_FIELD);
+    // The morning behind the headline: the other five fields, other kinds of work, and the chosen posting.
+    const hero = [first.kind, ...FIELDS.filter((f) => f !== first).map((f) => f.kind), ...HERO_EXTRAS.map((p) => p.kind)];
+    expect(new Set(hero).size).toBeGreaterThanOrEqual(10);
+    const shown = [...hero, ...first.discover.map((row) => row.kind)];
+    const counts = shown.reduce((map, kind) => map.set(kind, (map.get(kind) ?? 0) + 1), new Map());
+    for (const [kind, n] of counts) expect(n / shown.length, `${kind}: ${n} of ${shown.length}`).toBeLessThanOrEqual(1 / 3);
+    // Whichever field is chosen, the same holds.
+    for (const field of FIELDS) {
+      const all = [field.kind, ...FIELDS.filter((f) => f !== field).map((f) => f.kind), ...HERO_EXTRAS.map((p) => p.kind), ...field.discover.map((row) => row.kind)];
+      const most = Math.max(...[...new Set(all)].map((kind) => all.filter((k) => k === kind).length));
+      expect(most / all.length, field.id).toBeLessThanOrEqual(1 / 3);
+    }
+  });
+});
+
+describe('Explore JobAgent: what is built is labelled as the code has it', () => {
+  const status = (name) => CAPABILITIES.find((c) => c.name === name)?.status;
+
+  it('marks as implemented, optional or planned what the code makes it (owner decision, 2026-11-15)', () => {
+    // Built and on by default.
+    for (const name of ['Work history and education', 'Skip unchanged listings', 'What gets interviews', 'Interview prep pack']) expect(status(name), name).toBe('shipped');
+    // Built, and off until the person turns it on.
+    for (const name of ['Drafted answers to open questions', 'Wait at a sign-in', 'Several applications at once', 'Daily scheduled search']) expect(status(name), name).toBe('optional');
+    // Not built. Planned work is never described as available.
+    for (const name of ['Results while a search runs', 'Packaged installer']) expect(status(name), name).toBe('planned');
+    for (const cap of CAPABILITIES.filter((c) => c.status === 'planned')) expect(cap.how, cap.name).toMatch(/^Not built\./);
+  });
+
+  it('backs those labels with the code', () => {
+    // Waiting at a wall and several at once are off unless a setting turns them on.
+    const settings = read('src', 'utils', 'credentialManager.js');
+    expect(settings).toContain('ASSIST_WAIT_FOR_WALL_SECONDS');
+    expect(settings).toContain('ASSIST_CONCURRENCY');
+    // Work history and education runs inside every fill.
+    expect(read('src', 'automation', 'assistStages.js')).toMatch(/repeatedSections|fillRepeatedSections/);
+    // The daily schedule is a command the person runs; nothing installs it.
+    expect(JSON.parse(read('package.json')).scripts.schedule).toMatch(/schedule/);
+    // The interview prep pack and outcome analytics exist.
+    expect(existsSync(join(ROOT, 'src', 'dashboard', 'prepPack.js'))).toBe(true);
+    // Drafted answers need the optional model.
+    expect(existsSync(join(ROOT, 'src', 'apply', 'groundedAnswer.js'))).toBe(true);
+    // No streaming of results exists.
+    const server = read('src', 'dashboard', 'server.js');
+    expect(server).not.toContain('text/event-stream');
+  });
+
+  it('says each thing a capability needs said: what it does, why it matters, how it works', () => {
+    for (const cap of CAPABILITIES) for (const key of ['what', 'why', 'how']) expect(cap[key], `${cap.name}: ${key}`).toMatch(/\S{3,}/);
+    // Short enough to read at a glance.
+    for (const cap of CAPABILITIES) for (const key of ['what', 'why', 'how']) expect(cap[key].length, `${cap.name}: ${key}`).toBeLessThanOrEqual(190);
+  });
+
+  it('states the numbers the code has', () => {
+    const on = SOURCES.filter((s) => s.mode === 'on');
+    const nine = SOURCES.filter((s) => s.group === 'ats' && s.mode === 'on').length;
+    expect(nine).toBe(9);
+    expect(CAPABILITIES.find((c) => c.name === 'Employers’ application systems').what).toContain('nine ');
+    expect(FAQ.find((item) => /job sites/i.test(item.q)).a).toContain('nine ');
+    expect(on.length).toBe(12);
+    // Eleven kinds of hidden condition.
+    expect(read('src', 'scoring', 'hiddenClauses.js').match(/^ {2}\['[a-z_0-9]+',/gm).length).toBe(11);
+    expect(CAPABILITIES.find((c) => c.name === 'Hidden conditions').how).toContain('Eleven ');
+    // The page budget is two pages.
+    expect(read('src', 'resume', 'tailor_cli.py')).toMatch(/request\.get\("max_pages"\) is not None else 2\b/);
+    // No model is used unless one is switched on, and identity lines are removed first.
+    expect(existsSync(join(ROOT, 'src', 'llm', 'identityUnits.js'))).toBe(true);
+    expect(read('LICENSE')).toMatch(/^MIT License/);
+  });
+
+  it('closes on the real first three steps, and never says it submits', () => {
+    expect(CLOSE.steps.map((step) => step.name)).toEqual(['Add your resume', 'Confirm the job titles', 'Run your first search']);
+    expect(read('src', 'dashboard', 'data.js')).toContain('Run your first search');
+    expect(FAQ.length).toBe(7);
+    expect(FAQ[0].a).toMatch(/^No\./);
+    expect(BOUNDARIES.never[0]).toMatch(/^Submits an application without you/);
+  });
+
+  it('explains the product in plain words on the Overview', () => {
+    // Words a first-time visitor outside technology would not know stay under the hood.
+    const overview = read('src', 'dashboard', 'public', 'assets', 'explore', 'js', 'content-overview.js');
+    const copy = overview.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+      // Identifiers, not copy: adapter ids, topic ids, and the `how` of a source that names its vendor.
+      .replace(/\b(?:id|group|topic|family|mode|outcome|line|kind|bullet): '[^']*'/g, '')
+      // The fourth argument of a register entry is the topic it links to under the hood.
+      .replace(/^( {2}cap\('[^']+', '[^']+', '[a-z]+'), '[a-z]+',/gm, '$1,');
+    for (const term of [/\bATS\b/, /\bpacket/i, /\bshortlist/i, /127\.0\.0\.1/, /\bSQLite\b/, /\bPlaywright\b/, /\bembeddings?\b/i, /\bJSON\b/, /\badapters?\b/i, /\bLLM\b/, /\bIMAP\b/]) {
+      expect(copy, String(term)).not.toMatch(term);
+    }
   });
 });

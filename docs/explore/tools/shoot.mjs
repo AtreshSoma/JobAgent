@@ -70,7 +70,13 @@ function plan(page, viewId) {
       const end = Math.min(maxY, Math.round(box.bottom + scrollY - vh));
       const name = el.id || [...el.classList].find((c) => c.startsWith('ex-') && c !== 'ex-chapter') || `block${i}`;
       const ys = [start];
-      if (end > start + 40) {
+      const plate = el.classList.contains('ex-sheet-chapter') && document.documentElement.dataset.motion === 'pinned' ? el.querySelector('.ex-plate') : null;
+      if (plate) {
+        // A held sheet: as it lands, half way through its picture, and finished, just before the next sheet rises.
+        const length = el.offsetHeight - 2 * plate.offsetHeight;
+        ys.length = 0;
+        for (const p of [0.03, 0.5, 0.985]) ys.push(Math.round(start + length * p));
+      } else if (end > start + 40) {
         const n = Math.min(cap - 1, Math.ceil((end - start) / (vh * 0.9)));
         for (let k = 1; k <= n; k += 1) ys.push(Math.round(start + ((end - start) * k) / n));
       }

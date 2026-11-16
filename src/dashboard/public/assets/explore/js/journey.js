@@ -10,7 +10,7 @@
  * The five scenes the posting calls at are built in scenes.js.
  */
 import { h, prefersReducedMotion } from './dom.js';
-import { JOURNEY, GATES, EXAMPLE_JOB } from './content-overview.js';
+import { JOURNEY, GATES, TIER_GLOSS } from './content-overview.js';
 import { SCORE_MODEL, scoreInputs } from './score-model.js';
 
 /** Which line each stage runs on. Find is blue, Apply is green, Track is magenta. */
@@ -19,7 +19,6 @@ export const LINE_OF = Object.freeze({ discover: 'find', score: 'find', tailor: 
 /** How long the token rests at a station before moving on, in milliseconds. */
 const DWELL_MS = 1250;
 
-const example = scoreInputs();
 const slug = (text) => String(text).toLowerCase().replace(/\s+/g, '-');
 
 /* ───────────────────────── the route ───────────────────────── */
@@ -35,13 +34,17 @@ function routeStops() {
   return stops;
 }
 
-const STATION_STATUS = Object.freeze({
-  discover: `Found on ${EXAMPLE_JOB.source}, ${EXAMPLE_JOB.posted}.`,
-  score: `Scored ${example.total}. Tier: ${example.tier}.`,
-  tailor: 'Resume tailored. Packet ready for review.',
-  fill: 'Form filled in your own browser.',
-  track: 'Submitted by you. Now tracking replies.',
-});
+/** What the status line says at each station, for one field's posting. */
+function stationStatus(field) {
+  const result = scoreInputs(field.inputs);
+  return {
+    discover: `Found on the employer’s careers page, ${field.job.posted}.`,
+    score: `Scored ${result.total} out of 100. ${TIER_GLOSS[result.tier]}`,
+    tailor: 'Resume tailored. Everything for this application is ready for you to check.',
+    fill: 'Form filled in a browser window you can watch.',
+    track: 'Submitted by you. Now tracking replies.',
+  };
+}
 
 const SIGNAL_COPY = Object.freeze({
   tailor: { waiting: 'Held at the signal. Nothing is filled until you approve.', action: 'Approve' },
@@ -49,10 +52,12 @@ const SIGNAL_COPY = Object.freeze({
 });
 
 /**
- * @returns {{ root: HTMLElement, start: () => void, reset: () => void }}
+ * @param {object} field the field whose posting runs the line (content-overview.js, FIELDS)
+ * @returns {{ root: HTMLElement, start: () => void, reset: () => void, stop: () => void }}
  */
-export function buildRoute() {
+export function buildRoute(field) {
   const stops = routeStops();
+  const STATION_STATUS = stationStatus(field);
   let at = 0;
   let timer = null;
   let started = false;
@@ -61,7 +66,7 @@ export function buildRoute() {
   const again = h('button', { type: 'button', class: 'ex-route-again', hidden: true, onClick: () => reset() }, 'Run it again');
   // The token is the posting itself, carrying its title along the line.
   // Decorative: the status line below says the same thing in words.
-  const token = h('span', { class: 'ex-route-token', 'aria-hidden': 'true' }, h('span', { class: 'ex-route-tag', text: EXAMPLE_JOB.title }));
+  const token = h('span', { class: 'ex-route-token', 'aria-hidden': 'true' }, h('span', { class: 'ex-route-tag', text: field.job.title }));
 
   const items = stops.map((stop, index) => {
     const next = stops[index + 1];
@@ -87,10 +92,11 @@ export function buildRoute() {
     // The token sits beside the list, not in it: a list may only hold items.
     h('div', { class: 'ex-route-track' }, h('ol', { class: 'ex-route-line' }, items), token),
     h('p', { class: 'ex-route-status' },
-      h('span', { class: 'ex-route-job' }, h('b', { text: EXAMPLE_JOB.title }), ` ${EXAMPLE_JOB.company}`),
+      h('span', { class: 'ex-route-job' }, h('b', { text: field.job.title }), ` ${field.job.company}`),
       h('span', { class: 'ex-route-live', role: 'status' }, state),
       again),
     h('p', { class: 'ex-route-note', text: 'An example posting. Clear each signal to let it through.' }));
+  let live = true;
 
   function paint() {
     const stop = stops[at];
@@ -155,10 +161,17 @@ export function buildRoute() {
   }
 
   // A tab left in the background should not run the line unseen.
-  document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(timer); else if (started) advance(); });
+  const onVisibility = () => { if (document.hidden) clearTimeout(timer); else if (started && live) advance(); };
+  document.addEventListener('visibilitychange', onVisibility);
+  /** Retire this route (the Overview is being rebuilt for another field). */
+  function stop() {
+    live = false;
+    clearTimeout(timer);
+    document.removeEventListener('visibilitychange', onVisibility);
+  }
 
   paint();
-  return { root, start, reset };
+  return { root, start, reset, stop };
 }
 
 /* ───────────────────────── shared pieces ───────────────────────── */

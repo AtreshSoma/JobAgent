@@ -2,9 +2,10 @@
 /*
  * Explore JobAgent: the Overview.
  *
- * The Overview reads like a launch film. A headline over a morning of
- * postings, the problem in the reader's own words, then five chapter sheets
- * the example posting passes through. Each sheet has its own ground (tokens.css,
+ * The Overview reads like a launch film, for someone who has never heard of
+ * JobAgent. A headline over a morning of postings from many kinds of work, the
+ * problem in the reader's own words, the whole route in one look, then five
+ * chapter sheets the reader's posting passes through. Each sheet has its own ground (tokens.css,
  * Grounds); the two human gates are red sheets with a black signal head. In a
  * wide window the sheets hold and peel over one another (motion.js); anywhere
  * else they are ordinary sections, one after another.
@@ -17,8 +18,8 @@
  *
  * Contents
  *   1. Type roles and the page        7. Never
- *   2. Hero                           8. Under the hood, sources
- *   3. The problem                    9. Run the line, register, close
+ *   2. Hero, with the field picker    8. Where the jobs come from, the turn-off
+ *   3. The problem                    9. The whole route, register, questions, close
  *   4. Sheets and their chrome       10. The chapter rail
  *   5. The two signals               11. Held sheets (pinned)
  *   6. The five pictures             12. Motion, narrow screens
@@ -41,13 +42,19 @@
 
 /* ───────────────────────── 2. hero ───────────────────────── */
 
+/*
+ * One screen that answers four questions for someone who has never heard of
+ * JobAgent: what it is (the sentence), whether it is for them (the morning of
+ * postings and the field picker), whether to trust it (three facts), and what
+ * to do next (two buttons).
+ */
 .ex-overview > .ex-hero {
   min-height: min(calc(100svh - var(--top-h)), 64rem);
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  grid-template-areas: "title field" "foot field" "proof field";
-  column-gap: var(--space-2xl); row-gap: var(--space-lg);
-  padding-block: clamp(1.5rem, 6vh, 4.5rem) var(--space-xl);
+  display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "title field" "foot field" "trust trust" "pick pick";
+  column-gap: var(--space-xl);
+  padding-block: clamp(1.25rem, 4.5vh, 3rem) var(--space-lg);
 }
 .ex-hero-title {
   grid-area: title; align-self: end; font-size: clamp(3.4rem, .4rem + 8.6vw, 10.5rem); line-height: .84; letter-spacing: -.03em;
@@ -56,63 +63,105 @@
 .ex-hero-title .ex-line { display: block; }
 .ex-hero-call { color: var(--signal-ink); }
 .ex-hero-title .ex-lamp { width: .15em; height: .15em; margin-left: .04em; }
-.ex-hero-foot { grid-area: foot; align-self: end; display: grid; gap: var(--space-lg); justify-items: start; }
-.ex-hero-foot .ex-lede { max-width: 40ch; color: var(--color-ink-2); }
-.ex-hero-proof {
-  grid-area: proof; display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-lg);
-  padding-top: var(--space-md); border-top: var(--rule-hair) solid var(--color-rule);
-  font-size: var(--text-sm); font-weight: 600; font-stretch: var(--wdth-sign); color: var(--color-ink-2);
-}
-.ex-hero-proof li { display: inline-flex; align-items: center; gap: .55em; }
-.ex-hero-proof li::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--line-find); }
-.ex-hero-proof li:last-child::before { background: var(--signal); }
+.ex-hero-foot { grid-area: foot; display: grid; gap: var(--space-md); justify-items: start; padding-top: clamp(1rem, 3vh, 2rem); }
+.ex-hero-foot .ex-lede { max-width: 43ch; color: var(--color-ink-2); }
 
-/* The field: one morning of postings, standing in depth. */
-.ex-crowd { grid-area: field; position: relative; min-height: clamp(20rem, 60vh, 40rem); margin-right: calc(-1 * var(--page-pad)); perspective: 1300px; perspective-origin: 40% 45%; }
+/* Three reasons to trust it, each a fact about the code. */
+.ex-trust {
+  grid-area: trust; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-lg);
+  margin-top: clamp(1.25rem, 4vh, 3rem); padding-top: var(--space-md); border-top: var(--rule-hair) solid var(--color-rule-strong);
+}
+.ex-trust li { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: .7em; align-items: baseline; line-height: 1.4; }
+.ex-trust li::before { content: ''; width: 9px; height: 9px; border-radius: 50%; background: var(--line-find); grid-row: span 2; translate: 0 -1px; }
+.ex-trust [data-line="apply"]::before { background: var(--line-apply); }
+.ex-trust [data-line="signal"]::before { background: var(--signal); }
+.ex-trust strong { font-weight: 740; }
+.ex-trust span { grid-column: 2; font-size: var(--text-sm); color: var(--color-ink-2); }
+
+/* See it for your field: six choices, one pressed. The whole story follows it. */
+.ex-fieldpick {
+  grid-area: pick; display: grid; gap: var(--space-xs); margin-top: clamp(1rem, 3vh, 2rem);
+  padding: var(--space-sm) var(--space-md); background: var(--color-paper-2); border-radius: var(--radius-surface);
+}
+.ex-fieldpick-label { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 var(--space-sm); line-height: 1.35; }
+.ex-fieldpick-label strong { font-weight: 760; }
+.ex-fieldpick-label span { font-size: var(--text-sm); color: var(--color-ink-2); }
+.ex-picks { display: flex; flex-wrap: wrap; gap: var(--space-2xs); }
+.ex .ex-pick {
+  min-height: 44px; padding: 0 1.05rem; border: 1.5px solid var(--color-rule-strong); border-radius: var(--radius-pill);
+  font-weight: 660; font-size: var(--text-sm); white-space: nowrap; background: var(--page-bg); color: var(--color-ink);
+  transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out), border-color var(--dur-short) var(--ease-out), transform var(--dur-press) var(--ease-out);
+}
+.ex .ex-pick[aria-checked="true"] { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-on-ink); }
+.ex .ex-pick:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) { .ex .ex-pick:not([aria-checked="true"]):hover { border-color: var(--color-ink); } }
+.ex-pick-short { display: none; }
+
+/* The morning: postings from many kinds of work, standing in depth around yours. */
+.ex-crowd { grid-area: field; position: relative; min-height: clamp(19rem, 52vh, 36rem); margin-right: calc(-1 * var(--page-pad)); perspective: 1300px; perspective-origin: 40% 45%; }
 .ex-crowd-space { position: absolute; inset: 0; transform-style: preserve-3d; transform: rotateX(6deg) rotateY(-14deg); }
 .ex-fcard {
-  position: absolute; left: var(--x); top: calc(var(--y) * .78); width: clamp(9.5rem, 13vw, 12.5rem);
+  position: absolute; left: var(--x); top: calc(var(--y) * .8); width: clamp(10.5rem, 14vw, 13rem);
   display: grid; gap: 2px; padding: .8rem .95rem;
   background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule); border-radius: 10px;
-  box-shadow: var(--shadow-lift); font-size: var(--text-xs); line-height: 1.35;
+  box-shadow: var(--shadow-lift); line-height: 1.3;
   transform: translateZ(var(--z)) rotateY(var(--r)); filter: blur(var(--blur, 0));
   backface-visibility: hidden;
 }
-.ex-fcard-src { font-weight: 720; font-stretch: var(--wdth-sign); color: var(--line-find-ink); }
-.ex-fcard-title { font-weight: 700; font-size: var(--text-sm); color: var(--color-ink); line-height: 1.2; }
-.ex-fcard-co { color: var(--color-ink-2); }
+.ex-fcard-src { font-size: .8125rem; font-weight: 740; font-stretch: var(--wdth-sign); color: var(--line-find-ink); }
+.ex-fcard-title { font-size: .9375rem; font-weight: 700; color: var(--color-ink); line-height: 1.2; }
+.ex-fcard-co { font-size: .8125rem; color: var(--color-ink-2); }
 .ex-fcard-bars { display: grid; gap: 4px; margin-top: .45rem; }
-.ex-fcard-bars span { height: 4px; border-radius: 2px; background: var(--color-paper-3); }
+.ex-fcard-bars span { height: 3px; border-radius: 2px; background: var(--color-paper-3); }
 .ex-fcard-bars span:nth-child(2) { width: 72%; }
 .ex-fcard-bars span:nth-child(3) { width: 46%; }
+/* Yours: in front, in focus, on the line it will travel. The line is a straight
+   rule along the card's square top edge. */
 .ex-fcard.is-ours {
-  z-index: 2; filter: none; width: clamp(13rem, 19vw, 17.5rem); padding: 1.15rem 1.3rem 1.2rem; gap: 3px;
-  border: 1.5px solid var(--line-find); border-top-width: 6px; border-radius: 12px;
-  box-shadow: 0 2px 0 oklch(0% 0 0 / .04), 0 40px 70px -28px oklch(15% .05 260 / .55);
+  z-index: 2; left: 15%; top: 21%; filter: none; width: clamp(16.5rem, 24vw, 22.5rem); padding: 1.3rem 1.45rem 1.35rem; gap: 4px;
+  border-radius: 0 0 10px 10px; transform: translateZ(110px) rotateY(-4deg);
+  box-shadow: 0 2px 0 oklch(0% 0 0 / .04), 0 40px 70px -28px oklch(15% .05 260 / .5);
 }
-.ex-fcard.is-ours .ex-fcard-title { font-size: var(--text-lg); font-weight: 760; letter-spacing: -.01em; }
-.ex-fcard.is-ours .ex-fcard-co { font-size: var(--text-sm); color: var(--color-ink-2); }
-.ex-fcard-score { display: flex; align-items: center; gap: var(--space-xs); margin-top: var(--space-xs); }
-.ex-fcard-num { font-size: clamp(3.4rem, 2rem + 2.6vw, 4.6rem); line-height: .8; letter-spacing: -.03em; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.ex-fcard.is-ours::before { content: ''; position: absolute; left: -1px; right: -1px; bottom: 100%; height: 5px; background: var(--line-find); }
+.ex-fcard.is-ours .ex-fcard-src { font-size: var(--text-sm); }
+.ex-fcard.is-ours .ex-fcard-title { font-size: clamp(1.2rem, .95rem + .7vw, 1.55rem); font-weight: 760; letter-spacing: -.01em; line-height: 1.15; text-wrap: balance; }
+.ex-fcard.is-ours .ex-fcard-co { font-size: var(--text-md); }
+.ex-fcard-score { display: flex; align-items: center; gap: var(--space-sm); margin-top: var(--space-sm); padding-top: var(--space-sm); border-top: var(--rule-hair) solid var(--color-rule); }
+.ex-fcard-num { font-size: clamp(3.4rem, 2rem + 3.2vw, 5rem); line-height: .8; letter-spacing: -.03em; color: var(--color-ink); font-variant-numeric: tabular-nums; }
+.ex-fcard-verdict { display: grid; gap: 4px; justify-items: start; }
+.ex-fcard-gloss { font-size: var(--text-sm); line-height: 1.3; color: var(--color-ink-2); }
 
 /* ───────────────────────── 3. the problem ───────────────────────── */
 
-.ex-overview > .ex-problem { display: grid; gap: var(--space-xl); padding-top: var(--space-3xl); }
-.ex-say { font-size: clamp(2.4rem, .8rem + 5vw, 6.6rem); line-height: .98; letter-spacing: -.024em; max-width: 21ch; text-wrap: pretty; }
-.ex-say-line { display: block; }
-.ex-say-turn { color: var(--signal-ink); max-width: 19ch; justify-self: end; text-align: right; }
-.ex-contrast { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-xl); margin-top: var(--space-2xl); }
-.ex-contrast li {
-  display: grid; align-content: start; gap: var(--space-xs);
-  padding-top: var(--space-md); border-top: var(--rule-hair) solid var(--color-rule-strong); color: var(--color-ink-2);
+/*
+ * One beat. The reader's own morning in four short lines, then the picture:
+ * three ways to look for work, with the one that waits for you set apart.
+ */
+.ex-overview > .ex-problem { display: grid; gap: clamp(2rem, 5vh, 3.5rem); }
+.ex-problem-head { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: var(--space-lg) var(--space-2xl); align-items: end; }
+.ex-say { font-size: clamp(2.6rem, .8rem + 5.4vw, 6.6rem); line-height: .95; letter-spacing: -.026em; max-width: 11ch; }
+.ex-say .ex-w { display: inline-block; }
+.ex-pains { display: grid; }
+.ex-pains li {
+  padding: .6rem 0; border-top: var(--rule-hair) solid var(--color-rule-strong); color: var(--color-ink-2);
+  font-family: var(--font-serif); font-size: clamp(1.3rem, 1rem + .9vw, 1.85rem); line-height: 1.2; letter-spacing: -.01em;
 }
-.ex-contrast-n { display: none; }
-.ex-contrast-who { font-size: clamp(1.7rem, 1.1rem + 1.4vw, 2.6rem); line-height: 1; letter-spacing: -.015em; color: var(--color-ink); }
-.ex-contrast-what { font-size: var(--text-lg); line-height: 1.45; text-wrap: pretty; }
-.ex-contrast .is-ours { border-top: 3px solid var(--signal); color: var(--color-ink); }
-.ex-contrast .is-ours .ex-contrast-who { color: var(--signal-ink); }
-.ex-contrast .is-ours .ex-contrast-what { font-weight: 600; }
-.ex-problem-who { color: var(--color-ink-2); max-width: 56ch; }
+.ex-pains li:last-child { border-bottom: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-contrast { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-sm); }
+.ex-contrast li {
+  display: grid; align-content: start; gap: var(--space-xs); padding: var(--space-lg) var(--space-lg) var(--space-xl);
+  background: var(--color-paper-2); border-radius: var(--radius-surface); color: var(--color-ink-2);
+}
+.ex-contrast-who { font-size: clamp(1.9rem, 1.1rem + 1.9vw, 3.1rem); line-height: 1; letter-spacing: -.018em; color: var(--color-ink); }
+.ex-contrast-what { font-size: var(--text-lg); line-height: 1.4; text-wrap: pretty; }
+.ex-contrast-then { font-size: var(--text-md); line-height: 1.45; }
+/* Ours is the dark one, with the signal lit: the only way that stops for you. */
+.ex-contrast .is-ours { position: relative; background: var(--color-board); color: var(--color-board-dim); }
+.ex-contrast .is-ours .ex-contrast-who { color: var(--color-board-ink); }
+.ex-contrast .is-ours .ex-contrast-what { color: var(--color-board-ink); }
+.ex-contrast .is-ours .ex-contrast-then { color: var(--board-signal); font-weight: 700; font-size: var(--text-lg); }
+.ex-contrast .is-ours::after { content: ''; position: absolute; top: var(--space-lg); right: var(--space-lg); width: 14px; height: 14px; border-radius: 50%; background: var(--board-signal); box-shadow: 0 0 0 5px color-mix(in oklab, var(--board-signal) 28%, transparent); }
+.ex-say-turn { justify-self: end; max-width: 20ch; text-align: right; color: var(--signal-ink); font-size: clamp(1.9rem, .9rem + 2.9vw, 3.9rem); line-height: 1; }
 
 /* ───────────────────────── 4. sheets ───────────────────────── */
 
@@ -144,6 +193,17 @@
 .ex-chrome-at { font-variant-numeric: tabular-nums; font-weight: 640; }
 .ex-chrome-n { color: var(--color-ink); }
 .ex-chrome-fact { margin-left: auto; font-weight: 640; color: var(--line-ink); }
+/* Whose example this is, as a control: the same story for another field. */
+.ex-chrome-field { position: relative; display: inline-flex; align-items: center; gap: .55em; }
+.ex-chrome-field label { color: var(--color-ink-2); }
+.ex .ex-chrome-pick {
+  appearance: none; -webkit-appearance: none; min-height: 32px; padding: 0 2rem 0 .85rem; margin: 0;
+  font: inherit; font-weight: 680; font-stretch: var(--wdth-text); color: var(--color-ink); background: var(--color-paper-2);
+  border: var(--rule-hair) solid var(--color-rule-strong); border-radius: var(--radius-pill); cursor: pointer;
+  transition: border-color var(--dur-short) var(--ease-out);
+}
+.ex-chrome-field::after { content: ''; position: absolute; right: .85rem; top: 50%; width: .45em; height: .45em; margin-top: -.38em; border-right: 2px solid var(--color-ink-2); border-bottom: 2px solid var(--color-ink-2); rotate: 45deg; pointer-events: none; }
+@media (hover: hover) and (pointer: fine) { .ex .ex-chrome-pick:hover { border-color: var(--color-ink); } }
 
 .ex-scene-inner {
   display: grid; grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "pic" "notes";
@@ -208,6 +268,18 @@
 
 .ex-demo-cap { color: var(--color-ink-3); }
 
+/* A condition lifted out of a posting: a tag, and the sentence it came from. */
+.ex-cond { display: flex; flex-wrap: wrap; align-items: baseline; gap: .35rem .7rem; }
+.ex .ex-cond-tag {
+  display: inline-flex; align-items: center; gap: .35em; padding: .2em .75em .2em .5em; border-radius: var(--radius-pill);
+  background: var(--tint-signal); color: var(--signal-ink); font-size: var(--text-xs); font-weight: 720; white-space: nowrap; line-height: 1.5;
+}
+.ex-cond-tag .ex-ic { translate: 0 1px; }
+.ex button.ex-cond-tag { min-height: 28px; border: var(--rule-hair) solid color-mix(in oklab, var(--signal) 45%, transparent); transition: background-color var(--dur-short) var(--ease-out); }
+.ex button.ex-cond-tag[aria-expanded="false"] { background: transparent; }
+@media (hover: hover) and (pointer: fine) { .ex button.ex-cond-tag:hover { border-color: var(--signal); } }
+.ex-cond-quote { flex: 1 1 14rem; font-size: var(--text-sm); line-height: 1.4; color: var(--color-ink-2); }
+
 /* Discover: postings as cards on the board. */
 .ex-feeders { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: var(--space-md); font-size: var(--text-xs); }
 .ex-feeders-label { margin-right: var(--space-2xs); font-weight: 720; color: var(--color-ink); }
@@ -216,75 +288,97 @@
 .ex-plane-wrap { perspective: 1300px; }
 .ex-board .ex-board-rows { display: grid; gap: 8px; padding: 0; background: none; box-shadow: none; color: var(--color-ink); transform-style: preserve-3d; }
 .ex-board .ex-board-row, .ex-board-copy {
-  grid-template-columns: 6.5rem minmax(0, 1fr) minmax(0, 12.5rem);
-  padding: .95rem 1.25rem; background: var(--color-sheet);
+  grid-template-columns: 8.5rem minmax(0, 1fr) minmax(0, 13rem);
+  padding: .8rem 1.25rem; background: var(--color-sheet);
   border: var(--rule-hair) solid var(--color-rule); border-radius: 10px;
 }
 .ex-board .ex-board-row { position: relative; }
 .ex-board .ex-board-kept { border-color: var(--line-apply); box-shadow: 0 0 0 1px var(--line-apply), 0 24px 40px -24px color-mix(in oklab, var(--line-apply) 50%, transparent); }
-.ex-board-src { color: var(--line-ink); }
+.ex-board-src { color: var(--line-ink); font-size: var(--text-sm); line-height: 1.35; }
 .ex-board-meta { color: var(--color-ink-3); }
 .ex-board-out { color: var(--color-ink-3); }
 .ex-board-kept .ex-board-out { color: var(--line-apply-ink); }
 .ex-board-merged .ex-board-out { color: var(--line-find-ink); }
-.ex-board-held .ex-board-out { color: var(--signal-ink); }
+.ex-board-held .ex-board-out, .ex-board-excluded .ex-board-out { color: var(--signal-ink); }
 .ex-board-row:not(.ex-board-kept) .ex-board-title { color: var(--color-ink-2); }
-/* The extra copies of the merged role exist only while it plays. */
+.ex-board-cond { grid-column: 2 / -1; padding-top: .55rem; border-top: var(--rule-hair) dashed var(--color-rule-strong); }
+/* The extra copies of the merged job exist only while it plays. */
 .ex-board-copy { position: absolute; inset: -1px; display: grid; gap: var(--space-sm); align-items: baseline; visibility: hidden; opacity: 0; }
 
-/* Score: the posting's words, the number, and the points behind it. */
-.ex-scorecard { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-lg); }
-.ex-posting { padding: var(--space-md); background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule); border-top: var(--rule-line) solid var(--line-find); border-radius: var(--radius-surface); font-size: var(--text-sm); line-height: 1.5; box-shadow: var(--shadow-lift); }
-.ex-posting-title { font-weight: 760; font-size: var(--text-md); line-height: 1.25; }
-.ex-posting-co { color: var(--color-ink-2); }
-.ex-posting-text { display: grid; gap: var(--space-2xs); margin-top: var(--space-xs); color: var(--color-ink-2); }
-.ex-posting-label { display: block; font-size: var(--text-xs); font-weight: 720; font-stretch: var(--wdth-sign); color: var(--color-ink-3); }
-.ex-posting-other { margin-top: var(--space-xs); font-weight: 680; color: var(--color-ink); }
-.ex-posting-other:empty { display: none; }
-.ex-scorecard:not([data-preset="good"]) .ex-posting-text { display: none; }
-/* A skill of yours found in the posting: marked where it stands. */
+/* Score: one number, at the size of the decision it makes, and the reasons under it. */
+.ex-scorecard { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); }
+.ex-score-top { display: grid; gap: var(--space-lg); align-items: start; }
+.ex-score-main { display: grid; align-content: start; }
+.ex-score-figure { display: flex; align-items: flex-end; gap: var(--space-sm); flex-wrap: nowrap; }
+.ex-scorecard .ex-score-num { font-size: clamp(6.5rem, 2rem + 8.6vw, 9.75rem); line-height: .76; letter-spacing: -.04em; color: var(--color-ink); font-weight: 400; font-stretch: 100%; }
+.ex-score-side { display: grid; gap: 6px; justify-items: start; padding-bottom: .3rem; }
+.ex-score-gloss { margin-top: var(--space-sm); font-size: var(--text-lg); font-weight: 640; line-height: 1.3; }
+.ex-score-ruler { margin-top: var(--space-md); }
+.ex-scorecard .ex-ruler { padding-bottom: 3.5rem; }
+.ex-scorecard .ex-ruler-mark { box-shadow: 0 0 0 3px var(--color-paper); }
+.ex-score-note { font-size: var(--text-sm); line-height: 1.4; max-width: 44ch; }
+.ex-score-note:empty { display: none; }
+/* The verdict is given only once every point is in (scenes.js, paint). */
+.ex-scorecard :is(.ex-tier, .ex-score-gloss, .ex-score-note) { transition: opacity 320ms var(--ease-out); }
+.ex-scorecard.is-adding :is(.ex-tier, .ex-score-gloss, .ex-score-note) { opacity: 0; }
+.ex-scorecard.is-adding .ex-ruler-names .is-current { color: var(--color-ink-3); font-weight: 400; }
+.ex-scorecard.is-adding :is(.ex-bar-fill, .ex-ruler-mark) { transition: none; }
+
+.ex-posting { position: relative; display: grid; gap: 6px; padding: 1.1rem var(--space-md); background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule); border-radius: 0 0 var(--radius-surface) var(--radius-surface); font-size: var(--text-sm); line-height: 1.5; box-shadow: var(--shadow-lift); }
+.ex-posting::before { content: ''; position: absolute; left: -1px; right: -1px; bottom: 100%; height: 5px; background: var(--line-find); }
+.ex-posting-title { font-weight: 760; font-size: var(--text-lg); line-height: 1.2; }
+.ex-posting-co { color: var(--color-ink-2); margin-bottom: var(--space-3xs); }
+.ex-posting-text { color: var(--color-ink); }
+.ex-posting-label { display: block; font-size: var(--text-xs); font-weight: 720; font-stretch: var(--wdth-sign); color: var(--color-ink-2); }
+/* With one fact changed it is no longer this posting's own words: they step back. */
+.ex-scorecard:not([data-whatif="this"]) :is(.ex-posting, .ex-score-evidence, .ex-score-asked) { opacity: .38; }
+.ex-scorecard :is(.ex-posting, .ex-score-evidence, .ex-score-asked) { transition: opacity var(--dur-short) var(--ease-out); }
+/* A skill of yours found in the posting, and a requirement it states: marked where they stand. */
 .ex-hit {
-  --hit: 1; padding: 0 .12em; font-weight: 720; border-radius: 2px;
-  color: color-mix(in oklab, var(--line-find-ink) calc(var(--hit) * 100%), var(--color-ink-2));
+  --hit: 1; padding: 0 .2em; font-weight: 720; border-radius: 3px;
+  color: color-mix(in oklab, var(--line-find-ink) calc(var(--hit) * 100%), var(--color-ink));
   background: linear-gradient(var(--tint-find), var(--tint-find)) no-repeat 0 50% / calc(var(--hit) * 100%) 100%;
 }
-.ex-score-main { display: grid; gap: var(--space-sm); align-content: start; }
-.ex-score-figure { display: flex; align-items: flex-end; gap: var(--space-md); flex-wrap: wrap; }
-.ex-scorecard .ex-score-num { font-size: clamp(7rem, 3rem + 8vw, 12.5rem); line-height: .78; letter-spacing: -.04em; color: var(--color-ink); font-weight: 400; font-stretch: 100%; }
-.ex-score-side { display: grid; gap: var(--space-xs); justify-items: start; padding-bottom: .6rem; }
-.ex-score-ruler { margin-top: var(--space-sm); }
-.ex-score-note { min-height: 0; font-size: var(--text-sm); }
-.ex-meaning { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3xs) var(--space-xs); padding-top: var(--space-xs); border-top: var(--rule-hair) dashed var(--color-rule-strong); font-size: var(--text-sm); }
-.ex-meaning-name { font-weight: 720; }
-.ex-meaning-note { flex: 1 1 100%; color: var(--color-ink-2); font-size: var(--text-xs); }
+.ex-floor { padding: 0 .25em; border-radius: 3px; background: var(--tint-signal); color: var(--signal-ink); font-weight: 720; }
+
+.ex-score-why { display: grid; gap: var(--space-sm) var(--space-xl); padding-top: var(--space-sm); border-top: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-score-col h3 { font-size: var(--text-sm); font-weight: 760; margin-bottom: var(--space-2xs); }
+.ex-score-col h3 span { margin-left: .7em; font-size: var(--text-xs); font-weight: 400; color: var(--color-ink-2); }
 .ex-scorecard .ex-bars { grid-template-columns: minmax(0, 1fr); gap: 0; margin-top: 0; }
-.ex-scorecard .ex-bar { grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr) 4.4rem; padding: .26rem 0; }
-.ex-scorecard .ex-ruler-mark { box-shadow: 0 0 0 3px var(--color-paper); }
-/* How far the scene has played scales each bar and the marker; at rest it is 1. */
+.ex-scorecard .ex-bar { grid-template-columns: 5.8rem minmax(0, 1fr) 4.4rem; gap: var(--space-xs); padding: .2rem 0; }
+.ex-scorecard .ex-bar-track { height: 6px; }
+.ex-scorecard .ex-bar-num { color: var(--color-ink-2); }
+.ex-scorecard .ex-bar.is-rest { grid-template-columns: 9.4rem minmax(0, 1fr) 4.4rem; margin-top: 4px; padding-top: 6px; border-top: var(--rule-hair) solid var(--color-rule); }
+.ex-scorecard .ex-bar.is-rest .ex-bar-label { color: var(--color-ink-3); }
+.ex-scorecard .ex-bar.is-penalty { grid-template-columns: minmax(0, 1fr) auto; margin-top: 4px; padding-top: 6px; border-top: var(--rule-hair) dashed var(--color-rule-strong); }
+.ex-scorecard .ex-bar.is-penalty[hidden] { display: none; }
+.ex-scorecard .ex-bar.is-penalty :is(.ex-bar-label, .ex-bar-num) { color: var(--signal-ink); font-weight: 660; }
+/* How far a reason has been counted scales its bar; at rest it is 1. */
 .ex-bar-fill { transform: scaleX(calc(var(--v, 0) * var(--reveal, 1))); }
-.ex-ruler-mark { transform: translateX(calc(var(--at) * var(--reveal, 1) * 1cqw)); }
-.ex-scorecard[data-scrub] :is(.ex-bar-fill, .ex-ruler-mark) { transition: none; }
-.ex-score-presets { display: grid; gap: var(--space-2xs); }
-.ex-score-presets-label { font-size: var(--text-xs); font-weight: 720; color: var(--color-ink-3); font-stretch: var(--wdth-sign); }
+.ex-ev { display: grid; }
+.ex-ev li { padding: .3rem 0; border-top: var(--rule-hair) solid var(--color-rule); font-size: var(--text-sm); line-height: 1.4; }
+.ex-ev li:first-child { border-top: 0; padding-top: 0; }
+.ex-ev-skill { margin-right: .6em; font-weight: 720; color: var(--line-find-ink); }
+.ex-ev-line { color: var(--color-ink-2); }
+.ex-ev .is-gap .ex-ev-skill { color: var(--signal-ink); }
+.ex-ask { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-md); }
+.ex-ask li { display: inline-flex; align-items: center; gap: .6rem; font-size: var(--text-sm); }
+.ex-ask q { font-weight: 660; }
+.ex-ask-add { display: inline-flex; align-items: center; gap: .3em; padding: .2em .7em .2em .5em; border: var(--rule-hair) solid var(--color-rule-strong); border-radius: var(--radius-pill); font-size: var(--text-xs); font-weight: 660; color: var(--color-ink-2); white-space: nowrap; }
+.ex-score-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-sm); padding-top: var(--space-sm); border-top: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-score-presets-label { font-size: var(--text-sm); font-weight: 760; }
 @media (min-width: 760px) {
-  .ex-scorecard {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    grid-template-areas: "main posting" "main bars" "meaning bars" "presets presets" "cap cap";
-    column-gap: var(--space-xl); row-gap: var(--space-md);
-  }
-  .ex-posting { grid-area: posting; }
-  .ex-score-main { grid-area: main; }
-  .ex-scorecard .ex-bars { grid-area: bars; }
-  .ex-meaning { grid-area: meaning; align-self: end; }
-  .ex-score-presets { grid-area: presets; }
-  .ex-scorecard .ex-demo-cap { grid-area: cap; margin-top: 0; }
+  .ex-score-top { grid-template-columns: minmax(0, 18.5rem) minmax(0, 1fr); gap: var(--space-xl); }
+  .ex-score-why { grid-template-columns: minmax(0, 18.5rem) minmax(0, 1fr); grid-template-areas: "points evidence" "points asked"; }
+  .ex-score-points { grid-area: points; } .ex-score-evidence { grid-area: evidence; } .ex-score-asked { grid-area: asked; }
 }
 
-/* Tailor: what the posting asks for, and two sheets of the same paper. */
-.ex-wanted { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: var(--space-md); font-size: var(--text-sm); }
+/* Tailor: what the posting asks for, two sheets of the same paper, and the ledger of every move. */
+.ex-spread { display: grid; gap: var(--space-sm); }
+.ex-wanted { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: var(--text-sm); }
 .ex-wanted-label { margin-right: var(--space-2xs); font-weight: 720; }
 .ex-want {
-  --found: 1; --gap: 0; padding: .22em .85em; border-radius: var(--radius-pill); background: var(--color-sheet); font-weight: 680;
+  --found: 1; --gap: 0; padding: .2em .8em; border-radius: var(--radius-pill); background: var(--color-sheet); font-weight: 680;
   border: 1.5px solid color-mix(in oklab, var(--line-apply) calc(var(--found) * 100%), var(--color-rule-strong));
   color: color-mix(in oklab, var(--line-apply-ink) calc(var(--found) * 100%), var(--color-ink-2));
 }
@@ -293,18 +387,29 @@
   border-color: color-mix(in oklab, var(--signal) calc(var(--gap) * 100%), var(--color-rule-strong));
   color: color-mix(in oklab, var(--signal-ink) calc(var(--gap) * 100%), var(--color-ink-2));
 }
-.ex-spread .ex-sheets { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: var(--space-md); }
-.ex-sheet { border-radius: 10px; }
+.ex-spread .ex-sheets { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; gap: var(--space-md); }
+.ex-spread .ex-sheet { display: grid; gap: var(--space-2xs); align-self: start; padding: var(--space-sm) var(--space-md); border-radius: var(--radius-surface); font-size: .78rem; line-height: 1.4; }
 .ex-sheet-master { box-shadow: var(--shadow-lift); }
 .ex-sheet-tailored { box-shadow: 0 0 0 1px var(--line-apply), var(--shadow-lift); }
-.ex-sheet-tab { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); }
-.ex-sheet-lock { display: inline-flex; align-items: center; gap: .3em; font-size: var(--text-xs); font-weight: 620; }
+.ex-spread .ex-sheet-tab { display: flex; align-items: center; justify-content: space-between; gap: var(--space-xs); margin-bottom: 0; font-size: var(--text-xs); }
+.ex-sheet-lock, .ex-sheet-fit { display: inline-flex; align-items: center; gap: .3em; font-weight: 640; }
+.ex-sheet-fit { color: var(--color-ink); }
+.ex-spread .ex-sheet-role { margin-bottom: 0; font-size: var(--text-md); font-weight: 740; line-height: 1.25; }
+.ex-sheet-sum { color: var(--color-ink-2); }
+.ex-spread .ex-sheet-bullets { gap: 1px; }
 /* A bullet is a strip of the sheet's own paper. While it moves it is lifted off
    the sheet (motion.js sets --lift), so it passes over its neighbours. */
-.ex-sheet-bullet {
-  --lift: 0; background-color: var(--color-sheet);
+.ex-spread .ex-sheet-bullet {
+  --lift: 0; padding-block: .22rem; font-size: inherit; line-height: inherit; background-color: var(--color-sheet);
   box-shadow: 0 calc(var(--lift) * 16px) calc(var(--lift) * 30px) calc(var(--lift) * -10px) oklch(0% 0 0 / .5);
-  scale: calc(1 + var(--lift) * .035);
+  scale: calc(1 + var(--lift) * .03);
+}
+.ex-spread .ex-sheet-bullet::before { top: .78em; }
+/* The line left out to fit the page is struck on the master, in the open. */
+.ex-sheet-bullet.will-go .ex-sheet-text {
+  --strike: 1; color: var(--color-ink-3);
+  background: linear-gradient(var(--signal), var(--signal)) no-repeat 0 58% / calc(var(--strike) * 100%) 1.5px;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
 }
 /* Emphasis arrives with the scene: at rest a term the posting asks for is bold and marked. */
 .ex-kw {
@@ -312,28 +417,53 @@
   color: color-mix(in oklab, var(--line-apply-ink) calc(var(--kw) * 100%), var(--color-ink-2));
   background: linear-gradient(var(--tint-apply), var(--tint-apply)) no-repeat 0 60% / calc(var(--kw) * 100%) 70%;
 }
+.ex-spread .ex-sheet-skills { margin-top: 0; padding-top: var(--space-xs); font-size: inherit; }
+.ex-compare {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-2xs) var(--space-lg); align-items: center;
+  padding: var(--space-xs) var(--space-md) var(--space-sm); background: var(--color-paper-2); border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-surface);
+}
+.ex-compare-title { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 var(--space-md); font-size: var(--text-sm); font-weight: 760; }
+.ex-compare-cap { display: none; font-size: var(--text-xs); font-weight: 400; color: var(--color-ink-3); }
+.ex-compare-cells { display: flex; gap: var(--space-2xs); margin: 0; }
+.ex-compare-cells div { --proof: 1; display: flex; flex-direction: column-reverse; align-items: center; min-width: 4.3rem; padding: .35rem .5rem .45rem; border: var(--rule-hair) solid var(--color-rule); border-radius: var(--radius-surface); }
+.ex-compare-cells dd { font-family: var(--font-serif); font-size: 1.9rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.ex-compare-cells dt { font-size: var(--text-xs); font-weight: 660; font-stretch: var(--wdth-sign); color: var(--color-ink-2); white-space: nowrap; }
+/* The proof: nothing was added. Ringed in the Apply line's colour. */
+.ex-compare-cells .is-proof { border-color: transparent; box-shadow: 0 0 0 calc(var(--proof) * 2px) var(--line-apply); }
+.ex-compare-cells .is-proof dt { color: var(--line-apply-ink); }
+.ex-compare-notes { display: grid; gap: 3px; font-size: var(--text-sm); line-height: 1.4; color: var(--color-ink-2); }
+.ex-compare-notes strong { color: var(--color-ink); font-weight: 700; }
+.ex-compare-notes .ex-gap { display: block; margin: 0; padding: 0; background: none; font-size: inherit; line-height: inherit; }
+.ex-compare-notes .ex-gap strong { color: var(--signal-ink); }
 
-/* Fill: the form in the browser window JobAgent opens. */
-.ex-formfig { perspective: 1500px; }
+/* Fill: what is needed first, then the form in the browser window JobAgent opens. */
+.ex-formfig { display: grid; gap: var(--space-sm); perspective: 1500px; }
+.ex-ready { display: grid; gap: var(--space-3xs); font-size: var(--text-sm); line-height: 1.4; }
+.ex-ready li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: var(--space-xs); align-items: start; color: var(--color-ink-2); }
+.ex-ready .ex-ic { margin-top: 2px; }
+.ex-ready .is-ok .ex-ic { color: var(--line-apply-ink); }
+.ex-ready .is-wait .ex-ic { color: var(--signal-ink); }
 .ex-window { background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule-strong); border-radius: 10px; box-shadow: var(--shadow-lift); overflow: clip; transform-origin: 50% 100%; }
 .ex-window-bar { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--space-3xs) var(--space-md); padding: var(--space-xs) var(--space-lg); border-bottom: var(--rule-hair) solid var(--color-rule); background: var(--color-paper-2); font-size: var(--text-xs); color: var(--color-ink-2); }
 .ex-window-url { font-weight: 680; color: var(--color-ink); }
-.ex-formfig .ex-window .ex-form { position: relative; border: 0; border-radius: 0; overflow: clip; }
+.ex-formfig .ex-window .ex-form { position: relative; border: 0; border-radius: 0; overflow: clip; padding: var(--space-md) var(--space-lg); gap: var(--space-xs); }
+.ex-formfig .ex-halt { margin: var(--space-2xs) calc(-1 * var(--space-lg)) calc(-1 * var(--space-md)); padding: var(--space-sm) var(--space-lg); }
 .ex-scanline {
   position: absolute; left: 0; right: 0; top: 0; z-index: 1; height: 64px; margin-top: -64px; pointer-events: none; visibility: hidden;
   background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--line-apply) 24%, transparent)); border-bottom: 2px solid var(--line-apply);
 }
 .ex-field { --lit: 1; }
-.ex-field-box { border-color: color-mix(in oklab, var(--line-apply) calc(var(--lit) * 100%), var(--color-rule-strong)); gap: var(--space-xs); background: var(--color-sheet); }
+.ex-field-box { min-height: 38px; border-color: color-mix(in oklab, var(--line-apply) calc(var(--lit) * 100%), var(--color-rule-strong)); gap: var(--space-xs); background: var(--color-sheet); }
 .ex-field-tag { display: grid; justify-items: end; text-align: right; }
 .ex-field-tag > * { grid-area: 1 / 1; }
 .ex-field-kind { visibility: hidden; font-size: var(--text-xs); font-stretch: var(--wdth-sign); font-weight: 680; color: var(--line-find-ink); white-space: nowrap; }
 .ex-field-value { flex: 1 1 auto; min-width: 0; }
 .ex-field-ok { display: inline-grid; flex: none; margin-left: auto; color: var(--line-apply-ink); }
 
-/* Track: the stages an application moves through, and its history. */
-.ex-stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-xs); margin-bottom: var(--space-lg); }
-.ex-stage { --on: 1; display: grid; gap: var(--space-xs); align-content: start; min-height: 9rem; padding-top: var(--space-xs); border-top: var(--rule-line) solid var(--color-rule-strong); }
+/* Track: the stages an application moves through, what needs you today, and its history. */
+.ex-trackfig { display: grid; gap: var(--space-md); container-type: inline-size; }
+.ex-stages { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-xs); }
+.ex-stage { --on: 1; display: grid; gap: var(--space-xs); align-content: start; min-height: 7.5rem; padding-top: var(--space-xs); border-top: var(--rule-line) solid var(--color-rule-strong); }
 .ex-stage.is-past { border-top-color: var(--line-track); }
 .ex-stage.is-current { border-top-color: color-mix(in oklab, var(--line-track) calc(var(--on) * 100%), var(--color-rule-strong)); }
 .ex-stage-name { font-size: var(--text-sm); font-weight: 720; line-height: 1.25; color: var(--color-ink-2); }
@@ -344,10 +474,17 @@
 }
 .ex-app-title { font-weight: 740; font-size: var(--text-sm); line-height: 1.25; }
 .ex-app-co { font-size: var(--text-xs); color: var(--color-ink-2); }
-.ex-app-chip { justify-self: start; margin-top: var(--space-2xs); padding: .15em .65em; border-radius: var(--radius-pill); background: var(--tint-track); color: var(--line-track-ink); font-size: var(--text-xs); font-weight: 680; white-space: nowrap; }
+.ex-today { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-sm); padding: var(--space-xs) var(--space-md); background: var(--tint-track); border-radius: var(--radius-surface); font-size: var(--text-sm); }
+.ex-today-name { font-weight: 760; color: var(--line-track-ink); }
+.ex-today-item { display: inline-flex; align-items: center; gap: .45em; font-weight: 640; }
+.ex-today-due { margin-left: auto; font-size: var(--text-xs); font-weight: 720; font-stretch: var(--wdth-sign); color: var(--line-track-ink); white-space: nowrap; }
 .ex-history { padding: 0 var(--space-md); background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule); border-radius: 10px; box-shadow: var(--shadow-lift); }
 .ex-history .ex-event:first-child { border-top: 0; }
 .ex-event-what .ex-ic { vertical-align: -2px; color: var(--line-track-ink); }
+@container (max-width: 36rem) {
+  .ex-stage-name { font-size: var(--text-xs); }
+  .ex-stages { gap: var(--space-2xs); }
+}
 
 /* ───────────────────────── 7. never ───────────────────────── */
 
@@ -366,11 +503,35 @@
 .ex-does-list li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: var(--space-xs); color: var(--color-ink-2); font-size: var(--text-sm); }
 .ex-does-list .ex-ic { color: var(--line-apply); margin-top: 4px; }
 
-/* ───────────────────────── 8. under the hood ───────────────────────── */
+/* ───────────────────────── 8. where the jobs come from, and the turn-off ───────────────────────── */
 
-.ex-overview > .ex-hood { display: grid; gap: var(--space-2xl); }
-.ex-hood-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: var(--space-lg) var(--space-2xl); align-items: end; }
-.ex-hood-side { display: grid; gap: var(--space-md); justify-items: start; }
+/*
+ * Coverage at a glance: three columns, by what the reader has to do to get
+ * postings from a source. Then a branch leaves the main line for how it is built.
+ */
+.ex-overview > .ex-hood { display: grid; gap: clamp(3.5rem, 8vh, 6rem); }
+.ex-src { display: grid; gap: var(--space-xl); }
+.ex-src-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: var(--space-lg) var(--space-2xl); align-items: end; }
+.ex-src-cols { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, .8fr) minmax(0, 1.05fr); gap: var(--space-xl); }
+.ex-src-col { display: grid; align-content: start; gap: var(--space-xs); padding-top: var(--space-md); border-top: 2px solid var(--color-ink); }
+.ex-src-n { font-family: var(--font-serif); font-size: clamp(4.2rem, 2rem + 5vw, 7.5rem); line-height: .8; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.ex-src-name { display: flex; align-items: center; gap: .55em; margin-top: var(--space-xs); font-size: var(--text-lg); font-weight: 740; line-height: 1.25; }
+.ex-src-note { font-size: var(--text-sm); line-height: 1.45; color: var(--color-ink-2); max-width: 36ch; }
+.ex-src-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); column-gap: var(--space-lg); margin-top: var(--space-sm); }
+.ex-source { display: grid; align-content: center; min-height: 2.75rem; padding: .45rem 0; border-top: var(--rule-hair) solid var(--color-rule); line-height: 1.3; }
+.ex-source-name { font-weight: 680; }
+.ex-source-how { font-size: var(--text-xs); color: var(--color-ink-3); }
+/* Shape, not only colour: a filled dot is on, a ring needs your key, a square reads links. */
+.ex-src-name .ex-mode { width: 11px; height: 11px; }
+
+/* The turn-off: the grey line of the system map branches away from the main line. */
+.ex-turnoff {
+  position: relative; display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: var(--space-xl) var(--space-2xl); align-items: center;
+  padding-top: var(--space-2xl); border-top: var(--rule-line) solid var(--line-control);
+}
+.ex-turnoff::before { content: ''; position: absolute; left: 0; top: calc(-1 * var(--rule-line) / 2); translate: 0 -50%; width: 22px; height: 22px; border-radius: 50%; background: var(--page-bg); border: 6px solid var(--line-control); }
+.ex-hood-head { display: grid; gap: var(--space-md); justify-items: start; }
+.ex-hood-title { font-size: clamp(2.2rem, 1rem + 2.8vw, 4rem); }
 .ex-hoodmap {
   position: relative; aspect-ratio: var(--w) / var(--h); container-type: inline-size;
   background: var(--color-sheet); border: var(--rule-hair) solid var(--color-rule); border-radius: 14px; box-shadow: var(--shadow-lift);
@@ -388,50 +549,115 @@
   .ex-hood-node, .ex-hood-node[data-up] { translate: -50% -6px; }
   .ex-hood-dot { width: 12px; height: 12px; border-width: 3px; }
 }
-.ex-hood-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-lg) var(--space-xl); }
-.ex-hood-facts li { display: grid; gap: var(--space-3xs); align-content: start; padding-top: var(--space-sm); border-top: 2px solid var(--color-ink); }
+.ex-hood-facts { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-lg) var(--space-xl); }
+.ex-hood-facts li { display: grid; gap: var(--space-3xs); align-content: start; padding-top: var(--space-sm); border-top: var(--rule-hair) solid var(--color-rule-strong); }
 .ex-hood-fact { font-weight: 740; line-height: 1.25; }
 .ex-hood-fact-text { font-size: var(--text-sm); color: var(--color-ink-2); }
-.ex-sources .ex-feeds { margin-top: 0; padding-top: var(--space-xl); border-top: var(--rule-hair) solid var(--color-rule-strong); }
 
-/* ───────────────────────── 9. run the line, register, close ───────────────────────── */
+/* ───────────────────────── 9. the whole route, the register, questions, close ───────────────────────── */
 
 .ex-run-head { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: var(--space-lg) var(--space-2xl); align-items: end; }
-.ex-run .ex-platform { border-radius: 14px; box-shadow: none; clip-path: none; padding-inline: var(--space-xl); margin-top: var(--space-2xl); }
+.ex-run .ex-platform { border-radius: 14px; box-shadow: none; clip-path: none; padding-inline: var(--space-xl); margin-top: var(--space-xl); }
+.ex-overview > .ex-run { padding-bottom: clamp(5rem, 4rem + 6vw, 9rem); }
 
-.ex-overview > .ex-ledger { display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: var(--space-xl) var(--space-2xl); align-items: start; }
-.ex-ledger-head { position: sticky; top: calc(var(--top-h) + var(--space-lg)); display: grid; gap: var(--space-sm); }
-.ex-ledger-head .ex-big { font-size: clamp(2.2rem, 1rem + 2.8vw, 4rem); }
-.ex-ledger-note { font-size: var(--text-sm); color: var(--color-ink-3); min-height: 2.8em; }
-.ex-ledger-group { border-top: 2px solid var(--color-ink); }
-.ex-ledger-group:last-child { border-bottom: 2px solid var(--color-ink); }
-.ex-ledger-group summary { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-md); padding: var(--space-sm) 0; cursor: pointer; list-style: none; }
-.ex-ledger-group summary::-webkit-details-marker { display: none; }
-.ex-ledger-area { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1.9rem, 1.2rem + 1.6vw, 2.9rem); line-height: 1; letter-spacing: -.015em; transition: color var(--dur-short) var(--ease-out); }
-.ex-ledger-tally { font-size: var(--text-sm); color: var(--color-ink-3); white-space: nowrap; }
-.ex-ledger-tally::after {
-  content: ''; display: inline-block; width: .5em; height: .5em; margin-left: .8em; translate: 0 -.15em;
-  border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(45deg);
-  transition: transform var(--dur-short) var(--ease-out);
+/*
+ * The register. How much is finished (four counts over one bar), which part
+ * (six areas as stops on a line), then one capability spelled out at a time.
+ */
+.ex-overview > .ex-reg { display: grid; gap: var(--space-xl); }
+.ex-reg-head { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: var(--space-xl) var(--space-2xl); align-items: end; }
+.ex-reg-title .ex-big { font-size: clamp(2.4rem, 1rem + 3.4vw, 4.6rem); max-width: 13ch; }
+.ex-reg-title .ex-section-lede { margin-top: var(--space-sm); max-width: 46ch; }
+.ex-reg-bar { display: flex; gap: 3px; height: 12px; }
+.ex-reg-bar i { flex-basis: 0; border-radius: 2px; background: var(--line-apply); transform-origin: left center; }
+.ex-reg-bar i:first-child { border-radius: 6px 2px 2px 6px; } .ex-reg-bar i:last-child { border-radius: 2px 6px 6px 2px; }
+.ex-reg-bar [data-status="optional"] { background: var(--line-find); }
+.ex-reg-bar [data-status="experimental"] { background: var(--signal); }
+.ex-reg-bar [data-status="planned"] { background: none; box-shadow: inset 0 0 0 1.5px var(--color-rule-strong); }
+.ex-reg-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-xs); margin-top: var(--space-xs); }
+.ex .ex-reg-stat {
+  display: grid; justify-items: start; align-content: start; gap: 1px; text-align: left; padding: var(--space-xs) var(--space-sm) var(--space-sm);
+  border-radius: var(--radius-surface); transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
 }
-.ex-ledger-group[open] .ex-ledger-tally::after { transform: rotate(-135deg); translate: 0 .1em; }
-@media (hover: hover) and (pointer: fine) { .ex-ledger-group summary:hover .ex-ledger-area { color: var(--line-find-ink); } }
-.ex-ledger-rows { padding-bottom: var(--space-md); }
-.ex-ledger-row { display: grid; grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) auto 28px; gap: var(--space-3xs) var(--space-md); align-items: baseline; padding: var(--space-xs) 0; border-top: var(--rule-hair) solid var(--color-rule); }
-.ex-ledger-name { font-weight: 680; }
-.ex-ledger-what { color: var(--color-ink-2); font-size: var(--text-sm); }
-.ex-ledger-link { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--color-ink-3); align-self: center; transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out); }
-@media (hover: hover) and (pointer: fine) { .ex-ledger-link:hover { background: var(--color-ink); color: var(--color-on-ink); } }
+.ex-reg-n { font-family: var(--font-serif); font-size: clamp(2.6rem, 1.6rem + 2vw, 3.7rem); line-height: .9; font-variant-numeric: tabular-nums; }
+.ex-reg-stat-name { font-weight: 740; }
+.ex-reg-stat-note { font-size: var(--text-sm); line-height: 1.35; color: var(--color-ink-2); }
+.ex .ex-reg-stat[aria-pressed="true"] { background: var(--color-ink); color: var(--color-on-ink); }
+.ex-reg-stat[aria-pressed="true"] .ex-reg-stat-note { color: inherit; }
+@media (hover: hover) and (pointer: fine) { .ex .ex-reg-stat:not([aria-pressed="true"]):hover { background: var(--color-paper-2); } }
+
+.ex-reg-body { display: grid; grid-template-columns: 15.5rem minmax(0, 1fr); gap: var(--space-2xl); align-items: start; padding-top: var(--space-lg); border-top: 2px solid var(--color-ink); }
+/* The areas: six stops down one line. */
+.ex-reg-areas { position: relative; display: grid; }
+.ex-reg-areas::before { content: ''; position: absolute; left: 9px; top: 24px; bottom: 24px; width: 4px; border-radius: 2px; background: var(--color-rule-strong); }
+.ex .ex-reg-area {
+  position: relative; display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm);
+  min-height: 48px; text-align: left; font-weight: 640; color: var(--color-ink-2);
+  transition: color var(--dur-short) var(--ease-out);
+}
+.ex-reg-area-dot { width: 22px; height: 22px; border-radius: 50%; background: var(--page-bg); border: 5px solid var(--color-rule-strong); transition: border-color var(--dur-short) var(--ease-out), scale var(--dur-short) var(--ease-out); }
+.ex .ex-reg-area[aria-pressed="true"] { color: var(--color-ink); font-weight: 760; }
+.ex-reg-area[aria-pressed="true"] .ex-reg-area-dot { border-color: var(--color-ink); scale: 1.12; }
+.ex .ex-reg-area:disabled { color: var(--color-ink-3); opacity: .55; }
+@media (hover: hover) and (pointer: fine) { .ex .ex-reg-area:not(:disabled):hover { color: var(--color-ink); } .ex-reg-area:not(:disabled):hover .ex-reg-area-dot { border-color: var(--color-ink); } }
+
+.ex-reg-note { margin-bottom: var(--space-xs); font-size: var(--text-sm); color: var(--color-ink-3); }
+.ex-reg-list { position: relative; display: grid; align-content: start; }
+.ex-reg-item { border-top: var(--rule-hair) solid var(--color-rule); }
+.ex-reg-item:last-child { border-bottom: var(--rule-hair) solid var(--color-rule); }
+.ex .ex-reg-row {
+  display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: var(--space-sm);
+  width: 100%; min-height: 44px; padding: .35rem var(--space-sm); text-align: left; font-weight: 640; line-height: 1.3;
+  border-radius: var(--radius-surface); transition: background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out);
+}
+.ex .ex-reg-item.is-open .ex-reg-row { background: var(--color-ink); color: var(--color-on-ink); }
+/* How finished, as a mark: filled is ready, a ring is yours to switch on, a square is held back, a dashed ring is not built. */
+.ex-reg-mark { width: 10px; height: 10px; border-radius: 50%; background: var(--line-apply); }
+.ex-reg-mark-optional { background: transparent; box-shadow: inset 0 0 0 2.5px var(--line-find); }
+.ex-reg-mark-experimental { border-radius: 2px; background: var(--signal); }
+.ex-reg-mark-planned { background: transparent; border: 1.5px dashed var(--color-ink-3); }
+.ex-reg-item.is-open .ex-reg-mark-planned { border-color: currentColor; }
+.ex-reg-new { padding: .05em .5em; border-radius: 3px; background: var(--color-ink); color: var(--color-on-ink); font-size: var(--text-xs); font-weight: 700; font-stretch: var(--wdth-sign); }
+.ex-reg-item.is-open .ex-reg-new { background: var(--color-on-ink); color: var(--color-ink); }
+.ex-reg-detail { display: grid; align-content: start; gap: var(--space-sm); padding: var(--space-sm) var(--space-sm) var(--space-lg) calc(10px + 2 * var(--space-sm)); }
+.ex-reg-detail-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-sm); font-size: var(--text-sm); color: var(--color-ink-2); }
+.ex-reg-detail-name { font-family: var(--font-serif); font-weight: 400; font-size: clamp(1.8rem, 1.2rem + 1.4vw, 2.7rem); line-height: 1.02; letter-spacing: -.015em; text-wrap: balance; }
+.ex-reg-facts { display: grid; margin: 0; }
+.ex-reg-facts div { display: grid; gap: 2px; padding: var(--space-sm) 0; border-top: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-reg-facts dt { font-size: var(--text-sm); font-weight: 720; }
+.ex-reg-facts dd { line-height: 1.5; color: var(--color-ink-2); text-wrap: pretty; }
+.ex-reg-detail .ex-more { margin-top: 0; justify-self: start; }
+.ex-reg-foot { display: flex; align-items: center; gap: .6em; font-size: var(--text-sm); color: var(--color-ink-2); }
+/* A wide window: the names stay on the left and the chosen one is spelled out beside them. */
+@media (min-width: 1000px) {
+  .ex-reg-list { min-height: 31rem; padding-right: 55%; }
+  .ex-reg-detail { position: absolute; top: 0; right: 0; width: calc(55% - var(--space-xl)); min-height: 100%; padding: var(--space-lg) var(--space-lg) var(--space-xl); background: var(--color-paper-2); border-radius: var(--radius-surface); }
+}
+
+/* Questions people ask first. */
+.ex-overview > .ex-faq { display: grid; grid-template-columns: minmax(0, .8fr) minmax(0, 1.2fr); gap: var(--space-xl) var(--space-2xl); align-items: start; }
+.ex-faq .ex-big { font-size: clamp(2.4rem, 1rem + 3.4vw, 4.6rem); max-width: 10ch; }
+.ex-faq-item { border-top: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-faq-item:last-child { border-bottom: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-faq-item summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--space-md); min-height: 56px; padding: var(--space-sm) 0; cursor: pointer; list-style: none; }
+.ex-faq-item summary::-webkit-details-marker { display: none; }
+.ex-faq-q { font-family: var(--font-serif); font-size: clamp(1.35rem, 1rem + .9vw, 1.9rem); line-height: 1.15; letter-spacing: -.01em; }
+.ex-faq-mark { position: relative; width: 18px; height: 18px; }
+.ex-faq-mark::before, .ex-faq-mark::after { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 2px; margin-top: -1px; border-radius: 1px; background: currentColor; transition: rotate var(--dur-short) var(--ease-out); }
+.ex-faq-mark::after { rotate: 90deg; }
+.ex-faq-item[open] .ex-faq-mark::after { rotate: 0deg; }
+.ex-faq-a { padding-bottom: var(--space-md); max-width: 64ch; color: var(--color-ink-2); line-height: 1.6; text-wrap: pretty; }
+@media (hover: hover) and (pointer: fine) { .ex-faq-item summary:hover .ex-faq-q { color: var(--line-find-ink); } }
 
 .ex-overview > .ex-close { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); gap: var(--space-xl) var(--space-2xl); align-items: end; padding-bottom: var(--space-3xl); }
 .ex-close-title { font-size: clamp(3rem, 1rem + 5.4vw, 7rem); line-height: .9; letter-spacing: -.028em; max-width: 12ch; }
-.ex-close-side { display: grid; gap: var(--space-lg); justify-items: start; }
-.ex-next { display: grid; gap: var(--space-xs); counter-reset: step; font-weight: 680; }
-.ex-next li { display: flex; align-items: center; gap: var(--space-xs); counter-increment: step; }
-.ex-next li::before {
-  content: counter(step); display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: 50%;
-  border: 1.5px solid var(--color-ink); font-size: var(--text-sm); font-variant-numeric: tabular-nums;
-}
+.ex-close-side { display: grid; gap: var(--space-md); justify-items: start; }
+.ex-next { display: grid; width: 100%; counter-reset: step; }
+.ex-next li { display: grid; grid-template-columns: 2.4rem minmax(0, 1fr); align-items: baseline; column-gap: var(--space-sm); padding: var(--space-xs) 0; border-top: var(--rule-hair) solid var(--color-rule-strong); counter-increment: step; }
+.ex-next li::before { content: counter(step); grid-row: span 2; font-family: var(--font-serif); font-size: 2.2rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.ex-next-name { font-weight: 740; }
+.ex-next-text { grid-column: 2; font-size: var(--text-sm); color: var(--color-ink-2); }
+.ex-close-after { font-weight: 680; }
 
 /* ───────────────────────── 10. the chapter rail ───────────────────────── */
 
@@ -478,9 +704,9 @@ html[data-motion="pinned"] .ex-rail.is-on, html[data-motion="pinned"] .ex-rail:f
  * underneath it. motion.js scrubs the picture, the tilt and the shade.
  */
 /* The chapter rail floats over the foot of every held sheet; the sheet keeps that strip clear. */
-html[data-motion="pinned"] { --rail-room: 5rem; }
+html[data-motion="pinned"] { --rail-room: 4.4rem; }
 html[data-motion="pinned"] .ex-sheet-chapter { --play: .95; height: calc(var(--stage-h) * (2 + var(--play))); }
-html[data-motion="pinned"] .ex-gate { --play: .5; }
+html[data-motion="pinned"] .ex-gate { --play: .55; }
 html[data-motion="pinned"] .ex-sheet-chapter + .ex-sheet-chapter,
 html[data-motion="pinned"] .ex-sheet-chapter + .ex-never { margin-top: calc(-1 * var(--stage-h)); }
 html[data-motion="pinned"] .ex-plate {
@@ -490,31 +716,85 @@ html[data-motion="pinned"] .ex-plate {
 }
 html[data-motion="pinned"] .ex-overview > .ex-never { transform-origin: 50% 0; }
 html[data-motion="pinned"] .ex-scene-inner {
-  min-height: 0; padding-block: clamp(1rem, 3.6vh, 2.75rem) var(--rail-room);
-  grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr); grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas: "head pic" "notes pic"; gap: clamp(.9rem, 2.4vh, 1.6rem) clamp(2rem, 4.5vw, 5rem);
+  min-height: 0; padding-block: clamp(.75rem, 2.4vh, 1.75rem) var(--rail-room);
+  grid-template-columns: minmax(0, .68fr) minmax(0, 1.32fr); grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "head pic" "notes pic"; gap: clamp(.9rem, 2.4vh, 1.6rem) clamp(2rem, 4vw, 4.5rem);
 }
-html[data-motion="pinned"] .ex-scene[data-layout="split-flip"] .ex-scene-inner { grid-template-columns: minmax(0, 1.22fr) minmax(0, .78fr); grid-template-areas: "pic head" "pic notes"; }
-html[data-motion="pinned"] .ex-scene-claim { font-size: clamp(2.2rem, min(1rem + 2.6vw, 7.4vh), 4.6rem); }
+html[data-motion="pinned"] .ex-scene[data-layout="split-flip"] .ex-scene-inner { grid-template-columns: minmax(0, 1.32fr) minmax(0, .68fr); grid-template-areas: "pic head" "pic notes"; }
+html[data-motion="pinned"] .ex-scene-claim { font-size: clamp(2.1rem, min(1rem + 2.3vw, 6.8vh), 4.1rem); max-width: 14ch; }
 html[data-motion="pinned"] .ex-scene-body { font-size: var(--text-md); }
 /* The picture is centred in its side of the sheet, and scaled to fit a short window (motion.js sets --fit). */
 html[data-motion="pinned"] .ex-scene-pic { display: grid; place-items: center; min-height: 0; align-self: stretch; }
 html[data-motion="pinned"] .ex-scene-pic > .ex-demo { width: 100%; transform: scale(var(--fit, 1)); transform-origin: 50% 0; }
 html[data-motion="pinned"] .ex-scene-rail { display: block; position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; height: 4px; background: var(--line); transform-origin: left center; }
-/* On a held sheet only the moment that is playing is spelled out; the rest keep their names. */
-html[data-motion="pinned"] .ex-beat { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 0fr; row-gap: 0; transition: grid-template-rows 420ms var(--ease-out), border-color var(--dur-short) var(--ease-out); }
+/*
+ * On a held sheet only the moment that is playing is spelled out. Every
+ * moment's sentence sits in the same place under the list of names, and only
+ * its opacity changes, so nothing on the sheet moves as the scene plays.
+ */
+html[data-motion="pinned"] .ex-beats { position: relative; display: block; padding-bottom: 5.9em; font-size: var(--text-sm); }
+html[data-motion="pinned"] .ex-beat { display: block; padding: .42rem 0; transition: border-color var(--dur-short) var(--ease-out); }
 html[data-motion="pinned"] .ex-beat-name { color: var(--color-ink-3); transition: color var(--dur-short) var(--ease-out); }
-html[data-motion="pinned"] .ex-beat-text { min-height: 0; overflow: hidden; opacity: 0; transition: opacity 320ms var(--ease-out); }
-html[data-motion="pinned"] .ex-beat.is-on { grid-template-rows: auto 1fr; border-top-color: var(--line); }
+html[data-motion="pinned"] .ex-beat-text { position: absolute; left: 0; right: 0; bottom: 0; height: 5.2em; opacity: 0; transition: opacity 320ms var(--ease-out); }
+html[data-motion="pinned"] .ex-beat.is-on { border-top-color: var(--line); }
 html[data-motion="pinned"] .ex-beat.is-on .ex-beat-name { color: var(--color-ink); }
-html[data-motion="pinned"] .ex-beat.is-on .ex-beat-text { opacity: 1; padding-top: var(--space-3xs); }
+html[data-motion="pinned"] .ex-beat.is-on .ex-beat-text { opacity: 1; }
 html[data-motion="pinned"] .ex-gate-inner { align-content: center; padding-block: clamp(1rem, 4vh, 3rem) var(--rail-room); }
+/* The score's picture is the tallest. On a held sheet the moment's sentence says what a column's sub-heading would. */
+html[data-motion="pinned"] .ex-chrome { padding-block: .6rem; }
+html[data-motion="pinned"] .ex-scorecard .ex-score-num { font-size: clamp(5rem, 12.5vh, 9.75rem); }
+/* The resume's caption rides in the ledger's title row, where there is room for it. */
+html[data-motion="pinned"] .ex-spread > .ex-demo-cap { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+html[data-motion="pinned"] .ex-compare-cap { display: inline; }
+html[data-motion="pinned"] .ex-score-col h3 span { display: none; }
+html[data-motion="pinned"] .ex-scorecard .ex-demo-cap { margin-top: 0; }
+@media (max-height: 860px) {
+  html[data-motion="pinned"] { --rail-room: 3.9rem; }
+  html[data-motion="pinned"] .ex-chrome { padding-block: .45rem; }
+  html[data-motion="pinned"] .ex-scene-inner { padding-top: clamp(.75rem, 2.2vh, 1.5rem); grid-template-columns: minmax(0, .6fr) minmax(0, 1.4fr); column-gap: clamp(1.5rem, 3vw, 3rem); }
+  html[data-motion="pinned"] .ex-scene[data-layout="split-flip"] .ex-scene-inner { grid-template-columns: minmax(0, 1.4fr) minmax(0, .6fr); }
+  html[data-motion="pinned"] .ex-scene-claim { font-size: clamp(1.9rem, 6vh, 3.2rem); }
+  html[data-motion="pinned"] .ex-rail { bottom: .75rem; }
+  html[data-motion="pinned"] .ex-board .ex-board-row { padding-block: .6rem; }
+}
+/* A window of middling height: the caption and the what-ifs go first, and the form closes up. */
+@media (max-height: 880px) {
+  html[data-motion="pinned"] :is(.ex-demo-cap, .ex-compare-cap, .ex-score-presets) { display: none; }
+  html[data-motion="pinned"] .ex-formfig .ex-window .ex-form { padding-block: var(--space-sm); gap: 5px; }
+  html[data-motion="pinned"] .ex-field-box { min-height: 33px; }
+  html[data-motion="pinned"] .ex-formfig .ex-halt { margin-bottom: calc(-1 * var(--space-sm)); padding-block: var(--space-xs); }
+  html[data-motion="pinned"] .ex-spread .ex-sheet { padding: var(--space-xs) var(--space-sm); }
+  html[data-motion="pinned"] .ex-spread { gap: var(--space-xs); }
+  html[data-motion="pinned"] .ex-score-gloss { margin-top: var(--space-xs); }
+}
 @media (max-height: 780px) {
   html[data-motion="pinned"] .ex-scene-body { font-size: var(--text-sm); }
-  html[data-motion="pinned"] .ex-beat { padding: .4rem 0; font-size: .8125rem; line-height: 1.4; }
-  html[data-motion="pinned"] .ex-scene-notes { gap: var(--space-xs); }
-  html[data-motion="pinned"] .ex-scene-head { gap: var(--space-xs); }
-  html[data-motion="pinned"] .ex-yours { display: none; }
+  html[data-motion="pinned"] .ex-beats { font-size: .8125rem; }
+  html[data-motion="pinned"] .ex-beat { padding: .3rem 0; }
+  html[data-motion="pinned"] .ex-scene-notes, html[data-motion="pinned"] .ex-scene-head { gap: var(--space-xs); }
+  html[data-motion="pinned"] .ex-yours, html[data-motion="pinned"] .ex-demo-cap { display: none; }
+  /* A short window: each picture keeps what its chapter is about and lets the rest go, so nothing has to shrink. */
+  html[data-motion="pinned"] :is(.ex-score-presets, .ex-score-note, .ex-ruler-nums, .ex-ruler-names) { display: none; }
+  html[data-motion="pinned"] .ex-scorecard .ex-ruler { padding-bottom: .5rem; }
+  html[data-motion="pinned"] .ex-score-gloss { margin-top: var(--space-xs); font-size: var(--text-md); }
+  html[data-motion="pinned"] .ex-posting { padding-block: .7rem; }
+  html[data-motion="pinned"] .ex-ev .is-gap, html[data-motion="pinned"] .ex-compare-cap { display: none; }
+  html[data-motion="pinned"] .ex-scorecard .ex-bar { padding-block: .12rem; }
+  html[data-motion="pinned"] .ex-score-why { padding-top: var(--space-xs); row-gap: var(--space-xs); }
+  html[data-motion="pinned"] .ex-ev li { padding-block: .18rem; }
+  html[data-motion="pinned"] .ex-score-col h3 { margin-bottom: var(--space-3xs); }
+  html[data-motion="pinned"] .ex-spread { gap: var(--space-xs); }
+  html[data-motion="pinned"] .ex-spread .ex-sheet { padding: var(--space-xs) var(--space-sm); }
+  html[data-motion="pinned"] .ex-spread .ex-sheet-bullet { padding-block: .14rem; }
+  html[data-motion="pinned"] .ex-compare-notes .ex-gap { display: none; }
+  html[data-motion="pinned"] .ex-compare { padding-block: var(--space-2xs) var(--space-xs); }
+  html[data-motion="pinned"] :is(.ex-sheet-sum, .ex-wanted) { display: none; }
+  html[data-motion="pinned"] .ex-formfig .ex-window .ex-form { padding-block: var(--space-sm); gap: 4px; }
+  html[data-motion="pinned"] .ex-field-box { min-height: 30px; }
+  html[data-motion="pinned"] .ex-field { row-gap: 2px; }
+  html[data-motion="pinned"] .ex-formfig .ex-halt { margin-bottom: calc(-1 * var(--space-sm)); padding-block: var(--space-xs); }
+  html[data-motion="pinned"] .ex-halt-button { min-height: 32px; }
+  html[data-motion="pinned"] .ex-ready li + li { display: none; }
   html[data-motion="pinned"] .ex-gate-title { font-size: clamp(3.4rem, 15vh, 9rem); }
 }
 
@@ -524,106 +804,129 @@ html[data-motion="pinned"] .ex-gate-inner { align-content: center; padding-block
   /* Load, played once (main.js marks it done so returning to the Overview does not replay it). */
   html[data-ready]:not([data-intro="done"]) .ex-line > span { animation: ex-line-up 1.1s var(--ease-out) both; }
   html[data-ready]:not([data-intro="done"]) .ex-line:nth-of-type(2) > span { animation-delay: 110ms; }
-  html[data-ready]:not([data-intro="done"]) :is(.ex-hero-foot, .ex-hero-proof) { animation: ex-rise 1s var(--ease-out) 380ms both; }
-  html[data-ready]:not([data-intro="done"]) .ex-hero-proof { animation-delay: 520ms; }
+  html[data-ready]:not([data-intro="done"]) :is(.ex-hero-foot, .ex-trust, .ex-fieldpick) { animation: ex-rise 1s var(--ease-out) 380ms both; }
+  html[data-ready]:not([data-intro="done"]) .ex-trust { animation-delay: 520ms; }
+  html[data-ready]:not([data-intro="done"]) .ex-fieldpick { animation-delay: 640ms; }
   /* The lamp lands after the words, then rings once: this is where you come in. */
   html[data-ready]:not([data-intro="done"]) .ex-lamp { animation: ex-pop 520ms var(--ease-out) 640ms both; }
   html[data-ready]:not([data-intro="done"]) .ex-lamp::after { animation: ex-ring 1.1s var(--ease-out) 1050ms 2; }
 
-  /* The register and the close, once, as they arrive. */
-  html[data-reveals="on"] .ex-ledger[data-reveal=""] :is(.ex-ledger-head, .ex-ledger-group) { opacity: 0; transform: translateY(24px); }
-  .ex-ledger-head, .ex-ledger-group { transition: opacity var(--dur-move) var(--ease-out), transform 900ms var(--ease-out); }
-  .ex-ledger-group:nth-child(2) { transition-delay: 60ms; }
-  .ex-ledger-group:nth-child(3) { transition-delay: 120ms; }
-  .ex-ledger-group:nth-child(4) { transition-delay: 180ms; }
-  .ex-ledger-group:nth-child(5) { transition-delay: 240ms; }
-  .ex-ledger-group:nth-child(6) { transition-delay: 300ms; }
-  .ex-ledger.is-filtering .ex-ledger-row { animation: ex-rise-sm 380ms var(--ease-out) both; animation-delay: calc(min(var(--k), 8) * 28ms); }
+  /* The register, the questions and the close, once, as they arrive. */
+  html[data-reveals="on"] .ex-reg[data-reveal=""] :is(.ex-reg-title, .ex-reg-stat, .ex-reg-body) { opacity: 0; transform: translateY(24px); }
+  html[data-reveals="on"] .ex-reg[data-reveal=""] .ex-reg-bar i { transform: scaleX(0); }
+  .ex-reg-title, .ex-reg-stat, .ex-reg-body { transition: opacity var(--dur-move) var(--ease-out), transform 900ms var(--ease-out), background-color var(--dur-short) var(--ease-out), color var(--dur-short) var(--ease-out); }
+  .ex-reg-bar i { transition: transform 1.1s var(--ease-out); }
+  .ex-reg-bar i:nth-child(2), .ex-reg-stat:nth-child(2) { transition-delay: 90ms; }
+  .ex-reg-bar i:nth-child(3), .ex-reg-stat:nth-child(3) { transition-delay: 180ms; }
+  .ex-reg-bar i:nth-child(4), .ex-reg-stat:nth-child(4) { transition-delay: 270ms; }
+  .ex-reg[data-reveal="done"] .ex-reg-stat { transition-delay: 0s; }
+  .ex-reg-body { transition-delay: 220ms; }
+  /* A change of area or filter brings its rows in with a short rise; the chosen one's lines fade in place. */
+  .ex-reg.is-swapping .ex-reg-item { animation: ex-rise-sm 380ms var(--ease-out) both; animation-delay: calc(min(var(--k), 10) * 26ms); }
+  .ex-reg-detail > * { animation: ex-fade 260ms var(--ease-out) both; }
+  html[data-reveals="on"] .ex-faq[data-reveal=""] > * { opacity: 0; transform: translateY(24px); }
+  .ex-faq > * { transition: opacity 800ms var(--ease-out), transform 900ms var(--ease-out); }
+  .ex-faq > :nth-child(2) { transition-delay: 120ms; }
+  .ex-faq-item[open] .ex-faq-a { animation: ex-rise-sm 320ms var(--ease-out) both; }
   html[data-reveals="on"] .ex-close[data-reveal=""] > * { opacity: 0; transform: translateY(28px); }
   .ex-close > * { transition: opacity 800ms var(--ease-out), transform 1s var(--ease-out); }
   .ex-close > :nth-child(2) { transition-delay: 140ms; }
 }
 
+/* A finger needs a bigger target than a pointer does. */
+@media (pointer: coarse) {
+  .ex .ex-chip { min-height: 44px; }
+  .ex-more { min-height: 44px; }
+  .ex .ex-chrome-pick { min-height: 44px; }
+  .ex button.ex-cond-tag { min-height: 44px; padding-inline: .9em 1.1em; }
+  .ex .ex-signal-btn { min-height: 44px; }
+  .ex .ex-nav button { min-height: 44px; }
+  .ex .ex-iconbtn { width: 44px; height: 44px; }
+}
+
 @media (max-width: 1100px) {
-  .ex-overview > .ex-hero { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: var(--space-xl); }
+  .ex-overview > .ex-hero { column-gap: var(--space-lg); }
   .ex-never-inner, .ex-does { grid-template-columns: minmax(0, 1fr); }
   .ex-never-side { position: static; }
+  .ex-src-cols { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .ex-src-col:first-child { grid-column: 1 / -1; }
 }
 @media (max-width: 900px) {
-  .ex-overview > .ex-ledger, .ex-hood-head, .ex-run-head, .ex-overview > .ex-close { grid-template-columns: minmax(0, 1fr); }
-  .ex-ledger-head { position: static; }
+  .ex-problem-head, .ex-src-head, .ex-turnoff, .ex-run-head, .ex-reg-head, .ex-overview > .ex-faq, .ex-overview > .ex-close { grid-template-columns: minmax(0, 1fr); }
   .ex-hood-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ex-contrast { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); }
+  .ex-contrast { grid-template-columns: minmax(0, 1fr); }
+  .ex-say { max-width: 14ch; }
+  /* The areas become a row of stops across the top. */
+  .ex-reg-body { grid-template-columns: minmax(0, 1fr); gap: var(--space-md); }
+  .ex-reg-areas { display: flex; flex-wrap: wrap; gap: var(--space-2xs); }
+  .ex-reg-areas::before { display: none; }
+  .ex .ex-reg-area { grid-template-columns: auto auto; gap: .5em; min-height: 44px; padding: 0 .9rem; border: 1.5px solid var(--color-rule-strong); border-radius: var(--radius-pill); font-size: var(--text-sm); }
+  .ex .ex-reg-area[aria-pressed="true"] { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-on-ink); }
+  .ex-reg-area[aria-pressed="true"] .ex-count { opacity: 1; }
+  .ex-reg-area-dot { display: none; }
 }
 @media (max-width: 760px) {
-  .ex-overview > .ex-hero {
-    min-height: 0; grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "title" "field" "foot" "proof"; row-gap: var(--space-md);
-  }
-  .ex-hero-title { text-wrap: balance; }
-  .ex-crowd { min-height: 17rem; margin-inline: calc(-1 * var(--page-pad)); }
-  .ex-fcard { width: 9.25rem; padding: .6rem .7rem; }
-  .ex-fcard.is-ours { width: 12.5rem; }
+  .ex-overview > .ex-hero { min-height: 0; display: flex; flex-direction: column; padding-top: var(--space-lg); }
+  .ex-hero-title { align-self: auto; font-size: clamp(3.1rem, 15.5vw, 4.4rem); }
+  .ex-hero-foot { padding-top: var(--space-md); }
+  .ex-trust { grid-template-columns: minmax(0, 1fr); gap: var(--space-2xs); margin-top: var(--space-md); }
+  .ex-trust span { display: none; }
+  .ex-fieldpick { margin-top: var(--space-md); padding: var(--space-sm); }
+  .ex-picks { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ex .ex-pick { padding: 0 .3rem; }
+  .ex-pick-full { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .ex-pick-short { display: inline; }
+  /* The crowd becomes a strip of the morning, with your posting under it. */
+  .ex-crowd { order: 5; min-height: 0; margin: var(--space-md) calc(-1 * var(--page-pad)) 0 0; perspective: none; overflow: clip; }
+  .ex-crowd-space { position: relative; inset: auto; transform: none; padding: 84px var(--page-pad) 5px 0; }
+  .ex-fcard { display: none; transform: none; filter: none; }
+  .ex-crowd-space > .ex-fcard:nth-child(-n+3) { display: grid; top: 0; left: 0; width: 164px; padding: .6rem .8rem; box-shadow: none; }
+  .ex-crowd-space > .ex-fcard:nth-child(2) { left: 172px; }
+  .ex-crowd-space > .ex-fcard:nth-child(3) { left: 344px; }
+  .ex-crowd-space > .ex-fcard .ex-fcard-bars { display: none; }
+  .ex-fcard-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .ex-fcard.is-ours { display: grid; position: relative; left: auto; top: auto; width: auto; transform: none; padding: 1.1rem 1.2rem 1.2rem; }
+  .ex-fcard.is-ours .ex-fcard-title { white-space: normal; }
+
   :root { --radius-sheet: 20px; }
   .ex-plate { padding-block: var(--space-sm) calc(var(--space-2xl) + var(--radius-sheet)); }
   .ex-scene-inner { padding-top: var(--space-lg); gap: var(--space-lg); }
-  .ex-chrome-fact { margin-left: 0; flex-basis: 100%; }
+  .ex-chrome-fact { margin-left: 0; flex-basis: 100%; order: 3; }
+  .ex-chrome-field { margin-left: auto; }
   .ex-beat { grid-template-columns: minmax(0, 1fr); }
   .ex-gate-inner { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-md); }
   .ex-gate-title { text-wrap: balance; font-size: clamp(3rem, 1rem + 10vw, 5rem); }
   .ex-gate-track { --at: 70%; }
   .ex-gate-tag { display: none; }
   .ex-spread .ex-sheets { grid-template-columns: minmax(0, 1fr); }
+  .ex-spread .ex-sheet { font-size: var(--text-sm); }
+  .ex-compare { grid-template-columns: minmax(0, 1fr); }
+  .ex-compare-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+  .ex-compare-cells div { min-width: 0; padding-inline: 0; }
   .ex-board .ex-board-row, .ex-board-copy { grid-template-columns: minmax(0, 1fr); gap: var(--space-3xs); }
   .ex-board-out { text-align: left; }
+  .ex-board-cond { grid-column: 1; }
+  .ex-ev-skill { display: block; }
+  .ex-ask { display: grid; }
+  .ex-ask li { justify-content: space-between; }
   /* The stages stand in a column, each a row: name on the left, the application beside it. */
   .ex-stages { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .ex-stage { grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; min-height: 4.6rem; padding: var(--space-xs) 0 var(--space-xs) var(--space-sm); border-top: 0; border-left: var(--rule-line) solid var(--color-rule-strong); }
   .ex-stage.is-past { border-left-color: var(--line-track); }
   .ex-stage.is-current { border-left-color: color-mix(in oklab, var(--line-track) calc(var(--on) * 100%), var(--color-rule-strong)); }
   .ex-does-list { grid-template-columns: minmax(0, 1fr); }
-  .ex-ledger-row { grid-template-columns: minmax(0, 1fr) auto; }
-  .ex-ledger-what { grid-column: 1 / -1; grid-row: 2; }
-  .ex-ledger-link { display: none; }
+  .ex-src-cols { grid-template-columns: minmax(0, 1fr); }
   .ex-run .ex-platform { padding-inline: var(--space-md); }
+  .ex-reg-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ex-reg-detail { padding-left: var(--space-sm); }
 }
 @media (max-width: 420px) {
   .ex-hood-facts { grid-template-columns: minmax(0, 1fr); }
   .ex-field-tag { justify-items: start; text-align: left; }
   .ex-gate-head { width: 3.75rem; }
+  .ex-scorecard .ex-bar { grid-template-columns: 5.4rem minmax(0, 1fr) 4.2rem; }
+  .ex-scorecard .ex-bar.is-rest { grid-template-columns: 8.4rem minmax(0, 1fr) 4.2rem; }
 }
 
 /* The footer's statement, in the Overview's voice. */
 .ex-foot-line { font-family: var(--font-serif); font-weight: 400; font-stretch: 100%; font-size: clamp(2rem, 1rem + 2.6vw, 3.6rem); letter-spacing: -.02em; line-height: 1; }
-
-/* Track's four stages share a narrow picture on a small held sheet: the names step down a size. */
-.ex-trackfig { container-type: inline-size; }
-@container (max-width: 36rem) {
-  .ex-stage-name { font-size: var(--text-xs); }
-  .ex-stages { gap: var(--space-2xs); }
-}
-
-/* On a held sheet the score's parts share the width, so the picture keeps its size. */
-html[data-motion="pinned"] .ex-scorecard {
-  grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr);
-  grid-template-areas: "main posting" "bars bars" "presets presets" "meaning meaning" "cap cap"; row-gap: var(--space-sm);
-}
-html[data-motion="pinned"] .ex-scorecard .ex-bars { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: var(--space-xl); }
-html[data-motion="pinned"] .ex-score-presets { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2xs) var(--space-sm); }
-html[data-motion="pinned"] .ex-scorecard .ex-score-num { font-size: clamp(5.5rem, 16vh, 12rem); }
-html[data-motion="pinned"] .ex-meaning-note { flex: 1 1 auto; }
-
-/* A short window: the picture takes more of the width and the frame gives back its padding,
-   so the picture keeps a readable size. */
-@media (max-height: 860px) {
-  html[data-motion="pinned"] { --rail-room: 4.25rem; }
-  html[data-motion="pinned"] .ex-chrome { padding-block: .7rem; }
-  html[data-motion="pinned"] .ex-scene-inner { padding-top: clamp(.75rem, 2.4vh, 1.5rem); grid-template-columns: minmax(0, .64fr) minmax(0, 1.36fr); column-gap: clamp(1.5rem, 3vw, 3rem); }
-  html[data-motion="pinned"] .ex-scene[data-layout="split-flip"] .ex-scene-inner { grid-template-columns: minmax(0, 1.36fr) minmax(0, .64fr); }
-  html[data-motion="pinned"] .ex-scene-claim { font-size: clamp(2rem, 6.4vh, 3.4rem); }
-  html[data-motion="pinned"] .ex-sheet { padding: var(--space-md); }
-  html[data-motion="pinned"] .ex-formfig .ex-form { padding: var(--space-md) var(--space-lg); gap: var(--space-xs); }
-  html[data-motion="pinned"] .ex-field-box { min-height: 36px; }
-  html[data-motion="pinned"] .ex-rail { bottom: .75rem; }
-  html[data-motion="pinned"] .ex-board .ex-board-row { padding-block: .7rem; }
-}
