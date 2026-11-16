@@ -80,14 +80,24 @@ export function glassLens(host, selected) {
     return option && host.contains(option) && option !== host && !option.disabled ? option : null;
   };
 
-  const geometry = (option) => ({ x: option.offsetLeft, y: option.offsetTop, w: option.offsetWidth, h: option.offsetHeight });
+  /**
+   * A box in the host's own coordinates, to the fraction of a pixel. The
+   * offset* properties round to whole pixels, and options are fractional
+   * widths, so a lens sized from them could sit a pixel proud of its option.
+   */
+  function boxOf(node) {
+    const r = node.getBoundingClientRect();
+    const h = host.getBoundingClientRect();
+    return { x: r.left - h.left - host.clientLeft + host.scrollLeft, y: r.top - h.top - host.clientTop + host.scrollTop, w: r.width, h: r.height };
+  }
+  const round = (n) => Math.round(n * 100) / 100;
+  const geometry = (option) => {
+    const b = boxOf(option);
+    return { x: round(b.x), y: round(b.y), w: round(b.w), h: round(b.h) };
+  };
 
   /** Where the lens is on screen right now, mid-glide included. */
-  function shown() {
-    const r = lens.getBoundingClientRect();
-    const h = host.getBoundingClientRect();
-    return { x: r.left - h.left - host.clientLeft + host.scrollLeft, y: r.top - h.top - host.clientTop, w: r.width, h: r.height };
-  }
+  const shown = () => boxOf(lens);
 
   function rest(at) {
     lens.style.transform = `translate(${at.x}px, ${at.y}px)`;
@@ -95,11 +105,27 @@ export function glassLens(host, selected) {
     lens.style.height = `${at.h}px`;
   }
 
+  // A resize (window, wrap, a row coming out of hiding, a count that grows in
+  // the selected option) lands at once. The selected option is watched too:
+  // its width can change while the row as a whole does not.
+  // Only a real change counts: a newly watched element reports its size once
+  // on its own, and taking that for a resize would snap a press-glide back.
+  const sizes = new WeakMap();
+  const resized = new ResizeObserver((entries) => {
+    let changed = false;
+    for (const { target, contentRect } of entries) {
+      const size = `${contentRect.width}x${contentRect.height}`;
+      if (sizes.has(target) && sizes.get(target) !== size) changed = true;
+      sizes.set(target, size);
+    }
+    if (changed) soon(false);
+  });
+
   function mark(option) {
     if (under === option) return;
-    under?.classList.remove('is-lensed');
+    if (under) { under.classList.remove('is-lensed'); resized.unobserve(under); }
     under = option;
-    under?.classList.add('is-lensed');
+    if (under) { under.classList.add('is-lensed'); resized.observe(under); }
   }
 
   /**
@@ -187,8 +213,7 @@ export function glassLens(host, selected) {
       || [...r.addedNodes, ...r.removedNodes].some((n) => n !== lens));
     if (real) soon(true);
   }).observe(host, { childList: true, subtree: true, attributes: true, attributeFilter: ['aria-pressed', 'aria-selected', 'hidden'] });
-  // A resize (window, wrap, a row coming out of hiding) lands at once.
-  new ResizeObserver(() => soon(false)).observe(host);
+  resized.observe(host);
   document.fonts?.ready.then(() => soon(false));
   place(false);
 }

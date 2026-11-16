@@ -49,7 +49,7 @@ describe('liquid glass switches', { timeout: 120_000 }, () => {
       // The stage tabs are rebuilt on every change; the lens follows the new selection all the same.
       const tabs = page.locator('#tabs .tab');
       await tabs.nth(2).click();
-      expect(await tabs.nth(2).getAttribute('aria-selected')).toBe('true');
+      await expect.poll(() => tabs.nth(2).getAttribute('aria-selected')).toBe('true');
       await expect.poll(() => offset(page, '#tabs', '.tab[aria-selected="true"]'), { timeout: 5_000 }).toEqual({ x: 0, w: 0, shown: true });
       expect(await page.locator('#tabs > .glass-lens').count()).toBe(1);
       // The lens is decoration: hidden from assistive technology, and it never takes a click.
@@ -85,7 +85,7 @@ describe('liquid glass switches', { timeout: 120_000 }, () => {
       // Only transform is animated: it runs off the main thread.
       expect(glides[0]).toEqual(['transform']);
       await page.mouse.up();
-      expect(await target.getAttribute('aria-selected')).toBe('true');
+      await expect.poll(() => target.getAttribute('aria-selected')).toBe('true');
       await expect.poll(() => offset(page, '#tabs', '.tab[aria-selected="true"]'), { timeout: 5_000 }).toEqual({ x: 0, w: 0, shown: true });
       // The heavier selected label never pushes the row sideways.
       expect(await widths()).toEqual(before);
