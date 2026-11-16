@@ -276,20 +276,24 @@ function titlesFromHeadline(sections) {
 /**
  * Split a skills line at commas, semicolons, bullets and pipes that are NOT
  * inside brackets, so "Databases (SQL, NoSQL), Kafka" is two items, not
- * "Databases (SQL" and "NoSQL)". An unclosed bracket stays open to the end of
- * the line, which keeps its text together rather than shredding it.
- * (tailor.py `_split_skill_list` follows the same rule.)
+ * "Databases (SQL" and "NoSQL)". Same brackets as tailor.py `_split_skill_list`:
+ * (), [] and {}.
+ *
+ * When the brackets do not balance (a stray "(" with no ")"), nothing says where
+ * the bracket was meant to end, so the line is split plainly instead. Holding
+ * the rest of the line inside it would silently drop every skill after it.
  *
  * @param {string} text
  * @returns {string[]}
  */
 function splitOutsideBrackets(text) {
+  const line = String(text ?? '');
   const pieces = [];
   let depth = 0;
   let current = '';
-  for (const ch of String(text ?? '')) {
-    if (ch === '(' || ch === '[') depth += 1;
-    else if ((ch === ')' || ch === ']') && depth > 0) depth -= 1;
+  for (const ch of line) {
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth -= 1;
     if (depth === 0 && /[,;•|]/.test(ch)) {
       pieces.push(current);
       current = '';
@@ -298,7 +302,7 @@ function splitOutsideBrackets(text) {
     }
   }
   pieces.push(current);
-  return pieces;
+  return depth === 0 ? pieces : line.split(/[,;•|]/);
 }
 
 /**
@@ -316,7 +320,7 @@ function skillsFromSections(sections) {
       const body = line.includes(':') ? line.slice(line.indexOf(':') + 1) : line;
       for (const piece of splitOutsideBrackets(body)) {
         // Bracketed detail is dropped, and so is a bracket left open to the end of the line.
-        const skill = piece.replace(/[([][^)\]]*[)\]]/g, ' ').replace(/[([][^)\]]*$/, ' ').replace(/\s+/g, ' ').trim();
+        const skill = piece.replace(/[([{][^)\]}]*[)\]}]/g, ' ').replace(/[([{][^)\]}]*$/, ' ').replace(/\s+/g, ' ').trim();
         // One to four words, no sentence punctuation. "Delta Live Tables" yes,
         // "building scalable pipelines for the enterprise" no.
         if (!skill || skill.length < 2 || skill.length > 40) continue;

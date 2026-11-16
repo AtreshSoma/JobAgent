@@ -33,6 +33,14 @@ describe('drawing positions are not text', () => {
     expect(paragraphsFromDocumentXml(xml)).toEqual(['SKILLS:']);
   });
 
+  it('a self-closed size element never swallows the text after it', () => {
+    // `<wp14:pctWidth/>` has no closing tag; matching it to a LATER one would delete the paragraphs between.
+    const xml = '<w:body><w:p><w:r><w:t>Before</w:t></w:r><wp14:pctWidth/></w:p>'
+      + '<w:p><w:r><w:t>Keep me</w:t></w:r></w:p>'
+      + '<w:p><wp14:pctWidth>0</wp14:pctWidth><w:r><w:t>Next</w:t></w:r></w:p></w:body>';
+    expect(paragraphsFromDocumentXml(xml)).toEqual(['Before', 'Keep me', 'Next']);
+  });
+
   it('keeps every real run of text, including a text box inside a drawing', () => {
     const xml = '<w:body><w:p><w:r><w:t>Name</w:t></w:r><w:r><w:drawing><wp:anchor><wp:positionH><wp:posOffset>-914400</wp:posOffset></wp:positionH>'
       + '<w:txbxContent><w:p><w:r><w:t>person@example.com</w:t></w:r></w:p></w:txbxContent></wp:anchor></w:drawing></w:r></w:p></w:body>';
@@ -79,8 +87,16 @@ describe('skills are split outside brackets only', () => {
     expect(out.join('|')).not.toMatch(/[()]/);
   });
 
-  it('still splits plain lists and unbalanced brackets safely', () => {
+  it('still splits plain lists', () => {
     expect(skills(['Python, Java; Go | Rust'])).toEqual(['Python', 'Java', 'Go', 'Rust']);
+  });
+
+  it('a bracket that never closes costs no skill after it', () => {
+    expect(skills(['Python (3.x, Java, Go'])).toEqual(['Python', 'Java', 'Go']);
     expect(skills(['Cloud (AWS, Azure'])).toContain('Cloud');
+  });
+
+  it('keeps square and curly brackets together too', () => {
+    expect(skills(['Messaging [Kafka, Pulsar], Storage {S3, GCS}, Go'])).toEqual(['Messaging', 'Storage', 'Go']);
   });
 });

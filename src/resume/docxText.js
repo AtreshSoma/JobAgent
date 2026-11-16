@@ -157,8 +157,10 @@ export function paragraphsFromDocumentXml(xml) {
     // it. Stripping only the tags glued them onto the heading, and
     // "123456789EXPERIENCE:" matched no section (2026-11-12).
     // The 2010 "wp14" size and relative-position elements write "0" the same way
-    // (the heading read "00EXPERIENCE:").
-    .replace(/<(wp|wp14):(posOffset|align|pctWidth|pctHeight|pctPosHOffset|pctPosVOffset)\b[^>]*>[\s\S]*?<\/\1:\2>/g, '')
+    // (the heading read "00EXPERIENCE:"). A self-closed form has no closing tag to pair
+    // with, so it is left alone rather than matched to a LATER one, which would delete
+    // every paragraph in between.
+    .replace(/<(wp|wp14):(posOffset|align|pctWidth|pctHeight|pctPosHOffset|pctPosVOffset)(?=[\s>])[^>]*(?<!\/)>[\s\S]*?<\/\1:\2>/g, '')
     .replace(/<w:tab\b[^>]*>/g, '\t')
     .replace(/<w:(?:br|cr)\b[^>]*>/g, '\n')
     // Paragraph and table-cell/row ends are the only real line breaks.
