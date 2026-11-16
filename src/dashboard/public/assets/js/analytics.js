@@ -28,10 +28,15 @@ export const HEALTH_FACTS = [
   { key: 'strongFit', label: 'strong fits', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match — filter the board to them' },
 ];
 
-/** Shown only when non-zero, and only where no tab already carries it. */
+/**
+ * Shown only when non-zero, and only where no tab already carries it. In the
+ * order they need you: a submit nobody confirmed first, then postings whose
+ * date is unknown. The profile's own flag (profile.js) leads the group, since
+ * an empty field stops every application.
+ */
 export const HEALTH_FLAGS = [
   { key: 'submitUnverified', label: 'unverified submits', tone: 'bad', filter: { appStatus: 'submit_unverified' }, title: 'Auto-submits with no confirmation — only you can resolve these' },
-  { key: 'undatedDropped', label: 'undated', tone: 'attn', filter: { undated: true }, title: 'The source gave no confirmed posting date — held back, or still live but worth a quick check' },
+  { key: 'undatedDropped', label: 'without a date', tone: 'attn', filter: { undated: true }, title: 'The source gave no confirmed posting date — held back, or still live but worth a quick check' },
 ];
 
 /**
@@ -53,7 +58,8 @@ export function statNode({ key, label, tone, filter, title }, stats) {
   const known = typeof raw === 'number' && Number.isFinite(raw);
   const value = known ? raw : 0;
   const attrs = {
-    class: `stat ${known && value > 0 ? tone ?? '' : ''} ${filter ? 'clickable' : ''}`.trim().replace(/\s+/g, ' '),
+    // A zero is a fact, not news: it is set quieter than a number that changed.
+    class: `stat ${known && value > 0 ? tone ?? '' : ''} ${known && value === 0 ? 'is-zero' : ''} ${filter ? 'clickable' : ''}`.trim().replace(/\s+/g, ' '),
     title: known ? (title ?? '') : `${title ?? label} — not reported by the server (it may need a restart to pick up a recent update)`,
   };
   // A REAL button when it does something, a plain span when it does not.
@@ -76,24 +82,33 @@ export function statNode({ key, label, tone, filter, title }, stats) {
   return el('span', attrs, el('b', { text: known ? fmt(value) : 'n/a' }), el('span', { class: 'l', text: label }));
 }
 
+/**
+ * The row, in two parts that read differently on purpose:
+ *
+ *   facts      what changed, number first, separated by hairlines;
+ *   attention  what needs you, each marked by its tone's dot, then the way to
+ *              the data-quality dialog. Empty items are left out entirely.
+ */
 export function renderHealth(stats) {
   const host = $('health');
   host.textContent = '';
   // When discovery last found anything — the first question on opening the app.
   const last = relTime(stats.lastDiscoveryAt);
   host.append(el('span', { class: 'stat', title: 'When discovery last found anything' },
-    el('span', { class: 'l', text: 'Last search' }), el('b', { text: last ?? 'never' })));
+    el('span', { class: 'l', text: last ? 'Searched' : 'No search yet' }), last ? el('b', { text: last }) : null));
   for (const fact of HEALTH_FACTS) host.append(statNode(fact, stats));
 
+  const attention = el('div', { class: 'health-attn' });
   for (const flag of HEALTH_FLAGS) {
     // An empty warning is noise; only real attention items get a pill.
     if ((stats.totals[flag.key] ?? 0) === 0) continue;
-    host.append(statNode(flag, stats));
+    attention.append(statNode(flag, stats));
   }
-  host.append(el('button', {
+  attention.append(el('button', {
     type: 'button', class: 'stat clickable stat-link', 'data-action': 'open-data-quality',
     title: `${fmt(stats.totals?.jobsTracked ?? 0)} jobs stored in total. See why jobs were filtered, how long they stay, and missing descriptions.`,
-  }, el('span', { class: 'l', text: 'Data quality' })));
+  }, el('span', { class: 'l', text: 'Data quality' }), el('span', { class: 'chev', 'aria-hidden': 'true' })));
+  host.append(attention);
 
   // This strip is rebuilt from scratch on every stats load, so the profile
   // pill has to be re-added here or it would vanish on the next poll.

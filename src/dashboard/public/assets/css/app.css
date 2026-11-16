@@ -1007,7 +1007,8 @@ dialog { background: var(--surface); }
 
 /* Pipeline health, as plain facts. */
 .health {
-  display: flex; align-items: center; gap: var(--s3); flex-wrap: nowrap;
+  /* On the text's baseline, so a fact that starts with words lines up with one that starts with a number. */
+  display: flex; align-items: baseline; gap: var(--s3); flex-wrap: nowrap;
   /* The containing block for its .sr-only labels: without it they were placed
      against the page and escaped this strip's clipping, widening a 390px
      phone layout to 487px (a sideways scroll on every view). */
@@ -1022,7 +1023,8 @@ dialog { background: var(--surface); }
   white-space: nowrap; border-radius: var(--r-xs);
 }
 button.stat:hover { background: none; border-color: transparent; }
-.health .stat + .stat::before {
+/* Facts are divided by hairlines; the attention group is set apart by space alone. */
+.health > .stat + .stat::before {
   content: ''; width: 1px; height: 12px; background: var(--line);
   margin-right: var(--s3); align-self: center;
 }
@@ -1031,19 +1033,31 @@ button.stat:hover { background: none; border-color: transparent; }
 .stat.clickable:focus-visible { outline-offset: 3px; }
 .stat b { color: var(--text); font-size: var(--fs-sm); font-weight: 650; }
 .stat .l { font-size: var(--fs-sm); color: var(--text-dim); }
+/* A zero is a fact, not news. */
+.stat.is-zero b { color: var(--text-faint); font-weight: 550; }
+
+/* What needs you: no filled pills fighting the facts, one dot in the tone's colour
+   and the words in it. The group is the row's last word, after the facts. */
+.health-attn { display: flex; align-items: baseline; gap: var(--s4); margin-left: var(--s3); flex: none; }
+/* The dot is the first item of the stat's own row, so no padding elsewhere can let it sit on the number. */
+.stat.attn::before, .stat.bad::before {
+  content: ''; flex: none; align-self: center; width: 6px; height: 6px; margin: 0 3px 0 3px; border-radius: 50%;
+  background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft);
+}
+.stat.bad::before { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
 .stat.attn b, .stat.attn .l { color: var(--warn-text); }
 .stat.bad b, .stat.bad .l { color: var(--bad); }
-/* A tinted fill, like a .chip.warn — not a 1px outline. The outline drew the
-   exact shape of the focus ring, so "216 undated" looked stuck in focus. */
-.stat.attn, .stat.bad {
-  border: 0; border-radius: var(--r-full); padding: 2px 9px;
-  color: var(--warn-text); background: var(--warn-soft);
+.stat.attn.clickable:hover b, .stat.attn.clickable:hover .l,
+.stat.bad.clickable:hover b, .stat.bad.clickable:hover .l { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+/* The way to the detail behind every number: quiet until pointed at. */
+.stat-link .l { color: var(--text-dim); }
+.stat-link .chev {
+  width: 5px; height: 8px; margin-left: 3px; align-self: center;
+  background: var(--text-faint); clip-path: polygon(0 0, 40% 0, 100% 50%, 40% 100%, 0 100%, 60% 50%);
+  transition: translate .16s ease;
 }
-.stat.bad { color: var(--bad); background: var(--bad-soft); }
-button.stat.attn:hover { background: color-mix(in srgb, var(--warn) 22%, transparent); }
-button.stat.bad:hover { background: color-mix(in srgb, var(--bad) 22%, transparent); }
-.stat.attn + .stat::before, .stat.bad + .stat::before,
-.stat + .stat.attn::before, .stat + .stat.bad::before { display: none; }
+.stat-link:hover .chev { background: var(--accent); translate: 2px 0; }
+@media (prefers-reduced-motion: reduce) { .stat-link .chev { transition: none; } }
 
 /* ─────────────────── view switch ───────────────────
    Today | All jobs, ahead of the stage tabs it gates. A segmented control,
@@ -1135,9 +1149,9 @@ button.stat.bad:hover { background: color-mix(in srgb, var(--bad) 22%, transpare
   }
   .tabs::-webkit-scrollbar, .health::-webkit-scrollbar { display: none; }
   .tabs .tab, .health .stat { flex: none; }
-  /* Something that needs you (unverified submits) leads the strip: scrolled
-     past the edge at 390px, it was the one fact nobody saw. */
-  .health .stat.bad { order: -1; }
+  /* What needs you leads the strip on a phone: scrolled past the edge at
+     390px, it was the one thing nobody saw. */
+  .health-attn { order: -1; margin-left: 0; margin-right: var(--s3); }
   .statusbar .runbox { width: 100%; min-width: 0; }
   .statusbar .run-main { min-width: 0; flex: 1 1 auto; }
   .statusbar .spacer { display: none; }

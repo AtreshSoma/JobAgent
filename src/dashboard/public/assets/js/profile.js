@@ -742,11 +742,12 @@ export function renderHealthProfileFlag() {
   // Each count bold inside its own words ("1 empty field"). A separate bold
   // total in front read as "1 1 empty field" — the number twice.
   const parts = [];
-  if (open) parts.push([open, ` question${open === 1 ? '' : 's'}`]);
-  if (missing) parts.push([missing, ` empty field${missing === 1 ? '' : 's'}`]);
+  if (missing) parts.push([missing, ` profile field${missing === 1 ? '' : 's'} empty`]);
+  if (open) parts.push([open, ` question${open === 1 ? '' : 's'} to answer`]);
   const nodes = parts.flatMap(([n, words], i) => [...(i ? [el('span', { class: 'l', text: ' · ' })] : []),
     el('b', { text: String(n) }), el('span', { class: 'l', text: words })]);
-  host.append(el('button', {
+  // It leads the attention group: an empty field stops every application.
+  (host.querySelector('.health-attn') ?? host).prepend(el('button', {
     type: 'button', class: 'stat clickable attn pf-flag', 'data-action': 'open-profile',
     title: 'Open the application profile to fill these in.',
   }, ...nodes));
