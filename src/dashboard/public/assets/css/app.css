@@ -1036,9 +1036,16 @@ button.stat:hover { background: none; border-color: transparent; }
 /* A zero is a fact, not news. */
 .stat.is-zero b { color: var(--text-faint); font-weight: 550; }
 
-/* What needs you: no filled pills fighting the facts, one dot in the tone's colour
-   and the words in it. The group is the row's last word, after the facts. */
-.health-attn { display: flex; align-items: baseline; gap: var(--s4); margin-left: var(--s3); flex: none; }
+/* What needs you, in one rounded group at the row's end: each item a quiet
+   button with its tone's dot, then the way to the detail behind the numbers. */
+.health-attn {
+  display: flex; align-items: center; gap: 2px; flex: none; margin-left: auto;
+  padding: 2px; border: 1px solid var(--line); border-radius: var(--r-full);
+  background: color-mix(in srgb, var(--text) 3%, transparent);
+}
+.health-attn > .stat { align-items: center; padding: 3px 11px; border-radius: var(--r-full); transition: background-color .15s ease; }
+.health-attn > button.stat:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+.health-attn > .stat-link { padding-left: 12px; }
 /* The dot is the first item of the stat's own row, so no padding elsewhere can let it sit on the number. */
 .stat.attn::before, .stat.bad::before {
   content: ''; flex: none; align-self: center; width: 6px; height: 6px; margin: 0 3px 0 3px; border-radius: 50%;
@@ -1047,8 +1054,16 @@ button.stat:hover { background: none; border-color: transparent; }
 .stat.bad::before { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
 .stat.attn b, .stat.attn .l { color: var(--warn-text); }
 .stat.bad b, .stat.bad .l { color: var(--bad); }
-.stat.attn.clickable:hover b, .stat.attn.clickable:hover .l,
-.stat.bad.clickable:hover b, .stat.bad.clickable:hover .l { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+.stat.attn.clickable:hover b, .stat.attn.clickable:hover .l { color: var(--warn-text); }
+.stat.bad.clickable:hover b, .stat.bad.clickable:hover .l { color: var(--bad); }
+/* A search more than a day old: said in the warning colour, not hidden in grey. */
+.stat-fresh.is-stale b, .stat-fresh.is-stale .l { color: var(--warn-text); }
+/* The connection is the row's first dot: healthy needs no words; lost, it says so. */
+.statusbar .conn.ok { font-size: 0; gap: 0; }
+.statusbar .conn.ok::before { width: 8px; height: 8px; }
+/* No spacer: the facts follow the dot, and the attention group takes the far end. */
+.statusbar .spacer { display: none; }
+.statusbar .health { flex: 1 1 auto; }
 /* The way to the detail behind every number: quiet until pointed at. */
 .stat-link .l { color: var(--text-dim); }
 .stat-link .chev {
@@ -1152,6 +1167,7 @@ button.stat:hover { background: none; border-color: transparent; }
   /* What needs you leads the strip on a phone: scrolled past the edge at
      390px, it was the one thing nobody saw. */
   .health-attn { order: -1; margin-left: 0; margin-right: var(--s3); }
+  .health-attn > .stat { flex: none; }
   .statusbar .runbox { width: 100%; min-width: 0; }
   .statusbar .run-main { min-width: 0; flex: 1 1 auto; }
   .statusbar .spacer { display: none; }

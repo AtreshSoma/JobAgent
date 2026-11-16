@@ -25,8 +25,12 @@ import { renderHealthProfileFlag } from './profile.js';
 export const HEALTH_FACTS = [
   // The 24h count is often single digits while a week holds hundreds.
   { key: 'postedLast7d', label: 'posted this week', tone: 'hot', filter: { postedWithinHours: '168' }, title: 'Open jobs whose POSTING is less than 1 week old — filter the board to them' },
-  { key: 'strongFit', label: 'strong fits', tone: 'hot', filter: { fit: 'strong' }, title: 'Open jobs scored as a strong match — filter the board to them' },
+  // Strong fits are not here: the Priority and Best matches tabs and the Next
+  // panel already carry them, so a fourth copy one row up was only noise.
 ];
+
+/** A last search older than this is stale enough to say so. */
+const STALE_SEARCH_HOURS = 24;
 
 /**
  * Shown only when non-zero, and only where no tab already carries it. In the
@@ -93,9 +97,14 @@ export function renderHealth(stats) {
   const host = $('health');
   host.textContent = '';
   // When discovery last found anything — the first question on opening the app.
+  // Past a day it says so, quietly, and points at the way to fix it.
   const last = relTime(stats.lastDiscoveryAt);
-  host.append(el('span', { class: 'stat', title: 'When discovery last found anything' },
-    el('span', { class: 'l', text: last ? 'Searched' : 'No search yet' }), last ? el('b', { text: last }) : null));
+  const age = stats.lastDiscoveryAt ? (Date.now() - Date.parse(stats.lastDiscoveryAt)) / 3_600_000 : null;
+  const stale = age !== null && age >= STALE_SEARCH_HOURS;
+  host.append(el('span', {
+    class: `stat stat-fresh${stale ? ' is-stale' : ''}`,
+    title: stale ? 'Your last search was over a day ago. Find jobs runs a new one.' : 'When discovery last found anything',
+  }, el('span', { class: 'l', text: last ? 'Searched' : 'No search yet' }), last ? el('b', { text: last }) : null));
   for (const fact of HEALTH_FACTS) host.append(statNode(fact, stats));
 
   const attention = el('div', { class: 'health-attn' });

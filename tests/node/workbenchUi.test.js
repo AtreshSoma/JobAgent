@@ -424,7 +424,9 @@ describe('the top pane states things once', () => {
     }
     // What remains is what changed and what is worth a look; corpus size and
     // coverage moved to the Discovery and data quality dialog.
-    for (const kept of ['postedLast7d', 'strongFit']) expect(facts).toContain(kept);
+    expect(facts).toContain('postedLast7d');
+    // Strong fits are the Priority and Best matches tabs and the Next panel's first line.
+    expect(facts).not.toContain("key: 'strongFit'");
     for (const moved of ['jobsTracked', 'discoveredLast24h', 'postedLast24h']) {
       expect(facts, `${moved} belongs in the data-quality dialog`).not.toContain(`key: '${moved}'`);
     }
