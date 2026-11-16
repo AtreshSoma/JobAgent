@@ -559,6 +559,10 @@ _HEADING_KINDS: Dict[str, set] = {
         # body text inside the role above it.
         "earlier experience", "additional experience", "other experience",
         "volunteer experience", "volunteering", "leadership",
+        # Membership blocks and the "work" spelling of volunteering. Unrecognised,
+        # the section above swallowed them (docs/RESUME_TAILORING_PLAN.md, P0).
+        "volunteer work", "volunteer work experience", "affiliations",
+        "professional affiliations", "memberships", "professional memberships", "activities",
         "honors", "honors and awards", "licenses", "training", "languages", "interests", "references",
     },
 }
@@ -571,6 +575,7 @@ _SECTION_HEADINGS = set().union(*_HEADING_KINDS.values())
 _NON_ROLE_SECTIONS = _HEADING_KINDS["summary"] | _HEADING_KINDS["skills"] | _HEADING_KINDS["education"] | {
     "certifications", "licenses", "training", "languages", "interests", "references",
     "honors", "honors and awards", "awards", "publications", "additional information",
+    "affiliations", "professional affiliations", "memberships", "professional memberships", "activities",
 }
 
 
@@ -1600,8 +1605,54 @@ def _protect_headings(document) -> Dict[str, Any] | None:
     }
 
 
+#: Punctuation a heading may end with: "EDUCATION:", "Skills -".
+_HEADING_TRAILING = " \t:;.-\u2013\u2014\u2022*|_"
+
+#: Words that may qualify a known section name without changing what it is:
+#: "Relevant Work Experience", "Professional Skills", "Key Projects".
+_HEADING_QUALIFIERS = frozenset({
+    "relevant", "professional", "selected", "key", "core", "technical", "notable",
+    "recent", "related", "industry", "prior", "highlighted",
+})
+
+
 def _norm_heading(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "").strip().lower())
+    """The known section name a heading line stands for, else its plain lowercase text.
+
+    Measured 2026-11-12 on a real resume: 0 of 6 headings were recognised.
+    "PROFESSIONAL SUMMARY:" kept its ":" and so matched nothing, and every step
+    that works per section (skill reordering, summary and bullet priority, page
+    fitting) found no section to work on, while the packet still said it was
+    tailored. So a heading is read the way a person reads it:
+
+      * trailing punctuation is ignored ("EDUCATION:", "Skills -");
+      * detail after a comma names an employer or place, not the section
+        ("Projects, Example Organisation" is "projects");
+      * a qualifier may precede a known name ("Relevant Work Experience").
+
+    A line with a date, or one too long to be a heading, is never reshaped, so a
+    role line or a sentence cannot turn into a section. A combined heading whose
+    comma parts are ALL known ("Skills, Tools") stays combined for the callers
+    that split it.
+    """
+    s = re.sub(r"\s+", " ", (text or "").strip().lower()).rstrip(_HEADING_TRAILING)
+    if not s or s in _SECTION_HEADINGS or len(s) > 60 or _EMPLOYMENT_DATE_RE.search(s):
+        return s
+    parts = [part.strip() for part in s.split(",") if part.strip()]
+    if len(parts) > 1 and all(part in _SECTION_HEADINGS for part in parts):
+        return s
+    head = parts[0] if parts else s
+    if len(parts) > 1 and head in _SECTION_HEADINGS:
+        return head
+    words = head.split()
+    for size in (3, 2, 1):
+        if len(words) <= size:
+            continue
+        tail = " ".join(words[-size:])
+        qualifiers = words[:-size]
+        if tail in _SECTION_HEADINGS and len(qualifiers) <= 2 and all(w in _HEADING_QUALIFIERS for w in qualifiers):
+            return tail
+    return s
 
 
 _SUMMARY_HEADINGS = _HEADING_KINDS["summary"]
