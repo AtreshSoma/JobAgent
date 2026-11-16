@@ -1,0 +1,75 @@
+{
+  "size": "1440x900",
+  "theme": "light",
+  "passes": {
+    "slow": {
+      "pageHeight": 19148,
+      "frames": 5049,
+      "seconds": 86.08,
+      "fps": 58.7,
+      "medianMs": 16.7,
+      "p95Ms": 16.8,
+      "p99Ms": 33.3,
+      "worstMs": 33.5,
+      "dropped": 116,
+      "over50ms": 0,
+      "longTasks": 0,
+      "longestTaskMs": 0,
+      "layoutShift": 0.1001,
+      "layoutShifts": 163
+    },
+    "fast": {
+      "pageHeight": 19148,
+      "frames": 337,
+      "seconds": 6.47,
+      "fps": 52.1,
+      "medianMs": 16.7,
+      "p95Ms": 33.4,
+      "p99Ms": 33.4,
+      "worstMs": 50,
+      "dropped": 50,
+      "over50ms": 0,
+      "longTasks": 0,
+      "longestTaskMs": 0,
+      "layoutShift": 0.0966,
+      "layoutShifts": 74
+    },
+    "back": {
+      "pageHeight": 19148,
+      "frames": 291,
+      "seconds": 5.12,
+      "fps": 56.9,
+      "medianMs": 16.7,
+      "p95Ms": 33.3,
+      "p99Ms": 33.4,
+      "worstMs": 50,
+      "dropped": 15,
+      "over50ms": 0,
+      "longTasks": 1,
+      "longestTaskMs": 52,
+      "layoutShift": 0.0538,
+      "layoutShifts": 25
+    }
+  },
+  "load": {
+    "layoutShift": 0.2779,
+    "longTasks": [
+      113
+    ],
+    "mode": "pinned"
+  },
+  "weight": {
+    "font": {
+      "files": 2,
+      "bytes": 111136
+    },
+    "js": {
+      "files": 15,
+      "bytes": 339045
+    },
+    "css": {
+      "files": 3,
+      "bytes": 129457
+    }
+  }
+}
