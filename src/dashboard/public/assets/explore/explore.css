@@ -87,6 +87,8 @@ body.ex {
   font-weight: 650; text-decoration: none;
 }
 .ex-skip:focus { transform: none; }
+/* Out of sight until it is focused, including in a full-page capture of the page. */
+.ex-skip:not(:focus) { clip-path: inset(50%); }
 
 /* Line colour by attribute, so any element on a line can ask for `--line`. */
 [data-line="find"] { --line: var(--line-find); --line-ink: var(--line-find-ink); --line-tint: var(--tint-find); }
@@ -612,7 +614,7 @@ html:not([data-ready]) .ex-foot { display: none; }
 }
 .ex-node-dot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid currentColor; flex: none; transition: background-color var(--dur-short) var(--ease-out), transform var(--dur-short) var(--ease-out); }
 .ex-node-short { display: none; }
-.ex-node-flag { font-size: var(--text-xs); font-weight: 620; background: none !important; padding: 0; border: 0; opacity: .8; }
+.ex-node-flag { font-size: var(--text-xs); font-weight: 620; background: none !important; padding: 0; border: 0; }
 .ex-node-flag::before { display: none; }
 .ex .ex-node[data-rel="selected"] { background: var(--color-ink); border-color: var(--color-ink); color: var(--color-on-ink); }
 .ex-node[data-rel="selected"] .ex-node-dot { background: currentColor; }
@@ -753,6 +755,19 @@ html:not([data-ready]) .ex-foot { display: none; }
 .ex-table thead th { border-top: 0; font-size: var(--text-xs); color: var(--color-ink-3); font-weight: 720; }
 .ex-table tbody th { font-weight: 720; white-space: nowrap; }
 .ex-rowgroup, .ex-table tbody tr:has(.ex-rowgroup) td { border-top-color: var(--color-rule-strong); }
+/* A phone: each row stands as a block, the part first, so nothing has to be scrolled sideways. */
+@media (max-width: 640px) {
+  .ex-tablewrap { overflow: visible; }
+  .ex-table { min-width: 0; }
+  .ex-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .ex-table tr, .ex-table th, .ex-table td { display: block; }
+  .ex-table tr { padding: var(--space-xs) 0; border-top: var(--rule-hair) solid var(--color-rule); }
+  .ex-table th, .ex-table td { padding: 2px 0; border-top: 0; }
+  .ex-table td:last-child { color: var(--color-ink-2); }
+}
+@media (pointer: coarse) {
+  .ex .ex-flow-step, .ex-toc a, .ex .ex-node { min-height: 44px; }
+}
 .ex-kind { font-size: var(--text-xs); font-weight: 680; color: var(--color-ink-2); white-space: nowrap; }
 .ex-kind-core { color: var(--line-apply-ink); }
 .ex-kind-optional { color: var(--line-find-ink); }

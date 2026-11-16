@@ -99,7 +99,7 @@ export const ARCH_NODES = Object.freeze([
   {
     id: 'resume', layer: 'engine', name: 'Resume tailoring',
     role: 'A Node runner around a Python tailor.',
-    detail: 'Node spawns a Python process and exchanges one JSON message each way. The Python side uses python-docx to produce a per-job copy of the master resume by reordering and emphasizing existing content, then lints and scores it. If Python is missing, the run continues with the master resume and a warning.',
+    detail: 'Node hands the request to one of two long-lived Python workers (one JSON message each way). The Python side uses python-docx to produce a per-job copy of the master resume by reordering and emphasizing existing content, then lints and scores it. If Python is missing, the run continues with the master resume and a warning.',
     files: ['src/resume/tailorRunner.js', 'src/resume/tailor_cli.py', 'src/resume/tailor.py', 'src/resume/jdKeywords.py', 'src/resume/atsLint.py', 'src/resume/atsReport.py', 'src/resume/validate.py', 'src/resume/chromiumPdf.js'],
     talks: ['files', 'llm'],
   },
@@ -178,7 +178,7 @@ export const ARCH_NODES = Object.freeze([
   {
     id: 'model', layer: 'outside', name: 'Model provider', status: 'optional',
     role: 'An endpoint you choose, or a local model.',
-    detail: 'Any OpenAI-compatible server, Anthropic, or a local Ollama or LM Studio server. Nothing is sent unless LLM assist is on.',
+    detail: 'Any OpenAI-compatible server, Anthropic, or a local Ollama or LM Studio server. Nothing is sent unless you turn a model feature on, and lines with your name, email, phone or profile link are removed first.',
     files: ['src/llm/providers.js'],
     talks: [],
   },
@@ -224,7 +224,7 @@ export const RUN_STEPS = Object.freeze([
   },
   {
     id: 'fresh', name: 'Freshness',
-    detail: 'Postings older than your window (24 hours, 3 days, 7 days, or no limit) are recorded as set aside rather than scored. A posting with no readable date is never mixed into fresh results; it is held for review. Jobs already on your board are exempt, so the window only governs what gets added.',
+    detail: 'Postings older than your window (24 hours, 3, 7, 14 or 30 days, or no limit) are recorded as set aside rather than scored. A posting with no readable date is never mixed into fresh results; it is held for review. Jobs already on your board are exempt, so the window only governs what gets added.',
     files: ['src/search/freshnessFilter.js', 'src/config/userSettings.js'],
   },
   {
@@ -309,13 +309,13 @@ export const TRACES = Object.freeze([
     steps: [
       { name: 'Classify sponsorship', detail: 'The description is read for an explicit refusal first, then an un-negated affirmative phrase, then a configured likely-sponsor employer matched on whole words. The result is Denied, Confirmed, Likely or Unconfirmed, with the evidence kept.', files: ['src/scoring/sponsorshipClassifier.js', 'src/utils/sponsorshipLanguage.js'] },
       { name: 'Score categories', detail: 'Profile-derived categories (title fit, core skills, industry) award a share of their weight for the terms found. A skill named only under “nice to have” earns 30% of the credit of a required one. Structural categories cover seniority, sponsorship, location, freshness, a direct employer link and overlap with your profile’s skills.', files: ['src/scoring/scorer.js', 'src/scoring/titleMatch.js', 'src/utils/textNormalize.js'] },
-      { name: 'Apply penalties', detail: 'Two factors can only subtract. Posted pay below your target costs up to 6 points. A stated floor you do not meet (years, degree, licence, clearance) costs up to 8.', files: ['src/scoring/eligibility.js', 'src/scoring/searchConstraints.js'] },
+      { name: 'Apply penalties', detail: 'Three factors can only subtract. Posted pay below your target costs up to 6 points. A stated floor you do not meet (years, degree, license, clearance) costs up to 8. A people-manager role when your search targets individual-contributor roles costs up to 20.', files: ['src/scoring/eligibility.js', 'src/scoring/searchConstraints.js', 'src/scoring/scorer.js'] },
       { name: 'Normalize and tier', detail: 'Points are divided by the sum of all weights and rounded to a whole number out of 100. Thresholds in `scoring.json` map the total to Priority (85), Apply (75), Queue (60), Near miss (50) or Discard.', files: ['src/scoring/explainScore.js', 'config/scoring.json'] },
       { name: 'Hold where a person should decide', detail: 'A job that scores Apply or better is moved to Queue when you need sponsorship and the posting does not confirm it, or when a stated requirement rules you out. The explanation says which.', files: ['src/scoring/explainScore.js'] },
       { name: 'Keep verdicts honest', detail: 'A hash of the weights, thresholds, profile inputs and scorer version is stored with each score. When any of them changes, stored jobs are re-scored from their saved descriptions without touching the network.', files: ['src/scoring/fingerprint.js', 'src/pipeline/index.js'] },
     ],
     notes: [
-      { title: 'How the board is ordered', items: ['Tier first, then postings from the last 24 hours, then sponsorship feasibility (skipped when you need none), then score, then direct employer links ahead of aggregators.'] },
+      { title: 'How the board is ordered', items: ['Tier first, then how recent, in bands (under 24 hours, 1 to 3 days, 4 to 7 days, 8 to 21 days, older), then sponsorship feasibility (skipped when you need none), then score, then direct employer links ahead of aggregators.'] },
       { title: 'How eligibility is read', items: ['Requirement clauses are separated from preferred ones before any number is read.', 'Phrases about the employer’s age (“for over 25 years”) are not requirements.', 'A range such as “3 to 5 years” states its low end as the floor.', 'A degree “or equivalent experience” is not a hard floor.', 'A gap of three or more years is ineligible; one or two is a stretch.'] },
       { title: 'Calibration is a proposal', items: ['`npm run scoring:calibrate` compares category points between applications that reached an interview and those that did not.', 'It refuses with fewer than 30 recorded outcomes or fewer than 5 on either side, moves a weight only when a bootstrap interval excludes zero, caps each change at 20%, and preserves the total.', 'It writes a report. Nothing changes until you run it with `--apply`.'] },
     ],
@@ -335,7 +335,7 @@ export const TRACES = Object.freeze([
       { name: 'Ask the person', detail: 'A verified rewrite is shown beside the original for you to accept or reject. A refused one is shown with the reason and cannot be accepted. Accepting a rewrite after approval sends the packet back for review.', files: ['src/resume/rewrites.js', 'src/dashboard/public/assets/js/rewrites.js'] },
     ],
     notes: [
-      { title: 'The six tasks', items: ['`jd-requirements`: reads a posting and lists requirement phrases. Only the public posting is sent.', '`rewrite-bullets` and `refine`: propose rewordings of your own bullets (needs `RESUME_REWRITE=suggest`).', '`cover-letter`: writes two to four cited paragraphs (needs `COVER_LETTER_MODE=grounded`).', '`classify-reply`: asked only about emails the phrase rules could not classify; its quoted evidence must appear in the message.', '`draft-reply`: drafts a reply for you to copy or download. It is never sent.'] },
+      { title: 'The seven tasks', items: ['`jd-requirements`: reads a posting and lists requirement phrases. Only the public posting is sent.', '`rewrite-bullets` and `refine`: propose rewordings of your own bullets (needs `RESUME_REWRITE=suggest`).', '`cover-letter`: writes two to four cited paragraphs (needs `COVER_LETTER_MODE=grounded`).', '`classify-reply`: asked only about emails the phrase rules could not classify; its quoted evidence must appear in the message.', '`draft-reply`: drafts a reply for you to copy or download. It is never sent.', '`free-text-answer`: drafts an answer to an open question on a form from your resume. It refuses questions of fact, and you approve each answer for one job.'] },
       { title: 'Rank by meaning', items: ['With `RERANK=on` and an embedding model, the top matches get a second number: cosine similarity between the posting and your resume bullets, with the three closest bullets as the reason.', 'It is stored in a separate file and never changes a score, a tier or a gate.'] },
       { title: 'Cost and privacy', items: ['Usage is logged as token counts per task and model, never prompts or answers.', 'Text from a posting is wrapped as untrusted input so instructions inside it are not followed.'] },
     ],
@@ -348,9 +348,9 @@ export const TRACES = Object.freeze([
     output: 'A per-job .docx and .pdf, a keyword audit, an ATS score and band, and any warnings.',
     steps: [
       { name: 'Choose the terms', detail: 'Keywords come from your scoring vocabulary (plus verified LLM requirements when that is on). They are tiered: a term in the title, repeated, or under a Required heading outranks one mentioned once under nice-to-have.', files: ['src/resume/jdKeywords.py', 'src/resume/tailorRunner.js'] },
-      { name: 'Cross the process boundary', detail: 'Node spawns Python with UTF-8 forced on both pipes and sends one JSON request on stdin. A timeout kills the whole process tree. The master resume is opened read-only.', files: ['src/resume/tailorRunner.js', 'src/resume/pythonEnv.js', 'src/resume/tailor_cli.py'] },
+      { name: 'Cross the process boundary', detail: 'Two long-lived Python workers take requests, with UTF-8 forced on both pipes and one JSON request per job. A timeout ends the worker and a fresh one takes its place. The master resume is opened read-only.', files: ['src/resume/tailorRunner.js', 'src/resume/pythonWorker.js', 'src/resume/pythonEnv.js', 'src/resume/tailor_cli.py'] },
       { name: 'Reorder', detail: 'Summary paragraphs and bullets move within their own section and role so supported required content comes first. Comma-separated skill lists are reordered with bracket-aware splitting, so “Dimensional Modeling (Kimball, Inmon)” moves as one item.', files: ['src/resume/tailor.py'] },
-      { name: 'Emphasize', detail: 'A matched keyword is bolded where your resume already uses it, by splitting the text run so only the phrase is bold. The number of emphasized terms is capped. An optional line lists terms that are both requested and already present; it is the only new sentence, and it passes through the humanizer.', files: ['src/resume/tailor.py', 'src/resume/humanizer.py', 'config/humanizer_patterns.json'] },
+      { name: 'Emphasize', detail: 'A matched keyword is bolded where your resume already uses it, by splitting the text run so only the phrase is bold. The number of emphasized terms is capped. No new sentence is added: every line is a line of your master resume.', files: ['src/resume/tailor.py'] },
       { name: 'Make it ATS-safe', detail: 'Layout tables are flattened to single-column paragraphs in the copy, keeping their exact text, and manual page breaks that leave half-empty pages are repaired.', files: ['src/resume/tailor.py'] },
       { name: 'Check the result', detail: 'A validator confirms the document opens, has contact details and core sections. A linter reports constructs parsers choke on. A report estimates keyword match and density and lists gaps, each conditioned on you actually having the experience.', files: ['src/resume/validate.py', 'src/resume/atsLint.py', 'src/resume/atsReport.py', 'src/resume/keywordAudit.py'] },
       { name: 'Export a PDF', detail: 'LibreOffice is tried first: it renders the .docx itself, and it is what the page fit measured. Then Word. If neither exists, the document is rendered to HTML in its own font, size and margins and printed with headless Chromium, after checking the page contains every paragraph of the source.', files: ['src/resume/pdfExport.py', 'src/resume/chromiumPdf.js', 'src/resume/pdfPreview.js'] },

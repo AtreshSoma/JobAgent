@@ -150,7 +150,8 @@
   --dur-travel: 900ms;
   --radius-sheet: 28px;
 
-  --page-max: 78rem;
+  /* The page column grows on a large screen, so a wide window is filled, not framed in empty margin. */
+  --page-max: clamp(78rem, 70vw, 96rem);
   --page-pad: clamp(1rem, 4vw, 3rem);
   --top-h: 60px;
 }

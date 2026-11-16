@@ -7,7 +7,7 @@
  * both themes, with motion on and with reduced motion.
  *
  *   node docs/explore/tools/shoot.mjs --out=<dir> [--only=1440x900] [--themes=light,dark]
- *        [--motion=on,reduce] [--views=overview,how] [--query=field=security] [--sheets] [--sheets-only]
+ *        [--sizes=1997x1161,...] [--motion=on,reduce] [--views=overview,how] [--query=field=security] [--sheets] [--sheets-only]
  *
  * Each configuration gets a folder of numbered JPEGs and, with --sheets, contact
  * sheets (several frames on one image) for reviewing many frames at once.
@@ -24,7 +24,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
   return [k, v];
 }));
 const OUT = resolve(args.out ?? 'explore-shots');
-const SIZES = [[1440, 900], [1180, 700], [768, 1024], [390, 844], [320, 568]]
+const SIZES = (args.sizes ? args.sizes.split(',').map((s) => s.split('x').map(Number)) : [[1440, 900], [1180, 700], [768, 1024], [390, 844], [320, 568]])
   .filter(([w, h]) => !args.only || args.only.split(',').includes(`${w}x${h}`));
 const THEMES = (args.themes ?? 'light,dark').split(',');
 const MOTION = (args.motion ?? 'on,reduce').split(',');

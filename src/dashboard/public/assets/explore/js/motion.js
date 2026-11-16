@@ -334,10 +334,11 @@ function fitPictures(root) {
     const demo = pic.querySelector('.ex-demo');
     demo.style.setProperty('--fit', '1');
     demo.style.removeProperty('margin-bottom');
-    const fit = Math.min(1, pic.clientHeight / demo.offsetHeight, pic.clientWidth / demo.offsetWidth);
+    // Smaller to fit a short window; a little larger to fill a tall one, never past 1.2.
+    const fit = Math.min(1.2, pic.clientHeight / demo.offsetHeight, pic.clientWidth / demo.offsetWidth);
     demo.style.setProperty('--fit', fit.toFixed(3));
-    // It is scaled from its top edge; giving back the height the scale removes keeps it centred.
-    if (fit < 1) demo.style.marginBottom = `${(-(1 - fit) * demo.offsetHeight).toFixed(1)}px`;
+    // It is scaled from its top edge; giving back (or taking) the height the scale changes keeps it centred.
+    if (fit !== 1) demo.style.marginBottom = `${(-(1 - fit) * demo.offsetHeight).toFixed(1)}px`;
   }
 }
 

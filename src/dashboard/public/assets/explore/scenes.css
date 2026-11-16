@@ -950,7 +950,9 @@ html[data-motion="pinned"] .ex-scorecard .ex-demo-cap { margin-top: 0; }
   .ex-gate-card { padding: var(--space-sm) var(--space-md); }
   .ex-gate-tag { display: none; }
   .ex-gate-title { text-wrap: balance; font-size: clamp(3rem, 1rem + 10vw, 5rem); }
-  .ex-gate-track { --at: 70%; }
+  .ex-gate-track { --at: 58%; }
+  /* The crossed-off line, then what JobAgent does about it, underneath. */
+  .ex-pain { grid-template-columns: minmax(0, 1fr); justify-items: start; gap: .4rem; }
   .ex-gate-tag { display: none; }
   .ex-spread .ex-sheets { grid-template-columns: minmax(0, 1fr); }
   .ex-spread .ex-sheet { font-size: var(--text-sm); }
