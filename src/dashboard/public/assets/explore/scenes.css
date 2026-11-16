@@ -49,6 +49,7 @@
  * to do next (two buttons).
  */
 .ex-overview > .ex-hero {
+  container-type: inline-size;
   min-height: min(calc(100svh - var(--top-h)), 64rem);
   display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto auto auto;
@@ -57,7 +58,8 @@
   padding-block: clamp(1.25rem, 4.5vh, 3rem) var(--space-lg);
 }
 .ex-hero-title {
-  grid-area: title; align-self: end; font-size: clamp(3.4rem, .4rem + 8.6vw, 10.5rem); line-height: .84; letter-spacing: -.03em;
+  /* Never wider than its column: "All the work." is about 3.9em wide, so the size is capped by the hero's own width. */
+  grid-area: title; align-self: end; font-size: min(clamp(3.4rem, .4rem + 8.6vw, 10.5rem), 12.2cqi); line-height: .84; letter-spacing: -.03em;
   text-wrap: nowrap;
 }
 .ex-hero-title .ex-line { display: block; }
@@ -138,15 +140,26 @@
  * three ways to look for work, with the one that waits for you set apart.
  */
 .ex-overview > .ex-problem { display: grid; gap: clamp(2rem, 5vh, 3.5rem); }
-.ex-problem-head { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr); gap: var(--space-lg) var(--space-2xl); align-items: end; }
+.ex-problem-head { display: grid; grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr); gap: var(--space-lg) var(--space-2xl); align-items: end; }
 .ex-say { font-size: clamp(2.6rem, .8rem + 5.4vw, 6.6rem); line-height: .95; letter-spacing: -.026em; max-width: 11ch; }
 .ex-say .ex-w { display: inline-block; }
 .ex-pains { display: grid; }
-.ex-pains li {
-  padding: .6rem 0; border-top: var(--rule-hair) solid var(--color-rule-strong); color: var(--color-ink-2);
-  font-family: var(--font-serif); font-size: clamp(1.3rem, 1rem + .9vw, 1.85rem); line-height: 1.2; letter-spacing: -.01em;
+/* Each frustration is crossed off by what JobAgent does about it (motion.js draws --strike). */
+.ex-pain {
+  --strike: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: .35rem var(--space-md);
+  padding: .65rem 0; border-top: var(--rule-hair) solid var(--color-rule-strong);
 }
-.ex-pains li:last-child { border-bottom: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-pain:last-child { border-bottom: var(--rule-hair) solid var(--color-rule-strong); }
+.ex-pain-text {
+  font-family: var(--font-serif); font-size: clamp(1.3rem, 1rem + .9vw, 1.85rem); line-height: 1.2; letter-spacing: -.01em;
+  color: color-mix(in oklab, var(--color-ink-3) calc(var(--strike) * 100%), var(--color-ink));
+  background: linear-gradient(var(--signal), var(--signal)) no-repeat 0 55% / calc(var(--strike) * 100%) 2px;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+.ex-pain-fix {
+  display: inline-flex; align-items: center; gap: .35em; padding: .25em .75em .25em .55em; border-radius: var(--radius-pill);
+  background: var(--tint-apply); color: var(--line-apply-ink); font-size: var(--text-sm); font-weight: 720; white-space: nowrap;
+}
 .ex-contrast { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-sm); }
 .ex-contrast li {
   display: grid; align-content: start; gap: var(--space-xs); padding: var(--space-lg) var(--space-lg) var(--space-xl);
@@ -234,8 +247,8 @@
 /* ───────────────────────── 5. the two signals ───────────────────────── */
 
 .ex-gate-inner {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: "title head" "track track" "text text";
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-areas: "title title head" "track track track" "card text text";
   gap: var(--space-lg) var(--space-2xl); align-items: end; padding-top: var(--space-2xl);
 }
 .ex-gate-title { grid-area: title; font-size: clamp(3.6rem, .8rem + 9.4vw, 11.5rem); line-height: .84; letter-spacing: -.03em; text-wrap: nowrap; }
@@ -247,22 +260,60 @@
   background: var(--signal-head); border-radius: var(--radius-pill);
   box-shadow: inset 0 -6px 0 oklch(0% 0 0 / .4), 0 30px 60px -24px oklch(10% 0.05 29 / .6);
 }
-.ex-gate-lamp { width: 64%; aspect-ratio: 1; border-radius: 50%; background: var(--lamp-off); }
-.ex-gate-lamp.is-stop { background: var(--lamp-stop); box-shadow: 0 0 0 4px oklch(0% 0 0 / .35), 0 0 34px 8px color-mix(in oklab, var(--lamp-stop) 70%, transparent); }
+/*
+ * The lamps follow --clear: at danger (0) the top lamp is lit red; cleared (1) the bottom lamp is
+ * lit green. At rest the picture is the finished one, so the signal shows clear: the person has
+ * pressed. motion.js plays it from danger.
+ */
+.ex-plate { --clear: 1; }
+.ex-gate-lamp { width: 64%; aspect-ratio: 1; border-radius: 50%; background: var(--lamp-off); box-shadow: 0 0 0 4px oklch(0% 0 0 / .35); }
+.ex-gate-lamp.is-stop {
+  background: color-mix(in oklab, var(--lamp-stop) calc((1 - var(--clear)) * 100%), var(--lamp-off));
+  box-shadow: 0 0 0 4px oklch(0% 0 0 / .35), 0 0 34px 8px color-mix(in oklab, var(--lamp-stop) calc((1 - var(--clear)) * 70%), transparent);
+}
+.ex-gate-lamp.is-clear {
+  background: color-mix(in oklab, var(--lamp-clear) calc(var(--clear) * 100%), var(--lamp-off));
+  box-shadow: 0 0 0 4px oklch(0% 0 0 / .35), 0 0 34px 8px color-mix(in oklab, var(--lamp-clear) calc(var(--clear) * 70%), transparent);
+}
 .ex-gate-track { --at: 72%; grid-area: track; position: relative; height: 4.75rem; }
 .ex-gate-rail { position: absolute; left: 0; top: 62%; width: var(--at); height: 8px; margin-top: -4px; border-radius: 4px; background: var(--color-ink); transform-origin: left center; }
 .ex-gate-ahead { position: absolute; left: var(--at); right: 0; top: 62%; margin-top: -1.5px; border-top: 3px dashed color-mix(in oklab, var(--color-ink) 45%, transparent); }
+/* Once cleared, the line ahead is drawn solid. */
+.ex-gate-onward { position: absolute; left: var(--at); right: 0; top: 62%; height: 8px; margin-top: -4px; border-radius: 4px; background: var(--color-ink); transform: scaleX(var(--clear)); transform-origin: left center; }
 .ex-gate-stopline { position: absolute; left: var(--at); top: 62%; width: 6px; height: 3.25rem; margin: -1.625rem 0 0 -3px; border-radius: 3px; background: var(--color-ink); }
 .ex-gate-token {
   position: absolute; left: calc(var(--at) - 4.5rem); top: 62%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
   border-radius: 50%; background: var(--color-sheet); box-shadow: 0 0 0 5px var(--color-ink);
 }
+/* At rest the posting has gone on through the signal: the person has pressed. motion.js holds it short of the stop first. */
+.ex-gate-token { left: calc(var(--at) + 4.5rem); }
 .ex-gate-tag {
   position: absolute; left: 50%; bottom: calc(100% + 14px); transform: translateX(-50%); white-space: nowrap;
   padding: .32em .85em; border-radius: var(--radius-pill); background: var(--color-ink); color: var(--color-paper);
   font-size: var(--text-xs); font-weight: 720; font-stretch: var(--wdth-sign);
 }
-.ex-gate-text { grid-area: text; font-size: clamp(1.15rem, .9rem + .7vw, 1.6rem); line-height: 1.35; max-width: 40ch; color: var(--color-ink); text-wrap: pretty; }
+.ex-gate-text { grid-area: text; align-self: center; font-size: clamp(1.15rem, .9rem + .7vw, 1.6rem); line-height: 1.35; max-width: 40ch; color: var(--color-ink); text-wrap: pretty; }
+/* What the person has in front of them at the signal, and the one press that is theirs. */
+.ex-gate-card {
+  grid-area: card; position: relative; display: grid; gap: var(--space-xs); padding: var(--space-md) var(--space-lg);
+  background: oklch(99% .004 29); color: oklch(19% .03 29); border-radius: 12px;
+  box-shadow: 0 2px 0 oklch(0% 0 0 / .08), 0 30px 60px -26px oklch(18% .08 29 / .6);
+}
+.ex-gate-card-job { font-size: var(--text-sm); color: oklch(38% .04 29); }
+.ex-gate-card-job strong { color: oklch(19% .03 29); font-weight: 760; }
+.ex-gate-checks { display: grid; gap: 6px; }
+.ex-gate-check { display: grid; grid-template-columns: 22px minmax(0, 1fr); align-items: center; gap: var(--space-xs); font-weight: 620; line-height: 1.35; }
+.ex-gate-check .ex-ic { width: 22px; height: 22px; padding: 3px; border-radius: 50%; background: oklch(46% .13 155); color: oklch(99% 0 0); stroke-width: 2.6; }
+.ex-gate-act { position: relative; display: grid; justify-items: start; align-items: center; margin-top: var(--space-2xs); padding-top: var(--space-sm); border-top: var(--rule-hair) solid oklch(88% .02 29); }
+.ex-gate-act > :not(.ex-gate-cursor) { grid-area: 1 / 1; }
+.ex-gate-action {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 var(--space-lg); border-radius: var(--radius-pill);
+  background: oklch(19% .03 29); color: oklch(99% 0 0); font-weight: 720; opacity: 0;
+}
+.ex-gate-done { display: inline-flex; align-items: center; gap: .55em; min-height: 44px; font-weight: 760; color: oklch(38% .13 155); }
+.ex-gate-done-lamp { width: 12px; height: 12px; border-radius: 50%; background: oklch(62% .19 150); box-shadow: 0 0 0 4px oklch(62% .19 150 / .22); }
+.ex-gate-cursor { position: absolute; left: 0; top: 0; z-index: 2; opacity: 0; pointer-events: none; filter: drop-shadow(0 4px 6px oklch(0% 0 0 / .35)); }
+.ex-gate-cursor svg { display: block; fill: oklch(15% .02 29); stroke: oklch(99% 0 0); stroke-width: 1.4; stroke-linejoin: round; }
 
 /* ───────────────────────── 6. the five pictures ───────────────────────── */
 
@@ -402,7 +453,6 @@
 .ex-spread .ex-sheet-bullet {
   --lift: 0; padding-block: .22rem; font-size: inherit; line-height: inherit; background-color: var(--color-sheet);
   box-shadow: 0 calc(var(--lift) * 16px) calc(var(--lift) * 30px) calc(var(--lift) * -10px) oklch(0% 0 0 / .5);
-  scale: calc(1 + var(--lift) * .03);
 }
 .ex-spread .ex-sheet-bullet::before { top: .78em; }
 /* The line left out to fit the page is struck on the master, in the open. */
@@ -706,7 +756,7 @@ html[data-motion="pinned"] .ex-rail.is-on, html[data-motion="pinned"] .ex-rail:f
 /* The chapter rail floats over the foot of every held sheet; the sheet keeps that strip clear. */
 html[data-motion="pinned"] { --rail-room: 4.4rem; }
 html[data-motion="pinned"] .ex-sheet-chapter { --play: .95; height: calc(var(--stage-h) * (2 + var(--play))); }
-html[data-motion="pinned"] .ex-gate { --play: .55; }
+html[data-motion="pinned"] .ex-gate { --play: 1.1; }
 html[data-motion="pinned"] .ex-sheet-chapter + .ex-sheet-chapter,
 html[data-motion="pinned"] .ex-sheet-chapter + .ex-never { margin-top: calc(-1 * var(--stage-h)); }
 html[data-motion="pinned"] .ex-plate {
@@ -795,7 +845,9 @@ html[data-motion="pinned"] .ex-scorecard .ex-demo-cap { margin-top: 0; }
   html[data-motion="pinned"] .ex-formfig .ex-halt { margin-bottom: calc(-1 * var(--space-sm)); padding-block: var(--space-xs); }
   html[data-motion="pinned"] .ex-halt-button { min-height: 32px; }
   html[data-motion="pinned"] .ex-ready li + li { display: none; }
-  html[data-motion="pinned"] .ex-gate-title { font-size: clamp(3.4rem, 15vh, 9rem); }
+  html[data-motion="pinned"] .ex-gate-title { font-size: clamp(3.4rem, 14vh, 8.5rem); }
+  html[data-motion="pinned"] .ex-gate-card { padding: var(--space-sm) var(--space-md); gap: 6px; }
+  html[data-motion="pinned"] .ex-gate-inner { row-gap: var(--space-sm); }
 }
 
 /* ───────────────────────── 12. motion, narrow screens ───────────────────────── */
@@ -894,7 +946,9 @@ html[data-motion="pinned"] .ex-scorecard .ex-demo-cap { margin-top: 0; }
   .ex-chrome-fact { margin-left: 0; flex-basis: 100%; order: 3; }
   .ex-chrome-field { margin-left: auto; }
   .ex-beat { grid-template-columns: minmax(0, 1fr); }
-  .ex-gate-inner { grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-md); }
+  .ex-gate-inner { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "title head" "track track" "card card" "text text"; gap: var(--space-md); }
+  .ex-gate-card { padding: var(--space-sm) var(--space-md); }
+  .ex-gate-tag { display: none; }
   .ex-gate-title { text-wrap: balance; font-size: clamp(3rem, 1rem + 10vw, 5rem); }
   .ex-gate-track { --at: 70%; }
   .ex-gate-tag { display: none; }

@@ -13,7 +13,7 @@
  * Every picture is built for one field (content-overview.js, FIELDS), and every
  * score on the page comes from the model the Score Lab uses.
  */
-import { h, icon, marked } from './dom.js';
+import { glide, h, icon, marked } from './dom.js';
 import { statusBadge, topicLink } from './ui.js';
 import { LINE_OF, setRuler, tierRuler } from './journey.js';
 import { NET, NET_SIGNALS, NET_SIZE, netDrawing } from './deep.js';
@@ -97,7 +97,7 @@ export function heroField(field) {
     h('span', { class: 'ex-fcard-title', text: field.job.title.replace(/-/g, '‑') }),
     h('span', { class: 'ex-fcard-co', text: `${field.job.company}, ${field.job.location}` }),
     h('span', { class: 'ex-fcard-score' },
-      h('span', { class: 'ex-fcard-num', text: String(result.total) }),
+      h('span', { class: 'ex-fcard-num', text: String(result.total), dataset: { total: String(result.total) } }),
       h('span', { class: 'ex-fcard-verdict' },
         h('span', { class: `ex-tier ex-tier-${slug(result.tier)}`, text: result.tier }),
         h('span', { class: 'ex-fcard-gloss', text: TIER_GLOSS[result.tier] }))));
@@ -113,7 +113,9 @@ export function problem() {
   return h('section', { class: 'ex-chapter ex-problem', id: 'why', 'aria-labelledby': 'whyTitle' },
     h('div', { class: 'ex-problem-head' },
       h('h2', { class: 'ex-say', id: 'whyTitle', tabindex: '-1' }, words(PROBLEM.title)),
-      h('ul', { class: 'ex-pains' }, PROBLEM.lines.map((text) => h('li', { text })))),
+      h('ul', { class: 'ex-pains' }, PROBLEM.lines.map((line) => h('li', { class: 'ex-pain' },
+        h('span', { class: 'ex-pain-text', text: line.pain }),
+        h('span', { class: 'ex-pain-fix' }, icon('check', { size: 14 }), line.fix))))),
     h('ol', { class: 'ex-contrast', 'aria-label': 'Three ways to look for work' }, PROBLEM.contrast.map((row) => h('li', { class: row.ours ? 'is-ours' : null },
       h('span', { class: 'ex-contrast-who', text: row.who }),
       h('span', { class: 'ex-contrast-what', text: row.what }),
@@ -173,8 +175,17 @@ function scene(stage, index, layout, picture, field) {
  * line moves past this point until a person lets it.
  */
 function gate(g, index, field) {
-  const after = JOURNEY.find((s) => s.id === g.after);
+  const after = JOURNEY.find((st) => st.id === g.after);
   const id = `signal-${g.after}`;
+  // What is in front of the person at this signal, and the one press that is theirs.
+  const card = h('div', { class: 'ex-gate-card' },
+    h('p', { class: 'ex-gate-card-job' }, h('strong', { text: field.job.title }), ` ${field.job.company}`),
+    h('ul', { class: 'ex-gate-checks' }, g.checks.map((text) => h('li', { class: 'ex-gate-check' }, icon('check', { size: 15 }), h('span', { text })))),
+    h('div', { class: 'ex-gate-act' },
+      h('span', { class: 'ex-gate-action', 'aria-hidden': 'true', text: g.action }),
+      h('span', { class: 'ex-gate-done' }, h('span', { class: 'ex-gate-done-lamp', 'aria-hidden': 'true' }), g.done),
+      // The person's own pointer: the press is theirs. Part of the picture only.
+      h('span', { class: 'ex-gate-cursor', 'aria-hidden': 'true' }, cursorIcon())));
   return h('section', {
     class: 'ex-chapter ex-gate ex-sheet-chapter', id, 'aria-labelledby': `${id}-title`,
     dataset: { line: LINE_OF[after.id], gate: g.after },
@@ -189,10 +200,25 @@ function gate(g, index, field) {
       h('div', { class: 'ex-gate-track', 'aria-hidden': 'true' },
         h('span', { class: 'ex-gate-rail' }),
         h('span', { class: 'ex-gate-ahead' }),
+        h('span', { class: 'ex-gate-onward' }),
         h('span', { class: 'ex-gate-stopline' }),
         h('span', { class: 'ex-gate-token' }, h('span', { class: 'ex-gate-tag', text: field.job.title }))),
+      card,
       h('p', { class: 'ex-gate-text', text: g.detail })),
     h('span', { class: 'ex-shade', 'aria-hidden': 'true' })));
+}
+
+/** A pointer, drawn: the person's hand on the one control that is theirs. */
+function cursorIcon() {
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  el.setAttribute('viewBox', '0 0 24 24');
+  el.setAttribute('width', '30');
+  el.setAttribute('height', '30');
+  el.setAttribute('focusable', 'false');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M5 3.5l13.5 7.2-6 1.6 3.6 6.6-2.4 1.3-3.6-6.6-4.4 4.3z');
+  el.append(path);
+  return el;
 }
 
 /* ───────────────────────── 1. Discover ───────────────────────── */
@@ -223,7 +249,7 @@ function discoverScene(stage, index, field) {
   board.querySelector('.ex-feeder-more').addEventListener('click', (event) => {
     event.preventDefault();
     const target = document.getElementById('sources');
-    target?.scrollIntoView({ block: 'start' });
+    target?.scrollIntoView({ block: 'start', behavior: glide() });
     target?.querySelector('h2')?.focus({ preventScroll: true });
   });
   return scene(stage, index, 'split', board, field);

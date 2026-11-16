@@ -259,21 +259,58 @@ function track(section, tl) {
 const SCENES = { discover, score, tailor, fill, track };
 
 /**
- * A signal: the words and the sentence under them arrive with the sheet, the
- * line draws up to the stop, the posting runs along it and waits, the lamp is
- * lit. Then it holds, long enough to be read.
+ * A signal, played across the whole time its red sheet is held:
+ *
+ *   the words and the sentence under them arrive as the sheet lands; the line
+ *   draws up to the stop and the posting runs along it and waits, with the
+ *   lamp at danger; what the person is shown is ticked off, one line at a
+ *   time; their own pointer comes to the one control that is theirs and
+ *   presses it; the lamp changes to clear, the line ahead turns solid, and the
+ *   posting goes on through.
+ *
+ * Nothing passes the signal before the press, at any point of the scroll.
  */
 function signal(section, tl) {
+  const plate = section.querySelector('.ex-plate');
   const line = section.querySelector('.ex-gate-track');
   const token = line.querySelector('.ex-gate-token');
-  tl.from(all(section, '.ex-gate-title .ex-w'), { yPercent: 40, autoAlpha: 0, duration: 0.6, stagger: 0.12, ease: 'power3.out' }, 0)
-    .from(section.querySelector('.ex-gate-text'), { autoAlpha: 0, y: 18, duration: 0.6 }, 0.25)
-    .from(section.querySelector('.ex-gate-head'), { autoAlpha: 0, y: 30, duration: 0.7, ease: 'power3.out' }, 0.1)
-    .from(line.querySelector('.ex-gate-rail'), { scaleX: 0, duration: 1.4, ease: 'power2.inOut' }, 0.5)
-    .from(token, { x: () => -token.offsetLeft, duration: 1.4, ease: 'power2.inOut' }, 0.5)
-    .from(section.querySelector('.ex-gate-lamp.is-stop'), { scale: 0.2, autoAlpha: 0.3, duration: 0.5, ease: 'power3.out' }, 1.7)
+  const card = section.querySelector('.ex-gate-card');
+  const action = card.querySelector('.ex-gate-action');
+  const cursor = card.querySelector('.ex-gate-cursor');
+  const toAction = () => {
+    const a = action.getBoundingClientRect();
+    const c = cursor.getBoundingClientRect();
+    return { x: a.left + a.width * 0.62 - c.left, y: a.top + a.height * 0.55 - c.top };
+  };
+  const rem = () => parseFloat(getComputedStyle(html).fontSize);
+  tl.from(all(section, '.ex-gate-title .ex-w'), { yPercent: 50, autoAlpha: 0, duration: 0.7, stagger: 0.14, ease: 'power3.out' }, 0)
+    .from(section.querySelector('.ex-gate-head'), { autoAlpha: 0, y: 40, duration: 0.8, ease: 'power3.out' }, 0.15)
+    .from(section.querySelector('.ex-gate-text'), { autoAlpha: 0, y: 18, duration: 0.6 }, 0.35)
+    // The posting runs up to the stop and waits. The lamp is at danger.
+    .from(line.querySelector('.ex-gate-rail'), { scaleX: 0, duration: 1.3, ease: 'power2.inOut' }, 0.6)
+    .fromTo(token, { x: () => -token.offsetLeft }, { x: () => -9 * rem(), duration: 1.3, ease: 'power2.inOut' }, 0.6)
+    .from(section.querySelector('.ex-gate-lamp.is-stop'), { scale: 0.2, duration: 0.5, ease: 'back.out(2)' }, 1.75)
     .from(line.querySelector('.ex-gate-ahead'), { autoAlpha: 0, duration: 0.4 }, 1.9)
-    .to({}, { duration: 3.4 });
+    // What the person is shown, ticked off one line at a time.
+    .from(card, { autoAlpha: 0, y: 46, rotation: -1.5, duration: 0.8, ease: 'power3.out' }, 2.1)
+    .from(all(card, '.ex-gate-check'), { autoAlpha: 0, x: -18, duration: 0.45, stagger: 0.32, ease: 'power3.out' }, 2.6)
+    .from(all(card, '.ex-gate-check .ex-ic'), { scale: 0, duration: 0.3, stagger: 0.32, ease: 'back.out(3)' }, 2.85)
+    .fromTo(action, { autoAlpha: 0, y: 10 }, { autoAlpha: 1, y: 0, duration: 0.4 }, 3.6)
+    // Their pointer comes to the control, and presses it.
+    .fromTo(cursor, { autoAlpha: 0, x: () => toAction().x + 150, y: () => toAction().y + 90 }, { autoAlpha: 1, x: () => toAction().x + 40, y: () => toAction().y + 30, duration: 0.4, ease: 'power2.out' }, 4.1)
+    .to(cursor, { x: () => toAction().x, y: () => toAction().y, duration: 0.7, ease: 'power3.inOut' }, 4.5)
+    .to(cursor, { scale: 0.82, duration: 0.12, ease: 'power2.in' }, 5.2)
+    .to(action, { scale: 0.94, duration: 0.12, ease: 'power2.in' }, 5.2)
+    .to(cursor, { scale: 1, duration: 0.2 }, 5.32)
+    .to(action, { scale: 1, autoAlpha: 0, duration: 0.3 }, 5.32)
+    .fromTo(card.querySelector('.ex-gate-done'), { autoAlpha: 0, scale: 0.9 }, { autoAlpha: 1, scale: 1, duration: 0.45, ease: 'back.out(2)' }, 5.45)
+    // The lamp changes to clear, the line ahead turns solid, and the posting goes through.
+    // Stated at both ends inside the timeline: the sheet's own tilt and shade are tweened too, and a
+    // refresh of those must not lose the lamp's starting state.
+    .fromTo(plate, { '--clear': 0 }, { '--clear': 1, duration: 0.6, ease: 'power2.out', immediateRender: true }, 5.45)
+    .to(token, { x: 0, duration: 1.3, ease: 'power2.inOut' }, 5.9)
+    .to(cursor, { autoAlpha: 0, duration: 0.5 }, 6.2)
+    .to({}, { duration: 1.6 });
 }
 
 /**
@@ -426,16 +463,26 @@ function hero(root, pinned) {
     introPlayed = true;
     gsap.from(cards.filter((card) => card !== ours), { autoAlpha: 0, z: '-=600', duration: 1.6, stagger: { each: 0.06, from: 'random' }, ease: 'power3.out', delay: 0.35 });
     gsap.from(ours, { autoAlpha: 0, y: 40, z: '-=300', duration: 1.4, ease: 'power3.out', delay: 0.9 });
+    // Your posting is scored as it comes forward: the number adds up, then the verdict is given.
+    const num = ours.querySelector('.ex-fcard-num');
+    const total = Number(num.textContent);
+    const count = { n: 0 };
+    gsap.to(count, { n: total, duration: 1.3, delay: 1.25, ease: 'power2.out', onUpdate: () => { num.textContent = String(Math.round(count.n)); }, onComplete: () => { num.textContent = String(total); } });
+    gsap.from(ours.querySelector('.ex-fcard-verdict'), { autoAlpha: 0, x: 14, duration: 0.6, delay: 2.4, ease: 'power3.out' });
   }
   if (!pinned) return null;
-  const scroll = { trigger: section, start: 'top top', end: 'bottom top', scrub: TRAIL };
+  // Scrolled away from, the morning flies past the reader and your posting comes forward. Every
+  // value is stated at both ends, so this never inherits a half-played entrance, and it does not
+  // draw until the page is scrolled, so the entrance plays undisturbed.
+  const scroll = () => ({ trigger: section, start: 'top top', end: 'bottom top', scrub: TRAIL });
   for (const card of cards) {
     if (card === ours) continue;
-    const depth = Math.abs(Number(card.dataset.depth)) / 800;
-    gsap.to(card, { z: `+=${380 + 220 * depth}`, yPercent: -40 - 90 * depth, opacity: 0.08, ease: 'none', scrollTrigger: scroll });
+    const z = Number(card.dataset.depth);
+    const depth = Math.abs(z) / 800;
+    gsap.fromTo(card, { z, yPercent: 0, opacity: 1 }, { z: z + 380 + 220 * depth, yPercent: -40 - 90 * depth, opacity: 0.3, ease: 'none', immediateRender: false, scrollTrigger: scroll() });
   }
-  gsap.to(ours, { z: '+=140', yPercent: -18, ease: 'none', scrollTrigger: scroll });
-  gsap.to(section.querySelector('.ex-hero-title'), { yPercent: -14, ease: 'none', scrollTrigger: scroll });
+  gsap.fromTo(ours, { z: 110, yPercent: 0, scale: 1 }, { z: 250, yPercent: -18, scale: 1.04, ease: 'none', immediateRender: false, scrollTrigger: scroll() });
+  gsap.fromTo(section.querySelector('.ex-hero-title'), { yPercent: 0 }, { yPercent: -14, ease: 'none', immediateRender: false, scrollTrigger: scroll() });
   if (!matchMedia('(hover: hover) and (pointer: fine)').matches) return null;
   const rx = gsap.quickTo(space, 'rotationX', { duration: 0.9, ease: 'power3.out' });
   const ry = gsap.quickTo(space, 'rotationY', { duration: 0.9, ease: 'power3.out' });
@@ -451,17 +498,31 @@ function hero(root, pinned) {
 }
 
 /**
- * The problem is one beat, played once on arrival: the statement, the four
- * frustrations, then the three ways side by side, and the turn. Nothing waits
- * half-lit for the scrollbar.
+ * The problem, read at the reader's pace in a wide window and played once on a
+ * phone: the statement, then each frustration is crossed off by what JobAgent
+ * does about it, then the three ways to look for work side by side, and the turn.
  */
-function problem(root) {
+function problem(root, pinned) {
   const section = root.querySelector('.ex-problem');
-  gsap.timeline({ defaults: { ease: 'power3.out' }, scrollTrigger: { trigger: section, start: 'top 70%', once: true } })
-    .from(all(section, '#whyTitle .ex-w'), { yPercent: 70, autoAlpha: 0, duration: 0.8, stagger: 0.07 }, 0)
-    .from(all(section, '.ex-pains li'), { autoAlpha: 0, x: -20, duration: 0.6, stagger: 0.12 }, 0.3)
-    .from(all(section, '.ex-contrast li'), { autoAlpha: 0, y: 40, duration: 0.9, stagger: 0.16 }, 0.75)
-    .from(all(section, '.ex-say-turn .ex-w'), { yPercent: 70, autoAlpha: 0, duration: 0.7, stagger: 0.05 }, 1.5);
+  const pains = all(section, '.ex-pain');
+  const tl = gsap.timeline({
+    defaults: { ease: 'power3.out' },
+    scrollTrigger: pinned
+      ? { trigger: section, start: 'top 72%', end: 'bottom 75%', scrub: TRAIL }
+      : { trigger: section, start: 'top 70%', once: true },
+  });
+  tl.from(all(section, '#whyTitle .ex-w'), { yPercent: 70, autoAlpha: 0, duration: 0.8, stagger: 0.07 }, 0)
+    .from(pains, { autoAlpha: 0, x: -24, duration: 0.6, stagger: 0.14 }, 0.25);
+  pains.forEach((pain, i) => {
+    const t = 1.1 + i * 0.55;
+    tl.fromTo(pain, { '--strike': 0 }, { '--strike': 1, duration: 0.45, ease: 'none' }, t)
+      .from(pain.querySelector('.ex-pain-fix'), { autoAlpha: 0, x: 16, scale: 0.9, duration: 0.4 }, t + 0.3);
+  });
+  const cards = all(section, '.ex-contrast li');
+  tl.from(cards, { autoAlpha: 0, y: 60, rotation: (i) => [-2, 1.5, -1][i] ?? 0, duration: 0.9, stagger: 0.18 }, 3.5)
+    .from(section.querySelector('.ex-contrast .is-ours'), { scale: 0.94, duration: 0.8 }, 3.9)
+    .from(all(section, '.ex-say-turn .ex-w'), { yPercent: 70, autoAlpha: 0, duration: 0.7, stagger: 0.05 }, 4.6);
+  if (!pinned) tl.timeScale(1.6);
 }
 
 /** Parts that simply arrive, once, as they are scrolled to. */
@@ -512,7 +573,7 @@ export function startMotion(root) {
       fit();
       ScrollTrigger.addEventListener('refreshInit', fit);
     }
-    problem(root);
+    problem(root, pinned);
     sheets(root, pinned);
     const unrail = pinned ? rail(root) : () => {};
     rise(all(root, '.ex-never-list li, .ex-does-list li'));
@@ -525,6 +586,7 @@ export function startMotion(root) {
       for (const beat of all(root, '.ex-beat')) beat.classList.remove('is-on');
       // The score is drawn by its own scene; put it back to every point counted.
       for (const card of all(root, '.ex-scorecard')) card.exPaint?.(null);
+      for (const num of all(root, '.ex-fcard-num')) num.textContent = num.dataset.total;
     };
   });
   document.fonts?.ready.then(() => ScrollTrigger.refresh());

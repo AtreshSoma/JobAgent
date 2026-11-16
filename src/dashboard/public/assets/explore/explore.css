@@ -28,7 +28,10 @@
 
 html {
   overflow-x: clip;
-  scroll-behavior: smooth;
+  /* Not smooth here: the scroll library measures the page by jumping the scroll position, and
+     CSS smoothing turns that jump into a glide, so every scene would be measured in the wrong
+     place after a resize. In-page links glide on their own (main.js, glide). */
+  scroll-behavior: auto;
   scroll-padding-top: calc(var(--top-h) + var(--space-md));
   -webkit-text-size-adjust: 100%;
   --page-bg: var(--color-paper);
@@ -873,7 +876,6 @@ html[data-here="signal"] { --here-c: var(--signal); }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  html { scroll-behavior: auto; }
   .ex *, .ex *::before, .ex *::after, .ex details::details-content { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; transition-delay: 0s !important; }
   /* The scroll-linked rule is a position readout, not motion: it keeps following the page. */
   body.ex .ex-top::after { animation-duration: auto !important; }

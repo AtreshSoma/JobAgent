@@ -16,7 +16,7 @@
  * it with that field's posting, score, resume and form. A chapter rail (pinned
  * layout only) shows where the reader is on the line.
  */
-import { h, icon, prefersReducedMotion } from './dom.js';
+import { glide, h, icon, prefersReducedMotion } from './dom.js';
 import { buildRoute, LINE_OF } from './journey.js';
 import { buildScenes, heroField, hood, never, problem } from './scenes.js';
 import { register } from './register.js';
@@ -62,7 +62,7 @@ function hero(field) {
           onClick: (event) => {
             event.preventDefault();
             const target = document.getElementById('why');
-            target?.scrollIntoView({ block: 'start' });
+            target?.scrollIntoView({ block: 'start', behavior: glide() });
             target?.querySelector('h2')?.focus({ preventScroll: true });
           },
         }, HERO.primary, icon('arrow', { size: 16 })),

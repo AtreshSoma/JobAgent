@@ -641,6 +641,67 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
     }, { motion: true, viewport: { width: 1440, height: 900 } });
   });
 
+  it('keeps the headline whole and the hero working after the window is resized (2026-11-16 regression)', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withExplore(async (page, context) => {
+      // CSS smooth scrolling made the scroll library measure every scene in the wrong place after a resize.
+      expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollBehavior)).toBe('auto');
+      await page.evaluate(() => window.scrollTo({ top: 6000, behavior: 'instant' }));
+      await page.waitForTimeout(900);
+      await page.setViewportSize({ width: 1997, height: 1161 });
+      await page.waitForTimeout(1200);
+      await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
+      // Back at the top the morning of postings is in full view again, and the chapter rail is put away.
+      await expect.poll(() => page.locator('.ex-fcard:not(.is-ours)').first().evaluate((el) => Number(getComputedStyle(el).opacity)), { timeout: 5_000 }).toBeGreaterThan(0.95);
+      await expect.poll(() => page.locator('.ex-rail').evaluate((el) => el.classList.contains('is-on')), { timeout: 5_000 }).toBe(false);
+      // The headline is never cut off by its own column, at any window width.
+      for (const width of [1180, 1440, 1997, 2560]) {
+        await page.setViewportSize({ width, height: 1161 });
+        await page.waitForTimeout(300);
+        const cut = await page.evaluate(() => [...document.querySelectorAll('.ex-hero-title .ex-line')].map((line) => {
+          const range = document.createRange();
+          range.selectNodeContents(line.firstElementChild);
+          return Math.round(range.getBoundingClientRect().right - line.getBoundingClientRect().right);
+        }));
+        for (const over of cut) expect(over, `${width}px`).toBeLessThanOrEqual(1);
+      }
+      void context;
+    }, { motion: true, theme: 'light', viewport: { width: 1440, height: 900 } });
+  });
+
+  it('holds the posting at each signal until the person presses, then lets it through', async (ctx) => {
+    if (!available) return ctx.skip();
+    await withExplore(async (page) => {
+      await expect.poll(() => page.evaluate(() => document.documentElement.dataset.motion)).toBe('pinned');
+      for (const id of ['signal-tailor', 'signal-fill']) {
+        const at = (p) => page.evaluate(([sid, q]) => {
+          const el = document.getElementById(sid);
+          const top = el.getBoundingClientRect().top + window.scrollY;
+          const start = top - innerHeight;
+          const end = top + el.offsetHeight - 2 * el.querySelector('.ex-plate').offsetHeight;
+          window.scrollTo({ top: start + (end - start) * q, behavior: 'instant' });
+        }, [id, p]);
+        const state = () => page.evaluate((sid) => {
+          const plate = document.querySelector(`#${sid} .ex-plate`);
+          const token = plate.querySelector('.ex-gate-token').getBoundingClientRect();
+          const stop = plate.querySelector('.ex-gate-stopline').getBoundingClientRect();
+          return {
+            clear: Number(getComputedStyle(plate).getPropertyValue('--clear')),
+            passed: token.left > stop.right,
+            done: Number(getComputedStyle(plate.querySelector('.ex-gate-done')).opacity),
+          };
+        }, id);
+        // Held: the lamp at danger, the posting short of the stop, nothing approved.
+        await at(0.4);
+        await page.waitForTimeout(1300);
+        expect(await state(), `${id} held`).toEqual({ clear: 0, passed: false, done: 0 });
+        // Pressed: the lamp clear, the posting through, and the result said.
+        await at(1);
+        await expect.poll(state, { timeout: 5_000 }).toEqual({ clear: 1, passed: true, done: 1 });
+      }
+    }, { motion: true, theme: 'light', viewport: { width: 1440, height: 900 } });
+  });
+
   it('plays each picture once on a phone, without holding the page', async (ctx) => {
     if (!available) return ctx.skip();
     await withExplore(async (page) => {

@@ -95,6 +95,11 @@ export function svg(tag, attrs = {}, ...children) {
   return el;
 }
 
+/** How an in-page jump should move: a glide, or at once for a reader who prefers reduced motion. */
+export function glide() {
+  return prefersReducedMotion() ? 'instant' : 'smooth';
+}
+
 /** Does the person prefer reduced motion? Read at call time, so a change is respected. */
 export function prefersReducedMotion() {
   return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;

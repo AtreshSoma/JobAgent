@@ -14,7 +14,7 @@
  */
 import { renderOverview } from './overview.js';
 import { renderDeep } from './deep.js';
-import { prefersReducedMotion } from './dom.js';
+import { glide, prefersReducedMotion } from './dom.js';
 import { fieldSwapped, sceneLanding, startMotion, stopMotion } from './motion.js';
 import { adoptFieldFromLink, getField, initField, onFieldChange, syncFieldLink } from './field.js';
 
@@ -197,13 +197,12 @@ function show({ view, part }, { fromLink = false } = {}) {
 
 /**
  * Bring a section's top to the top of the window, below the header, honouring
- * the CSS scroll-padding and scroll-behavior (so it glides unless the reader
- * prefers reduced motion).
+ * the CSS scroll-padding. It glides unless the reader prefers reduced motion.
  */
 function scrollToTop(el, { instant = false } = {}) {
   const pad = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
   // A scene that holds while it plays is entered a little way in, with its first moment under way.
-  window.scrollTo({ top: Math.max(0, sceneLanding(el) ?? el.getBoundingClientRect().top + window.scrollY - pad), behavior: instant ? 'instant' : 'auto' });
+  window.scrollTo({ top: Math.max(0, sceneLanding(el) ?? el.getBoundingClientRect().top + window.scrollY - pad), behavior: instant ? 'instant' : glide() });
 }
 
 function go(view) {

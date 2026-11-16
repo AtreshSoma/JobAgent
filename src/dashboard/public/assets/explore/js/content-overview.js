@@ -391,15 +391,16 @@ export const SCORE_LEAD_ROWS = Object.freeze([
 
 /**
  * The problem the product answers, said plainly, and the one difference that
- * matters set beside the two things people already use.
+ * matters set beside the two things people already use. Each frustration is
+ * crossed off by what JobAgent does about it (`fix`).
  */
 export const PROBLEM = Object.freeze({
   title: 'Job hunting is mostly retyping.',
   lines: [
-    'The same job boards, every morning.',
-    'The same form, typed again.',
-    'The catch, buried in paragraph nine.',
-    'One resume, reworded for every posting.',
+    { pain: 'The same job boards, every morning.', fix: 'Searched for you' },
+    { pain: 'The same form, typed again.', fix: 'Typed for you' },
+    { pain: 'The catch, buried in paragraph nine.', fix: 'Lifted out as a tag' },
+    { pain: 'One resume, reworded for every posting.', fix: 'Reordered for each job' },
   ],
   turn: 'JobAgent takes the retyping. You keep the decisions.',
   contrast: [
@@ -511,10 +512,24 @@ export const JOURNEY = Object.freeze([
   },
 ]);
 
-/** The two points on the journey where only a person can move things forward. */
+/**
+ * The two points on the journey where only a person can move things forward.
+ * `checks` is what the person has in front of them at the signal, `action` the
+ * one thing only they can press, and `done` what is true once they have.
+ */
 export const GATES = Object.freeze([
-  { after: 'tailor', label: 'You approve', fact: 'You check everything first', detail: 'Nothing is filled until you approve the resume, the letter and the answers for this job. Change any of them afterwards and the approval is withdrawn.' },
-  { after: 'fill', label: 'You submit', fact: 'The click is yours', detail: 'Form filling ends at a filled form. You read it and press Submit. A click is not proof: it counts as applied only when a confirmation is seen.' },
+  {
+    after: 'tailor', label: 'You approve', fact: 'You check everything first',
+    detail: 'Nothing is filled until you approve the resume, the letter and the answers for this job. Change any of them afterwards and the approval is withdrawn.',
+    checks: ['Resume, tailored for this job', 'Cover letter, from your master letter', 'Answers to this form’s questions'],
+    action: 'Approve', done: 'Approved by you',
+  },
+  {
+    after: 'fill', label: 'You submit', fact: 'The click is yours',
+    detail: 'Form filling ends at a filled form. You read it and press Submit. A click is not proof: it counts as applied only when a confirmation is seen.',
+    checks: ['Every field filled and read back', 'The open question, answered by you', 'Your tailored resume, attached'],
+    action: 'Submit application', done: 'Confirmation seen. Applied.',
+  },
 ]);
 
 /** The stages an application can be recorded at, in order, and where the example ends up. */
