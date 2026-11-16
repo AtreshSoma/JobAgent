@@ -57,18 +57,38 @@ packet said `resumeTailored: true`, so the problem was invisible.
 
 ### P0: recognize the resume's structure
 
-- [ ] **Normalize headings before matching**, in both `tailor.py` and
-      `resumeProfile.js`: strip a trailing `:` and other end punctuation, and
-      any leading drawing-anchor digits.
-- [ ] **One heading vocabulary for both languages.** Move it to a JSON file
-      (for example `config/resume_sections.json`) read by Python and Node, so
-      the two parsers cannot drift again. Accept qualifiers before a known head
-      noun ("relevant work experience", "volunteer work experience") and
-      trailing detail after a comma ("projects, <organization>").
-- [ ] **Drop drawing-position text in `docxText.js`.** Remove `<wp:posOffset>`,
-      `<wp:align>` and the rest of `wp:positionH/V` before stripping tags.
-- [ ] **Bracket-aware skill splitting in the Node parser,** the same rule
-      `_split_skill_list` already uses in Python.
+Done, except the shared vocabulary file.
+
+- [x] **Normalize headings before matching.** `_norm_heading` in `tailor.py` now
+      ignores trailing punctuation ("EDUCATION:", "Skills -"), reads detail after
+      a comma as detail ("Projects, <organization>" is "projects"), and accepts a
+      qualifier before a known name ("Relevant Work Experience"). A line with a
+      date, or one too long to be a heading, is never reshaped. The Node parser
+      already ignored trailing punctuation; it now also drops a number glued on
+      the front and reads detail after a comma.
+- [ ] **One heading vocabulary for both languages.** Qualifiers, comma detail and
+      the volunteer and affiliation names are now accepted in both parsers, but
+      the two tables are still separate. Moving them to one JSON file (for example
+      `config/resume_sections.json`) read by Python and Node is still to do, so
+      the two cannot drift again.
+- [x] **Drop drawing-position text in `docxText.js`.** `wp:posOffset`, `wp:align`
+      and the `wp14` size and relative-position elements (`pctWidth`, `pctHeight`,
+      `pctPosHOffset`, `pctPosVOffset`) are removed before tags are stripped. The
+      `wp14` ones were the bigger cause: they write "0", so a heading read
+      "00EXPERIENCE:".
+- [x] **Bracket-aware skill splitting in the Node parser.** "Databases (SQL,
+      NoSQL), Kafka" is two items. A bracket left open keeps its text together
+      and is dropped from the skill name.
+
+Measured again on the same real resume after these changes (counts only):
+
+| Measure | Before | After |
+|---|---|---|
+| Section headings recognized by `tailor.py` | 0 of 6 | 4 of 6 |
+| Sections found by the profile parser | header, education, skills | summary, education, experience, skills |
+| Job titles found by the profile parser | 0 | 8 |
+
+The two headings `tailor.py` still misses have not been looked at yet.
 
 ### P1: find roles correctly
 
