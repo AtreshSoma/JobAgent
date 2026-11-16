@@ -80,6 +80,6 @@ export function restartNotice(change) {
     code: 'restart_needed',
     severity: 'warn',
     message: 'JobAgent was updated after it started. Auto-fill is still running the old version until you restart it.',
-    fix: 'Stop it (Ctrl+C in its terminal), then run `npm run app` again.',
+    fix: 'Run `npm run app` again (or double-click the launcher): it restarts the old one for you once no run is in progress.',
   };
 }

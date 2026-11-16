@@ -25,6 +25,13 @@
  * or a network error is also `unknown`: absence of proof is not proof.
  */
 
+import { safeFetch } from '../utils/safeFetch.js';
+
+// node:https, not built-in fetch: Workday's firewall refuses Node's fetch by its
+// TLS handshake (see TRANSPORT in adapters/workday.js), and a refusal here
+// reads as `unknown`, which silently stopped every Workday liveness check.
+const DEFAULT_FETCH = safeFetch;
+
 const USER_AGENT = 'JobAgent/0.1 (local job-search assistant; posting status check)';
 
 /** @typedef {{ state: 'open'|'closed'|'unknown', via: string, httpStatus?: number|null, detail?: string }} Liveness */
@@ -115,7 +122,7 @@ export function createLivenessCache() {
  * @param {{ fetchImpl?: typeof fetch, timeoutMs?: number, signal?: AbortSignal, cache?: Map }} [options]
  * @returns {Promise<Liveness>}
  */
-export async function checkPostingLiveness(job, { fetchImpl = fetch, timeoutMs = 12000, signal, cache } = {}) {
+export async function checkPostingLiveness(job, { fetchImpl = DEFAULT_FETCH, timeoutMs = 12000, signal, cache } = {}) {
   const target = livenessTarget(job);
   if (!target) return { state: 'unknown', via: 'no ATS API for this link' };
   if (target.ats === 'workday-malformed') {
@@ -232,7 +239,7 @@ export function livenessHost(job) {
  */
 export async function sweepPostings({
   db, limit = 300, maxAgeHours = 24, apply = true, perHost = 2, spacingMs = 150,
-  signal, fetchImpl = fetch, now = new Date(), onProgress, rows,
+  signal, fetchImpl = DEFAULT_FETCH, now = new Date(), onProgress, rows,
 } = {}) {
   const olderThan = new Date(now.getTime() - maxAgeHours * 3600_000).toISOString();
   const todo = rows ?? db.listPostingsToCheck({ olderThan, limit });

@@ -83,12 +83,46 @@ export function parseRetryAfterMs(value, nowMs = Date.now()) {
  * @returns {Error & { status: number, retryAfterMs: number|null, retryable: boolean }}
  */
 export function httpError(res, label, url) {
-  const err = new Error(`${label} HTTP ${res.status} for ${url}`);
+  const retryAfterMs = parseRetryAfterMs(res.headers?.get?.('retry-after'));
+  const firewall = isFirewallBlock(res, retryAfterMs);
+  // A firewall 403 is a refusal; a firewall 429 is throttling. Measured
+  // 2026-11-16 on Workday: the same Cloudflare HTML 429 page is served both
+  // for a client it refuses outright and, after heavy volume, for a client it
+  // had been answering, and in the second case waiting DOES work. So only the
+  // 403 is final; the 429 is retried and backed off like any other 429.
+  const refused = firewall && res.status === 403;
+  let message = `${label} HTTP ${res.status} for ${url}`;
+  if (refused) message = `${label} HTTP 403 (refused by the site's firewall) for ${url}`;
+  else if (firewall) message = `${label} HTTP 429 (site firewall is throttling us) for ${url}`;
+  const err = new Error(message);
   err.status = res.status;
-  err.retryAfterMs = parseRetryAfterMs(res.headers?.get?.('retry-after'));
+  err.retryAfterMs = retryAfterMs;
   // 429/5xx are worth another attempt; other 4xx are our problem, not a blip.
   err.retryable = res.status === 429 || (res.status >= 500 && res.status <= 599);
+  if (refused) err.botBlocked = true;
+  if (firewall) err.firewall = true;
   return err;
+}
+
+/**
+ * Was this 403/429 written by a bot firewall rather than by the API?
+ *
+ * 2026-11-16: every Workday CXS request answered 429 within ~100ms, with an
+ * HTML page, `server: cloudflare` and no Retry-After, while the same request
+ * from curl answered 200. The API's own throttle answers in JSON (or at least
+ * sends Retry-After). The page alone does not say whether waiting helps (see
+ * httpError): it marks the error `firewall` so the message can say who answered.
+ *
+ * @param {{ status: number, headers?: { get?: (name: string) => string|null } }} res
+ * @param {number|null} retryAfterMs
+ */
+export function isFirewallBlock(res, retryAfterMs = null) {
+  if (res?.status !== 403 && res?.status !== 429) return false;
+  if (retryAfterMs) return false;
+  const get = (name) => String(res.headers?.get?.(name) ?? '').toLowerCase();
+  const html = get('content-type').includes('text/html');
+  const firewall = get('server').includes('cloudflare') || Boolean(get('cf-mitigated'));
+  return html && firewall;
 }
 
 /** Body-reading methods a Response exposes — every one of them can stall. */

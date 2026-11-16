@@ -23,14 +23,35 @@
  *                  (404/403/429/etc.), the job keeps rawMetadata.summaryOnly=true
  *                  and the reason is reported. Detail fetch is public-only — no
  *                  login, CAPTCHA, private endpoint, or bot-protection bypass.
+ *
+ * TRANSPORT (2026-11-16, owner's decision). Requests go through node:https
+ * (`createSafeFetch`), not Node's built-in fetch. Cloudflare in front of Workday
+ * began answering every request from Node's fetch (undici) with an instant HTML
+ * 429, while the identical request over node:https or curl got a 200. Measured:
+ * the trigger is the TLS handshake (undici offers ALPN "http/1.1"; node:https
+ * offers none), not headers, user agent, search text or request rate. Choosing
+ * this transport does sidestep that fingerprint rule, which is the owner's
+ * call, recorded here so it is not mistaken for an accident. Everything else
+ * stays the same: requests carry the identifying DISCOVERY_USER_AGENT (no
+ * browser impersonation), the per-pod host gate, concurrency ceilings,
+ * Retry-After handling and circuit breaker still apply. The firewall's pages
+ * are named in errors (httpClient.isFirewallBlock): a 403 is reported as
+ * `bot_blocked`; a 429 is throttling, retried and waited out like any other.
  */
 
 import { FULL_SWEEP_DAYS, listingFingerprint } from '../boardFingerprints.js';
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
-import { fetchJsonWithTimeout } from '../../utils/httpClient.js';
+import { discoveryHeaders, fetchJsonWithTimeout } from '../../utils/httpClient.js';
 import { createHostGate } from '../../utils/hostGate.js';
+import { createSafeFetch } from '../../utils/safeFetch.js';
+
+/**
+ * The default transport for every Workday request (see TRANSPORT above).
+ * One instance, so kept-alive sockets are reused across tenants on a pod.
+ */
+export const workdayFetch = createSafeFetch();
 import { profileVocabularyFor, titleFitPriority } from '../../scoring/profileFit.js';
 import { hydrateFromDetailCache } from '../detailBudget.js';
 
@@ -297,6 +318,15 @@ const DEFAULT_HOST_CONCURRENCY = 8;
 const DEFAULT_HOST_SPACING_MS = 0;
 
 /**
+ * How long a SEARCH request waits for an open pod breaker to close before
+ * giving up: two breaker periods. Searches are the work a run exists to do;
+ * failing them instantly while the breaker was open is what cost 138 wd1
+ * employers on 2026-11-16 (see hostGate.waitWhileOpen). Descriptions do not
+ * wait: they stop on a pod once it has pushed back (enrichWithDetail).
+ */
+const SEARCH_BREAKER_WAIT_MS = 150_000;
+
+/**
  * @param {object} source jobboards entry: { tenants: object[] }
  * @param {object} ctx
  * @param {typeof fetch} [ctx.fetchImpl]
@@ -309,7 +339,7 @@ const DEFAULT_HOST_SPACING_MS = 0;
  * @returns {Promise<{ jobs: object[], errors: Array<object> }>}
  */
 export async function run(source = {}, ctx = {}) {
-  const { fetchImpl = fetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
+  const { fetchImpl = workdayFetch, rateLimiter, maxRetries = 3, requestTimeoutMs } = ctx;
   const tenants = Array.isArray(source.tenants) ? source.tenants : [];
   // Tenant parallelism is cheap and safe to raise: every tenant is a DIFFERENT
   // host, and per-host politeness is enforced by the host gate regardless. With
@@ -488,7 +518,7 @@ async function fetchTenant(cfg, ctx) {
     if (rateLimiter) await rateLimiter.wait(spacingKey, rateLimitMs);
     const body = (offset) => pageBody(cfg, offset, searchText);
     const first = await withRetry(
-      () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(0), requestTimeoutMs, abortSignal), { minSpacingMs: hostSpacingMs, signal: abortSignal }),
+      () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(0), requestTimeoutMs, abortSignal), { minSpacingMs: hostSpacingMs, signal: abortSignal, waitWhenOpenMs: SEARCH_BREAKER_WAIT_MS }),
       { maxRetries },
     );
     const firstPostings = Array.isArray(first.jobPostings) ? first.jobPostings : [];
@@ -514,7 +544,7 @@ async function fetchTenant(cfg, ctx) {
       if (shouldCancel?.()) { cancelled = true; return { postings: [], error: null }; }
       try {
         const data = await withRetry(
-          () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(offset), requestTimeoutMs, abortSignal), { minSpacingMs: hostSpacingMs, signal: abortSignal }),
+          () => hostGate.run(endpoint, () => postJson(fetchImpl, endpoint, body(offset), requestTimeoutMs, abortSignal), { minSpacingMs: hostSpacingMs, signal: abortSignal, waitWhenOpenMs: SEARCH_BREAKER_WAIT_MS }),
           { maxRetries },
         );
         return { postings: Array.isArray(data.jobPostings) ? data.jobPostings : [], error: null };
@@ -674,7 +704,7 @@ async function postJson(fetchImpl, url, body, requestTimeoutMs, signal) {
   // One deadline for headers AND body — see fetchJsonWithTimeout.
   return fetchJsonWithTimeout(fetchImpl, url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: discoveryHeaders({ 'Content-Type': 'application/json', Accept: 'application/json' }),
     body: JSON.stringify(body),
     // `fetchWithTimeout` composes this with its own timeout controller, so a
     // cancelled run aborts the request already on the wire instead of waiting
@@ -713,7 +743,11 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
   // The host already told us to slow down. Detail text is a nice-to-have, so
   // stop asking rather than spending a retry budget per job on a pod that is
   // refusing us — that is what turned one 429 into hundreds.
-  if (hostGate?.isOpen(url)) {
+  //
+  // Stricter than "is the breaker open now": once this pod's breaker has opened
+  // at all this run, descriptions stop on it for the rest of the run. They are
+  // recoverable (`npm run enrich`); the searches sharing the pod are not.
+  if (hostGate?.isOpen(url) || hostGate?.hasTripped?.(url)) {
     job.rawMetadata.summaryOnly = true;
     job.rawMetadata.detailSkipped = 'host-throttled';
     return { url, error: 'skipped: host is rate-limiting (backed off)', status: 429, attempts: 0, summaryOnly: true };
@@ -722,7 +756,7 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
   try {
     const call = () => getJson(fetchImpl, url, requestTimeoutMs);
     const data = await withRetry(
-      () => (hostGate ? hostGate.run(url, call, { minSpacingMs: hostSpacingMs, signal: abortSignal }) : call()),
+      () => (hostGate ? hostGate.run(url, call, { minSpacingMs: hostSpacingMs, signal: abortSignal, skipIfTripped: true }) : call()),
       { maxRetries },
     );
     const info = data?.jobPostingInfo ?? {};
@@ -787,7 +821,7 @@ export async function enrichWithDetail(job, posting, cfg, ctx) {
 }
 
 async function getJson(fetchImpl, url, requestTimeoutMs) {
-  return fetchJsonWithTimeout(fetchImpl, url, { headers: { Accept: 'application/json' } }, requestTimeoutMs, 'Workday detail');
+  return fetchJsonWithTimeout(fetchImpl, url, { headers: discoveryHeaders({ Accept: 'application/json' }) }, requestTimeoutMs, 'Workday detail');
 }
 
 /**

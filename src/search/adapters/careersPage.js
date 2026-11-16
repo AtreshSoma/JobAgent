@@ -229,6 +229,13 @@ async function parseLinks(urls, company, source, ctx, errors) {
       }
       return { jobs: found, error: null };
     } catch (err) {
+      // One posting that is gone (a sitemap still listing a filled job, e.g.
+      // Costco's /jobs/67627) is not a source failure: it was reported as
+      // "missing config — run npm run doctor" on every run. Keep it as a note.
+      const status = Number(err?.status ?? err?.statusCode);
+      if (status === 404 || status === 410) {
+        return { jobs: [], error: { company: companyLabel(company), url, note: `posting no longer exists (HTTP ${status}); skipped` } };
+      }
       return { jobs: [], error: { company: companyLabel(company), url, error: err.message } };
     }
   });

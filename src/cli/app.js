@@ -34,7 +34,8 @@ import { ui } from './ui.js';
 import { quickPreflight } from './preflight.js';
 import { masterResumeFile } from '../profile/workspace.js';
 import { instanceProof, readToken, TOKEN_HEADER, tokensMatch, unlockUrl } from '../dashboard/apiToken.js';
-import { readLiveLock, writeLock } from '../dashboard/instanceLock.js';
+import { pidAlive, readLiveLock, writeLock } from '../dashboard/instanceLock.js';
+import { newestServerCode } from '../dashboard/codeFreshness.js';
 
 /** Parse and validate a user-facing dashboard port. */
 export function parseDashboardPort(value, fallback = 4646) {
@@ -154,6 +155,76 @@ export async function identifyRunningDashboard(port, { timeoutMs = 1000, fetchIm
     // Refused, timed out, not JSON: nothing of ours is there.
     return null;
   }
+}
+
+/**
+ * Should the running dashboard be replaced, and is it safe to?
+ *
+ * WHY. Re-running `npm run app` after an update found the old server, opened
+ * it and exited, so the "JobAgent was updated after it started" banner stayed
+ * no matter how often the user relaunched (2026-11-16: server from 08:10,
+ * update pulled at 10:30, banner still up hours later). The fix the banner
+ * asked for (Ctrl+C in a terminal the user may not have open) was the only
+ * way out. Now the launcher does it: a server older than the code on disk is
+ * stopped and a fresh one started in its place.
+ *
+ * SAFE ONLY WHEN: the server proved it holds this install's token, its pid is
+ * the one in this install's lock file (so the signal goes to our own process),
+ * and no run is in progress (a discovery or auto-fill is never cut off).
+ *
+ * @param {object} args
+ * @param {{pid: number, port: number, startedAt: string|null}|null} args.holder live lock
+ * @param {{url: string, proven: boolean}} args.found what answered on the port
+ * @param {boolean} args.force `--restart`
+ * @param {string|null} args.token
+ * @param {object} [deps]
+ * @returns {Promise<{restart: boolean, reason: string}>}
+ */
+export async function decideRestart({ holder, found, force, token }, deps = {}) {
+  if (!found?.proven) return { restart: false, reason: 'unproven' };
+  if (!holder || !found.url.endsWith(`:${holder.port}`)) return { restart: false, reason: 'no-lock' };
+  const startedMs = Date.parse(holder.startedAt ?? '');
+  let stale = false;
+  if (Number.isFinite(startedMs)) {
+    const newest = (deps.newestServerCode ?? newestServerCode)();
+    // Same one-second slack as codeFreshness: files written during startup
+    // are the code it loaded.
+    stale = Boolean(newest && newest.mtimeMs > startedMs + 1000);
+  }
+  if (!stale && !force) return { restart: false, reason: 'current' };
+  try {
+    const res = await (deps.fetchImpl ?? fetch)(`${found.url}/api/run/status`, {
+      signal: AbortSignal.timeout(2000),
+      headers: token ? { [TOKEN_HEADER]: token } : {},
+    });
+    /** @type {any} */
+    const body = res.ok ? await res.json() : null;
+    if (!body || typeof body.running !== 'boolean') return { restart: false, reason: 'status-unknown' };
+    if (body.running) return { restart: false, reason: 'busy' };
+  } catch {
+    return { restart: false, reason: 'status-unknown' };
+  }
+  return { restart: true, reason: stale ? 'stale' : 'forced' };
+}
+
+/**
+ * Ask our own dashboard process to stop (SIGTERM: it closes the server and
+ * checkpoints the database) and wait for it to exit.
+ * @returns {Promise<boolean>} true once the process is gone
+ */
+export async function stopDashboardProcess(pid, {
+  timeoutMs = 15_000, kill = (p, s) => process.kill(p, s), alive = pidAlive,
+} = {}) {
+  try { kill(pid, 'SIGTERM'); } catch (err) {
+    if (err?.code === 'ESRCH') return true;
+    return false;
+  }
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!alive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return !alive(pid);
 }
 
 /** Wait until the dashboard answers HTTP (it should immediately; be sure). */
@@ -335,7 +406,27 @@ export async function runApp({ parsed, env, deps = {} }) {
     ui.note('If it is an older JobAgent window, close it (Ctrl+C) and start again. Otherwise free the port or choose another with --port=NNNN.');
     return { ok: false, url: existingUrl, port: requestedPort, alreadyRunning: true, unproven: true, problems: ['dashboard port held by an unproven server'] };
   }
+  let restarted = false;
   if (existingUrl) {
+    const force = parsed.flags.has('restart');
+    const decision = await (deps.decideRestart ?? decideRestart)({ holder, found, force, token: existingToken });
+    if (decision.restart) {
+      ui.note(decision.reason === 'stale'
+        ? 'The running dashboard is older than the code on disk. Restarting it to load the update…'
+        : 'Restarting the running dashboard…');
+      restarted = await (deps.stopDashboardProcess ?? stopDashboardProcess)(holder.pid);
+      if (!restarted) {
+        ui.warn(`The old dashboard (pid ${holder.pid}) did not stop in time. Stop it with Ctrl+C in its window, then run "npm run app" again.`);
+        return { ok: false, url: existingUrl, port: requestedPort, alreadyRunning: true, problems: ['old dashboard did not stop'] };
+      }
+    } else if (decision.reason === 'busy') {
+      ui.warn('JobAgent was updated, but a run is in progress, so the old version keeps going for now.');
+      ui.note('Run "npm run app" again when it finishes and the update will load.');
+    } else if (force) {
+      ui.warn('Could not restart the running dashboard safely (it did not confirm it is idle). Stop it with Ctrl+C in its window.');
+    }
+  }
+  if (existingUrl && !restarted) {
     ui.success(`Job Agent is already running at ${ui.c.bold(existingUrl)}`);
     if (!noOpen) {
       const opened = (deps.openBrowser ?? openBrowser)(unlockUrl(existingUrl, existingToken), {
@@ -343,7 +434,7 @@ export async function runApp({ parsed, env, deps = {} }) {
       });
       if (opened === false) ui.warn(`Could not open the browser automatically. Open ${existingUrl} yourself.`);
     }
-    ui.note('Stop that one (Ctrl+C in its window) first if you meant to restart it.');
+    ui.note('To restart it, run "npm run app -- --restart" (only while no run is in progress).');
     return { ok: true, url: existingUrl, port: requestedPort, alreadyRunning: true };
   }
 

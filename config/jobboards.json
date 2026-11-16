@@ -354,8 +354,7 @@
         "note": "QUERY-FIRST DISCOVERY, no API key, no per-run cost. Searches ACROSS every employer hosted by an ATS vendor instead of enumerating one configured board at a time \u2014 this is the capability the paid Apify actors provided. Queries default to candidate.targetTitles so the title list lives in exactly one place. Both providers OR-match query terms, so queries are phrase-quoted and every hit must clear a title gate before it is kept. Providers: 'workable' (real pagination, full JD inline, relevance-ranked so dayRange is the only recency lever) and 'smartrecruiters' (already newest-first; newest 100 per query, server ignores offset). Public unauthenticated vendor search endpoints only \u2014 no login, CAPTCHA solving, or evasion. PROVIDERS: workable + smartrecruiters (ATS-vendor cross-customer search) and themuse (a cross-company job board). Each was verified against the live endpoint AND its robots.txt before being added \u2014 see the per-provider notes in src/search/adapters/atsSearch.js. themuse rows carry an aggregator URL (the board hosts the landing page, not the employer), so they are tagged aggregator:true and the dashboard asks you to trace the direct URL before applying. usOnly gates worldwide indexes through utils/usGeography.js (blank and borderless locations are KEPT).",
         "providers": [
           "workable",
-          "smartrecruiters",
-          "themuse"
+          "smartrecruiters"
         ],
         "location": "United States",
         "country": "us",
@@ -369,7 +368,8 @@
         "usOnly": true,
         "museMaxPages": 3,
         "detailBudgetNote": "Left at 25 DELIBERATELY. The audit listed raising this as a quick win, but measured against the live store atsSearch has 0 of 331 rows under 200 characters \u2014 Workable returns the full JD inline, so the detail budget is not this source's constraint and raising it would buy nothing. The description gap is Workday (69%) and SmartRecruiters (70%); those budgets were raised instead. atsSearch's real limitation is VOLUME (0.3% of the corpus), which is a query/coverage problem, not a detail-fetch one.",
-        "museCategoriesNote": "museCategories is deliberately NOT set: The Muse's categories now follow the active profile's role families (MUSE_CATEGORIES_BY_FAMILY in src/search/adapters/atsSearch.js). Set an explicit array here only to override that. The old fixed list was ['Data and Analytics','Data Science','Software Engineering','IT'], and two of those names return nothing from the live API ('Data Science': 2 jobs, 'IT': 0)."
+        "museCategoriesNote": "museCategories is deliberately NOT set: The Muse's categories now follow the active profile's role families (MUSE_CATEGORIES_BY_FAMILY in src/search/adapters/atsSearch.js). Set an explicit array here only to override that. The old fixed list was ['Data and Analytics','Data Science','Software Engineering','IT'], and two of those names return nothing from the live API ('Data Science': 2 jobs, 'IT': 0).",
+        "museRemovedNote": "themuse removed from providers 2026-11-16: its public API answers HTTP 403 (Cloudflare) to every client, curl included, so it delivered nothing and showed as an error on every run. Add it back to providers if the API reopens."
       }
     },
     {
@@ -429,7 +429,6 @@
         "coinbase",
         "doordashusa",
         "okta",
-        "amplitude",
         "fivetran",
         "sigmacomputing",
         "collibra",
@@ -488,7 +487,8 @@
       ],
       "options": {
         "note": "DISCOVERY. Greenhouse board tokens (the company slug in boards.greenhouse.io/<token>). These are verified-live H-1B-friendly tech companies that currently list Data/BI/Analytics-Engineer roles. A dead/empty board is logged and skipped, never crashes the run.",
-        "crossIndustryNote": "Boards from cloudflare to flatironhealth were added 2026-11-01 for security and biotech profiles, each verified live against boards-api.greenhouse.io with jobs listed. Tried and not found (404): sentinelone (the board is sentinellabs), snyk, arcticwolf, rapid7, lacework, redcanary, drata, vanta, imprivata, modernatx, insitro, benchling, tempus, grail, guardanthealth, 10xgenomics, exactsciences, veeva, medidata."
+        "crossIndustryNote": "Boards from cloudflare to flatironhealth were added 2026-11-01 for security and biotech profiles, each verified live against boards-api.greenhouse.io with jobs listed. Tried and not found (404): sentinelone (the board is sentinellabs), snyk, arcticwolf, rapid7, lacework, redcanary, drata, vanta, imprivata, modernatx, insitro, benchling, tempus, grail, guardanthealth, 10xgenomics, exactsciences, veeva, medidata.",
+        "movedNote": "amplitude moved to ashby-boards 2026-11-16 (its Greenhouse board returns 404; api.ashbyhq.com/posting-api/job-board/amplitude answers 200)."
       }
     },
     {
@@ -505,7 +505,6 @@
         "outreach",
         "highspot",
         "shieldai",
-        "InfrastructureandCapitalProjects",
         "thinkahead",
         "protective",
         "cti-md",
@@ -546,11 +545,11 @@
         "repurposeglobal",
         "askfavor",
         "getsquire",
-        "railroad19",
-        "playonsports"
+        "railroad19"
       ],
       "options": {
-        "note": "DISCOVERY. Lever company slugs (jobs.lever.co/<slug>). Verified-live boards that currently list Data/Analytics roles."
+        "note": "DISCOVERY. Lever company slugs (jobs.lever.co/<slug>). Verified-live boards that currently list Data/Analytics roles.",
+        "removedNote": "Removed 2026-11-16 because api.lever.co answers 404 for them: InfrastructureandCapitalProjects, playonsports."
       }
     },
     {
@@ -2391,10 +2390,6 @@
           "careersUrl": "https://apply.deloitte.com/en_US/careers/SearchJobs/"
         },
         {
-          "name": "Cognizant",
-          "careersUrl": "https://careers.cognizant.com/us-en/jobs/"
-        },
-        {
           "name": "Capgemini",
           "sitemap": "https://careers.capgemini.com/sitemap.xml"
         },
@@ -2410,7 +2405,8 @@
       "maxLinksPerCompany": 50,
       "rateLimitMs": 4000,
       "options": {
-        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped \u2014 never bypassed. Entries added 2026-08-05 after live-verifying each site actually exposes a static, unauthenticated job-link surface: sitemap.xml with individual postings (Meta, Costco, EY), or a careers listing page whose raw HTML contains real <a href> links to job pages carrying schema.org JobPosting JSON-LD (Deloitte, KPMG; Cognizant qualifies the same way but its WAF 403s our identifying User-Agent, so it degrades to logged-and-skipped rather than bypassed). Rejected as having no public static feed (JS-rendered listings, no sitemap, no JSON-LD, confirmed by live fetch): Microsoft, Amazon, Google, Apple, Oracle, JPMorgan Chase, Starbucks, Capgemini, Infosys. UnitedHealth Group's individual job pages DO carry JobPosting JSON-LD, but its listing page renders client-side with no static links to scrape, so it stayed out too \u2014 revisit if the harvester (scripts/harvestSources.mjs) or a manual URL ever seeds one of its job URLs."
+        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped \u2014 never bypassed. Entries added 2026-08-05 after live-verifying each site actually exposes a static, unauthenticated job-link surface: sitemap.xml with individual postings (Meta, Costco, EY), or a careers listing page whose raw HTML contains real <a href> links to job pages carrying schema.org JobPosting JSON-LD (Deloitte, KPMG; Cognizant qualifies the same way but its WAF 403s our identifying User-Agent, so it degrades to logged-and-skipped rather than bypassed). Rejected as having no public static feed (JS-rendered listings, no sitemap, no JSON-LD, confirmed by live fetch): Microsoft, Amazon, Google, Apple, Oracle, JPMorgan Chase, Starbucks, Capgemini, Infosys. UnitedHealth Group's individual job pages DO carry JobPosting JSON-LD, but its listing page renders client-side with no static links to scrape, so it stayed out too \u2014 revisit if the harvester (scripts/harvestSources.mjs) or a manual URL ever seeds one of its job URLs.",
+        "removedNote": "Cognizant (careers.cognizant.com/us-en/jobs/) removed 2026-11-16: it answers HTTP 403 to automated clients on every run, curl included."
       }
     },
     {
@@ -2477,7 +2473,8 @@
         "Zingage",
         "troveo",
         "adjoe",
-        "a2zradiology"
+        "a2zradiology",
+        "amplitude"
       ],
       "options": {
         "note": "DISCOVERY via Ashby's official public posting API (api.ashbyhq.com/posting-api/job-board/<board>). Board slugs of tech companies hiring data roles; a dead board is logged and skipped."

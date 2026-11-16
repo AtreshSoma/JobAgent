@@ -156,6 +156,7 @@ export function createHostGate({
    * @property {boolean[]} outcomes rolling window, true = throttled
    * @property {number} openUntil breaker open until this ms (0 = closed)
    * @property {number} throttleEvents total 429/503 seen (for reporting)
+   * @property {number} trips how many times the breaker has opened this run
    */
   /** @type {Map<string, HostState>} */
   const hosts = new Map();
@@ -221,6 +222,7 @@ export function createHostGate({
         outcomes: [],
         openUntil: 0,
         throttleEvents: 0,
+        trips: 0,
       };
       hosts.set(key, s);
     }
@@ -318,6 +320,35 @@ export function createHostGate({
   }
 
   /**
+   * Has this host's breaker opened at any point in this run? A host that has
+   * pushed back once is the place to stop optional work (job descriptions),
+   * so the required work (searches) keeps the budget.
+   * @param {string|URL} url
+   */
+  function hasTripped(url) {
+    return (hosts.get(hostKeyFor(url))?.trips ?? 0) > 0;
+  }
+
+  /**
+   * Wait out an open breaker instead of failing on it.
+   *
+   * WHY. 2026-11-16: description fetches on wd1 drew 429s, the wd1 breaker
+   * opened for 60s, and every wd1 SEARCH that arrived in that minute failed
+   * instantly: 138 employers contributed nothing, in a source that finished
+   * in 99s. A search is the work the run exists to do, so it waits for the
+   * breaker to close (bounded by `maxWaitMs`) and then goes through.
+   */
+  async function waitWhileOpen(key, maxWaitMs, signal) {
+    const deadline = now() + maxWaitMs;
+    while (isOpenKey(key)) {
+      const s = hosts.get(key);
+      const until = Math.min(s?.openUntil ?? 0, deadline);
+      if (now() >= deadline || until <= now()) break;
+      await abortableSleep(sleepFn, until - now() + 50, signal);
+    }
+  }
+
+  /**
    * Record a throttle response so EVERY caller of this host slows down.
    * @param {string} key
    * @param {number} [retryAfterMs]
@@ -334,8 +365,9 @@ export function createHostGate({
       : Math.min(baseCooldownMs * 2 ** (s.consecutiveThrottles - 1), maxCooldownMs);
     const cooldown = Math.min(backoff, maxCooldownMs);
     s.nextStartAt = Math.max(s.nextStartAt, now() + cooldown);
-    if (shouldOpen(s)) {
+    if (shouldOpen(s) && !(s.openUntil > now())) {
       s.openUntil = now() + breakerOpenMs;
+      s.trips += 1;
     }
   }
 
@@ -348,6 +380,10 @@ export function createHostGate({
    * @param {object} [runOptions]
    * @param {number} [runOptions.minSpacingMs] per-call minimum between starts
    * @param {AbortSignal} [runOptions.signal] drop this call if the run is cancelled
+   * @param {number} [runOptions.waitWhenOpenMs] wait up to this long for an
+   *   open breaker to close instead of failing at once (required work)
+   * @param {boolean} [runOptions.skipIfTripped] fail at once if this host's
+   *   breaker has opened at all this run (optional work)
    * @returns {Promise<T>}
    * @throws {HostCircuitOpenError} when the host's breaker is open
    * @throws {RunCancelledError} when `signal` aborts before the call starts
@@ -355,19 +391,35 @@ export function createHostGate({
   async function run(url, fn, runOptions = {}) {
     const key = hostKeyFor(url);
     const signal = runOptions.signal;
-    // A cancelled run must not spend a queued slot. With hundreds of requests
-    // waiting behind one pod's gate, dialling them all anyway is what made
-    // "Stopping…" take as long as it did.
-    if (signal?.aborted) throw new RunCancelledError();
-    if (isOpenKey(key)) throw new HostCircuitOpenError(key);
+    const openWaitMs = Math.max(0, Number(runOptions.waitWhenOpenMs) || 0);
+    const waitDeadline = now() + openWaitMs;
     const s = stateFor(key);
 
-    await acquire(s, key, signal);
+    // Admission loop. Optional work fails fast; required work (waitWhenOpenMs)
+    // waits for an open breaker to close, takes a slot, and if the breaker
+    // opened again while it queued, hands the slot back and waits again, so a
+    // parked search never holds one of the pod's few slots idle.
+    for (;;) {
+      // A cancelled run must not spend a queued slot. With hundreds of requests
+      // waiting behind one pod's gate, dialling them all anyway is what made
+      // "Stopping…" take as long as it did.
+      if (signal?.aborted) throw new RunCancelledError();
+      if (runOptions.skipIfTripped && s.trips > 0) throw new HostCircuitOpenError(key);
+      if (openWaitMs > 0) await waitWhileOpen(key, Math.max(0, waitDeadline - now()), signal);
+      if (isOpenKey(key)) throw new HostCircuitOpenError(key);
+      await acquire(s, key, signal);
+      if (openWaitMs > 0 && isOpenKey(key) && now() < waitDeadline && !signal?.aborted) {
+        release(s);
+        continue;
+      }
+      break;
+    }
     try {
       // Re-check after queueing: the run may have been cancelled, or the host may
       // have started throttling, while we waited for a slot — either way there is
       // no point spending the request.
       if (signal?.aborted) throw new RunCancelledError();
+      if (runOptions.skipIfTripped && s.trips > 0) throw new HostCircuitOpenError(key);
       if (isOpenKey(key)) throw new HostCircuitOpenError(key);
 
       const spacing = Math.max(0, Number(runOptions.minSpacingMs ?? minSpacingMs) || 0);
@@ -422,10 +474,11 @@ export function createHostGate({
         circuitOpen: s.openUntil > now(),
         inFlight: s.inFlight,
         maxConcurrent: limitFor(key),
+        trips: s.trips,
       };
     }
     return out;
   }
 
-  return { run, isOpen, snapshot, hostKeyFor, configure, limitFor: (host) => limitFor(hostKeyFor(host)) };
+  return { run, isOpen, hasTripped, snapshot, hostKeyFor, configure, limitFor: (host) => limitFor(hostKeyFor(host)) };
 }
