@@ -11,4 +11,16 @@ $('save').addEventListener('click', async () => {
   await chrome.storage.local.set({ serverUrl, key });
   show('Saved. Open an application tab and click the extension.', true);
 });
+$('pair').addEventListener('click', async () => {
+  const serverUrl = $('serverUrl').value.trim().replace(/\/$/, '');
+  const code = $('code').value.trim();
+  if (!code) return show('Type the code the dashboard shows.', false);
+  show('Pairing…', true);
+  const result = await globalThis.JobAgentPairing.pairWithServer(serverUrl, code);
+  if (!result.ok) return show(result.error, false);
+  await chrome.storage.local.set({ serverUrl, key: result.key });
+  $('key').value = result.key;
+  $('code').value = '';
+  show('Paired. Open an application tab and click the extension.', true);
+});
 function show(text, ok) { $('status').textContent = text; $('status').className = ok ? 'ok' : 'error'; }

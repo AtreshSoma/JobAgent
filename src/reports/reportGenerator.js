@@ -237,6 +237,20 @@ ${htmlTable(['Score', 'Tier', 'Company', 'Title', 'Sponsorship', 'URL'], topRows
 }
 
 /**
+ * The rows a report is built from: this search's jobs, WITHOUT their full
+ * descriptions (audit D5). The report prints none, and reading them dragged
+ * hundreds of MB off disk. Falls back to the full read for a store without a
+ * summary read.
+ * @param {object} db
+ * @returns {object[]}
+ */
+export function reportJobRows(db) {
+  return typeof db.listJobsSummary === 'function'
+    ? db.listJobsSummary({ mode: 'profile' })
+    : db.listJobs({ mode: 'profile' });
+}
+
+/**
  * Write the JSON/CSV/HTML report files for a run.
  *
  * @param {object} args

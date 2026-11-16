@@ -16,16 +16,8 @@
   // have used — the fabrication the server-side answerer already refuses.
   const YEARS_QUESTION = /\b(how many|number of|total)\s+years?\b|\byears?\s+of\s+(?:\w+\s+){0,2}experience\b/i;
   const NAMES_SUBJECT = /\byears?\b.*\b(?:with|in|using|on|doing|as an?|of hands-on)\s+(?!total\b|the industry\b|this field\b|your career\b)\S/i;
+  const MAX_CONTROLS = 400;
   const SKIP_TYPES = new Set(['hidden', 'password', 'submit', 'button', 'reset', 'image']);
-  const ALIASES = {
-    firstName: ['first name', 'given name'], lastName: ['last name', 'surname', 'family name'],
-    preferredName: ['preferred name', 'preferred first name', 'nickname'], fullName: ['full name', 'legal name', 'your name'],
-    email: ['email', 'e-mail'], phone: ['phone number', 'mobile number', 'telephone', 'phone'],
-    addressLine1: ['address line 1', 'street address'], addressLine2: ['address line 2', 'apartment', 'suite'],
-    city: ['city'], state: ['state', 'province', 'region'], zip: ['zip code', 'postal code', 'postcode'],
-    country: ['country'], location: ['current location', 'where are you located', 'location'],
-    linkedin: ['linkedin'], github: ['github'], portfolio: ['portfolio', 'personal website', 'website url'],
-  };
 
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (message?.type !== 'JOB_AGENT_FILL') return false;
@@ -38,6 +30,11 @@
   async function fillPage(payload, connection) {
     const filled = [];
     const blockers = [];
+    if (typeof globalThis.JobAgentFieldLabels?.classifyLabel !== 'function') {
+      const message = 'The extension files are out of date or incomplete (the shared field mapping did not load). Reload the extension and try again.';
+      showBanner(0, 1, message);
+      return result({ contextVerified: false, blockers: [message] });
+    }
     const contextVerified = verifyJobContext(payload, connection);
     if (!contextVerified) {
       const message = 'This page could not be verified as the selected job. Return to the employer application reached from that job posting.';
@@ -60,7 +57,7 @@
       showBanner(0, 1, message);
       return result({ contextVerified: true, formDetected: false, filled, blockers: [message] });
     }
-    const controls = [...applicationRoot.querySelectorAll('input, textarea, select')].slice(0, 160);
+    const controls = [...applicationRoot.querySelectorAll('input, textarea, select')].slice(0, MAX_CONTROLS);
     const profileValues = valuesFrom(payload.profile);
     const decisions = new Map(Object.entries(payload.screeningDecisions || {}).map(([k, v]) => [norm(k), v]));
     let resumeUsed = false;
@@ -264,11 +261,12 @@
     };
   }
 
+  // The label mapping is the runner's own (src/shared/fieldLabels.js, loaded as
+  // fieldLabels.js before this file), so a fix to it reaches the extension too.
   function canonicalFor(label, name) {
     const text = norm(`${label} ${name}`);
     if (/phone.*(extension|device|type|country code)/.test(text)) return null;
-    for (const [key, aliases] of Object.entries(ALIASES)) if (aliases.some((a) => text === a || text.includes(a))) return key;
-    return null;
+    return globalThis.JobAgentFieldLabels.classifyLabel(label) || null;
   }
   function screeningFor(label, answers) {
     const text = norm(label);

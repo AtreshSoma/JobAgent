@@ -18,6 +18,7 @@ import { NOT_HANDLED } from './notHandled.js';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { backupStamp, lastAutoBackupAt, listBackups } from '../../logging/backup.js';
 import { exportBundle } from '../../logging/bundle.js';
+import { coverageTable, readCoverage } from '../../automation/coverageProbe.js';
 import { PACKAGE_VERSION } from '../../version.js';
 import { buildIcs, openFollowUps } from '../../reports/calendar.js';
 import { embedSettings } from '../../llm/embeddings.js';
@@ -79,6 +80,16 @@ export async function handleSystemRoutes(ctx, req, res, { path }) {
     // Settings page's system-health panel. Doctor spawns Python etc., so it
     // runs on demand only, never on the landing path.
     return sendJson(res, 200, await ctx.healthReport());
+  }
+  // What auto-fill finds and can answer, per ATS, from stored probes (audit A1).
+  if (req.method === 'GET' && path === '/api/coverage') {
+    const root = ctx.config?.root;
+    return sendJson(res, 200, coverageTable(root ? readCoverage(root) : []));
+  }
+  // A code to pair the browser extension with this dashboard (audit A12).
+  if (req.method === 'POST' && path === '/api/extension-pairing') {
+    try { ctx.extensionKeyForPairing(); } catch (err) { return sendJson(res, 409, { error: err.message }); }
+    return sendJson(res, 200, ctx.pairing.issue());
   }
   if (req.method === 'GET' && path === '/api/export/jobs.csv') {
     const csv = exportRowsToCsv(buildExportRows(ctx.db, { now: ctx.nowDate() }));

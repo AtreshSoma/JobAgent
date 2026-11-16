@@ -1,0 +1,56 @@
+<!doctype html>
+<!-- HAND-WRITTEN contract fixture (see README.md). The structure follows what is
+     publicly known of Workday's "My Experience" step (data-automation-id
+     attributes, an "Add" button per section that reveals an entry form). It was
+     NOT captured from a live site, so it proves how the filler handles this SHAPE
+     of page, not that a real employer's current form works. -->
+<title>My Experience</title>
+<body>
+<h1>My Experience</h1>
+<section data-automation-id="workExperienceSection">
+  <h3>Work Experience</h3>
+  <div id="work-entries"></div>
+  <button type="button" id="add-work" data-automation-id="add-button" aria-label="Add Work Experience">Add</button>
+</section>
+<section data-automation-id="educationSection">
+  <h3>Education</h3>
+  <div id="edu-entries"></div>
+  <button type="button" id="add-edu" data-automation-id="add-button" aria-label="Add Education">Add</button>
+</section>
+<section>
+  <h3>Websites</h3>
+  <button type="button" id="add-site" aria-label="Add Website">Add</button>
+</section>
+<button type="button" id="next" data-automation-id="bottom-navigation-next-button" onclick="window.__next=1">Save and Continue</button>
+<script>
+  let w = 0; let e = 0;
+  document.getElementById('add-work').addEventListener('click', () => {
+    w += 1;
+    const n = w;
+    const box = document.createElement('fieldset');
+    box.innerHTML = `<legend>Work Experience ${n}</legend>
+      <label for="w${n}-title">Job Title</label><input id="w${n}-title" required>
+      <label for="w${n}-co">Company</label><input id="w${n}-co" required>
+      <label for="w${n}-loc">Location</label><input id="w${n}-loc">
+      <label><input type="checkbox" id="w${n}-cur"> I currently work here</label>
+      <label for="w${n}-fm">From (MM)</label><input id="w${n}-fm" maxlength="2">
+      <label for="w${n}-fy">From (YYYY)</label><input id="w${n}-fy" maxlength="4">
+      <label for="w${n}-tm">To (MM)</label><input id="w${n}-tm" maxlength="2">
+      <label for="w${n}-ty">To (YYYY)</label><input id="w${n}-ty" maxlength="4">
+      <label for="w${n}-desc">Role Description</label><textarea id="w${n}-desc"></textarea>`;
+    document.getElementById('work-entries').append(box);
+  });
+  document.getElementById('add-edu').addEventListener('click', () => {
+    e += 1;
+    const n = e;
+    const box = document.createElement('fieldset');
+    box.innerHTML = `<legend>Education ${n}</legend>
+      <label for="e${n}-school">School or University</label><input id="e${n}-school" required>
+      <label for="e${n}-degree">Degree</label>
+      <select id="e${n}-degree"><option value=""></option><option>Associate's Degree</option><option>Bachelor's Degree</option><option>Master's Degree</option><option>Doctorate</option></select>
+      <label for="e${n}-field">Field of Study</label><input id="e${n}-field">
+      <label for="e${n}-year">Graduation Year</label><input id="e${n}-year" maxlength="4">`;
+    document.getElementById('edu-entries').append(box);
+  });
+  document.getElementById('add-site').addEventListener('click', () => { window.__siteAdded = 1; });
+</script>

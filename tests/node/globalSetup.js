@@ -96,6 +96,9 @@ export default function setup() {
   process.env.JOB_AGENT_RETENTION_SWEEP = 'off';
   // No scheduled backups (P1-6); dashboardBackups.test.js drives them directly.
   process.env.JOB_AGENT_BACKUPS = 'off';
+  // No real LibreOffice/Word/Chromium run to make a cover-letter PDF (audit A10);
+  // letterPdf.test.js passes its own converter.
+  process.env.JOB_AGENT_LETTER_PDF = 'off';
   // No background description fetching: it would call real ATS APIs, and it is
   // off by default anyway. dataQualityDashboard.test.js drives it with stubs.
   process.env.JOB_AGENT_ENRICHMENT = 'off';

@@ -18,6 +18,8 @@
  *     UI can show exactly WHY a job ranked where it did.
  */
 
+import { loadRoleFamilies, titleFamilies } from '../profile/roleFamilies.js';
+import { payFields, payLabel } from '../scoring/payFields.js';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -813,6 +815,9 @@ function boardRow(job, approval, now) {
     employmentCategory: job.employment_category ?? null,
     employmentLabel: EMPLOYMENT_LABELS[job.employment_category] ?? null,
     compensation: job.compensation_text ?? null,
+    // The parsed pay range (audit D6), annual figures; null when none is stated.
+    payMin: job.pay_min ?? null,
+    payMax: job.pay_max ?? null,
     remote: /\bremote\b/.test(haystack),
     // Where the role actually is, resolved once here so the board filter, the
     // coverage stats, and any future column all read the SAME answer rather
@@ -1337,6 +1342,8 @@ const SORTS = {
   // `createdAt` is set on insert and deliberately never updated on
   // re-discovery, so it is a true first-seen timestamp.
   discovered: thenById((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? ''))),
+  // The top of the stated pay range, highest first; no stated pay last (audit D6).
+  pay: thenById((a, b) => (b.payMax ?? -1) - (a.payMax ?? -1)),
 };
 
 /**
@@ -1879,6 +1886,11 @@ export function jobDetail(db, jobId, deps = {}) {
         aliases: scoring.evidenceAliases ?? {}, vocabulary: scoringVocabulary(scoring),
       });
     })(),
+    // The stated pay, parsed (audit D6). "Not stated" is a real answer.
+    pay: (() => {
+      const row = job.pay_checked ? job : { ...job, ...payFields({ compensationText: job.compensation_text, jdText: job.jd_text }) };
+      return { min: row.pay_min ?? null, max: row.pay_max ?? null, period: row.pay_period ?? null, source: row.pay_source ?? null, label: payLabel(row) };
+    })(),
     // What the posting's requirement sections name that the vocabulary does
     // not know, word for word, ranked by how many stored postings ask for it
     // (R12). The person can add one to what is looked for.
@@ -2350,6 +2362,8 @@ function workspaceItem(row, events, { today, timeZone, history = false }) {
     // Needs an employer account (Workday, Oracle, iCIMS…) or none (Greenhouse…).
     access: applicationAccess(row).kind,
     attentionKind: row.attention?.kind ?? null,
+    // F9: was the resume tailored for this job, or the master sent as it is?
+    resumeKind: row.resumeStatus === 'tailored' ? 'Tailored resume' : 'Master resume',
   };
   item.nextAction = workspaceNextAction(row, stage, followUp);
   if (history) {
@@ -2406,6 +2420,13 @@ function workspaceParts(db, now, config) {
     if (key) perCompany.set(key, (perCompany.get(key) ?? 0) + 1);
   }
   for (const item of items) item.sameCompany = Math.max(0, (perCompany.get(companyKey(item.company)) ?? 1) - 1);
+  // F9: the kind of role each submitted application was for, from its title.
+  try {
+    const taxonomy = loadRoleFamilies(config?.root ?? undefined);
+    for (const item of items) {
+      if (item.appStatus === APP_STATUS.SUBMITTED) item.roleFamily = titleFamilies(item.title ?? '', taxonomy).top?.label ?? null;
+    }
+  } catch { /* the role taxonomy is optional here */ }
   items.sort(workspaceOrder);
   return { rows, items, today, events };
 }

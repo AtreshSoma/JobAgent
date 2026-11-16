@@ -336,6 +336,34 @@ function questionCard(q) {
   item.append(el('h5', { class: 'pf-q-text', id: `qt-${q.key}`, text: q.label }), questionMeta(q));
   if (q.note) item.append(el('div', { class: 'attention' }, el('span', { class: 'mark', text: '!' }), el('div', { text: q.note })));
 
+  // A5: this looks like a question you already answered. One press adds this
+  // wording to that answer; nothing is applied until then.
+  if (q.similarTo) {
+    item.append(el('div', { class: 'evidence-note pf-q-suggest' },
+      el('div', { text: `This looks like one you already answered: "${q.similarTo.label}". If it means the same thing, use the same answer.` }),
+      el('button', {
+        type: 'button', class: 'small primary', 'data-action': 'same-as-question', 'data-key': q.key,
+        'data-answer-id': q.similarTo.answerId, text: 'Same answer',
+      })));
+  }
+
+  // A6: the number the work history supports, with the roles behind it. Saved
+  // only when the person presses the button, and editable first.
+  if (q.suggestedExperience) {
+    const x = q.suggestedExperience;
+    item.append(el('div', { class: 'evidence-note pf-q-suggest' },
+      el('div', {},
+        `Your work history suggests ${x.answer} with ${x.subject}, from: `
+        + x.roles.map((r) => `${r.title || 'role'} at ${r.employer || 'an employer'} (${r.start}–${r.end})`).join('; ')
+        + '. Overlaps are counted once and the figure is rounded down. Check it before you use it.'),
+      el('label', { class: 'pf-q-label', for: `qx-${q.key}`, text: `Years with ${x.subject}` }),
+      el('input', { type: 'text', id: `qx-${q.key}`, 'data-q-years': q.key, 'data-subject': x.subject, value: x.answer, autocomplete: 'off', maxlength: '40' }),
+      el('button', {
+        type: 'button', class: 'small primary', 'data-action': 'confirm-skill-years', 'data-key': q.key,
+        text: 'Use this for every form',
+      })));
+  }
+
   // The live form's own choices, as one-click picks. The stored value stays
   // free text; the filler maps it onto whatever the next form calls it.
   const options = (q.options ?? []).map((o) => o.label).filter(Boolean);
@@ -602,6 +630,31 @@ export async function saveQuestionAnswer(key) {
   }
 }
 
+/** Use an earlier answer for a reworded question (A5). */
+export async function sameAsQuestion(key, answerId) {
+  profileMessage('Saving…');
+  try {
+    await postJson('/api/profile/questions/same-as', { key, answerId });
+    toast('Done. Forms that word it this way now use that answer.', 'good');
+    profileMessage('');
+    await renderProfile();
+  } catch (err) { profileMessage(err.message, 'st-blocked'); }
+}
+
+/** Save the confirmed years with a skill (A6); later forms are answered with it. */
+export async function confirmSkillYears(key) {
+  const box = $('profileBody').querySelector(`[data-q-years="${cssEscape(key)}"]`);
+  const answer = box?.value ?? '';
+  if (!answer.trim()) { profileMessage('Type the number of years first.', 'st-blocked'); return; }
+  profileMessage('Saving…');
+  try {
+    await postJson('/api/profile/skill-experience', { key, subject: box.dataset.subject, answer });
+    toast(`Saved. Forms asking about ${box.dataset.subject} now get "${answer.trim()}".`, 'good');
+    profileMessage('');
+    await renderProfile();
+  } catch (err) { profileMessage(err.message, 'st-blocked'); }
+}
+
 export async function setQuestionStatus(key, status) {
   try {
     await postJson('/api/profile/questions/status', { key, status });
@@ -740,8 +793,77 @@ export async function openHealth() {
     c.detail ?? '—',
     c.fix ?? '—',
   ])));
+  await renderCoverage(body);
+  renderExtensionPairing(body);
+  renderSignOut(body);
   await renderBackups(body);
   await renderLlmUsage(body);
+}
+
+/**
+ * Auto-fill coverage per ATS (audit A1): what a dry run found and could answer
+ * on probed forms. Said plainly on the table: saved pages and local fixtures,
+ * page one of each form, no live site.
+ */
+export async function renderCoverage(host) {
+  let table;
+  try { table = await api('/api/coverage'); } catch { return; }
+  const section = el('section', { class: 'coverage', 'aria-labelledby': 'coverageTitle' });
+  section.append(el('h3', { id: 'coverageTitle', text: 'Auto-fill coverage' }));
+  if (!table.rows?.length) {
+    section.append(el('p', { class: 'muted', text: 'No form has been probed yet. A probe reads one application page without typing or clicking, and records which questions auto-fill could answer.' }));
+  } else {
+    section.append(miniTable(['ATS', 'Forms', 'Fields found', 'Would fill', 'Need you', 'Coverage'], table.rows.map((r) => [
+      r.ats, fmt(r.forms), fmt(r.found), fmt(r.mapped),
+      r.requiredNeedsYou ? `${fmt(r.needsYou)} (${fmt(r.requiredNeedsYou)} required)` : fmt(r.needsYou),
+      `${r.percent}%`,
+    ])));
+  }
+  section.append(el('p', { class: 'muted fineprint', text: table.basis }));
+  host.append(section);
+}
+
+/**
+ * Pair the browser extension (audit A12): a short code to type into the
+ * extension's settings page, instead of copying a key from .env.
+ */
+export function renderExtensionPairing(host) {
+  const section = el('section', { class: 'pairing', 'aria-labelledby': 'pairingTitle' });
+  section.append(el('h3', { id: 'pairingTitle', text: 'Browser extension' }));
+  const out = el('p', { class: 'pairing-code', role: 'status', 'aria-live': 'polite' });
+  const button = el('button', { type: 'button', class: 'small', text: 'Pair the extension' });
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const { code, expiresAt } = await postJson('/api/extension-pairing', {});
+      const minutes = Math.max(1, Math.round((Date.parse(expiresAt) - Date.now()) / 60000));
+      out.replaceChildren(el('b', { class: 'code', text: code }),
+        el('span', { class: 'muted', text: ` Type this into the extension's settings page within ${minutes} minutes. It works once.` }));
+    } catch (err) { out.textContent = err.message; } finally { button.disabled = false; }
+  });
+  section.append(el('p', { class: 'muted', text: 'Open the extension\'s settings page, then show a code here and type it in. No key to copy.' }), button, out);
+  host.append(section);
+}
+
+/**
+ * Sign out everywhere (audit P5): remove the active person's browser profile,
+ * and with it every application-site sign-in on this computer.
+ */
+export function renderSignOut(host) {
+  const section = el('section', { class: 'signout', 'aria-labelledby': 'signOutTitle' });
+  section.append(el('h3', { id: 'signOutTitle', text: 'Application-site sign-ins' }));
+  const out = el('p', { class: 'muted', role: 'status', 'aria-live': 'polite' });
+  const button = el('button', { type: 'button', class: 'small', text: 'Sign out everywhere' });
+  button.addEventListener('click', async () => {
+    if (!window.confirm('Sign out of every application site auto-fill has used on this computer? You will sign in again on the next auto-fill.')) return;
+    button.disabled = true;
+    try {
+      const { removed } = await postJson('/api/profile/sign-out-everywhere', { confirm: true });
+      out.textContent = removed.length ? 'Signed out. The next auto-fill opens a fresh browser.' : 'There were no saved sign-ins to remove.';
+    } catch (err) { out.textContent = err.message; } finally { button.disabled = false; }
+  });
+  section.append(el('p', { class: 'muted', text: 'Auto-fill keeps your sign-ins to sites such as Workday in a browser folder on this computer, unencrypted. This removes them.' }), button, out);
+  host.append(section);
 }
 
 /** LLM usage over the last 30 days (P3-5): tokens per task and model. */

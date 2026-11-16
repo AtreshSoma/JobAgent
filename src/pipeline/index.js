@@ -17,6 +17,7 @@
  * pipeline is fully testable offline.
  */
 
+import { createBoardFingerprints } from '../search/boardFingerprints.js';
 import { join } from 'node:path';
 import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -49,6 +50,8 @@ import { EVENT_TYPES } from '../logging/jobLogger.js';
 import { dateStamp, formatPostedRelative } from '../utils/dates.js';
 import { buildJobPaths } from '../utils/outputPaths.js';
 import { keywordsForJob, tailorResumeForJob, writeLetterDocx } from '../resume/tailorRunner.js';
+import { refreshLetterPdf } from '../apply/letterPdf.js';
+import { requiredFormFieldsFor } from '../automation/coverageProbe.js';
 import { composeGroundedLetter, letterSettings } from '../apply/groundedLetter.js';
 import { recordVersion } from '../apply/documentVersions.js';
 import { letterModeFor } from '../apply/letterMode.js';
@@ -215,6 +218,11 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   // whose id only exists after a detail read) — see src/search/detailBudget.js.
   const detailCache = deps.detailCache !== undefined ? deps.detailCache : createDetailCache(db);
   const sourceTimings = deps.sourceTimings ?? createSourceTimings({ root: config.root });
+  // Which boards changed since the last search (D1). Injectable so tests never
+  // touch the filesystem; null turns skipping off.
+  const boardFingerprints = deps.boardFingerprints !== undefined
+    ? deps.boardFingerprints
+    : createBoardFingerprints({ root: config.root });
   const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
@@ -238,6 +246,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       // per-source timing record behind for diagnosis. Injectable so tests
       // never touch the filesystem.
       sourceTimings,
+      boardFingerprints,
     },
     hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
@@ -250,6 +259,11 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       return false;
     },
   });
+  // A completed sweep starts the full-sweep clock again; a cancelled one does not.
+  try {
+    boardFingerprints?.finishRun({ completed: !searchCancelled });
+    boardFingerprints?.save();
+  } catch { /* the fingerprints are an optimisation; losing them only means a full read next time */ }
   logger.event(EVENT_TYPES.SEARCH_END, {
     message: `Search complete: ${jobs.length} jobs, ${duplicates.length} dupes, ${errors.length} errors`,
     meta: { found: jobs.length, duplicates: duplicates.length, errors: errors.length },
@@ -900,6 +914,14 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
         logger.warn?.(`cover letter .docx not written: ${err.message}`);
       }
     }
+    // And as a PDF, for a letter slot that takes only PDF (audit A10). Any PDF
+    // of an earlier text is removed first; a failed render leaves none.
+    const letterPdfFn = deps.letterPdfFn ?? (deps.writeFileImpl ? null : refreshLetterPdf);
+    if (letterPdfFn) {
+      const made = await letterPdfFn(coverLetterPath, { regenerate: Boolean(cover.docxPath), root: config.root, env: deps.env });
+      cover.pdfPath = made?.pdfPath ?? null;
+      if (!cover.pdfPath && cover.docxPath) logger.warn?.(`cover letter PDF not written: ${made?.reason ?? 'unknown'}`);
+    }
     logger.event(EVENT_TYPES.COVER_LETTER_GENERATED, {
       jobId: job.id, message: `cover letter (${cover.wordCount} words, ${cover.grounding.mode})`,
     });
@@ -937,7 +959,9 @@ export async function preparePacket({ config, db, logger, job, score, tier, deps
     // is reviewing days after it was built.
     owner: packetOwner({ ...config, resumeFingerprint: masterResumeFingerprint(config.root) }),
     atsReport: resumeAtsReport,
-    formFields: job.formFields ?? [],
+    // The questions the form asks, known BEFORE auto-fill starts when a probe of
+    // this exact form exists (audit A13); empty otherwise, as before.
+    formFields: job.formFields ?? requiredFormFieldsFor(config.root, job.url),
     html: job.html ?? '',
   });
   const packetPath = writePacket(packet, outPaths.folder, outPaths.packetName);

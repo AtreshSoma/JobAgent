@@ -46,6 +46,7 @@ import { detectBlocker } from './guards.js';
  * between tests.
  */
 const liveProfiles = new Map(); // userDataDir -> { context, chromium, closed }
+const launching = new Map(); // userDataDir -> promise of an in-flight launch (single-flight, audit A11)
 
 /** A session backed by the SHARED profile context: close() closes only its tab. */
 function sharedSession(context, page) {
@@ -60,6 +61,11 @@ function sharedSession(context, page) {
   };
 }
 
+/** Persistent profile folders a browser in this process has open (audit P5). */
+export function openProfileDirs() {
+  return [...liveProfiles.entries()].filter(([, e]) => !e.closed).map(([dir]) => dir);
+}
+
 export async function createBrowserSession({
   headless = false, slowMo = 0, channel = null, userDataDir = null, deps = {},
 } = {}) {
@@ -67,6 +73,12 @@ export async function createBrowserSession({
 
   // Persistent profile: reuse a real, signed-in browser profile.
   if (userDataDir) {
+    // Several tabs may ask at once (audit A11). Only the first may launch the
+    // browser; the rest wait for it and then open a tab in it, because a second
+    // launch would fight for the profile lock and fall back to a logged-out one.
+    for (let waited = 0; waited < 2 && launching.has(userDataDir); waited += 1) {
+      await launching.get(userDataDir).catch(() => {});
+    }
     const entry = liveProfiles.get(userDataDir);
     if (entry && !entry.closed && entry.chromium === chromium) {
       try {
@@ -77,26 +89,38 @@ export async function createBrowserSession({
         liveProfiles.delete(userDataDir);
       }
     }
+    const launch = (async () => {
+      try {
+        const context = await chromium.launchPersistentContext(userDataDir, {
+          headless,
+          slowMo,
+          ...(channel ? { channel } : {}),
+          acceptDownloads: false,
+        });
+        const e = { context, chromium, closed: false };
+        context.once?.('close', () => {
+          e.closed = true;
+          if (liveProfiles.get(userDataDir) === e) liveProfiles.delete(userDataDir);
+        });
+        liveProfiles.set(userDataDir, e);
+        return e;
+      } catch {
+        // The profile is locked by a browser this process does NOT own (e.g. a
+        // review window survived a server restart). Fall back to an ISOLATED
+        // context so the fill still navigates — saved logins just won't apply
+        // to this one run.
+        return null;
+      }
+    })();
+    launching.set(userDataDir, launch);
     try {
-      const context = await chromium.launchPersistentContext(userDataDir, {
-        headless,
-        slowMo,
-        ...(channel ? { channel } : {}),
-        acceptDownloads: false,
-      });
-      const e = { context, chromium, closed: false };
-      context.once?.('close', () => {
-        e.closed = true;
-        if (liveProfiles.get(userDataDir) === e) liveProfiles.delete(userDataDir);
-      });
-      liveProfiles.set(userDataDir, e);
-      const page = context.pages()[0] ?? (await context.newPage());
-      return sharedSession(context, page);
-    } catch {
-      // The profile is locked by a browser this process does NOT own (e.g. a
-      // review window survived a server restart). Fall back to an ISOLATED
-      // context so the fill still navigates — saved logins just won't apply
-      // to this one run.
+      const launched = await launch;
+      if (launched) {
+        const page = launched.context.pages()[0] ?? (await launched.context.newPage());
+        return sharedSession(launched.context, page);
+      }
+    } finally {
+      if (launching.get(userDataDir) === launch) launching.delete(userDataDir);
     }
   }
 

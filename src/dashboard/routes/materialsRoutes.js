@@ -15,6 +15,8 @@
  *   POST /api/jobs/:id/letter-draft         a letter for a job that has none (not saved)
  *   GET  /api/jobs/:id/resume-diff          master vs tailored, line by line
  *   POST /api/jobs/:id/keep-bullets         {bullets} never omitted on the next tailoring
+ *   POST /api/jobs/:id/draft-answer         {question} a grounded draft with its cited lines (not saved)
+ *   GET/POST/DELETE /api/jobs/:id/approved-answers  answers you approved for THIS job only
  *
  * Nothing here submits, approves or fills anything. Editing a letter that is
  * part of an approved packet sends the packet back to review, exactly like an
@@ -30,14 +32,18 @@ import {
   letterTextFromUpload, masterLetterState, readMasterLetterText, readMasterLetterVersion,
   restoreMasterLetter, saveMasterLetter, starterLetter,
 } from '../../apply/masterLetter.js';
+import { approveAnswer, readApprovedAnswers, removeApprovedAnswer } from '../../apply/approvedAnswers.js';
+import { draftGroundedAnswer } from '../../apply/groundedAnswer.js';
 import { assessLetter } from '../../apply/letterQuality.js';
 import { generateCoverLetter } from '../../apply/coverLetter.js';
 import { readManifest, recordVersion } from '../../apply/documentVersions.js';
 import { APPROVAL_STATUS } from '../../apply/approvalQueue.js';
+import { requirementPhrases } from '../../scoring/requirementPhrases.js';
 import { diffResume } from '../../resume/resumeDiff.js';
 import { extractDocxText } from '../../resume/docxText.js';
 import { keptBulletsFor, setKeptBullets } from '../../resume/keepBullets.js';
 import { writeLetterDocx } from '../../resume/tailorRunner.js';
+import { refreshLetterPdf } from '../../apply/letterPdf.js';
 import { masterResumeFile } from '../../profile/workspace.js';
 import { assertInsideDirectory } from '../../utils/pathSafe.js';
 import { writeFileAtomic } from '../../utils/fsSafe.js';
@@ -171,13 +177,44 @@ export async function handleMaterialsRoutes(ctx, req, res, { url, path }) {
   }
 
   // ── one job's materials ─────────────────────────────────────────────────
-  const m = path.match(/^\/api\/jobs\/([^/]+)\/(cover-letter|letter-draft|resume-diff|keep-bullets)$/);
+  const m = path.match(/^\/api\/jobs\/([^/]+)\/(cover-letter|letter-draft|resume-diff|keep-bullets|draft-answer|approved-answers)$/);
   if (!m) return NOT_HANDLED;
   const jobId = decodeURIComponent(m[1]);
   const action = m[2];
   const job = ctx.db.getJob(jobId);
   if (!job) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
   const root = rootOf(ctx);
+
+  // ── Draft answers to open questions (A4). A draft is shown, never saved; an
+  // answer is kept only when the person approves it, for this job only.
+  if (action === 'draft-answer' && req.method === 'POST') {
+    const body = await readBody(req, 20_000);
+    let requirements = [];
+    try { requirements = requirementPhrases(job.jd_text ?? '', {}).map((p) => p.phrase).slice(0, 20); } catch { /* hints only */ }
+    const draft = await (ctx.deps?.draftAnswerFn ?? draftGroundedAnswer)({
+      job, question: String(body.question ?? ''), config: ctx.config, requirements, env: process.env, deps: ctx.deps ?? {},
+    });
+    return sendJson(res, 200, draft);
+  }
+  if (action === 'approved-answers' && req.method === 'GET') {
+    return sendJson(res, 200, { answers: readApprovedAnswers(root, jobId) });
+  }
+  if (action === 'approved-answers' && req.method === 'POST') {
+    const body = await readBody(req, 50_000);
+    try {
+      const saved = approveAnswer(root, jobId, {
+        question: body.question, text: body.text, evidence: body.evidence, source: body.source === 'draft' ? 'draft' : 'written',
+      });
+      return sendJson(res, 200, { saved, answers: readApprovedAnswers(root, jobId) });
+    } catch (err) {
+      return sendJson(res, 400, { error: err.message });
+    }
+  }
+  if (action === 'approved-answers' && req.method === 'DELETE') {
+    const body = await readBody(req, 20_000);
+    removeApprovedAnswer(root, jobId, String(body.question ?? ''));
+    return sendJson(res, 200, { answers: readApprovedAnswers(root, jobId) });
+  }
 
   if (action === 'cover-letter' && req.method === 'GET') {
     const file = job.cover_letter_path;
@@ -216,6 +253,11 @@ export async function handleMaterialsRoutes(ctx, req, res, { url, path }) {
     if (existsSync(docxPath) && ctx.deps?.writeLetterDocxFn !== false) {
       try { docx = await (ctx.deps?.writeLetterDocxFn ?? writeLetterDocx)({ text, path: docxPath, root, deps: ctx.deps ?? {} }); }
       catch (err) { ctx.logger?.warn?.(`edited cover letter .docx not refreshed: ${err.message}`); }
+    }
+    // The PDF follows the text too (audit A10): the old one is removed, and a
+    // new one is rendered only from a Word copy that was just refreshed.
+    if (existsSync(docxPath) && ctx.deps?.letterPdfFn !== false) {
+      await (ctx.deps?.letterPdfFn ?? refreshLetterPdf)(file, { regenerate: Boolean(docx), root, env: process.env });
     }
     let version = null;
     if (folder) {

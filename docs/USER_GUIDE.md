@@ -110,7 +110,11 @@ npm run setup                      # seed your personal config from the examples
 cp .env.example .env               # then edit it. DRY_RUN needs no secrets
 ```
 
-**Python (resume tailoring).** Use a virtual environment. On macOS (Homebrew)
+**Python (resume tailoring).**
+
+**One step:** `npm run setup:all` installs the Node dependencies, makes `.venv` with Python 3.12+ and installs `requirements.txt`, downloads the form-filling browser, and ends on the `npm run doctor` report. The launchers also offer the Python step the first time they run, and refresh it when `requirements.txt` changes. JobAgent finds `.venv` on its own, so `PYTHON=` in `.env` is optional. The manual steps:
+
+Use a virtual environment. On macOS (Homebrew)
 and recent Debian/Ubuntu a bare `pip install` into the system Python is refused
 with `externally-managed-environment` (PEP 668) — that is the OS protecting
 itself, and a venv is the fix, not `--break-system-packages`:
@@ -471,7 +475,7 @@ The unpacked Manifest V3 extension in `extension/` moves an approved job from it
 |:--:|---|
 | **1** | Start the dashboard with `npm run dashboard` |
 | **2** | Open `chrome://extensions` or `edge://extensions`, turn on **Developer mode**, choose **Load unpacked**, and select this repository's `extension` folder |
-| **3** | Open the extension's **Connection settings**. Keep the server at `http://127.0.0.1:4646` and paste the value of `JOB_AGENT_EXTENSION_KEY` from your local `.env` |
+| **3** | Open the extension's **Connection settings**. Keep the server at `http://127.0.0.1:4646`. In the dashboard open **System health → Pair the extension**, then type the code it shows into **Pairing code** and press **Pair**. The code works once and lasts five minutes. (Pasting a key by hand still works, under "Or paste the key by hand".) |
 | **4** | Prepare and approve a job in the UI, select its row, and click the extension. The selected ID transfers automatically through the dashboard URL, so there is nothing to copy and paste |
 | **5** | Choose **Open application**. On LinkedIn, Indeed, or an employer job page, choose **Start / fill application**. It starts the application when it needs to, or fills the visible form step and attaches the approved resume. Review it, continue, and run it again on later ATS steps |
 
@@ -850,6 +854,8 @@ npm run assist         # open browser + fill, STOP before submit
 npm run end-to-end     # prepare-apps then assist (stops at approval boundary)
 npm run watch          # poll on an interval
 ```
+
+**A search every morning, without the dashboard open.** `npm run schedule` shows the entry for your computer's own scheduler (launchd on macOS, cron on Linux, Task Scheduler on Windows) for one search-and-score cycle with a desktop notification. `npm run schedule -- --install` adds it (`--time 06:45` for another time), and `npm run schedule -- --remove` takes it out. The scheduled run never prepares, fills or submits anything; its log is `logs/scheduled.log`.
 
 ### Human approval workflow
 

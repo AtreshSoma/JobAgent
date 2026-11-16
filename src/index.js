@@ -51,7 +51,7 @@
 import { loadConfig } from './config/loadConfig.js';
 import { openDatabase } from './logging/db.js';
 import { JobLogger, createPinoLogger } from './logging/jobLogger.js';
-import { generateReport } from './reports/reportGenerator.js';
+import { generateReport, reportJobRows } from './reports/reportGenerator.js';
 import { runPipeline } from './pipeline/index.js';
 import {
   runDiscover, runScore, runPrepareApps, runAssist, runEndToEnd,
@@ -590,7 +590,7 @@ async function runCommand(command, parsed, env) {
         // The report answers "how is MY search going", so it reads the
         // personalized rows only. Blending in an ad-hoc role search would put
         // roles the user never targeted into their own fit statistics.
-        const jobs = db.listJobs({ mode: 'profile' });
+        const jobs = reportJobRows(db);
         const report = generateReport({ jobs, outDir: join(config.root, 'reports') });
         pino.info({ files: report.files }, `Report regenerated for ${jobs.length} jobs`);
         ui.success(`Regenerated report for ${ui.c.bold(jobs.length)} jobs.`);
@@ -633,7 +633,7 @@ async function runLegacyMode(parsed, env) {
 
   try {
     if (mode === 'REPORT') {
-      const jobs = db.listJobs({ mode: 'profile' });
+      const jobs = reportJobRows(db);
       const report = generateReport({ jobs, outDir: join(config.root, 'reports') });
       pino.info({ files: report.files }, `Report regenerated for ${jobs.length} jobs`);
       return { mode, report };

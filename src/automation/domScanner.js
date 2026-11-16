@@ -25,6 +25,28 @@ function collectFields() {
 
   const cssEscape = (s) =>
     (window.CSS && CSS.escape ? CSS.escape(s) : String(s).replace(/[^a-zA-Z0-9_-]/g, '\\$&'));
+  // OPEN SHADOW ROOTS (audit A8). document.querySelectorAll never enters one,
+  // so a web-component form (SmartRecruiters and others) looked fieldless.
+  // deepAll walks the page in document order and enters every open shadow root
+  // where its host sits; byId and scopeOf look a label or reference up in the
+  // control's OWN root. Playwright's CSS engine pierces open shadow roots, so
+  // the selectors built below resolve there too.
+  const deepAll = (selector, root = document) => {
+    const out = [];
+    const walk = (node) => {
+      for (const el of node.querySelectorAll('*')) {
+        if (el.matches(selector)) out.push(el);
+        if (el.shadowRoot) walk(el.shadowRoot);
+      }
+    };
+    walk(root);
+    return out;
+  };
+  const scopeOf = (el) => {
+    const root = el?.getRootNode?.();
+    return root && typeof root.querySelector === 'function' ? root : document;
+  };
+  const byId = (id, from) => scopeOf(from).getElementById?.(id) ?? document.getElementById(id);
 
   const isVisible = (el) => {
     if (!el) return false;
@@ -55,8 +77,8 @@ function collectFields() {
     if (!node || node.nodeType !== 1) return 0;
     return (node.matches(FORM_CONTROL) ? 1 : 0) + node.querySelectorAll(FORM_CONTROL).length;
   };
-  const refText = (ids) => String(ids || '').split(/\s+/).filter(Boolean)
-    .map((id) => textOf(document.getElementById(id))).filter(Boolean).join(' ').trim();
+  const refText = (ids, from) => String(ids || '').split(/\s+/).filter(Boolean)
+    .map((id) => textOf(byId(id, from))).filter(Boolean).join(' ').trim();
 
   // THE QUESTION PRINTED ABOVE A CONTROL that nothing associates with it.
   // Rippling's custom questions are a <p> in the block before the field, with
@@ -86,7 +108,7 @@ function collectFields() {
   const labelFor = (el) => {
     // 1. <label for="id">
     if (el.id) {
-      const lab = document.querySelector(`label[for="${cssEscape(el.id)}"]`);
+      const lab = scopeOf(el).querySelector(`label[for="${cssEscape(el.id)}"]`);
       if (lab && lab.textContent.trim()) return lab.textContent.trim();
     }
     // 2. Wrapping <label>
@@ -95,7 +117,7 @@ function collectFields() {
     // 3. aria-labelledby (every id it names), then a MEANINGFUL aria-label.
     //    labelledby wins, as in the accessible-name algorithm: Rippling's
     //    location box carries both, and "textbox" is the wrong one.
-    const byText = refText(el.getAttribute('aria-labelledby'));
+    const byText = refText(el.getAttribute('aria-labelledby'), el);
     if (byText && !isGeneric(byText)) return byText;
     const aria = (el.getAttribute('aria-label') || '').trim();
     if (aria && !isGeneric(aria)) return aria;
@@ -152,11 +174,11 @@ function collectFields() {
     if (el.id) return `#${cssEscape(el.id)}`;
     if (el.name) {
       const tag = el.tagName.toLowerCase();
-      const same = document.querySelectorAll(`${tag}[name="${cssEscape(el.name)}"]`);
+      const same = deepAll(`${tag}[name="${cssEscape(el.name)}"]`);
       if (same.length === 1) return `${tag}[name="${cssEscape(el.name)}"]`;
       if (el.type) {
         const typed = `${tag}[name="${cssEscape(el.name)}"][type="${el.type}"]`;
-        if (document.querySelectorAll(typed).length === 1) return typed;
+        if (deepAll(typed).length === 1) return typed;
       }
       return handleFor(el);
     }
@@ -185,7 +207,7 @@ function collectFields() {
     if (group) {
       if (group.getAttribute('aria-label')) return group.getAttribute('aria-label').trim();
       const by = group.getAttribute('aria-labelledby');
-      const ref = by && document.getElementById(by.split(/\s+/)[0]);
+      const ref = by && byId(by.split(/\s+/)[0], el);
       if (ref && textOf(ref)) return textOf(ref);
     }
     // Nearest ancestor that holds the whole group: the text before it.
@@ -195,7 +217,7 @@ function collectFields() {
     let box = el.parentElement;
     for (let depth = 0; box && depth < 8 && box.tagName !== 'FORM'; depth += 1, box = box.parentElement) {
       const all = name ? box.querySelectorAll(`input[name="${cssEscape(name)}"]`).length : 1;
-      const mine = name ? document.querySelectorAll(`input[name="${cssEscape(name)}"]`).length : 1;
+      const mine = name ? deepAll(`input[name="${cssEscape(name)}"]`).length : 1;
       if (all < mine) continue;
       const prev = box.previousElementSibling;
       const t = textOf(prev);
@@ -212,7 +234,7 @@ function collectFields() {
   // options into "sms_opt_in".
   const optionLabelFor = (el) => {
     if (el.id) {
-      const lab = document.querySelector(`label[for="${cssEscape(el.id)}"]`);
+      const lab = scopeOf(el).querySelector(`label[for="${cssEscape(el.id)}"]`);
       if (lab && textOf(lab)) return textOf(lab);
     }
     const wrap = el.closest('label');
@@ -325,7 +347,7 @@ function collectFields() {
   // seven Yes/No questions on one Rippling posting, gender, ethnicity and veteran status
   // were invisible to the scanner, never filled, never reported (2026-11-12).
   const CUSTOM_SELECT = '[role="combobox"]:not(input):not(select):not(textarea), button[aria-haspopup="listbox"]';
-  const controls = Array.from(document.querySelectorAll(`input, textarea, select, ${CUSTOM_SELECT}`));
+  const controls = deepAll(`input, textarea, select, ${CUSTOM_SELECT}`);
 
   for (const el of controls) {
     if (out.length >= MAX_FIELDS) break;
@@ -360,7 +382,7 @@ function collectFields() {
     // of it from "You need to agree to the terms and conditions."
     const styledChoice = (rawType === 'checkbox' || rawType === 'radio') && !isVisible(el)
       && (() => {
-        const lab = (el.id && document.querySelector(`label[for="${cssEscape(el.id)}"]`)) || el.closest('label');
+        const lab = (el.id && scopeOf(el).querySelector(`label[for="${cssEscape(el.id)}"]`)) || el.closest('label');
         // ...or draws a role="radio"/"checkbox" box around it (Rippling).
         return Boolean(lab && isVisible(lab) && lab.textContent.trim()) || Boolean(styledBoxOf(el));
       })();
@@ -374,7 +396,7 @@ function collectFields() {
       if (!sel) {
         const host = el.closest('fieldset[id], [id]');
         sel = host ? `#${cssEscape(host.id)} input[type="file"]` : 'input[type="file"]';
-        if (document.querySelectorAll(sel).length !== 1) sel = null;
+        if (deepAll(sel).length !== 1) sel = null;
       }
       const label = labelFor(el)
         || (el.closest('fieldset')?.querySelector('legend')?.textContent ?? '').trim();
@@ -396,7 +418,7 @@ function collectFields() {
       const groupKey = `${el.name || ''}`;
       if (!el.name || seenRadioGroups.has(groupKey)) continue;
       seenRadioGroups.add(groupKey);
-      const radios = Array.from(document.querySelectorAll(`input[type="radio"][name="${cssEscape(el.name)}"]`));
+      const radios = deepAll(`input[type="radio"][name="${cssEscape(el.name)}"]`);
       const options = radios.map((r) => ({
         value: r.value,
         label: optionLabelFor(r) || r.value,
@@ -478,9 +500,9 @@ function collectFields() {
   // Tag (never drop) incidental controls, so callers decide what to ignore.
   for (const field of out) {
     let el;
-    try { el = field.selector ? document.querySelector(field.selector) : null; } catch { el = null; }
+    try { el = field.selector ? (deepAll(field.selector)[0] ?? null) : null; } catch { el = null; }
     if (!el && field.kind === 'radio' && field.options?.[0]?.selector) {
-      try { el = document.querySelector(field.options[0].selector); } catch { el = null; }
+      try { el = deepAll(field.options[0].selector)[0] ?? null; } catch { el = null; }
     }
     const reason = el ? incidentalReason(el, field.label) : null;
     if (reason) field.incidental = reason;
@@ -637,6 +659,22 @@ export async function detectValidationErrors(scope) {
   try {
     const errors = await scope.evaluate(() => {
       const out = new Set();
+      // Open shadow roots are read too (audit A8): see collectFields.
+      const deepAll = (selector, root = document) => {
+        const found = [];
+        const walk = (node) => {
+          for (const el of node.querySelectorAll('*')) {
+            if (el.matches(selector)) found.push(el);
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(root);
+        return found;
+      };
+      const byId = (id, from) => {
+        const root = from?.getRootNode?.();
+        return (root && typeof root.getElementById === 'function' ? root.getElementById(id) : null) ?? document.getElementById(id);
+      };
       const visible = (el) => {
         if (!el) return false;
         const style = window.getComputedStyle(el);
@@ -649,12 +687,12 @@ export async function detectValidationErrors(scope) {
         if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
         const id = el.getAttribute('aria-describedby');
         if (id) {
-          const desc = document.getElementById(id.split(/\s+/)[0]);
+          const desc = byId(id.split(/\s+/)[0], el);
           if (desc) return desc.textContent.trim();
         }
         return el.name || el.id || 'field';
       };
-      for (const el of document.querySelectorAll('[aria-invalid="true"]')) {
+      for (const el of deepAll('[aria-invalid="true"]')) {
         if (visible(el)) out.add(`invalid field: ${labelFor(el).slice(0, 80)}`);
       }
       const errorSel = '[role="alert"], .field-error, .error-message, .help-block.error, '
@@ -669,7 +707,7 @@ export async function detectValidationErrors(scope) {
           || /inset\(\s*50%/.test(st.clipPath);
       };
       const ANNOUNCEMENT = /^(?:.*\bpage is loaded|loading\b.*|.*\bhas loaded|\d+ results?\b.*)$/i;
-      for (const el of document.querySelectorAll(errorSel)) {
+      for (const el of deepAll(errorSel)) {
         const text = (el.textContent || '').trim();
         if (!visible(el) || !text || text.length > 200) continue;
         if (el.matches('[role="alert"]') && (screenReaderOnly(el) || ANNOUNCEMENT.test(text))) continue;
@@ -701,6 +739,22 @@ export async function unfilledRequiredControls(scope) {
   if (!scope || typeof scope.evaluate !== 'function') return null;
   try {
     const missing = await scope.evaluate(() => {
+      // Open shadow roots are read too (audit A8): see collectFields.
+      const deepAll = (selector, root = document) => {
+        const found = [];
+        const walk = (node) => {
+          for (const el of node.querySelectorAll('*')) {
+            if (el.matches(selector)) found.push(el);
+            if (el.shadowRoot) walk(el.shadowRoot);
+          }
+        };
+        walk(root);
+        return found;
+      };
+      const byId = (id, from) => {
+        const root = from?.getRootNode?.();
+        return (root && typeof root.getElementById === 'function' ? root.getElementById(id) : null) ?? document.getElementById(id);
+      };
       const visible = (el) => {
         const style = window.getComputedStyle(el);
         if (style.display === 'none' || style.visibility === 'hidden') return false;
@@ -730,7 +784,7 @@ export async function unfilledRequiredControls(scope) {
       const labelOf = (el) => {
         if (el.labels && el.labels.length) return el.labels[0].textContent.trim();
         const by = (el.getAttribute('aria-labelledby') || '').split(/\s+/).filter(Boolean)
-          .map((id) => textOf(document.getElementById(id))).filter(Boolean).join(' ');
+          .map((id) => textOf(byId(id, el))).filter(Boolean).join(' ');
         if (by && !generic(by)) return by;
         const aria = (el.getAttribute('aria-label') || '').trim();
         if (aria && !generic(aria)) return aria;
@@ -744,7 +798,7 @@ export async function unfilledRequiredControls(scope) {
       };
       const out = [];
       const seenGroups = new Set();
-      const controls = document.querySelectorAll(
+      const controls = deepAll(
         'input[required], select[required], textarea[required], [aria-required="true"]',
       );
       for (const el of controls) {
@@ -755,7 +809,7 @@ export async function unfilledRequiredControls(scope) {
         if (type === 'radio') {
           if (!el.name || seenGroups.has(el.name)) continue;
           seenGroups.add(el.name);
-          const group = [...document.querySelectorAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`)];
+          const group = deepAll(`input[type="radio"][name="${CSS.escape(el.name)}"]`);
           if (!group.some(visible)) continue;
           if (!group.some((r) => r.checked)) out.push(labelOf(el));
           continue;

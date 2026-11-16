@@ -25,6 +25,7 @@
  *                  login, CAPTCHA, private endpoint, or bot-protection bypass.
  */
 
+import { FULL_SWEEP_DAYS, listingFingerprint } from '../boardFingerprints.js';
 import { normalizeJob, htmlToText } from '../normalize.js';
 import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
@@ -352,6 +353,7 @@ export async function run(source = {}, ctx = {}) {
   const errors = [];
   let cancelled = false;
   let reusedTotal = 0;
+  let skippedTotal = 0;
 
   // Search phrases for tenants that do not pin their own. Derived from the
   // candidate's target titles so the profile is the single source of truth —
@@ -369,17 +371,17 @@ export async function run(source = {}, ctx = {}) {
       return { jobs: [], errors: [{ tenant: tenant?.tenant ?? null, error: cfg.error }] };
     }
     try {
-      const { jobs: found, errors: detailErrors, cancelled: tenantCancelled = false, reused = 0 } = await fetchTenant(cfg, {
+      const { jobs: found, errors: detailErrors, cancelled: tenantCancelled = false, reused = 0, skipped = 0 } = await fetchTenant(cfg, {
         fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs: source.rateLimitMs,
         requestTimeoutMs, pageConcurrency, detailConcurrency, hostSpacingMs,
         maxDetailFetches, workdayDetailCache: ctx.workdayDetailCache, shouldCancel: ctx.shouldCancel,
         targetTitles: ctx.candidate?.targetTitles ?? [],
         profileVocab: profileVocabularyFor(ctx.candidate),
-        abortSignal: ctx.abortSignal, maxPagesPerTerm,
+        abortSignal: ctx.abortSignal, maxPagesPerTerm, boardFingerprints: ctx.boardFingerprints,
       });
       return {
         jobs: found, errors: detailErrors.map((e) => ({ tenant: cfg.tenant, site: cfg.site, ...e })),
-        cancelled: tenantCancelled, reused,
+        cancelled: tenantCancelled, reused, skipped,
       };
     } catch (err) {
       return {
@@ -398,12 +400,23 @@ export async function run(source = {}, ctx = {}) {
     errors.push(...r.errors);
     cancelled ||= r.cancelled === true;
     reusedTotal += r.reused ?? 0;
+    skippedTotal += r.skipped ?? 0;
   }
 
   if (tenants.length === 0) {
     errors.push({ note: 'Workday source enabled but no tenants configured. Add { host, tenant, site } entries to `tenants`.' });
   }
 
+  // Some searches read only their first page (audit D1): say so, and report the
+  // run as NOT a full listing, so the expiry pass never reads a skipped page as
+  // proof that its postings are gone.
+  if (skippedTotal > 0) {
+    errors.push({
+      note: `Skipped the later pages of ${skippedTotal} unchanged Workday search(es): their total and first page `
+        + `matched the last run. A full sweep reads every page every ${FULL_SWEEP_DAYS} days.`,
+    });
+    return { jobs, errors, cancelled, reused: reusedTotal, cached: true };
+  }
   return { jobs, errors, cancelled, reused: reusedTotal };
 }
 
@@ -457,8 +470,9 @@ async function fetchTenant(cfg, ctx) {
     fetchImpl, rateLimiter, hostGate, maxRetries, rateLimitMs, requestTimeoutMs,
     pageConcurrency, detailConcurrency, hostSpacingMs, maxDetailFetches,
     workdayDetailCache, shouldCancel, targetTitles = [], profileVocab = null, abortSignal,
-    maxPagesPerTerm = MAX_PAGES,
+    maxPagesPerTerm = MAX_PAGES, boardFingerprints = null,
   } = ctx;
+  let skipped = 0;
   const endpoint = `https://${cfg.host}/wday/cxs/${encodeURIComponent(cfg.tenant)}/${encodeURIComponent(cfg.site)}/jobs`;
   const errors = [];
   let cancelled = false;
@@ -481,6 +495,14 @@ async function fetchTenant(cfg, ctx) {
     // `total` is reported on the FIRST page only — later pages return 0, so it
     // must be read here and never re-derived mid-walk.
     const total = Number.isFinite(first.total) ? first.total : firstPostings.length;
+    // Unchanged since the last run (same total, same first page): the later
+    // pages hold what is already stored. Skipped, except on a full sweep (D1).
+    const fpKey = `workday:${cfg.host}/${cfg.tenant}/${cfg.site}|${searchText ?? ''}`;
+    const fingerprint = boardFingerprints ? listingFingerprint(total, firstPostings) : null;
+    if (boardFingerprints?.unchanged(fpKey, fingerprint) && total > firstPostings.length) {
+      skipped += 1;
+      return firstPostings;
+    }
     const pageCount = Math.min(maxPagesPerTerm, Math.max(1, Math.ceil(total / cfg.pageSize)));
 
     // Remaining pages have computable offsets, so fetch them concurrently. The
@@ -511,11 +533,15 @@ async function fetchTenant(cfg, ctx) {
     });
 
     const found = [...firstPostings];
+    let termErrors = 0;
     for (const r of restPages) {
       if (!r) continue;
       found.push(...r.postings);
-      if (r.error) errors.push(r.error);
+      if (r.error) { errors.push(r.error); termErrors += 1; }
     }
+    // Remembered only after a complete walk: an error or a cancel leaves the
+    // board unknown, so the next run reads it all again.
+    if (boardFingerprints && !termErrors && !cancelled) boardFingerprints.record(fpKey, fingerprint);
     return found;
   };
 
@@ -595,7 +621,7 @@ async function fetchTenant(cfg, ctx) {
     if (failed.length > 0) errors.push(summarizeDetailFailures(failed, cfg, out.length));
   }
 
-  return { jobs: out, errors, cancelled, reused };
+  return { jobs: out, errors, cancelled, reused, skipped };
 }
 
 /**

@@ -40,11 +40,23 @@ export async function handleExtensionRoutes(ctx, req, res, { path }) {
       res.end();
       return;
     }
+    // Pairing (audit A12): the extension trades the code the dashboard is showing
+    // for the key, once. No key yet, so this sits before the key check; the
+    // transport checks above still apply, and the code is single-use, expires,
+    // and locks after wrong guesses (see src/extension/pairing.js).
+    if (req.method === 'POST' && path === '/api/extension/pair') {
+      const body = await readBody(req, 2_000);
+      const key = (() => { try { return ctx.extensionKeyForPairing(); } catch { return null; } })();
+      if (!key) return sendJson(res, 503, { error: 'This dashboard cannot keep an extension key.' });
+      const out = ctx.pairing.redeem(body.code, key);
+      if (!out.ok) return sendJson(res, 403, { error: out.error, ...(out.retryAfterMs ? { retryAfterMs: out.retryAfterMs } : {}) });
+      return sendJson(res, 200, { key: out.key });
+    }
     if (!validExtensionKey(ctx.extensionKey, req.headers['x-job-agent-key'])) {
       return sendJson(res, ctx.extensionKey ? 401 : 503, {
         error: ctx.extensionKey
           ? 'invalid Job Agent extension key'
-          : 'extension API is disabled; set JOB_AGENT_EXTENSION_KEY in .env and restart',
+          : 'the extension is not paired yet: in the dashboard open System health, choose Pair the extension, and type the code into the extension settings',
       });
     }
 

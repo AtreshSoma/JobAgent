@@ -7,6 +7,7 @@ import { runPipeline } from '../../src/pipeline/index.js';
 import { openDatabase } from '../../src/logging/db.js';
 import { JobLogger, createPinoLogger } from '../../src/logging/jobLogger.js';
 import { listPending } from '../../src/apply/approvalQueue.js';
+import { recordCoverage } from '../../src/automation/coverageProbe.js';
 import { loadTestConfig } from './helpers/testConfig.js';
 import { parseArgs, resolveMode, main } from '../../src/index.js';
 import * as F from './fixtures/jobs.js';
@@ -42,6 +43,8 @@ describe('CLI arg parsing', () => {
     await expect(main(['scor'], {})).rejects.toThrow(/score/); // lists known commands
   });
 });
+
+const readPacket = (row) => JSON.parse(readFileSync(row.application_packet_path, 'utf8'));
 
 describe('runPipeline', () => {
   let root;
@@ -116,6 +119,35 @@ describe('runPipeline', () => {
     expect(prepared.output_folder_path).toContain(join('applications', 'output'));
     expect(prepared.application_packet_path).not.toContain(join('resumes', 'output'));
     expect(existsSync(prepared.application_packet_path)).toBe(true);
+    db.close();
+  });
+
+  it('A13: a packet carries the required questions of a form that has been probed', async () => {
+    // A job with an application URL, which the shared fixtures do not have.
+    const url = 'https://jobs.acme-careers.example.test/apply/af-1';
+    const withUrl = { ...F.azureFabricSenior, url };
+    const one = async () => ({ jobs: [withUrl], duplicates: [], errors: [] });
+
+    const first = makeCtx(root);
+    await runPipeline({ ...first, mode: 'PREPARE', deps: { searchFn: one, now: F.NOW, stamp: 'p1' } });
+    const before = first.db.getJob(listPending(first.db)[0].job_id);
+    first.db.close();
+    expect(readPacket(before).screeningPlan.needsUser.map((q) => q.label)).not.toContain('Why do you want to work here?');
+
+    const probedRoot = mkdtempSync(join(tmpdir(), 'jobagent-probed-'));
+    const { db, logger, config } = makeCtx(probedRoot);
+    recordCoverage(config.root, {
+      at: '2026-11-16T10:00:00.000Z', ats: 'generic', host: new URL(url).hostname, path: new URL(url).pathname,
+      found: 2, mapped: 0, needsYou: 2, requiredNeedsYou: 1, uploads: 0, advance: null,
+      fields: [
+        { label: 'Why do you want to work here?', kind: 'textarea', required: true, status: 'needs_you' },
+        { label: 'Middle name', kind: 'text', required: false, status: 'needs_you' },
+      ],
+    });
+    await runPipeline({ config, db, logger, mode: 'PREPARE', deps: { searchFn: one, now: F.NOW, stamp: 'p2' } });
+    const asked = readPacket(db.getJob(before.id)).screeningPlan.needsUser.map((q) => q.label);
+    expect(asked).toContain('Why do you want to work here?');
+    expect(asked).not.toContain('Middle name'); // optional: never blocks
     db.close();
   });
 

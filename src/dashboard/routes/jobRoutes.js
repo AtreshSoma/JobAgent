@@ -7,6 +7,7 @@
  * Returns NOT_HANDLED when no route here matched, so server.js tries the next
  * module; anything else means the request was answered.
  */
+import { buildPrepPack, renderPrepPackHtml } from '../prepPack.js';
 import { markApplicationUserSubmitted, markApplicationVerified, retractApplicationSubmission } from '../../apply/applicationState.js';
 import { loadPacket } from '../../cli/commands.js';
 import { sanitizeErrorMessage } from '../../utils/failureRca.js';
@@ -22,6 +23,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { assertInsideDirectory } from '../../utils/pathSafe.js';
 import { writeLetterDocx } from '../../resume/tailorRunner.js';
+import { refreshLetterPdf } from '../../apply/letterPdf.js';
 import { sendBackToReview } from './materialsRoutes.js';
 
 /**
@@ -69,6 +71,24 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
       const detail = jobDetail(ctx.db, jobId, { ...ctx.deps, root: ctx.config?.root ?? null, config: ctx.config, now: ctx.nowDate() });
       if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
       return sendJson(res, 200, detail);
+    }
+    // Interview prep pack (F10): requirements beside the resume lines that show
+    // them, the gaps, the posting's conditions, and the submitted documents.
+    if (req.method === 'GET' && action === 'prep-pack') {
+      const detail = jobDetail(ctx.db, jobId, { ...ctx.deps, root: ctx.config?.root ?? null, config: ctx.config, now: ctx.nowDate() });
+      if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+      const folder = containedFolder(ctx, ctx.db.getJob(jobId));
+      const pack = buildPrepPack(detail, { versions: folder ? readManifest(folder).versions : [] });
+      return sendJson(res, 200, pack);
+    }
+    if (req.method === 'GET' && action === 'prep-page') {
+      const detail = jobDetail(ctx.db, jobId, { ...ctx.deps, root: ctx.config?.root ?? null, config: ctx.config, now: ctx.nowDate() });
+      if (!detail) return sendJson(res, 404, { error: `unknown job id: ${jobId}` });
+      const folder = containedFolder(ctx, ctx.db.getJob(jobId));
+      const html = renderPrepPackHtml(buildPrepPack(detail, { versions: folder ? readManifest(folder).versions : [] }));
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+      res.end(html);
+      return;
     }
     if (req.method === 'POST' && action === 'resume-preview') {
       const result = await ctx.materializeResumePreview(jobId);
@@ -230,10 +250,18 @@ export async function handleJobRoutes(ctx, req, res, { url, path }) {
       const version = restoreVersion(folder, Number(body.n), current, { now: ctx.nowDate() });
       // The version predates the Word copy: rebuild it from the restored text
       // (best effort; Python is optional), so both say the same thing.
+      let docxHoldsRestoredText = Boolean(target?.files?.letterDocx);
       if (hadDocx && target?.files?.letter && !target.files.letterDocx && ctx.deps?.writeLetterDocxFn !== false) {
         try {
           await (ctx.deps?.writeLetterDocxFn ?? writeLetterDocx)({ text: readFileSync(letter, 'utf8'), path: current.letterDocx, root, deps: ctx.deps ?? {} });
+          docxHoldsRestoredText = true;
         } catch (err) { ctx.logger?.warn?.(`restored letter .docx not rebuilt: ${sanitizeErrorMessage(err.message)}`); }
+      }
+      // A PDF of the text that was just replaced must not stay beside the
+      // restored letter (audit A10); a new one is rendered only from a Word
+      // copy that holds the restored text.
+      if (letter && ctx.deps?.letterPdfFn !== false) {
+        await (ctx.deps?.letterPdfFn ?? refreshLetterPdf)(letter, { regenerate: docxHoldsRestoredText, root, env: process.env });
       }
       // The documents changed, so an approval of the previous ones no longer
       // stands — the same rule as editing the letter or accepting a rewrite.

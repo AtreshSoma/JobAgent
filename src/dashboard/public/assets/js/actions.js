@@ -14,7 +14,7 @@ import { batchApprove, batchAutofill, batchDecide, batchPrepare, clearSelection,
 import { openDocuments, openReports } from './reports.js';
 import { openDataQuality, saveFreshness, startEnrichment, stopEnrichment, toggleEnrichment } from './dataQuality.js';
 import { adoptResumeSelection, chooseResumeProfile, openMasterResume, openMergePicker, reconsiderResumeChoice, renderMasterResume, restoreMasterVersion, selectedAdoptTitles, submitMergeSelection } from './master.js';
-import { backupNow, download, exportEverything, openHealth, openProfile, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
+import { backupNow, download, exportEverything, openHealth, openProfile, confirmSkillYears, sameAsQuestion, saveAllAnswers, saveProfileDetails, saveQuestionAnswer, setQuestionStatus } from './profile.js';
 import { applyRunGate, openRuns, pollRun, setRunDetails } from './runs.js';
 import { closeMainMenu, toggleMenu } from './menus.js';
 import { applyViewPrefs, hiddenColumns, onFilterChange, savePreference, setFilterSheet, syncThemeControl } from './main.js';
@@ -245,6 +245,8 @@ export const ACTIONS = {
   },
   'save-profile': saveProfileDetails,
   'save-question-answer': (target) => saveQuestionAnswer(target.dataset.key),
+  'confirm-skill-years': (target) => confirmSkillYears(target.dataset.key),
+  'same-as-question': (target) => sameAsQuestion(target.dataset.key, target.dataset.answerId),
   'dismiss-question': (target) => setQuestionStatus(target.dataset.key, 'dismissed'),
   'use-question-choice': (target) => {
     const box = $('profileBody').querySelector(`[data-q-answer="${cssEscape(target.dataset.key)}"]`);
@@ -419,7 +421,7 @@ export const BUSY_ACTIONS = new Set([
   'cancel-run', 'run', 'migrate-search-profile', 'activate-search-profile',
   'profile-from-resume-create', 'profile-from-resume-keep', 'confirm-merge-selection',
   'profile-from-resume-reconsider', 'adopt-resume-titles', 'adopt-resume-skills',
-  'restore-master', 'save-profile', 'save-question-answer', 'dismiss-question',
+  'restore-master', 'save-profile', 'save-question-answer', 'confirm-skill-years', 'same-as-question', 'dismiss-question',
   'save-answers', 'delete-answer', 'backup-now', 'export-bundle', 'watch-skill',
   'propose-rewrites', 'rewrite-accept', 'rewrite-reject', 'rewrite-accept-all', 'refine-rewrites',
   'compare-versions', 'restore-version', 'letter-mode', 'inbox-sync', 'inbox-record', 'inbox-dismiss', 'inbox-draft', 'run-rerank', 'export-jobs', 'export-tracker', 'open-email-jobs', 'email-copy', 'clear-role-search',

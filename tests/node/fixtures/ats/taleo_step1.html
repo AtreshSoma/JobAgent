@@ -1,0 +1,20 @@
+<!doctype html><html><head><title>Taleo Candidate Zone</title></head><body>
+<h2>Personal information</h2>
+<form id="requisitionDescriptionInterface.ID1.form" onsubmit="return false">
+  <label for="requisitionDescriptionInterface.ID123.row1">First name</label>
+  <input id="requisitionDescriptionInterface.ID123.row1" name="requisitionDescriptionInterface.ID123.row1" required>
+  <label for="requisitionDescriptionInterface.ID456.row1">Last name</label>
+  <input id="requisitionDescriptionInterface.ID456.row1" name="requisitionDescriptionInterface.ID456.row1" required>
+  <label for="requisitionDescriptionInterface.ID789.row1">Email address</label>
+  <input id="requisitionDescriptionInterface.ID789.row1" type="email" required>
+  <a id="requisitionDescriptionInterface.nextButton" class="btn" role="button" href="javascript:void(0)">Next</a>
+</form>
+<script>
+  document.getElementById('requisitionDescriptionInterface.nextButton').addEventListener('click', () => {
+    history.pushState({}, '', '/careersection/2/jobapply.ftl?step=2');
+    document.body.innerHTML = '<h2>Attachments</h2><form onsubmit="return false">'
+      + '<label for="resumeUpload">Resume</label><input id="resumeUpload" type="file">'
+      + '<a id="et-ef-content-ftf-submitButton" class="btn" role="button" href="javascript:void(0)">Submit</a></form>';
+    document.getElementById('et-ef-content-ftf-submitButton').addEventListener('click', () => { window.__submitted = true; });
+  });
+</script></body></html>

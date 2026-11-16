@@ -51,6 +51,8 @@ within a week. Workday accounts for ~60% of the wall clock.
 
 ### Run time and cancellation
 
+**Skipping unchanged boards (audit D1, Workday only so far).** Each Workday tenant search records its total and first page. When both match the last run, only the first page is read. A full sweep reads every page every 3 days. A run that skipped pages is recorded as not a full listing, so the expiry pass (which retires rows a source stopped listing) never counts it; a board whose walk had an error is not remembered. Other adapters read everything as before. Tested in `boardFingerprints` with a fake board; the speed-up has not been measured on a live sweep.
+
 Two things dominated a discovery run's wall clock and its responsiveness, both
 fixed by measurement rather than guesswork.
 
@@ -249,12 +251,32 @@ tenant that sets `searchText: ""` still means "enumerate everything".
 | Greenhouse | ✅ adapter + semantic resolver; detected by host **or** a `gh_jid=` query on an employer's own careers page | ✅ | ✅ `input-file-list` check; documents matched to inputs **by label** on both classic and current `job-boards.greenhouse.io` markup | ✅ confirmation-evidence gate | embedded-iframe boards handled | ✅ `atsApplicationFixtures`, `embeddedFormAutomation`, `uploadInputSelection` |
 | Lever | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
 | Ashby | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
-| Workday | ✅ (`data-automation-id` selectors) | ✅ | ✅ | ✅ | account-creation/login walls stop the run (by design) | ✅ `atsApplicationFixtures`, `workdayFormFill` |
+| Workday | ✅ (`data-automation-id` selectors); ◐ work history and education entries ("Add" per job and degree, read back) on a hand-written fixture | ✅ | ✅ | ✅ | account-creation/login walls stop the run (by design); the repeated-section filler has not run on a live Workday tenant | ✅ `atsApplicationFixtures`, `workdayFormFill`; ◐ `repeatedSections` (hand-written, **not captured from a live site**) |
 | SmartRecruiters | ✅ | ✅ | ✅ | ✅ | — | ✅ `atsApplicationFixtures` |
-| iCIMS | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | frequently login-walled → blocked with RCA. **This row is about AUTO-FILL only.** iCIMS is a working, enabled DISCOVERY source — 2,431 rows in the live store across 54 portals — but it was absent from the discovery table above, so this document read as “iCIMS is unsupported” | ❌ no dedicated fixture |
-| Taleo | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | legacy multi-frame flows often blocked | ❌ no dedicated fixture |
-| Jobvite | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | — | ❌ no dedicated fixture |
+| iCIMS | ◐ generic resolver + selector hints | ◐ | ◐ | ◐ | frequently login-walled → blocked with RCA. **This row is about AUTO-FILL only.** iCIMS is a working, enabled DISCOVERY source — 2,431 rows in the live store across 54 portals — but it was absent from the discovery table above, so this document read as “iCIMS is unsupported” | ◐ `atsMoreFixtures`: an iframe-embedded, two-step form written by hand, **not captured from a live site** |
+| Taleo | ◐ generic resolver + selector hints; fills ids full of dots and link-styled buttons (hand-written fixture) | ◐ link-style Next | ◐ | ◐ | legacy multi-frame flows often blocked | ◐ `atsMoreFixtures`: a hand-written form, **not captured from a live site** |
+| Jobvite | ◐ generic resolver + selector hints; name-based fields and a file input hidden behind an "Attach" label (hand-written fixture) | ◐ | ◐ | ◐ | — | ◐ `atsMoreFixtures`: a hand-written form, **not captured from a live site** |
 | Generic accessible forms | ✅ semantic field resolver (labels/ARIA/question text; selects, comboboxes, radios, checkboxes, dates, files, conditionals) | ✅ safe Next/Continue only | ✅ | ✅ | unknown required questions block (never guessed). **Assisted fill only — never eligible for auto-submit**, since an unrecognised site is by definition not fixture-verified | ✅ `atsApplicationFixtures` generic case, `validationDetection`, `fieldFiller` |
+
+**Interview prep pack.** At Interviewing, a job's page links to one printable sheet: each requirement beside the master-resume line that shows it, the gaps (requirements no line shows, and phrases the posting names that the resume does not), the posting's buried conditions with their sentences, and the submitted (frozen) document version. Quoted only; no model. Tested in `prepPack`.
+
+**Vocabulary coverage.** System health measures, over up to 1,500 recent postings with a full description, the share that mention five or more of the skills the profile looks for. Below 40% (with at least 50 postings) it warns that jobs may score alike and lists what the postings keep asking for; the fix is the existing Also asked for / Look for this skill on a job. It does not change any score.
+
+**Pay.** The pay a posting states is parsed to annual figures (US dollars only) with the period it was stated in and where it was read (compensation field, or a strict read of the description), stored on the job, and shown as "Not stated" when there is none. Sorting by pay is available through the board API (`sort=pay`, highest first, unstated last); there is no pay column or filter on the board yet. Existing jobs get their pay read by the next re-score. Tested in `payFields`.
+
+**Browser extension.** The extension uses the same label-to-field mapping as auto-fill (one module, `src/shared/fieldLabels.js`, copied into `extension/fieldLabels.js` by `npm run sync:extension`; a test fails when the copy is stale), so it no longer fills "Reference email" or an emergency-contact phone with your details. It reads up to 400 controls (was 160). It pairs with a code from System health instead of a pasted key. It still never answers work-authorization, demographic, attestation or skill-years questions. Tested on local pages with a fake `chrome`; not loaded into a real browser here.
+
+**Several tabs at once.** `ASSIST_CONCURRENCY` (1 to 3, default 1) lets the command-line batch fill that many approved applications together, each in its own tab of one persistent browser, never two on the same site (an ATS's tenants count as one site), and still stopping before every Submit. The dashboard's own Auto-fill batch is still one job at a time: it prepares, approves and fills each job in turn and shares one progress and cancel state, so it needs its own design. Tested with fake runners and a fake browser (`parallelTabs`); not run against live sites.
+
+**Draft answers to open questions.** With the optional model on, a job's detail page can draft an answer to an open question ("Why do you want to work here?") from your master resume, showing the resume lines it used. The draft goes through the same claim verifier as a grounded cover letter (numbers, named things and ownership must come from the cited lines), is never typed until you edit and approve it, is kept for that one job only, and is never reused for another employer. Nothing is drafted for eligibility, sponsorship, pay, skill-years, history, health, age or demographic questions, and the model never receives your name or contact lines. Tested with a stubbed model in `groundedAnswer`, `approvedAnswersRoutes` and `answerDraftBrowser`; not run against a real model here.
+
+**Work history and education.** On a page with an "Add" per job or degree, auto-fill adds one entry per role and degree from your profile and reads each value back. It uses only your profile's words (the role description is your own highlights, unedited), presses only an "Add" that names work experience or education, skips an entry already on the page, and presses nothing in a dry run. Fixture-tested on a Workday-shaped page; not yet run on a live tenant. iCIMS and Taleo use the same label rules but have no fixture of their own.
+
+**Walls.** A sign-in, CAPTCHA or verification page stops the run by default. With `ASSIST_WAIT_FOR_WALL_SECONDS` set (headed runs only, capped at 15 minutes) the run instead stays on the page, looks again, and continues once you have cleared it; a wall that stays ends the run blocked and says how long it waited. Tested on a local fixture whose wall clears mid-run (`waitForWall`).
+
+**Questions.** A question that matches no saved answer goes to the Questions list. Two helpers there only ever *suggest*: "same answer" for a close rewording of one you already answered (strict match; sensitive, pay, skill-years, other-country and employer-specific questions are excluded), and a years-with-a-skill number worked out from your work history. Both wait for one confirmation. Tested in `questionSimilarity` and `skillYears`.
+
+**Coverage probe.** `npm run coverage:probe` reads the saved form fixtures with the no-side-effects dry run and records, per platform, how many fields auto-fill finds and would answer (System health → Auto-fill coverage). It is measured on local fixtures, first page of each form, and refuses any non-local URL. It says nothing about a real employer's current form.
 
 **Live verification.** None of the ATS rows above has a recorded supervised
 live run yet, so final Auto-submit is refused on every ATS. Auto-submit on an

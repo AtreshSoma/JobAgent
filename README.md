@@ -139,6 +139,8 @@ cp .env.example .env               # DRY_RUN needs no secrets
 <details>
 <summary><b>🐍 Python setup (resume tailoring)</b></summary>
 
+**One step:** `npm run setup:all` installs the Node dependencies, makes `.venv` with Python 3.12+ and installs `requirements.txt`, downloads the form-filling browser, and ends on the `npm run doctor` report. The launchers also offer the Python step the first time they run, and refresh it when `requirements.txt` changes. JobAgent finds `.venv` on its own, so `PYTHON=` in `.env` is optional. The manual steps:
+
 Use a virtual environment. On macOS (Homebrew) and recent Debian/Ubuntu, `pip install` into the system Python fails with `externally-managed-environment` (PEP 668). Create a venv; don't use `--break-system-packages`.
 
 ```bash
@@ -355,7 +357,7 @@ sequenceDiagram
     end
 ```
 
-The **Chrome / Edge extension** (unpacked Manifest V3, in [`extension/`](extension/)) does the same inside your normal signed-in browser profile. Load it from `chrome://extensions` or `edge://extensions` with **Developer mode → Load unpacked**, then paste `JOB_AGENT_EXTENSION_KEY` from your `.env` into its Connection settings. It uses only `activeTab`, talks only to the loopback dashboard, and never fills passwords, CAPTCHAs, legal attestations, or work-authorization questions. See the [setup steps](docs/USER_GUIDE.md#-chrome--edge-extension).
+The **Chrome / Edge extension** (unpacked Manifest V3, in [`extension/`](extension/)) does the same inside your normal signed-in browser profile. Load it from `chrome://extensions` or `edge://extensions` with **Developer mode → Load unpacked**, then pair it with the code the dashboard shows (System health → Pair the extension) in its Connection settings. It uses only `activeTab`, talks only to the loopback dashboard, and never fills passwords, CAPTCHAs, legal attestations, or work-authorization questions. See the [setup steps](docs/USER_GUIDE.md#-chrome--edge-extension).
 
 ## 👤 Search profiles
 
