@@ -1,6 +1,6 @@
 # npm dependency license inventory
 
-Snapshot: 2026-11-13. Declared metadata from `package-lock.json`, including optional platform packages. Dependencies retain these licenses; this inventory does not replace their full notices. Regenerate with `npm run licenses`.
+Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including optional platform packages. Dependencies retain these licenses; this inventory does not replace their full notices. Regenerate with `npm run licenses`.
 
 | Package path | Version | Declared license | Scope |
 | --- | --- | --- | --- |
@@ -270,7 +270,7 @@ Snapshot: 2026-11-13. Declared metadata from `package-lock.json`, including opti
 | type-check | 0.4.0 | MIT | Development |
 | type-is | 2.1.0 | MIT | Runtime / optional |
 | type-is/node_modules/content-type | 2.1.0 | MIT | Runtime / optional |
-| typescript | 5.9.3 | Apache-2.0 | Development |
+| typescript | 6.0.3 | Apache-2.0 | Development |
 | undici-types | 6.21.0 | MIT | Development |
 | unpipe | 1.0.0 | MIT | Runtime / optional |
 | uri-js | 4.4.1 | BSD-2-Clause | Development |
