@@ -13,6 +13,9 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | @bcoe/v8-coverage | 1.0.2 | MIT | Development |
 | @cacheable/memory | 2.2.0 | MIT | Development |
 | @cacheable/utils | 2.5.0 | MIT | Development |
+| @emnapi/core | 2.0.0-beta.2 | MIT | Development |
+| @emnapi/runtime | 2.0.0-beta.2 | MIT | Development |
+| @emnapi/wasi-threads | 2.2.0 | MIT | Development |
 | @eslint-community/eslint-utils | 4.10.1 | MIT | Development |
 | @eslint-community/eslint-utils/node_modules/eslint-visitor-keys | 3.4.3 | Apache-2.0 | Development |
 | @eslint-community/regexpp | 4.12.2 | MIT | Development |
@@ -35,41 +38,40 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | @keyv/bigmap | 1.3.1 | MIT | Development |
 | @keyv/serialize | 1.1.1 | MIT | Development |
 | @modelcontextprotocol/sdk | 1.32.2 | MIT | Runtime / optional |
+| @napi-rs/wasm-runtime | 1.2.6 | MIT | Development |
 | @opentelemetry/api | 1.10.0 | Apache-2.0 | Runtime / optional |
 | @oxc-project/types | 0.156.0 | MIT | Development |
 | @pinojs/redact | 0.4.0 | MIT | Runtime / optional |
-| @rolldown/binding-android-arm-eabi | 1.2.18 | MIT | Development |
-| @rolldown/binding-android-arm64 | 1.2.18 | MIT | Development |
-| @rolldown/binding-darwin-arm64 | 1.2.18 | MIT | Development |
-| @rolldown/binding-darwin-x64 | 1.2.18 | MIT | Development |
-| @rolldown/binding-freebsd-x64 | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-arm-gnueabihf | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-arm64-gnu | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-arm64-musl | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-ppc64-gnu | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-s390x-gnu | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-x64-gnu | 1.2.18 | MIT | Development |
-| @rolldown/binding-linux-x64-musl | 1.2.18 | MIT | Development |
-| @rolldown/binding-openharmony-arm64 | 1.2.18 | MIT | Development |
-| @rolldown/binding-win32-arm64-msvc | 1.2.18 | MIT | Development |
-| @rolldown/binding-win32-x64-msvc | 1.2.18 | MIT | Development |
-| @rolldown/pluginutils | 1.1.0 | MIT | Development |
+| @rolldown/binding-android-arm-eabi | 1.2.19 | MIT | Development |
+| @rolldown/binding-android-arm64 | 1.2.19 | MIT | Development |
+| @rolldown/binding-darwin-arm64 | 1.2.19 | MIT | Development |
+| @rolldown/binding-darwin-x64 | 1.2.19 | MIT | Development |
+| @rolldown/binding-freebsd-x64 | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-arm-gnueabihf | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-arm64-gnu | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-arm64-musl | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-ppc64-gnu | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-s390x-gnu | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-x64-gnu | 1.2.19 | MIT | Development |
+| @rolldown/binding-linux-x64-musl | 1.2.19 | MIT | Development |
+| @rolldown/binding-openharmony-arm64 | 1.2.19 | MIT | Development |
+| @rolldown/binding-wasm32-wasi | 1.2.19 | MIT | Development |
+| @rolldown/binding-win32-arm64-msvc | 1.2.19 | MIT | Development |
+| @rolldown/binding-win32-x64-msvc | 1.2.19 | MIT | Development |
+| @rolldown/pluginutils | 1.1.1 | MIT | Development |
 | @stablelib/base64 | 1.0.1 | MIT | Runtime / optional |
-| @standard-schema/spec | 1.1.0 | MIT | Development |
+| @tybys/wasm-util | 0.10.5 | MIT | Development |
 | @types/chai | 5.2.3 | MIT | Development |
 | @types/deep-eql | 4.0.2 | MIT | Development |
 | @types/esrecurse | 4.3.1 | MIT | Development |
 | @types/estree | 1.0.9 | MIT | Development |
 | @types/json-schema | 7.0.15 | MIT | Development |
 | @types/node | 22.20.5 | MIT | Development |
-| @vitest/coverage-v8 | 4.1.12 | MIT | Development |
-| @vitest/expect | 4.1.12 | MIT | Development |
-| @vitest/mocker | 4.1.12 | MIT | Development |
-| @vitest/pretty-format | 4.1.12 | MIT | Development |
-| @vitest/runner | 4.1.12 | MIT | Development |
-| @vitest/snapshot | 4.1.12 | MIT | Development |
-| @vitest/spy | 4.1.12 | MIT | Development |
-| @vitest/utils | 4.1.12 | MIT | Development |
+| @vitest/coverage-v8 | 5.1.0 | MIT | Development |
+| @vitest/istanbul-lib-coverage | 2.1.0 | MIT | Development |
+| @vitest/istanbul-lib-report | 2.1.0 | MIT | Development |
+| @vitest/mocker | 5.1.0 | MIT | Development |
+| @vitest/spy | 5.1.0 | MIT | Development |
 | accepts | 2.0.0 | MIT | Runtime / optional |
 | acorn | 8.18.0 | MIT | Development |
 | acorn-jsx | 5.3.2 | MIT | Development |
@@ -90,7 +92,6 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | chai | 6.3.0 | MIT | Development |
 | content-disposition | 2.0.1 | MIT | Runtime / optional |
 | content-type | 1.0.5 | MIT | Runtime / optional |
-| convert-source-map | 2.0.0 | MIT | Development |
 | cookie | 0.7.2 | MIT | Runtime / optional |
 | cookie-signature | 1.2.2 | MIT | Runtime / optional |
 | cors | 2.8.6 | MIT | Runtime / optional |
@@ -105,7 +106,7 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | encodeurl | 2.0.1 | MIT | Runtime / optional |
 | es-define-property | 1.0.1 | MIT | Runtime / optional |
 | es-errors | 1.3.0 | MIT | Runtime / optional |
-| es-module-lexer | 2.3.1 | MIT | Development |
+| es-module-lexer | 2.3.2 | MIT | Development |
 | es-object-atoms | 1.1.2 | MIT | Runtime / optional |
 | escape-html | 1.0.3 | MIT | Runtime / optional |
 | escape-string-regexp | 4.0.0 | MIT | Development |
@@ -123,7 +124,7 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | etag | 1.8.1 | MIT | Runtime / optional |
 | eventsource | 3.0.7 | MIT | Runtime / optional |
 | eventsource-parser | 3.1.1 | MIT | Runtime / optional |
-| expect-type | 1.3.0 | Apache-2.0 | Development |
+| expect-type | 1.4.0 | Apache-2.0 | Development |
 | express | 5.3.0 | MIT | Runtime / optional |
 | express-rate-limit | 8.7.4 | MIT | Runtime / optional |
 | express/node_modules/content-type | 2.1.0 | MIT | Runtime / optional |
@@ -140,19 +141,18 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | flatted | 3.4.4 | ISC | Development |
 | forwarded | 0.2.0 | MIT | Runtime / optional |
 | fresh | 2.0.0 | MIT | Runtime / optional |
+| fsevents | 2.3.3 | MIT | Development |
 | function-bind | 1.1.2 | MIT | Runtime / optional |
 | get-intrinsic | 1.3.0 | MIT | Runtime / optional |
 | get-proto | 1.0.1 | MIT | Runtime / optional |
 | glob-parent | 6.0.2 | ISC | Development |
 | globals | 17.14.0 | MIT | Development |
 | gopd | 1.2.0 | MIT | Runtime / optional |
-| has-flag | 4.0.0 | MIT | Development |
 | has-symbols | 1.1.0 | MIT | Runtime / optional |
 | hashery | 1.5.1 | MIT | Development |
 | hasown | 2.0.4 | MIT | Runtime / optional |
 | hono | 4.13.17 | MIT | Runtime / optional |
 | hookified | 1.15.1 | MIT | Development |
-| html-escaper | 2.0.2 | MIT | Development |
 | http-errors | 2.0.1 | MIT | Runtime / optional |
 | iconv-lite | 0.7.3 | MIT | Runtime / optional |
 | ignore | 5.3.2 | MIT | Development |
@@ -164,9 +164,6 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | is-glob | 4.0.3 | MIT | Development |
 | is-promise | 4.0.0 | MIT | Runtime / optional |
 | isexe | 2.0.0 | ISC | Runtime / optional |
-| istanbul-lib-coverage | 3.2.2 | BSD-3-Clause | Development |
-| istanbul-lib-report | 3.0.1 | BSD-3-Clause | Development |
-| istanbul-reports | 3.2.0 | BSD-3-Clause | Development |
 | jose | 6.2.17 | MIT | Runtime / optional |
 | js-tokens | 10.0.0 | MIT | Development |
 | json-schema-to-ts | 3.1.1 | MIT | Runtime / optional |
@@ -188,9 +185,8 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | lightningcss-win32-arm64-msvc | 1.33.0 | MPL-2.0 | Development |
 | lightningcss-win32-x64-msvc | 1.33.0 | MPL-2.0 | Development |
 | locate-path | 6.0.0 | MIT | Development |
-| magic-string | 0.30.21 | MIT | Development |
+| magic-string | 1.4.5 | MIT | Development |
 | magicast | 0.5.5 | MIT | Development |
-| make-dir | 4.0.0 | MIT | Development |
 | math-intrinsics | 1.1.0 | MIT | Runtime / optional |
 | media-typer | 1.1.1 | MIT | Runtime / optional |
 | merge-descriptors | 2.0.0 | MIT | Runtime / optional |
@@ -204,7 +200,7 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | negotiator/node_modules/content-type | 2.1.0 | MIT | Runtime / optional |
 | object-assign | 4.1.1 | MIT | Runtime / optional |
 | object-inspect | 1.13.4 | MIT | Runtime / optional |
-| obug | 2.1.3 | MIT | Development |
+| obug | 3.0.0 | MIT | Development |
 | on-exit-leak-free | 2.1.2 | MIT | Runtime / optional |
 | on-finished | 2.4.2 | MIT | Runtime / optional |
 | once | 1.4.0 | ISC | Runtime / optional |
@@ -215,7 +211,6 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | path-exists | 4.0.0 | MIT | Development |
 | path-key | 3.1.1 | MIT | Runtime / optional |
 | path-to-regexp | 8.4.2 | MIT | Runtime / optional |
-| pathe | 2.0.3 | MIT | Development |
 | picocolors | 1.1.1 | ISC | Development |
 | picomatch | 4.0.7 | MIT | Development |
 | pino | 10.4.0 | MIT | Runtime / optional |
@@ -224,7 +219,7 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | pkce-challenge | 5.0.1 | MIT | Runtime / optional |
 | playwright | 1.65.0 | Apache-2.0 | Runtime / optional |
 | playwright-core | 1.65.0 | Apache-2.0 | Runtime / optional |
-| postcss | 8.5.32 | MIT | Development |
+| postcss | 8.5.33 | MIT | Development |
 | prelude-ls | 1.2.1 | MIT | Development |
 | process-warning | 5.0.0 | MIT | Runtime / optional |
 | proxy-addr | 2.0.8 | MIT | Runtime / optional |
@@ -237,11 +232,10 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | raw-body | 3.0.2 | MIT | Runtime / optional |
 | real-require | 1.0.0 | MIT | Runtime / optional |
 | require-from-string | 2.0.2 | MIT | Runtime / optional |
-| rolldown | 1.2.18 | MIT | Development |
+| rolldown | 1.2.19 | MIT | Development |
 | router | 2.2.0 | MIT | Runtime / optional |
 | safe-stable-stringify | 2.5.0 | MIT | Runtime / optional |
 | safer-buffer | 2.1.2 | MIT | Runtime / optional |
-| semver | 7.8.6 | ISC | Development |
 | send | 1.2.1 | MIT | Runtime / optional |
 | serve-static | 2.2.1 | MIT | Runtime / optional |
 | setprototypeof | 1.2.0 | ISC | Runtime / optional |
@@ -251,22 +245,20 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | side-channel-list | 1.0.1 | MIT | Runtime / optional |
 | side-channel-map | 1.0.1 | MIT | Runtime / optional |
 | side-channel-weakmap | 1.0.2 | MIT | Runtime / optional |
-| siginfo | 2.0.0 | ISC | Development |
 | sonic-boom | 4.2.1 | MIT | Runtime / optional |
 | source-map-js | 1.2.2 | BSD-3-Clause | Development |
 | split2 | 4.2.0 | ISC | Runtime / optional |
-| stackback | 0.0.2 | MIT | Development |
 | standardwebhooks | 1.1.1 | MIT | Runtime / optional |
 | statuses | 2.0.2 | MIT | Runtime / optional |
-| std-env | 4.2.0 | MIT | Development |
-| supports-color | 7.2.0 | MIT | Development |
+| std-env | 4.3.0 | MIT | Development |
 | thread-stream | 4.2.0 | MIT | Runtime / optional |
-| tinybench | 2.9.0 | MIT | Development |
-| tinyexec | 1.2.4 | MIT | Development |
+| tinybench | 6.2.3 | MIT | Development |
+| tinyexec | 1.3.1 | MIT | Development |
 | tinyglobby | 0.2.17 | MIT | Development |
 | tinyrainbow | 3.2.0 | MIT | Development |
 | toidentifier | 1.0.1 | MIT | Runtime / optional |
 | ts-algebra | 2.0.0 | MIT | Runtime / optional |
+| tslib | 2.9.1 | 0BSD | Development |
 | type-check | 0.4.0 | MIT | Development |
 | type-is | 2.1.0 | MIT | Runtime / optional |
 | type-is/node_modules/content-type | 2.1.0 | MIT | Runtime / optional |
@@ -275,11 +267,10 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | unpipe | 1.0.0 | MIT | Runtime / optional |
 | uri-js | 4.4.1 | BSD-2-Clause | Development |
 | vary | 1.1.2 | MIT | Runtime / optional |
-| vite | 8.3.7 | MIT | Development |
-| vite/node_modules/fsevents | 2.3.3 | MIT | Development |
-| vitest | 4.1.12 | MIT | Development |
+| vite | 8.3.8 | MIT | Development |
+| vitest | 5.1.0 | MIT | Development |
 | which | 2.0.2 | ISC | Runtime / optional |
-| why-is-node-running | 2.3.0 | MIT | Development |
+| why-is-node-running | 3.2.1 | MIT | Development |
 | word-wrap | 1.2.5 | MIT | Development |
 | wrappy | 1.0.2 | ISC | Runtime / optional |
 | yocto-queue | 0.1.0 | MIT | Development |
