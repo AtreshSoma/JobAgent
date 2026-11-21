@@ -30,9 +30,12 @@ import { classifyDiscovery } from '../search/discoveryFilter.js';
 import { applyFreshnessFilter, UNDATED_REASON } from '../search/freshnessFilter.js';
 import { sourceKind } from '../search/sources.js';
 import { createSourceTimings } from '../search/sourceTimings.js';
+import { createSourceCoverage, BACKFILL_MIN_TITLE_FIT } from '../search/sourceCoverage.js';
+import { createSitemapSeen } from '../search/sitemapSeen.js';
+import { zeroYieldTargets } from '../search/coverageTargets.js';
 import { createDetailCache } from '../search/detailBudget.js';
 import { applyExclusions, candidateNeedsSponsorship } from '../scoring/exclusionFilter.js';
-import { profileVocabularyFor, classifyTitleFit } from '../scoring/profileFit.js';
+import { profileVocabularyFor, classifyTitleFit, titleFitPriority } from '../scoring/profileFit.js';
 import { postedPay } from '../scoring/searchConstraints.js';
 import { postedOnAgrees, locationFromExternalPath } from '../search/adapters/workday.js';
 import { classifySponsorship } from '../scoring/sponsorshipClassifier.js';
@@ -223,6 +226,16 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   const boardFingerprints = deps.boardFingerprints !== undefined
     ? deps.boardFingerprints
     : createBoardFingerprints({ root: config.root });
+  // When each source last listed completely, and which employers it has listed
+  // (audit D1). Injectable; null turns the catch-up off (window-only behaviour).
+  const sourceCoverage = deps.sourceCoverage !== undefined
+    ? deps.sourceCoverage
+    : createSourceCoverage({ root: config.root });
+  // Which job URLs each careers sitemap listed last time, for first-seen dating
+  // of undated postings (audit D4). Injectable; null turns it off.
+  const sitemapSeen = deps.sitemapSeen !== undefined
+    ? deps.sitemapSeen
+    : createSitemapSeen({ root: config.root });
   const { jobs, duplicates, errors, perSource = [], cancelled: searchCancelled = false } = await searchFn({
     jobboards: config.jobboards,
     candidate: config.candidate,
@@ -247,6 +260,8 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
       // never touch the filesystem.
       sourceTimings,
       boardFingerprints,
+      sitemapSeen,
+      now: () => now.getTime(),
     },
     hooks: deps.searchHooks ?? {},
     // Only skip jobs we have already APPLIED to. Merely-seen or prepared jobs
@@ -264,6 +279,7 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     boardFingerprints?.finishRun({ completed: !searchCancelled });
     boardFingerprints?.save();
   } catch { /* the fingerprints are an optimisation; losing them only means a full read next time */ }
+  try { sitemapSeen?.save(); } catch { /* a hint; first-seen dating resumes next crawl */ }
   logger.event(EVENT_TYPES.SEARCH_END, {
     message: `Search complete: ${jobs.length} jobs, ${duplicates.length} dupes, ${errors.length} errors`,
     meta: { found: jobs.length, duplicates: duplicates.length, errors: errors.length },
@@ -311,8 +327,25 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     else unretained.push(job);
   }
   stats.retained = retained.length;
-  const freshness = applyFreshnessFilter(unretained, config.runtime ?? {}, { now });
+  // CATCH-UP (audit D1). The window above means "new to us" only when the
+  // source was read completely within it. Widen it per source to cover the gap
+  // since that source's last complete listing, and give an employer the source
+  // has never listed (a newly configured company) its open backlog up to the
+  // retention limit, title-fit roles only. Profile runs only: a role search
+  // runs different queries, so a source's profile clock says nothing about it.
+  const retentionDays = Number(config.exclusions?.staleness?.skipOlderThanDays) || 45;
+  const catchUpFor = runMode.discovery_mode === 'profile' && sourceCoverage
+    ? sourceCoverage.resolver({ retentionDays, at: now })
+    : null;
+  const fitVocab = config.candidate ? profileVocabularyFor(config.candidate) : null;
+  const freshness = applyFreshnessFilter(unretained, config.runtime ?? {}, {
+    now,
+    windowFor: catchUpFor ? (job) => catchUpFor(job.rawMetadata?.sourceId, job.company) : null,
+    titleFits: fitVocab ? (job) => titleFitPriority(job.title, fitVocab) >= BACKFILL_MIN_TITLE_FIT : null,
+  });
   const freshJobs = [...retained, ...freshness.kept];
+  stats.caughtUp = freshness.counts.caughtUp ?? 0;
+  stats.backfilled = freshness.counts.backfilled ?? 0;
   const freshnessModel = freshnessModelFor(config);
 
   // Every write below is batched into chunked transactions (P5).
@@ -321,7 +354,9 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
     logger.event(EVENT_TYPES.FRESHNESS_FILTERED, {
       message: `Freshness ${freshness.mode}: kept ${freshJobs.length}, dropped ${freshness.dropped.length}`
         + (freshness.review.length ? `, ${freshness.review.length} held for unknown-date review` : '')
-        + (freshness.fallbackUsed ? ' (3-day fallback applied)' : ''),
+        + (freshness.fallbackUsed ? ' (3-day fallback applied)' : '')
+        + (freshness.counts.caughtUp ? `, ${freshness.counts.caughtUp} caught up since a source's last complete run` : '')
+        + (freshness.counts.backfilled ? `, ${freshness.counts.backfilled} backfilled from newly listed employers` : ''),
       meta: {
         mode: freshness.mode,
         windowDays: freshness.windowDays,
@@ -627,6 +662,35 @@ export async function runPipeline({ config, db, logger: suppliedLogger, mode, de
   if (!searchCancelled && !loopCancelled && runMode.discovery_mode === 'profile') {
     stats.expired = expireUnlisted({ db, perSource, sourceTimings, writer });
     writer.flush();
+  }
+
+  // D1 — remember which sources listed completely, and which employers they
+  // listed, so the next run's catch-up window starts from here. Only after the
+  // loop has judged everything this run admitted: a cancelled run must not
+  // claim coverage it did not deliver.
+  if (!searchCancelled && !loopCancelled && runMode.discovery_mode === 'profile' && sourceCoverage) {
+    const listed = [...jobs, ...duplicates.map((d) => d?.job).filter(Boolean)]
+      .map((j) => ({ sourceId: j.rawMetadata?.sourceId, company: j.company }));
+    try {
+      sourceCoverage.record(perSource, listed, { at: now });
+      // D8: configured employers a complete listing returned nothing for.
+      const targets = deps.coverageTargets !== undefined ? deps.coverageTargets : readCoverageTargets(config.root);
+      if (Array.isArray(targets) && targets.length) {
+        stats.zeroYield = zeroYieldTargets({
+          targets, jobboards: config.jobboards, perSource, companies: listed.map((l) => l.company),
+        });
+        sourceCoverage.setLastRun?.({ at: now.toISOString(), zeroYield: stats.zeroYield });
+        if (stats.zeroYield.length) {
+          logger.event(EVENT_TYPES.SEARCH_END, {
+            message: `${stats.zeroYield.length} configured employer(s) returned no postings: `
+              + stats.zeroYield.slice(0, 12).map((z) => z.name).join(', ')
+              + (stats.zeroYield.length > 12 ? ', …' : ''),
+            meta: { zeroYield: stats.zeroYield },
+          });
+        }
+      }
+      sourceCoverage.save();
+    } catch { /* a hint; losing it only widens the next window */ }
   }
 
   // F10 — re-judge active rows scored under a different configuration, from
@@ -1053,6 +1117,17 @@ const DISCOVERY_STATUSES = new Set(['discarded', 'scored', 'unknown_date_review'
  * `queued` is a lifecycle, not a stored status: a Queue-tier row is 'scored'.
  */
 const RETAINED_STATUSES = new Set(['scored', 'needs_description']);
+
+/** config/coverage_targets.json `targets`, or [] when absent or unreadable. */
+function readCoverageTargets(root) {
+  if (!root) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(join(root, 'config', 'coverage_targets.json'), 'utf8'));
+    return Array.isArray(parsed?.targets) ? parsed.targets : [];
+  } catch {
+    return [];
+  }
+}
 
 /** Placeholder discovery result for rows recorded without classification. */
 const UNCLASSIFIED = Object.freeze({ match: 'unknown', signals: [], reasons: ['not classified: dropped before scoring'] });

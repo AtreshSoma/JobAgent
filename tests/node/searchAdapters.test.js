@@ -740,7 +740,9 @@ describe('careers adapter (public discovery)', () => {
       { companies: [{ name: 'Globex', sitemap: 'https://globex.com/sitemap.xml' }] },
       { fetchImpl, maxRetries: 0 },
     );
-    expect(errors).toHaveLength(0);
+    // The sitemap strategy reports what it read as a NOTE (not a failure).
+    expect(errors.filter((e) => e.error)).toHaveLength(0);
+    expect(errors.find((e) => e.note)?.note).toMatch(/sitemap: 3 job URLs/);
     // 3 job-like locs (2 /careers/job/ + 1 greenhouse); blog/about/home excluded.
     expect(jobs).toHaveLength(3);
     expect(jobs.every((j) => j.source === 'careers')).toBe(true);
@@ -758,7 +760,7 @@ describe('careers adapter (public discovery)', () => {
       { companies: [{ name: 'Globex', sitemap: 'https://globex.com/sitemap.xml' }] },
       { fetchImpl, maxRetries: 0 },
     );
-    expect(errors).toHaveLength(0);
+    expect(errors.filter((e) => e.error)).toHaveLength(0);
     expect(jobs).toHaveLength(3);
   });
 

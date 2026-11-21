@@ -715,11 +715,28 @@ node scripts/harvestSources.mjs --apply --limit=25 --min-jobs=2
 
 Board enumeration is free and unmetered forever after, so **each harvested coordinate converts a one-off metered lookup into permanent free coverage**. Run it occasionally, since it is the mechanism that makes discovery compound instead of resetting every time a paid provider's quota does.
 
+### Adding a specific employer
+
+Give the employer's careers page to the resolver. It reads the page once and prints a ready-to-paste entry: a Workday, Greenhouse, Lever, Ashby, Oracle or iCIMS board if the page links to one, or the site's job sitemap if it publishes one.
+
+```bash
+npm run resolve-careers -- https://jobs.example.com            # find the board or sitemap
+npm run resolve-careers -- https://jobs.example.com --verify   # also ask a Workday site for one result
+```
+
+A sitemap entry goes in `company-careers` as `{ "name": "...", "sitemap": "https://.../sitemap.xml" }`. The search reads the whole sitemap, keeps only the URLs whose words fit your profile and (with the US-only setting) are not abroad, reads the best-fitting titles first, and never re-reads a page it has already judged. At most 150 new pages per employer are read per search (`maxSitemapFetchesPerCompany` on the source, or `maxLinks` on one employer); the rest wait for the next search. A newly added employer's open roles that match your titles are added once, up to the retention limit (45 days), even with a short discovery window.
+
+**Which employers are covered.** `config/coverage_targets.json` lists about 100 employers and the route that reaches each. The test suite fails if an employer with a route is missing from your sources. `npm run coverage:audit` shows, for each one, how many postings are stored and active and why the rest were filtered, plus the same breakdown for every posting whose title fits your profile. It only reads.
+
+**Employers with no automated route.** Google (its robots.txt disallows the job pages), Tesla (403), IBM (answers every request with an empty page), Goldman Sachs, Uber and American Express have no public listing the agent may read. Add their postings by URL: paste the URL into *Add a job*, or list it in `manual-urls` or `data/jobs_input/manual_jobs.csv`.
+
 ### Freshness, expiry and re-scoring
 
 | Control | What it does |
 | --- | --- |
 | `JOB_FRESHNESS_MODE` (default `LAST_7_DAYS`; also `LAST_14_DAYS`, `LAST_30_DAYS`) | Gates **new** postings only. A job already on your board is not thrown away just because it turned 8 days old. |
+| Catch-up (automatic) | For each source, the window is widened to cover the time since that source was last read **in full**. A missed day, a failed source or a skipped page therefore loses nothing: a posting first seen on day 5 is still judged if the source was not read completely since then. An employer the source has never listed before (one you just added) has its open roles that match your titles added once, up to the retention limit. Kept per profile in `data/profiles/<id>/source_coverage.json`. |
+| Undated careers-site postings | A careers-site job with no date that appears in the site's sitemap after its first read is dated by when it first appeared, and labelled so. Kept in `sitemap_seen.json` beside it. |
 | `exclusions.staleness.skipOlderThanDays` (45) | How long a stored job is kept. Past it, the row retires as `stale_posting` — on the next search, or by the dashboard's re-check at startup and every 6 hours, whichever comes first. Jobs you shortlisted, prepared or applied to are never retired this way. |
 | Freshness points | Graded against the discovery window: full at day 0, half at its edge, zero at the retention limit. |
 | Per-source `maxAgeDays` | A fetch-side optimisation only. |
@@ -727,6 +744,8 @@ Board enumeration is free and unmetered forever after, so **each harvested coord
 **Set both from the dashboard.** *More actions → Discovery and data quality* shows the two settings in plain words and saves your choice to `data/settings.json` (local, gitignored), which overrides `.env` and `exclusions.json`. Delete that file to go back to the file-based values. The same dialog groups every filtered job by the rule that removed it — "older than the discovery window", "location outside your search", "states it will not sponsor" and so on — and lists the sources that failed in the last search.
 
 **Reading missing descriptions.** Some boards (Workday, SmartRecruiters, Oracle, iCIMS) list jobs without their description, so fit cannot be judged and the job waits as *waiting for a description*. The same dialog reads them from the same public endpoints: *Read descriptions now* runs one pass, and the background switch (off by default) repeats it every 6 hours. A pass reads at most 100 jobs (40 per source), two requests per host at a time, one second apart; only active jobs whose title your profile does not reject, inside retention, are read. Each job is written as soon as it is read, so stopping or closing the dashboard loses nothing. A failed read is retried after 24 hours, three times at most; a posting that answers 404/410 is not retried. Jobs you shortlisted, prepared or applied to are never changed. `npm run enrich` (dry run) and `npm run enrich -- --apply` do the same from the command line.
+
+**Jobs filtered out before catch-up existed.** Before 2026-11-20, a job first seen outside the window was stored as `stale` and never judged. `npm run rejudge-stale` lists those still inside retention whose title fits your profile; `npm run rejudge-stale -- --apply` puts them back as *waiting for a description* (the next search or a description pass judges them) and relabels the ones a title or location rule would have removed anyway with that real reason. It never touches jobs you acted on.
 
 A job whose source completes a full listing in each of its last **three** runs without returning it is retired as `expired: not listed by source for 3 runs`; a past JSON-LD `validThrough` retires it too. Nothing expires when an aggregate source failed that run.
 
@@ -884,6 +903,9 @@ npm run typecheck      # JSDoc type check (tsc) of the files marked // @ts-check
 npm run db:maintenance # checkpoint the SQLite WAL (+ --vacuum to compact; refuses while a run or the dashboard is active)
 npm run db:prune       # dry run: descriptions of old discarded rows (+ --prune-events=<days> for diagnostics)
 npm run rescore        # re-judge stored rows under the current profile (no network)
+npm run rejudge-stale  # list jobs the old discovery window discarded as stale (+ -- --apply to re-admit them)
+npm run coverage:audit # what the search reached, per employer in config/coverage_targets.json (read-only)
+npm run resolve-careers -- <careers URL>   # print the config entry for an employer's board or job sitemap
 npm run tracker        # refresh the Excel tracker at data/job_tracker.csv
 npm run backup         # back up every job list now (also daily, automatically, in data/backups)
 npm run export         # everything personal in ONE file (exports/…jobagent); --passphrase-file=… encrypts it

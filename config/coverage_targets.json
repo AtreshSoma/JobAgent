@@ -1,0 +1,598 @@
+{
+  "_note": "Employers the search is expected to reach, and the route that reaches each (audit 2026-11-20, docs/audits/2026-11-20-discovery-coverage.md). route is the adapter family; 'unreachable' and 'manual' mean no automated route, with the reason. tests/node/coverageTargets.test.js fails when an employer with a route is not configured in an enabled source. npm run coverage:audit reports what each one actually yielded. aliases match stored company names by leading words.",
+  "targets": [
+    {
+      "name": "Microsoft",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "Apple",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "Amazon",
+      "route": "amazonJobs",
+      "source": "amazon-jobs",
+      "aliases": [
+        "Amazon.com",
+        "Amazon Web Services",
+        "AWS"
+      ]
+    },
+    {
+      "name": "Meta",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "Netflix",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "NVIDIA",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Salesforce",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Adobe",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Oracle",
+      "route": "oracleRecruiting",
+      "source": "oracle-recruiting"
+    },
+    {
+      "name": "Cisco",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Intel",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Intel Corporation"
+      ]
+    },
+    {
+      "name": "Qualcomm",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "Broadcom",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Dell Technologies",
+      "route": "oracleRecruiting",
+      "source": "oracle-recruiting",
+      "aliases": [
+        "Dell"
+      ]
+    },
+    {
+      "name": "HP Inc.",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "HP"
+      ]
+    },
+    {
+      "name": "Hewlett Packard Enterprise",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "HPE"
+      ]
+    },
+    {
+      "name": "Micron Technology",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Micron"
+      ]
+    },
+    {
+      "name": "Applied Materials",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "KLA",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Analog Devices",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Texas Instruments",
+      "route": "oracleRecruiting",
+      "source": "oracle-recruiting"
+    },
+    {
+      "name": "ServiceNow",
+      "route": "smartrecruiters",
+      "source": "smartrecruiters-companies"
+    },
+    {
+      "name": "Workday",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Autodesk",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Snowflake",
+      "route": "ashby",
+      "source": "ashby-boards"
+    },
+    {
+      "name": "Databricks",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Stripe",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Airbnb",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Datadog",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Cloudflare",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "MongoDB",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Okta",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Coinbase",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "Palantir",
+      "route": "lever",
+      "source": "lever-boards"
+    },
+    {
+      "name": "Spotify",
+      "route": "lever",
+      "source": "lever-boards"
+    },
+    {
+      "name": "OpenAI",
+      "route": "ashby",
+      "source": "ashby-boards"
+    },
+    {
+      "name": "Anthropic",
+      "route": "greenhouse",
+      "source": "greenhouse-boards"
+    },
+    {
+      "name": "eBay",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "PayPal",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "CrowdStrike",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "JPMorgan Chase",
+      "route": "oracleRecruiting",
+      "source": "oracle-recruiting",
+      "aliases": [
+        "JPMorgan",
+        "JP Morgan"
+      ]
+    },
+    {
+      "name": "Bank of America",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Wells Fargo",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Citi",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Citigroup",
+        "Citibank"
+      ]
+    },
+    {
+      "name": "Capital One",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Morgan Stanley",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "BlackRock",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Fidelity Investments",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Fidelity"
+      ]
+    },
+    {
+      "name": "Vanguard",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Charles Schwab",
+      "route": "icims",
+      "source": "icims-portals",
+      "aliases": [
+        "Schwab"
+      ]
+    },
+    {
+      "name": "Visa",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Mastercard",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "BNY",
+      "route": "oracleRecruiting",
+      "source": "oracle-recruiting",
+      "aliases": [
+        "BNY Mellon"
+      ]
+    },
+    {
+      "name": "U.S. Bank",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "US Bank"
+      ]
+    },
+    {
+      "name": "State Street",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "UnitedHealth Group",
+      "route": "sitemap",
+      "source": "company-careers",
+      "aliases": [
+        "UnitedHealth",
+        "Optum"
+      ]
+    },
+    {
+      "name": "CVS Health",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Aetna"
+      ]
+    },
+    {
+      "name": "Elevance Health",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Anthem"
+      ]
+    },
+    {
+      "name": "Cigna",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "The Cigna Group",
+        "Evernorth"
+      ]
+    },
+    {
+      "name": "Humana",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Kaiser Permanente",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "Johnson & Johnson",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Pfizer",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Merck",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Comcast",
+      "route": "sitemap",
+      "source": "company-careers",
+      "aliases": [
+        "NBCUniversal"
+      ]
+    },
+    {
+      "name": "Verizon",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "AT&T",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "ATT"
+      ]
+    },
+    {
+      "name": "T-Mobile",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Disney",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "The Walt Disney Company"
+      ]
+    },
+    {
+      "name": "Walmart",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Target",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Costco",
+      "route": "sitemap",
+      "source": "company-careers",
+      "aliases": [
+        "Costco Wholesale"
+      ]
+    },
+    {
+      "name": "The Home Depot",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Home Depot"
+      ]
+    },
+    {
+      "name": "Lowe's",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Lowes"
+      ]
+    },
+    {
+      "name": "Nike",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Boeing",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Northrop Grumman",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "RTX",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Raytheon"
+      ]
+    },
+    {
+      "name": "Honeywell",
+      "route": "oracleRecruiting",
+      "source": "oracle-recruiting"
+    },
+    {
+      "name": "3M",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "General Motors",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "GM"
+      ]
+    },
+    {
+      "name": "John Deere",
+      "route": "sitemap",
+      "source": "company-careers",
+      "aliases": [
+        "Deere"
+      ]
+    },
+    {
+      "name": "Accenture",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "Deloitte",
+      "route": "careersUrl",
+      "source": "company-careers"
+    },
+    {
+      "name": "PwC",
+      "route": "workday",
+      "source": "workday-public"
+    },
+    {
+      "name": "EY",
+      "route": "sitemap",
+      "source": "company-careers",
+      "aliases": [
+        "Ernst & Young"
+      ]
+    },
+    {
+      "name": "KPMG",
+      "route": "careersUrl",
+      "source": "company-careers"
+    },
+    {
+      "name": "Capgemini",
+      "route": "sitemap",
+      "source": "company-careers"
+    },
+    {
+      "name": "Booz Allen Hamilton",
+      "route": "workday",
+      "source": "workday-public",
+      "aliases": [
+        "Booz Allen"
+      ]
+    },
+    {
+      "name": "Google",
+      "route": "unreachable",
+      "aliases": [
+        "Alphabet"
+      ],
+      "reason": "robots.txt disallows /about/careers/applications/jobs/results, which covers the listing and every job page. Add postings by URL (manual-urls)."
+    },
+    {
+      "name": "Tesla",
+      "route": "unreachable",
+      "reason": "Careers sitemap answers HTTP 403 to an identifying client (verified 2026-11-20)."
+    },
+    {
+      "name": "LinkedIn",
+      "route": "unreachable",
+      "reason": "LinkedIn is a URL reader only, by design (src/search/sources.js)."
+    },
+    {
+      "name": "Cognizant",
+      "route": "unreachable",
+      "reason": "Its WAF answers 403 to the identifying User-Agent; not bypassed."
+    },
+    {
+      "name": "IBM",
+      "route": "manual",
+      "reason": "careers.ibm.com answers HTTP 202 with an empty body to every page from an identifying client, including its robots-listed sitemap (2026-11-20). Add postings by URL."
+    },
+    {
+      "name": "Goldman Sachs",
+      "route": "manual",
+      "reason": "No job sitemap at higher.gs.com; listings load from a private GraphQL API. Add postings by URL."
+    },
+    {
+      "name": "Uber",
+      "route": "manual",
+      "reason": "The old public search endpoint now answers 'Missing RPC handler' (2026-11-20). Add postings by URL."
+    },
+    {
+      "name": "American Express",
+      "route": "manual",
+      "reason": "The careers page could not be read (oversized response headers) and no job sitemap was found (2026-11-20). Add postings by URL."
+    },
+    {
+      "name": "Lam Research",
+      "route": "manual",
+      "reason": "Careers site found but no ATS board or job sitemap was detected by npm run resolve-careers (2026-11-20)."
+    },
+    {
+      "name": "Expedia Group",
+      "route": "manual",
+      "aliases": [
+        "Expedia"
+      ],
+      "reason": "Workday body markers but no reachable board link or job sitemap (2026-11-20)."
+    },
+    {
+      "name": "Starbucks",
+      "route": "manual",
+      "reason": "Has an Eightfold job sitemap (apply.starbucks.com/careers/sitemap.xml, 21,994 URLs) but is almost all retail; add it to company-careers if wanted."
+    }
+  ]
+}

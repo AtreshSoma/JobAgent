@@ -177,3 +177,22 @@ describe('icims adapter', () => {
     expect(fetchImpl).toHaveBeenCalled();
   });
 });
+
+describe('platform registry: 2026-11-20 coverage audit', async () => {
+  const { platformForUrl: forUrl, extractCoordinate: coordOf, sitemapFor } = await import('../../src/search/platforms.js');
+
+  it('recognizes Oracle Recruiting on an employer-owned domain', () => {
+    const url = 'https://enterpriseplatform.example.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/123';
+    expect(forUrl(url)?.id).toBe('oracleRecruiting');
+    expect(coordOf(url)).toEqual({ ats: 'oracleRecruiting', host: 'enterpriseplatform.example.com', siteNumber: 'CX_1001' });
+  });
+
+  it('does not classify an unrelated vanity path as Oracle', () => {
+    expect(forUrl('https://careers.example.com/jobs/123')).toBeNull();
+  });
+
+  it('points Eightfold tenants at their job sitemap', () => {
+    expect(sitemapFor('https://acme.eightfold.ai/careers/job/42')).toBe('https://acme.eightfold.ai/careers/sitemap.xml');
+    expect(sitemapFor('https://boards.greenhouse.io/acme')).toBeNull();
+  });
+});

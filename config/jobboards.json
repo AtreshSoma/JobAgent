@@ -2353,6 +2353,139 @@
           "site": "EnterpriseCareers",
           "company": "Trellix",
           "pageSize": 20
+        },
+        {
+          "host": "cisco.wd5.myworkdayjobs.com",
+          "tenant": "cisco",
+          "site": "Cisco_Careers",
+          "company": "Cisco",
+          "pageSize": 20
+        },
+        {
+          "host": "hp.wd5.myworkdayjobs.com",
+          "tenant": "hp",
+          "site": "ExternalCareerSite",
+          "company": "HP Inc.",
+          "pageSize": 20
+        },
+        {
+          "host": "broadcom.wd1.myworkdayjobs.com",
+          "tenant": "broadcom",
+          "site": "External_Career",
+          "company": "Broadcom",
+          "pageSize": 20
+        },
+        {
+          "host": "boeing.wd1.myworkdayjobs.com",
+          "tenant": "boeing",
+          "site": "EXTERNAL_CAREERS",
+          "company": "Boeing",
+          "pageSize": 20
+        },
+        {
+          "host": "disney.wd5.myworkdayjobs.com",
+          "tenant": "disney",
+          "site": "disneycareer",
+          "company": "Disney",
+          "pageSize": 20
+        },
+        {
+          "host": "fmr.wd1.myworkdayjobs.com",
+          "tenant": "fmr",
+          "site": "FidelityCareers",
+          "company": "Fidelity Investments",
+          "pageSize": 20
+        },
+        {
+          "host": "cigna.wd5.myworkdayjobs.com",
+          "tenant": "cigna",
+          "site": "cignacareers",
+          "company": "Cigna",
+          "pageSize": 20
+        },
+        {
+          "host": "elevancehealth.wd1.myworkdayjobs.com",
+          "tenant": "elevancehealth",
+          "site": "ANT",
+          "company": "Elevance Health",
+          "pageSize": 20
+        },
+        {
+          "host": "vanguard.wd5.myworkdayjobs.com",
+          "tenant": "vanguard",
+          "site": "vanguard_external",
+          "company": "Vanguard",
+          "pageSize": 20
+        },
+        {
+          "host": "homedepot.wd5.myworkdayjobs.com",
+          "tenant": "homedepot",
+          "site": "CareerDepot",
+          "company": "The Home Depot",
+          "pageSize": 20
+        },
+        {
+          "host": "lowes.wd5.myworkdayjobs.com",
+          "tenant": "lowes",
+          "site": "LWS_External_CS",
+          "company": "Lowe's",
+          "pageSize": 20
+        },
+        {
+          "host": "nike.wd1.myworkdayjobs.com",
+          "tenant": "nike",
+          "site": "nke",
+          "company": "Nike",
+          "pageSize": 20
+        },
+        {
+          "host": "micron.wd1.myworkdayjobs.com",
+          "tenant": "micron",
+          "site": "External",
+          "company": "Micron Technology",
+          "pageSize": 20
+        },
+        {
+          "host": "amat.wd1.myworkdayjobs.com",
+          "tenant": "amat",
+          "site": "External",
+          "company": "Applied Materials",
+          "pageSize": 20
+        },
+        {
+          "host": "kla.wd1.myworkdayjobs.com",
+          "tenant": "kla",
+          "site": "Search",
+          "company": "KLA",
+          "pageSize": 20
+        },
+        {
+          "host": "analogdevices.wd1.myworkdayjobs.com",
+          "tenant": "analogdevices",
+          "site": "External",
+          "company": "Analog Devices",
+          "pageSize": 20
+        },
+        {
+          "host": "ebay.wd5.myworkdayjobs.com",
+          "tenant": "ebay",
+          "site": "apply",
+          "company": "eBay",
+          "pageSize": 20
+        },
+        {
+          "host": "3m.wd1.myworkdayjobs.com",
+          "tenant": "3m",
+          "site": "Search",
+          "company": "3M",
+          "pageSize": 20
+        },
+        {
+          "host": "ms.wd5.myworkdayjobs.com",
+          "tenant": "ms",
+          "site": "External",
+          "company": "Morgan Stanley",
+          "pageSize": 20
         }
       ],
       "rateLimitMs": 4000,
@@ -2400,13 +2533,48 @@
         {
           "name": "KPMG",
           "careersUrl": "https://www.kpmguscareers.com/job-search/"
+        },
+        {
+          "name": "Microsoft",
+          "sitemap": "https://apply.careers.microsoft.com/careers/sitemap.xml"
+        },
+        {
+          "name": "Apple",
+          "sitemap": "https://jobs.apple.com/sitemap/sitemap-jobs-en-us.xml",
+          "detail": "apple",
+          "jobUrlPattern": "/details/[^/]+/[^/]+"
+        },
+        {
+          "name": "Netflix",
+          "sitemap": "https://explore.jobs.netflix.net/careers/sitemap.xml"
+        },
+        {
+          "name": "Qualcomm",
+          "sitemap": "https://careers.qualcomm.com/careers/sitemap.xml"
+        },
+        {
+          "name": "UnitedHealth Group",
+          "sitemap": "https://careers.unitedhealthgroup.com/sitemap.xml"
+        },
+        {
+          "name": "Comcast",
+          "sitemap": "https://jobs.comcast.com/sitemap.xml"
+        },
+        {
+          "name": "Kaiser Permanente",
+          "sitemap": "https://www.kaiserpermanentejobs.org/sitemap.xml"
+        },
+        {
+          "name": "John Deere",
+          "sitemap": "https://careers.deere.com/careers/sitemap.xml"
         }
       ],
       "maxLinksPerCompany": 50,
       "rateLimitMs": 4000,
       "options": {
-        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped \u2014 never bypassed. Entries added 2026-08-05 after live-verifying each site actually exposes a static, unauthenticated job-link surface: sitemap.xml with individual postings (Meta, Costco, EY), or a careers listing page whose raw HTML contains real <a href> links to job pages carrying schema.org JobPosting JSON-LD (Deloitte, KPMG; Cognizant qualifies the same way but its WAF 403s our identifying User-Agent, so it degrades to logged-and-skipped rather than bypassed). Rejected as having no public static feed (JS-rendered listings, no sitemap, no JSON-LD, confirmed by live fetch): Microsoft, Amazon, Google, Apple, Oracle, JPMorgan Chase, Starbucks, Capgemini, Infosys. UnitedHealth Group's individual job pages DO carry JobPosting JSON-LD, but its listing page renders client-side with no static links to scrape, so it stayed out too \u2014 revisit if the harvester (scripts/harvestSources.mjs) or a manual URL ever seeds one of its job URLs.",
-        "removedNote": "Cognizant (careers.cognizant.com/us-en/jobs/) removed 2026-11-16: it answers HTTP 403 to automated clients on every run, curl included."
+        "note": "DISCOVERY. Public company careers pages only. Each entry is one of: { name, ats: 'greenhouse'|'lever'|'workday'|'ashby'|'smartrecruiters', slug/host/tenant/site } (delegates to the official API adapter), { name, careersUrl } (scrape public job links), or { name, sitemap } (read a public sitemap.xml; optional detail: 'apple', minTitleFit, maxLinks). Blocked pages (401/403/429/CAPTCHA/login) are logged and skipped, never bypassed. SITEMAP STRATEGY (2026-11-20, audit D3/D4): job URLs are filtered by the words in their slug (profile title fit and the US-only gate) before any page is fetched, newest <lastmod> first, pages already judged are not re-fetched, and at most maxSitemapFetchesPerCompany (default 150) new pages are read per company per run. Undated pages are dated by first appearance in the sitemap after the first crawl. RE-VERIFIED 2026-11-20 (live, robots.txt checked): Microsoft, Netflix and Qualcomm (Eightfold) publish /careers/sitemap.xml with JobPosting JSON-LD and robots.txt allows /careers; their JSON API (/api/apply, /api/pcsx) still answers 403/429 and is NOT used. Apple publishes sitemap-jobs-en-us.xml and a public /api/v1/jobDetails/{jobNumber} (detail: 'apple'). UnitedHealth Group publishes a sitemap with JobPosting JSON-LD (robots.txt disallows only /search-jobs/). Still unreachable within policy: Google (robots.txt disallows /about/careers/applications/jobs/results), Tesla (403). Cognizant's WAF 403s our identifying User-Agent.",
+        "removedNote": "Cognizant (careers.cognizant.com/us-en/jobs/) removed 2026-11-16: it answers HTTP 403 to automated clients on every run, curl included.",
+        "note_history": "2026-08-05: the earlier note recorded Microsoft, Amazon, Google, Apple, Oracle, JPMorgan Chase, Starbucks, Capgemini and Infosys as having no public static feed. Since then Amazon (amazonJobs), Oracle and JPMorgan (oracleRecruiting), Capgemini (sitemap here) and Microsoft/Apple (above) have routes."
       }
     },
     {
@@ -2474,7 +2642,8 @@
         "troveo",
         "adjoe",
         "a2zradiology",
-        "amplitude"
+        "amplitude",
+        "snowflake"
       ],
       "options": {
         "note": "DISCOVERY via Ashby's official public posting API (api.ashbyhq.com/posting-api/job-board/<board>). Board slugs of tech companies hiring data roles; a dead board is logged and skipped."
@@ -2873,6 +3042,11 @@
           "host": "ejkz.fa.us2.oraclecloud.com",
           "siteNumber": "CX_1",
           "company": "PEMCO"
+        },
+        {
+          "host": "enterpriseplatform.dell.com",
+          "siteNumber": "CX_1001",
+          "company": "Dell Technologies"
         }
       ],
       "options": {
@@ -3117,6 +3291,10 @@
         {
           "host": "careers-malanai.icims.com",
           "company": "Careers Malanai"
+        },
+        {
+          "host": "career-schwab.icims.com",
+          "company": "Charles Schwab"
         }
       ],
       "options": {

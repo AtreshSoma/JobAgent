@@ -78,7 +78,10 @@ describe('dashboard — discovery and data quality', () => {
     const d = await get('/api/data-quality');
     expect(d.board).toMatchObject({ scored: 1 });
     expect(d.filtered).toEqual([expect.objectContaining({ key: 'outside_window', count: 1 })]);
-    expect(d.freshness.rules).toHaveLength(4);
+    expect(d.freshness.rules).toHaveLength(5);
+    // Audit D1: the window is widened to cover a source's last full read.
+    expect(d.freshness.rules[0]).toMatch(/since a source was last read in full/);
+    expect(d.zeroYield).toEqual({ at: null, employers: [] });
     expect(d.enrichment.settings.enabled).toBe(false);
     expect(d.enrichment.state).toMatchObject({ running: false, enabled: false });
   });

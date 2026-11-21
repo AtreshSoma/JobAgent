@@ -29,12 +29,33 @@ import { withRetry } from '../../utils/retryHandler.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { fetchWithTimeout, discoveryHeaders } from '../../utils/httpClient.js';
 import { safeFetch } from '../../utils/safeFetch.js';
+import { normalizeJob, makeJobId, htmlToText } from '../normalize.js';
+import { jobFromCachedDetail } from '../detailBudget.js';
+import { profileVocabularyFor, titleFitPriority } from '../../scoring/profileFit.js';
+import { passesUsOnlyGate } from '../../scoring/exclusionFilter.js';
 
 export const adapterId = 'careers';
 
-/** Default and hard ceiling on links/URLs fetched per company. */
+/** Default and hard ceiling on links fetched per company from a careers PAGE. */
 const DEFAULT_MAX_LINKS = 50;
 const MAX_LINKS_CEILING = 200;
+/**
+ * Sitemap strategy: pages fetched per company per run, counted AFTER the slug
+ * filter and AFTER skipping pages already judged (audit D3). The old cap took
+ * the first 50 URLs in file order, so Meta (thousands of postings) yielded 50
+ * arbitrary, mostly foreign or unrelated pages. Filtered first, 150 covers a
+ * large employer's relevant backlog in one or two runs.
+ */
+const DEFAULT_SITEMAP_MAX_FETCHES = 150;
+const SITEMAP_MAX_FETCHES_CEILING = 500;
+/**
+ * Minimum `titleFitPriority` of a URL's slug to be worth a page fetch. 2 = the
+ * slug names a profile technology or role. Measured on Microsoft's sitemap
+ * (2,446 URLs): level >= 2 left 55 pages, including "senior data engineer
+ * united states washington redmond"; 1,026 slugs were outright rejects.
+ * A company entry can override it with `minTitleFit`.
+ */
+const DEFAULT_SLUG_MIN_FIT = 2;
 /** How many nested sitemaps from a sitemap index we will follow (one level). */
 const MAX_NESTED_SITEMAPS = 25;
 /** Default number of companies processed in parallel. */
@@ -171,43 +192,285 @@ async function fromCareersPage(company, source, ctx, maxLinks) {
   return { jobs, errors };
 }
 
-/** Strategy 3: read a public sitemap (or sitemap index), then parse job-like URLs. */
-async function fromSitemap(company, source, ctx, maxLinks) {
+/**
+ * Strategy 3: read a public sitemap (or sitemap index), keep the job URLs worth
+ * reading, then parse each (audit D3, D4).
+ *
+ *   1. every job-like `<loc>` with its `<lastmod>` (one nested level followed);
+ *   2. slug filter: the words in each URL (most career sites put the title and
+ *      often the city there) must fit the profile, and must not place the job
+ *      outside the US when the US-only gate is on. Costs nothing: no page fetch;
+ *   3. newest `<lastmod>` first;
+ *   4. pages already stored are not re-bought: a row with a description is
+ *      rebuilt from the store (it stays "listed" for the expiry pass), a
+ *      discarded row is skipped;
+ *   5. the per-company budget applies to what is left;
+ *   6. an undated posting whose URL is new since the previous crawl is dated
+ *      by this crawl (`postedAtSource: 'first_seen'`); see sitemapSeen.js.
+ */
+async function fromSitemap(company, source, ctx, _careersPageMaxLinks) {
   const { fetchImpl = safeFetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
   const errors = [];
+  const label = companyLabel(company);
 
   if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
   const root = await fetchPage(company.sitemap, { fetchImpl, maxRetries, requestTimeoutMs, hostGate });
   if (root.blocked) {
-    return { jobs: [], errors: [{ company: companyLabel(company), url: company.sitemap, error: `blocked (${root.reason}); skipped` }] };
+    return { jobs: [], errors: [{ company: label, url: company.sitemap, error: `blocked (${root.reason}); skipped` }] };
   }
   if (root.error) {
-    return { jobs: [], errors: [{ company: companyLabel(company), url: company.sitemap, error: root.error }] };
+    return { jobs: [], errors: [{ company: label, url: company.sitemap, error: root.error }] };
   }
 
-  let urls = [];
+  let entries = [];
+  let complete = true;
   if (isSitemapIndex(root.html)) {
-    // Follow nested sitemaps one level deep.
     const nested = extractLocs(root.html).slice(0, MAX_NESTED_SITEMAPS);
     for (const sm of nested) {
       if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
       const child = await fetchPage(sm, { fetchImpl, maxRetries, requestTimeoutMs, hostGate });
       if (child.blocked || child.error) {
-        errors.push({ company: companyLabel(company), url: sm, error: child.blocked ? `blocked (${child.reason}); skipped` : child.error });
+        complete = false;
+        errors.push({ company: label, url: sm, error: child.blocked ? `blocked (${child.reason}); skipped` : child.error });
         continue;
       }
-      urls.push(...extractLocs(child.html));
+      entries.push(...extractSitemapEntries(child.html));
     }
   } else {
-    urls = extractLocs(root.html);
+    entries = extractSitemapEntries(root.html);
+  }
+  // A site whose posting URLs carry none of the generic hints (Apple's are
+  // /details/{id}/{slug}) names its own pattern with `jobUrlPattern`.
+  const isPosting = company.jobUrlPattern ? safePattern(company.jobUrlPattern) : isJobLikeUrl;
+  entries = entries.filter((e) => isPosting(e.loc));
+  if (entries.length === 0) {
+    errors.push({ company: label, url: company.sitemap, note: 'no job-like URLs found in sitemap' });
+    return { jobs: [], errors };
   }
 
-  const jobUrls = dedupe(urls.filter(isJobLikeUrl)).slice(0, maxLinks);
-  if (jobUrls.length === 0) {
-    errors.push({ company: companyLabel(company), url: company.sitemap, note: 'no job-like URLs found in sitemap' });
+  const vocab = ctx.candidate ? profileVocabularyFor(ctx.candidate) : null;
+  const plan = planSitemapUrls(entries, {
+    vocab,
+    geography: ctx.geography ?? null,
+    minTitleFit: Number.isFinite(company.minTitleFit) ? company.minTitleFit : DEFAULT_SLUG_MIN_FIT,
+    maxFetches: clampInt(company.maxLinks ?? source.maxSitemapFetchesPerCompany, DEFAULT_SITEMAP_MAX_FETCHES, SITEMAP_MAX_FETCHES_CEILING),
+    known: (url) => ctx.detailCache?.knownUrl?.(url, 'careers') ?? null,
+    cached: (url) => ctx.detailCache?.byUrl?.(url, 'careers') ?? null,
+  });
+
+  // First-seen dating needs the previous crawl, read BEFORE recording this one.
+  const seen = ctx.sitemapSeen ?? null;
+  const previous = seen?.previous(company.sitemap) ?? null;
+  if (seen && complete) seen.record(company.sitemap, plan.relevant, new Date(ctx.now?.() ?? Date.now()));
+
+  const jobs = [];
+  for (const { url, cached } of plan.reuse) {
+    const job = jobFromCachedDetail(cached, {
+      source: 'careers', url, rawMetadata: { company: company.name ?? cached.company, via: 'careers', sitemap: true },
+    });
+    if (job) jobs.push(job);
   }
-  const jobs = await parseLinks(jobUrls, company, source, ctx, errors);
+  const fetched = company.detail === 'apple'
+    ? await parseAppleDetails(plan.fetch, company, source, ctx, errors)
+    : await parseLinks(plan.fetch, company, source, ctx, errors);
+  const crawledAt = new Date(ctx.now?.() ?? Date.now()).toISOString();
+  for (const job of fetched) {
+    job.rawMetadata = { ...(job.rawMetadata ?? {}), sitemap: true };
+    if (!job.postedAt && previous && !previous.has(job.url)) {
+      job.postedAt = crawledAt;
+      job.rawMetadata.postedAtSource = 'first_seen';
+      job.rawMetadata.postedAtApprox = true;
+    }
+    jobs.push(job);
+  }
+
+  const c = plan.counts;
+  errors.push({
+    company: label,
+    note: `sitemap: ${c.total} job URLs; ${c.offTarget} off-profile and ${c.abroad} outside the US skipped by slug; `
+      + `${c.alreadyJudged} already judged, ${plan.reuse.length} reused from the store; fetched ${plan.fetch.length}`
+      + (c.overBudget ? `; ${c.overBudget} relevant page(s) left for the next run (budget ${c.budget})` : ''),
+    degraded: c.overBudget > 0,
+  });
   return { jobs, errors };
+}
+
+/**
+ * Decide which sitemap URLs to fetch, reuse or skip. Pure.
+ *
+ * @param {Array<{loc: string, lastmod?: string|null}>} entries job-like entries
+ * @param {object} opts
+ * @param {object|null} opts.vocab profile vocabulary; null disables the fit filter
+ * @param {object|null} opts.geography exclusions.geography
+ * @param {number} opts.minTitleFit
+ * @param {number} opts.maxFetches
+ * @param {(url: string) => ({status?: string}|null)} [opts.known]
+ * @param {(url: string) => (object|null)} [opts.cached]
+ * @returns {{fetch: string[], reuse: Array<{url: string, cached: object}>, relevant: string[],
+ *   counts: {total: number, offTarget: number, abroad: number, alreadyJudged: number, overBudget: number, budget: number}}}
+ */
+export function planSitemapUrls(entries, {
+  vocab = null, geography = null, minTitleFit = DEFAULT_SLUG_MIN_FIT, maxFetches = DEFAULT_SITEMAP_MAX_FETCHES,
+  known = () => null, cached = () => null,
+} = {}) {
+  const counts = { total: 0, offTarget: 0, abroad: 0, alreadyJudged: 0, overBudget: 0, budget: maxFetches };
+  const unique = [];
+  const seen = new Set();
+  for (const e of entries) {
+    const url = String(e?.loc ?? '').split('#')[0];
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    unique.push({ url, lastmod: Date.parse(e.lastmod ?? '') || 0, order: unique.length });
+  }
+  counts.total = unique.length;
+
+  const relevant = [];
+  for (const item of unique) {
+    const words = slugText(item.url);
+    // A URL with no words (an id-only path) cannot be judged by its slug; it
+    // is kept and left to the page itself.
+    const fit = words && vocab ? titleFitPriority(words, vocab) : minTitleFit;
+    if (fit < minTitleFit) { counts.offTarget += 1; continue; }
+    if (words && geography?.usOnly === true && !passesUsOnlyGate({ location: words }, geography)) { counts.abroad += 1; continue; }
+    relevant.push({ ...item, fit });
+  }
+  // Best title fit first, then newest. Newest-only spent Microsoft's whole
+  // budget on "Azure"-mention roles (fit 2) while "Senior Data Engineer"
+  // (fit 4) waited for the next run (measured live, 2026-11-20).
+  relevant.sort((a, b) => (b.fit - a.fit) || (b.lastmod - a.lastmod) || (a.order - b.order));
+
+  const fetch = [];
+  const reuse = [];
+  for (const { url } of relevant) {
+    const stored = known(url);
+    if (stored?.status === 'discarded') { counts.alreadyJudged += 1; continue; }
+    if (stored) {
+      const hit = cached(url);
+      if (hit) { reuse.push({ url, cached: hit }); continue; }
+      // An ACTIVE row with no stored description (needs_description, or one
+      // re-admitted by `npm run rejudge-stale`): read the page again, or it
+      // would never be judged and the expiry pass would retire it unread.
+    }
+    if (fetch.length < maxFetches) fetch.push(url);
+    else counts.overBudget += 1;
+  }
+  return { fetch, reuse, relevant: relevant.map((r) => r.url), counts };
+}
+
+/** Path segments that carry no title words. */
+const GENERIC_SEGMENTS = new Set([
+  'job', 'jobs', 'careers', 'career', 'details', 'detail', 'posting', 'postings', 'position', 'positions',
+  'opening', 'openings', 'apply', 'en', 'search', 'view', 'requisition', 'vacancy', 'vacancies',
+]);
+
+/**
+ * The words a posting URL carries, for the slug filter: title and often city.
+ * "/careers/job/1970393557072567-senior-data-engineer-united-states-washington-redmond"
+ *   -> "senior data engineer united states washington redmond".
+ *
+ * @param {string} url
+ * @returns {string} lowercase words, '' when the path holds only ids
+ */
+export function slugText(url) {
+  let path;
+  try { path = new URL(url).pathname; } catch { return ''; }
+  const words = [];
+  for (const raw of path.split('/')) {
+    let seg;
+    try { seg = decodeURIComponent(raw); } catch { seg = raw; }
+    seg = seg.toLowerCase().replace(/\.(html?|aspx?|php)$/, '');
+    if (!seg || GENERIC_SEGMENTS.has(seg) || /^[a-z]{2}([-_][a-z]{2})?$/.test(seg)) continue;
+    const text = seg.replace(/^[\d-]+(?=[a-z])/, '').replace(/[-_+,.&()%]+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!text || !/[a-z]{3}/.test(text)) continue;
+    words.push(text);
+  }
+  return words.join(' ');
+}
+
+/** A URL predicate from a configured regex string; a bad pattern matches nothing. */
+function safePattern(source) {
+  try {
+    const re = new RegExp(String(source), 'i');
+    return (url) => re.test(String(url ?? ''));
+  } catch {
+    return () => false;
+  }
+}
+
+/** `<url>` entries of a sitemap with their `<lastmod>`, falling back to bare `<loc>`s. */
+export function extractSitemapEntries(xml) {
+  const text = String(xml ?? '');
+  const out = [];
+  const re = /<url>([\s\S]*?)<\/url>/gi;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const loc = /<loc>\s*([^<]+?)\s*<\/loc>/i.exec(m[1]);
+    if (!loc) continue;
+    const lastmod = /<lastmod>\s*([^<]+?)\s*<\/lastmod>/i.exec(m[1]);
+    out.push({ loc: decodeXmlEntities(loc[1].trim()), lastmod: lastmod ? lastmod[1].trim() : null });
+  }
+  if (out.length) return out;
+  return extractLocs(text).map((loc) => ({ loc, lastmod: null }));
+}
+
+/**
+ * Apple's job pages render client-side and carry no JSON-LD, but each posting
+ * has a public JSON detail at /api/v1/jobDetails/{jobNumber} — the same data
+ * the page itself loads (verified 2026-11-20; no key, cookie or token). The
+ * job number is the path segment after /details/.
+ */
+async function parseAppleDetails(urls, company, source, ctx, errors) {
+  const { fetchImpl = safeFetch, rateLimiter, hostGate, maxRetries = 3, requestTimeoutMs } = ctx;
+  const concurrency = ctx.detailConcurrency ?? DEFAULT_LINK_CONCURRENCY;
+  const out = await mapWithConcurrency(urls, concurrency, async (url) => {
+    if (ctx.shouldCancel?.()) return null;
+    const m = /\/details\/([^/]+)/.exec(url);
+    if (!m) return null;
+    const api = `${new URL(url).origin}/api/v1/jobDetails/${encodeURIComponent(m[1])}`;
+    try {
+      if (rateLimiter) await rateLimiter.wait('careers', source.rateLimitMs);
+      const page = await fetchPage(api, { fetchImpl, maxRetries, requestTimeoutMs, hostGate });
+      if (page.blocked || page.error) {
+        errors.push({ company: companyLabel(company), url, error: page.blocked ? `blocked (${page.reason}); skipped` : page.error });
+        return null;
+      }
+      return appleJobFromDetail(JSON.parse(page.html)?.res, { url, company: company.name ?? 'Apple' });
+    } catch (err) {
+      errors.push({ company: companyLabel(company), url, error: err.message });
+      return null;
+    }
+  });
+  return out.filter(Boolean);
+}
+
+/**
+ * Normalize one Apple `jobDetails` payload. Exported for tests.
+ * @param {object} res the `res` object of the response
+ * @param {{url: string, company: string}} meta
+ * @returns {object|null}
+ */
+export function appleJobFromDetail(res, { url, company }) {
+  if (!res?.postingTitle) return null;
+  const places = (Array.isArray(res.locations) ? res.locations : []).map((l) => [
+    l?.name, l?.stateProvince && !String(l?.name ?? '').includes(l.stateProvince) ? l.stateProvince : null, l?.countryName,
+  ].filter(Boolean).join(', ')).filter(Boolean);
+  const sections = [
+    res.jobSummary, res.description, res.responsibilities,
+    res.minimumQualifications && `Minimum qualifications:\n${res.minimumQualifications}`,
+    res.preferredQualifications && `Preferred qualifications:\n${res.preferredQualifications}`,
+  ].filter(Boolean).join('\n\n');
+  return normalizeJob({
+    source: 'careers',
+    company,
+    title: res.postingTitle,
+    location: places.join('; ') + (String(res.homeOffice) === 'true' ? (places.length ? '; Remote' : 'Remote') : ''),
+    url,
+    sourceJobId: res.jobNumber ?? res.reqId ?? '',
+    postedAt: res.postDateInGMT ?? null,
+    jdText: htmlToText(sections).slice(0, 20000),
+    employmentType: res.employmentType === 'Standard' ? 'Full-time' : String(res.employmentType ?? ''),
+    rawMetadata: { company, via: 'careers', detail: 'apple' },
+  });
 }
 
 /** Parse a list of public posting URLs via the JSON-LD reader, tagging company. */
@@ -223,10 +486,7 @@ async function parseLinks(urls, company, source, ctx, errors) {
       const found = await fetchUrl(url, {
         fetchImpl, source: 'careers', maxRetries, requestTimeoutMs, hostGate,
       });
-      for (const job of found) {
-        job.rawMetadata = { ...(job.rawMetadata ?? {}), company: company.name ?? job.company, via: 'careers' };
-        if (!job.company && company.name) job.company = company.name;
-      }
+      for (const job of found) ensureCareersIdentity(job, { url, companyName: company.name });
       return { jobs: found, error: null };
     } catch (err) {
       // One posting that is gone (a sitemap still listing a filled job, e.g.
@@ -246,6 +506,67 @@ async function parseLinks(urls, company, source, ctx, errors) {
     if (r.error) errors.push(r.error);
   }
   return jobs;
+}
+
+/**
+ * Give a careers-page job a stable, unique identity (in place).
+ *
+ * REGRESSION GUARD. The id is computed inside normalizeJob from company + title
+ * + sourceJobId, and pages without JSON-LD arrive with no company, no posting
+ * id and the page <title> as their title. On the live store every Wipro job had
+ * the id "careers:job details wipro limited", so each posting overwrote the
+ * last; Costco postings with the same title at different warehouses did the
+ * same. The posting URL is unique, so it supplies the id when the page did not.
+ */
+export function ensureCareersIdentity(job, { url, companyName }) {
+  job.rawMetadata = { ...(job.rawMetadata ?? {}), company: companyName ?? job.company, via: 'careers' };
+  let changed = false;
+  if (!job.company && companyName) { job.company = companyName; changed = true; }
+  const cleaned = cleanPageTitle(job.title, job.company || companyName);
+  if (job.title && cleaned !== job.title) { job.title = cleaned; changed = true; }
+  if (!job.title) {
+    const words = slugText(url);
+    if (words) { job.title = words.replace(/\b[a-z]/g, (c) => c.toUpperCase()); changed = true; }
+  }
+  if (!job.sourceJobId) { job.sourceJobId = postingIdFromUrl(url); changed = true; }
+  // The page we fetched IS the posting. A JSON-LD `url` can name another page
+  // (an apply link, a canonical on another host); keeping the fetched URL lets
+  // the next run recognize the page as already judged (knownUrl) and lets the
+  // sitemap memory match it.
+  if (url) {
+    if (job.url && job.url !== url) job.rawMetadata.jsonLdUrl = job.url;
+    job.url = url;
+  }
+  if (changed) job.id = makeJobId(job);
+  return job;
+}
+
+/** Strip " Job Details | Company" style suffixes a page <title> carries. */
+export function cleanPageTitle(title, companyName = '') {
+  let t = String(title ?? '').trim();
+  if (!t) return '';
+  const company = String(companyName ?? '').trim().toLowerCase();
+  // "Title | Company", "Title – Careers at Company". A plain hyphen is NOT a
+  // separator: it is part of titles ("ABL - Service Manager").
+  const parts = t.split(/\s+[|–—]\s+/);
+  if (parts.length > 1) {
+    const tail = parts[parts.length - 1].toLowerCase();
+    if ((company && tail.includes(company.split(/\s+/)[0])) || /careers?|jobs?/.test(tail)) t = parts.slice(0, -1).join(' | ');
+  }
+  t = t.replace(/\s*(job details|job detail|detalles del puesto|détails de l'offre|stellenangebot|careers?)\s*$/i, '').trim();
+  return /^(job details?|careers?|jobs?)$/i.test(t) ? '' : t;
+}
+
+/** A stable per-posting id from its URL: the last long number, else the path. */
+export function postingIdFromUrl(url) {
+  try {
+    const u = new URL(url);
+    const nums = (u.pathname.match(/\d{5,}/g) ?? []);
+    if (nums.length) return nums[nums.length - 1];
+    return `${u.hostname}${u.pathname}`.replace(/\/+$/, '');
+  } catch {
+    return String(url ?? '');
+  }
 }
 
 /** Stamp delegated ATS results with the careers provenance (source unchanged). */
@@ -436,10 +757,6 @@ function decodeXmlEntities(s) {
     .replace(/&gt;/gi, '>')
     .replace(/&quot;/gi, '"')
     .replace(/&#39;|&apos;/gi, "'");
-}
-
-function dedupe(arr) {
-  return [...new Set(arr)];
 }
 
 function companyLabel(company) {

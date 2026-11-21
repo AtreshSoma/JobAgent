@@ -65,7 +65,10 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:py": "python -m pytest",
-    "enrich": "node scripts/enrichDescriptions.mjs"
+    "enrich": "node scripts/enrichDescriptions.mjs",
+    "rejudge-stale": "node scripts/rejudgeStale.mjs",
+    "coverage:audit": "node scripts/coverageAudit.mjs",
+    "resolve-careers": "node scripts/resolveCareersSite.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",

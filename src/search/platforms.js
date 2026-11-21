@@ -121,6 +121,11 @@ export const PLATFORMS = Object.freeze([
     // oraclecloud.com serves all of Oracle Cloud; only the CandidateExperience
     // path is recruiting, so the host alone must not classify a site.
     pathHint: /\/(hcmUI\/CandidateExperience|hcmRestApi)\//i,
+    // Oracle Recruiting also runs on employers' OWN domains: Dell's careers
+    // site redirects to enterpriseplatform.dell.com/hcmUI/CandidateExperience/
+    // (site CX_1001), and the same REST API answers there (verified 2026-11-20).
+    // The path is distinctive enough to classify any host.
+    vanityPath: /\/hcmUI\/CandidateExperience\//i,
     bodyMarkers: ['/hcmUI/CandidateExperience/', 'recruitingCEJobRequisitions'],
     enumerable: true,
     extract: (u) => {
@@ -192,23 +197,31 @@ export const PLATFORMS = Object.freeze([
     label: 'Eightfold AI',
     hostPattern: /(^|\.)eightfold\.ai$/,
     bodyMarkers: ['eightfold.ai', 'static.vscdn.net'],
+    // No per-tenant API we may use, so no coordinate: enumerate through the
+    // tenant's own job sitemap with the `careers` adapter instead.
     enumerable: false,
-    note: 'Public job API returns HTTP 403 {"message":"Not authorized for PCSX"} without '
-      + 'authorization — verified on Starbucks and on Microsoft (which migrated its careers '
-      + 'site to Eightfold). Requesting it with a session cookie, CSRF token and matching '
-      + 'Referer still 403s. Getting past that would be bypassing authorization, so it is '
-      + 'out of scope by policy, not merely unimplemented.',
+    sitemapPath: '/careers/sitemap.xml',
+    note: 'Enumerate via the tenant\'s own /careers/sitemap.xml with the `careers` adapter '
+      + '({ name, sitemap }). Verified 2026-11-20: Microsoft (2,446 job URLs), Qualcomm (2,069), '
+      + 'Morgan Stanley (1,138), Netflix (443), John Deere (322), Starbucks (21,994); robots.txt '
+      + 'allows /careers and each job page carries JobPosting JSON-LD with datePosted. The JSON '
+      + 'API (/api/apply, /api/pcsx) answers 403 {"message":"Not authorized for PCSX"} or 429 '
+      + 'without authorization; getting past that would be bypassing authorization, so it stays '
+      + 'out of scope by policy.',
   },
   {
     id: 'phenom',
-    label: 'Phenom People / TalentBrew',
+    label: 'Phenom People / Radancy TalentBrew',
     hostPattern: null,
     bodyMarkers: ['phenompeople', 'ph-hero', 'talentbrew'],
     enumerable: false,
-    note: 'Individual job pages carry valid schema.org JobPosting JSON-LD (verified on '
-      + 'UnitedHealth Group), but the listing page renders client-side with no static links '
-      + 'and no job sitemap, so there is no entry point to enumerate from. Reachable only if '
-      + 'a posting URL arrives some other way (harvester or manual entry).',
+    sitemapPath: '/sitemap.xml',
+    note: 'Listing pages render client-side, but TalentBrew sites publish /sitemap.xml with '
+      + '/job/{city}/{title}/{ids} URLs whose pages carry JobPosting JSON-LD with datePosted. '
+      + 'Enumerate with the `careers` adapter ({ name, sitemap }). Verified 2026-11-20 on '
+      + 'UnitedHealth Group (6,546 job URLs), Comcast (737) and Kaiser Permanente (2,936); '
+      + 'robots.txt disallows only /search-jobs/. (The earlier note said there was no job '
+      + 'sitemap; that was wrong for these sites.)',
   },
 ]);
 
@@ -233,12 +246,33 @@ export function platformForUrl(url) {
   if (!/^https?:$/.test(parsed.protocol)) return null;
   const host = parsed.hostname.toLowerCase();
   for (const platform of PLATFORMS) {
-    if (!platform.hostPattern?.test(host)) continue;
+    if (!platform.hostPattern?.test(host)) {
+      if (platform.vanityPath?.test(parsed.pathname)) return platform;
+      continue;
+    }
     // A host that serves more than its ATS must also match the path hint.
     if (platform.pathHint && !platform.pathHint.test(parsed.pathname)) continue;
     return platform;
   }
   return null;
+}
+
+/**
+ * The job sitemap to try for a careers site on a platform that publishes one
+ * (Eightfold, TalentBrew), or null.
+ *
+ * @param {string} url any page on the careers site
+ * @param {object|null} [platform] the detected platform; detected from the URL when omitted
+ * @returns {string|null}
+ */
+export function sitemapFor(url, platform = null) {
+  const p = platform ?? platformForUrl(url);
+  if (!p?.sitemapPath) return null;
+  try {
+    return new URL(p.sitemapPath, new URL(url).origin).href;
+  } catch {
+    return null;
+  }
 }
 
 /**

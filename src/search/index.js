@@ -135,6 +135,9 @@ export async function runSearch({
     // copied into jobboards.json where the two would silently drift apart.
     candidate: ctx.candidate ?? candidate,
     scoring: ctx.scoring ?? scoring,
+    // The US-only gate's settings, for adapters that can skip a foreign posting
+    // BEFORE paying for its page (the careers sitemap slug filter).
+    geography: ctx.geography ?? exclusions?.geography ?? null,
     requestTimeoutMs: ctx.requestTimeoutMs ?? defaults.requestTimeoutMs,
     boardConcurrency: ctx.boardConcurrency ?? defaults.boardConcurrency,
     pageConcurrency: ctx.pageConcurrency ?? defaults.pageConcurrency,
@@ -207,6 +210,12 @@ export async function runSearch({
     // start hook; treat that as a single source-level error so other sources
     // (already gathered) are never lost.
     const payload = r.ok ? r.value : { jobs: [], errors: [{ error: r.error?.message ?? 'source failed' }] };
+    // Which CONFIGURED source listed the job. `job.source` names the adapter
+    // family ('greenhouse'), which several entries can share; the freshness
+    // catch-up (sourceCoverage.js) is kept per configured entry.
+    for (const job of payload.jobs) {
+      if (job && typeof job === 'object') job.rawMetadata = { ...(job.rawMetadata ?? {}), sourceId: source.id };
+    }
     collected.push(...payload.jobs);
     for (const e of payload.errors) {
       const tagged = { source: source.id, ...e };
