@@ -51,6 +51,16 @@ export function register() {
 
   const note = h('p', { class: 'ex-reg-note', role: 'status' });
   const list = h('ul', { class: 'ex-reg-list' });
+  // Where the mouse is, so a synthetic event at the same spot is not mistaken
+  // for movement (see disarmHover). The row's own pointermove calls it first,
+  // because the row's event reaches the row before the document's.
+  function notePointer(event) {
+    if (event.pointerType !== 'mouse') return;
+    const here = { x: event.clientX, y: event.clientY };
+    if (!hoverArmed && (!disarmedAt || here.x !== disarmedAt.x || here.y !== disarmedAt.y)) hoverArmed = true;
+    pointer = here;
+  }
+  document.addEventListener('pointermove', notePointer, { passive: true });
 
   /** Keep the choice valid: an area with rows, and a capability inside it. */
   function settle() {
@@ -70,10 +80,32 @@ export function register() {
       h('a', { class: 'ex-more', href: `#/how/${c.topic}` }, 'See it under the hood', icon('arrow', { size: 14 })));
   }
 
+  /*
+   * HOVER FOLLOWS THE MOUSE, NOT THE PAGE. Choosing a row re-renders the list,
+   * which moves rows under a pointer that has not moved, and Chromium then
+   * fires a synthetic pointerenter on whatever row is now beneath it. That
+   * re-chose the row under the resting mouse right after an arrow key or a
+   * click, undoing the keyboard's choice and dropping focus to <body> (the
+   * Explore test failed on this about 2 runs in 5, on every platform). So
+   * after a click or an arrow key, hover stays off until the mouse really
+   * moves away from where it was.
+   */
+  let pointer = null;
+  let hoverArmed = true;
+  let disarmedAt = null;
+  function disarmHover() {
+    hoverArmed = false;
+    disarmedAt = pointer;
+  }
+
   function choose(c, { focus = false } = {}) {
-    if (c === chosen) return;
-    chosen = c;
-    paint({ focus });
+    if (c !== chosen) {
+      chosen = c;
+      paint({ focus });
+      return;
+    }
+    // Already chosen (a hover got there first): a click or key still owes focus.
+    if (focus) list.querySelector('.ex-reg-row[aria-expanded="true"]')?.focus({ preventScroll: true });
   }
 
   function paint({ moved = false, focus = false } = {}) {
@@ -95,13 +127,21 @@ export function register() {
       const id = `reg-detail-${CAPABILITIES.indexOf(c)}`;
       const row = h('button', {
         type: 'button', class: 'ex-reg-row', 'aria-expanded': String(open), 'aria-controls': open ? id : null,
-        onClick: () => choose(c, { focus: true }),
+        onClick: () => { disarmHover(); choose(c, { focus: true }); },
         // A mouse only has to pass over a name to read about it; the keyboard and touch press.
-        onPointerenter: (event) => { if (event.pointerType === 'mouse' && matchMedia('(min-width: 1000px)').matches) choose(c); },
+        // pointermove, not pointerenter: it also fires for a real move WITHIN a
+        // row that a re-render slid under the mouse, and a synthetic event at the
+        // same spot never arms it (see disarmHover).
+        onPointermove: (event) => {
+          notePointer(event);
+          if (!hoverArmed || event.pointerType !== 'mouse' || !matchMedia('(min-width: 1000px)').matches) return;
+          choose(c);
+        },
         onKeydown: (event) => {
           const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0;
           if (!step) return;
           event.preventDefault();
+          disarmHover();
           choose(rows[(k + step + rows.length) % rows.length], { focus: true });
         },
       },

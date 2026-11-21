@@ -51,6 +51,17 @@ describe('backups', () => {
     expect(listBackups(root)).toHaveLength(2);
   });
 
+  it('keeps both of two backups made in the same second', async () => {
+    // Names are stamped to the second and VACUUM INTO refuses an existing file,
+    // so "Back up now" twice in one second used to fail the second backup.
+    const now = new Date('2026-11-11T05:00:00Z');
+    const first = await backupAll(root, { label: 'manual', now });
+    const second = await backupAll(root, { label: 'manual', now });
+    expect(second[0].path).not.toBe(first[0].path);
+    expect(second[0].path).toMatch(/applied_jobs-manual-2026-11-11T05-00-01Z\.db$/);
+    expect(listBackups(root)).toHaveLength(4);
+  });
+
   it('takes the daily backup only when the last is a day old', async () => {
     const t0 = new Date('2026-11-11T05:00:00Z');
     expect((await maybeAutoBackup(root, { now: t0 })).skipped).toBe(false);

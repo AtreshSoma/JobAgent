@@ -9,6 +9,12 @@
 *.bat  text eol=crlf
 *.ps1  text eol=crlf
 
+# The extension's field mapping is GENERATED from the shared module and a test
+# compares the two byte for byte. Checked out as CRLF on Windows, the copy no
+# longer matched the LF-joined generator output, and CI failed there on every run.
+src/shared/fieldLabels.js  text eol=lf
+extension/fieldLabels.js   text eol=lf
+
 # Binary: never diffed, never touched by EOL conversion.
 *.docx binary
 *.pdf  binary

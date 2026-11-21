@@ -65,6 +65,21 @@ export function snapshotDatabase(src, dest) {
 }
 
 /**
+ * The backup file name for `label` at `now`, moved on a second at a time until
+ * it is free. Names are stamped to the second and VACUUM INTO refuses an
+ * existing file, so a second backup within the same second ("Back up now"
+ * right after another) failed and the kept count never moved; the dashboard
+ * test timed out on it on a fast machine.
+ */
+export function freeBackupPath(dir, label, now = new Date()) {
+  for (let k = 0; k < 120; k += 1) {
+    const dest = join(dir, `applied_jobs-${label}-${backupStamp(new Date(now.getTime() + k * 1000))}.db`);
+    if (!existsSync(dest)) return dest;
+  }
+  throw new Error('no free backup file name in the next two minutes');
+}
+
+/**
  * Back up every database of a workspace root.
  * @returns {Promise<Array<{workspaceId: string, path: string, bytes: number}>>}
  */
@@ -72,7 +87,7 @@ export async function backupAll(root, { label = 'manual', now = new Date() } = {
   if (!/^[a-z][a-z-]*$/.test(label)) throw new Error(`invalid backup label: ${label}`);
   const results = [];
   for (const db of databaseFiles(root)) {
-    const dest = join(dirname(db.path), 'backups', `applied_jobs-${label}-${backupStamp(now)}.db`);
+    const dest = freeBackupPath(join(dirname(db.path), 'backups'), label, now);
     const copy = await snapshotDatabase(db.path, dest);
     results.push({ workspaceId: db.workspaceId, path: copy.path, bytes: copy.bytes });
     rotateBackups(dirname(dest), { now });

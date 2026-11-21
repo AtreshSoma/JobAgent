@@ -1399,8 +1399,13 @@ button.stat:hover { background: none; border-color: transparent; }
 .sp-item-text { display: flex; flex-direction: column; min-width: 0; }
 .sp-item-was { font-size: var(--fs-sm); overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .sp-chev { transition: none; } }
-/* A phone has no room for the bar on the line: it becomes the card's bottom edge. */
+/* A phone has no room for the bar on the line: it becomes the card's bottom edge.
+   The title gets ~128px beside its buttons there, so it is capped at two lines:
+   with a wide fallback font (Linux's DejaVu Sans) it ran to three and pushed the
+   board down (81px card against a 72px budget). The full sentence stays in the
+   DOM for screen readers, and the progress is also the bar. */
 @media (max-width: 560px) {
+  .sp-title { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
   .setup-progress { position: relative; overflow: hidden; padding-bottom: calc(var(--s2) + 3px); }
   .sp-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 0; }
   .sp-bar > i { border-radius: 0; }
@@ -4185,6 +4190,12 @@ dialog.palette::backdrop { background: rgba(5, 8, 14, .45); }
 /* The "Posted" segments filter the board, so their lens is tinted with the accent. */
 .seg[data-glass] button[aria-pressed="true"] { background: transparent; border-color: transparent; color: var(--accent-ink); }
 .seg[data-glass] button[aria-pressed="true"]:hover { background: transparent; }
+/* Until the lens is in place (it is placed a frame after the row is shown, then
+   fades in) the selected option is transparent over the channel: accent ink on
+   the dark surface measured 1.12:1, and the accessibility scan caught it on a
+   slower machine. The option carries the accent itself whenever there is no
+   visible lens. */
+.seg[data-glass]:not(:has(> .glass-lens:not(.is-off))) button[aria-pressed="true"] { background: var(--accent); }
 .seg[data-glass] .glass-lens {
   background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 88%, white 12%), var(--accent));
 }
