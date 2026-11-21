@@ -211,5 +211,27 @@ export function createDetailCache(db) {
     const id = map.get(urlKeyFor({ url }));
     return id ? byId(id) : null;
   };
+  // EVERY stored row for a URL, with or without a description: lets a source
+  // that reads one page per posting (the careers sitemap strategy) skip pages
+  // it has already judged, instead of re-buying them every run (audit D3).
+  const statusMaps = new Map();
+  cache.knownUrl = (url, source) => {
+    if (!raw || !url || !source) return null;
+    let map = statusMaps.get(source);
+    if (!map) {
+      map = new Map();
+      try {
+        const rows = raw.prepare(`
+          SELECT id, url, status, discard_reason FROM jobs
+          WHERE source = ? AND trim(coalesce(url, '')) <> ''`).all(source);
+        for (const row of rows) {
+          const key = urlKeyFor(row);
+          if (key && !map.has(key)) map.set(key, { id: row.id, status: row.status, discardReason: row.discard_reason });
+        }
+      } catch { /* no map: behave as unknown */ }
+      statusMaps.set(source, map);
+    }
+    return map.get(urlKeyFor({ url })) ?? null;
+  };
   return cache;
 }

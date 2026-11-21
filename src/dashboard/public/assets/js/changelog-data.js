@@ -19,6 +19,31 @@ export const CHANGELOG_GROUPS = Object.freeze([
 
 export const CHANGELOG = Object.freeze([
   {
+    date: '2026-11-20',
+    summary: 'Searches now reach Microsoft, Apple and about thirty more large employers, and a job first seen a few days late is judged instead of thrown away.',
+    safety: 'Nothing is submitted without your review. That has not changed.',
+    groups: {
+      new: [
+        'Searches now include Microsoft, Apple, Netflix, Qualcomm, UnitedHealth Group, Comcast, Kaiser Permanente and John Deere, read from their own careers sites.',
+        'Also added: Cisco, HP, Broadcom, Boeing, Disney, Fidelity, Cigna, Elevance Health, Vanguard, The Home Depot, Lowe\'s, Nike, Micron, Applied Materials, KLA, Analog Devices, eBay, 3M, Morgan Stanley, Snowflake, Dell and Charles Schwab.',
+        'Discovery and data quality lists the employers in your sources that returned no postings in the last full search, so a board that moved or stopped answering no longer goes unnoticed.',
+        'A command prints the setting for any employer\'s careers page, and another reports how many postings each large employer gave you and why the rest were filtered. The User Guide shows both.',
+      ],
+      improved: [
+        'A job is no longer thrown away because it was first seen a few days after it was posted. Each search looks back to the last time a source was read in full, so a missed day or a failed source loses nothing.',
+        'An employer you add to your sources has its open roles that match your titles added once, up to the retention limit, even with a short discovery window.',
+        'Careers sites are read by the words in each job link first, so only roles that fit your titles and are in the US are opened, best fit first, and a page already judged is not read again.',
+        'A careers-site job with no posting date is dated by when it first appeared on the site, after the site has been read once, instead of being kept off the board.',
+        'About 440 matching jobs that the old window had filtered out as too old were put back to be judged, and about 400 others now show the rule that really removed them, mostly a location outside the US.',
+      ],
+      fixed: [
+        'A careers page that redirected to another address could stop the whole search with an internal error. It now follows the redirect.',
+        'Jobs from careers sites without a job title in the page, such as Wipro, replaced one another, so only one survived. Each now keeps its own entry.',
+        'A Workday job marked "Posted 30+ Days Ago" said it was exactly 30 days old. It now says 30+ days.',
+      ],
+    },
+  },
+  {
     version: 'v0.2.3',
     date: '2026-11-15',
     summary: 'Setup is one calm line instead of a wall of warnings, tailored resumes are fitted and printed from your real document, the score and the packet agree on your gaps, and your name and contact details stay on your computer.',

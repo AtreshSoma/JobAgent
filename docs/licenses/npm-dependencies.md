@@ -272,6 +272,7 @@ Snapshot: 2026-11-16. Declared metadata from `package-lock.json`, including opti
 | type-is/node_modules/content-type | 2.1.0 | MIT | Runtime / optional |
 | typescript | 6.0.3 | Apache-2.0 | Development |
 | undici-types | 6.21.0 | MIT | Development |
+| unpdf | 1.9.1 | MIT | Runtime / optional |
 | unpipe | 1.0.0 | MIT | Runtime / optional |
 | uri-js | 4.4.1 | BSD-2-Clause | Development |
 | vary | 1.1.2 | MIT | Runtime / optional |

@@ -208,7 +208,7 @@ describe('the Add / Edit profile form', () => {
   });
 
   it('never replaces anyone\'s resume from this form', () => {
-    expect(dialog).toContain('it becomes their own master resume');
+    expect(dialog).toContain('A .docx also becomes their master resume');
     const profiles = read('assets/js/profiles.js');
     expect(profiles).toContain("'/api/search-profiles/read-resume'");
     expect(profiles).not.toContain("'/api/master-resume'");

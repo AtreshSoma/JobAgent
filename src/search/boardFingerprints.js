@@ -19,6 +19,11 @@ import { dirname, join } from 'node:path';
 
 import { workspacePaths } from '../profile/workspace.js';
 
+// A run that skipped pages reports `cached`, and src/search/sourceCoverage.js
+// does not count it as a complete listing. The discovery window therefore
+// widens to cover the time since the last FULL sweep, so a posting hidden
+// behind an unchanged first page is still admitted when the sweep finds it
+// (audit D6), even when this interval is longer than the window.
 export const FULL_SWEEP_DAYS = 3;
 const MAX_BOARDS = 5000;
 

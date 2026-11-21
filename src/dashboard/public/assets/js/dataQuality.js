@@ -83,6 +83,8 @@ function render(body, data) {
   body.append(enrichmentSection(data.enrichment));
   body.append(filteredSection(data.filtered));
   body.append(sourcesSection(data.sourceProblems, data.enrichment?.backlog));
+  const quiet = zeroYieldSection(data.zeroYield);
+  if (quiet) body.append(quiet);
 }
 
 function freshnessSection(f) {
@@ -187,6 +189,18 @@ function sourcesSection(problems, backlog) {
       : el('div', { class: 'muted', text: 'Every source answered in the last search.' }),
     unread.length ? el('h3', { text: 'Waiting for a description, by source' }) : null,
     unread.length ? miniTable(['Source', 'Jobs'], unread.map(([src, n]) => [src, fmt(n)])) : null);
+}
+
+/** Configured employers the last full search returned nothing for (audit D8). */
+function zeroYieldSection(zero) {
+  const employers = zero?.employers ?? [];
+  if (!employers.length) return null;
+  return el('section', { class: 'pf-section', 'aria-labelledby': 'dqZero' },
+    el('h3', { id: 'dqZero', text: 'Employers with no postings last search' }),
+    el('p', { class: 'muted', text: `${fmt(employers.length)} employer(s) in your sources returned nothing in the last full search`
+      + `${zero.at ? ` (${shortStamp(zero.at)})` : ''}. That can mean no open role matches your search terms, `
+      + 'or that the employer\'s board moved. Run "npm run resolve-careers -- <careers URL>" to re-check one.' }),
+    miniTable(['Employer', 'Source'], employers.map((e) => [e.name, (e.sources ?? []).join(', ')])));
 }
 
 /* ───────────────────────────── actions ───────────────────────────── */

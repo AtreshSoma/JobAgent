@@ -44,6 +44,12 @@ export const UNDATED_REASON = 'unknown posting date';
  * @param {FreshnessSettings} settings runtime freshness settings
  * @param {object} [options]
  * @param {Date} [options.now] reference time (default: now)
+ * @param {(job: object) => ({days: number, reason?: string, requireTitleFit?: boolean}|null)} [options.windowFor]
+ *   per-job catch-up window (audit D1). It can only WIDEN the configured window:
+ *   a source not read completely since N days ago, or an employer the source
+ *   has never listed, may admit postings older than the window. A window with
+ *   `requireTitleFit` admits only jobs `titleFits` accepts.
+ * @param {(job: object) => boolean} [options.titleFits]
  * @returns {{
  *   kept: object[],
  *   review: object[],
@@ -52,10 +58,11 @@ export const UNDATED_REASON = 'unknown posting date';
  *   windowDays: number,
  *   effectiveWindowDays: number,
  *   fallbackUsed: boolean,
- *   counts: { datedFresh: number, undatedReview: number, stale: number, undatedDropped: number }
+ *   counts: { datedFresh: number, undatedReview: number, stale: number, undatedDropped: number,
+ *             caughtUp: number, backfilled: number }
  * }}
  */
-export function applyFreshnessFilter(jobs = [], settings = {}, { now = new Date() } = {}) {
+export function applyFreshnessFilter(jobs = [], settings = {}, { now = new Date(), windowFor = null, titleFits = null } = {}) {
   const mode = settings.jobFreshnessMode ?? 'LAST_7_DAYS';
   const windowDays = FRESHNESS_WINDOW_DAYS[mode] ?? 7;
   // Undated jobs are opt-in and default OFF. They never join the fresh results.
@@ -86,7 +93,10 @@ export function applyFreshnessFilter(jobs = [], settings = {}, { now = new Date(
   const kept = [];
   const review = [];
   const dropped = [];
-  const counts = { datedFresh: 0, undatedReview: 0, stale: 0, undatedDropped: 0 };
+  // caughtUp: older than the window, posted since the source's last complete
+  // listing. backfilled: older than the window, from an employer the source had
+  // never listed before. Both are a subset of datedFresh.
+  const counts = { datedFresh: 0, undatedReview: 0, stale: 0, undatedDropped: 0, caughtUp: 0, backfilled: 0 };
 
   for (const { job, age } of ages) {
     if (age === null) {
@@ -104,10 +114,28 @@ export function applyFreshnessFilter(jobs = [], settings = {}, { now = new Date(
     if (age <= effectiveWindowDays) {
       kept.push(job);
       counts.datedFresh += 1;
-    } else {
-      dropped.push({ job, reason: `posted ${age} day(s) ago (> ${effectiveWindowDays}d window)` });
-      counts.stale += 1;
+      continue;
     }
+    // A lower-bound date ("Posted 30+ Days Ago") says only that the posting is
+    // at least that old, so it cannot prove the posting falls inside a wider
+    // catch-up or backfill window (audit D7). Its detail read supplies the real
+    // date; until then it is judged by the configured window alone.
+    const lowerBound = job.rawMetadata?.postedAtLowerBound === true;
+    const extra = !lowerBound && typeof windowFor === 'function' ? windowFor(job) : null;
+    if (extra && Number.isFinite(extra.days) && age <= extra.days
+      && (!extra.requireTitleFit || (typeof titleFits === 'function' && titleFits(job)))) {
+      job.rawMetadata = {
+        ...(job.rawMetadata ?? {}),
+        admittedBy: extra.reason === 'new-source' ? 'new-source-backfill' : 'catch-up',
+      };
+      kept.push(job);
+      counts.datedFresh += 1;
+      if (extra.reason === 'new-source') counts.backfilled += 1;
+      else counts.caughtUp += 1;
+      continue;
+    }
+    dropped.push({ job, reason: `posted ${age}${lowerBound ? '+' : ''} day(s) ago (> ${effectiveWindowDays}d window)` });
+    counts.stale += 1;
   }
 
   return { kept, review, dropped, mode, windowDays, effectiveWindowDays, fallbackUsed, counts };

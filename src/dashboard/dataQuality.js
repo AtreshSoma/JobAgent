@@ -12,6 +12,7 @@
  * discard_reason) so it never reads job descriptions.
  */
 
+import { createSourceCoverage } from '../search/sourceCoverage.js';
 import { FRESHNESS_WINDOW_DAYS } from '../utils/credentialManager.js';
 import { enrichmentBacklog, enrichmentSettings, FETCHABLE_SOURCES } from '../search/enrich.js';
 import { RETENTION_RANGE } from '../config/userSettings.js';
@@ -118,6 +119,17 @@ function sourceProblems(raw) {
   return { runAt: row.started_at, sources };
 }
 
+/** Configured employers the last complete search returned nothing for (audit D8). */
+function zeroYieldSummary(config) {
+  try {
+    if (!config?.root) return { at: null, employers: [] };
+    const last = createSourceCoverage({ root: config.root }).lastRun();
+    return { at: last?.at ?? null, employers: last?.zeroYield ?? [] };
+  } catch {
+    return { at: null, employers: [] };
+  }
+}
+
 /**
  * Plain-language description of the freshness model in effect.
  *
@@ -137,10 +149,13 @@ export function freshnessSummary(config = {}) {
     sources,
     fallbackTo3Days: config.runtime?.includeLast3DaysFallback !== false && Number.isFinite(windowDays) && windowDays < 3,
     rules: [
-      `Searches add a new job only if it was posted within ${windowText}.`,
+      `Searches add a new job if it was posted within ${windowText}, or since a source was last read in full `
+        + '(so a missed day or a failed source loses nothing).',
+      `An employer added to your sources has its open roles that match your titles added once, up to ${retentionDays} days old.`,
       `A job already on your board stays until it is ${retentionDays} days old, then it is retired.`,
       'Jobs you shortlisted, prepared or applied to are never retired automatically.',
-      'Jobs with no posting date are kept off the board rather than guessed at.',
+      'Jobs with no posting date are kept off the board, except careers-site jobs that appeared since the site was last read: '
+        + 'those are dated by when they first appeared.',
     ],
   };
 }
@@ -168,6 +183,7 @@ export function dataQualitySummary(db, config, { now = new Date(), enrichmentSta
       state: enrichmentState,
     },
     sourceProblems: { runAt: null, sources: [] },
+    zeroYield: zeroYieldSummary(config),
     settingsError: config.settingsError ?? null,
   };
   if (!raw?.prepare) return out;

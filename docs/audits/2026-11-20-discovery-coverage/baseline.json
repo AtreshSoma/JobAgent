@@ -1,0 +1,1291 @@
+{
+  "generatedAt": "2026-11-21T03:04:16.656Z",
+  "db": "data/profiles/<active profile>/applied_jobs.db (backup copy taken 2026-11-20, before any fix ran)",
+  "employers": [
+    {
+      "name": "Microsoft",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Apple",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Amazon",
+      "route": "amazonJobs",
+      "configuredIn": [
+        "amazon-jobs"
+      ],
+      "rows": 361,
+      "active": 10,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 292
+      },
+      "lastSeen": "2026-11-21T02:40:51.002Z"
+    },
+    {
+      "name": "Meta",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 134,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 122
+      },
+      "lastSeen": "2026-11-21T02:40:52.749Z"
+    },
+    {
+      "name": "Netflix",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "NVIDIA",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 1147,
+      "active": 356,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 488
+      },
+      "lastSeen": "2026-11-21T02:40:31.719Z"
+    },
+    {
+      "name": "Salesforce",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 970,
+      "active": 60,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 765
+      },
+      "lastSeen": "2026-11-21T02:40:31.734Z"
+    },
+    {
+      "name": "Adobe",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 234,
+      "active": 12,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 202
+      },
+      "lastSeen": "2026-11-21T02:40:31.737Z"
+    },
+    {
+      "name": "Oracle",
+      "route": "oracleRecruiting",
+      "configuredIn": [
+        "oracle-recruiting"
+      ],
+      "rows": 639,
+      "active": 55,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 558
+      },
+      "lastSeen": "2026-11-21T02:40:52.758Z"
+    },
+    {
+      "name": "Cisco",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Intel",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 740,
+      "active": 60,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 578
+      },
+      "lastSeen": "2026-11-21T02:40:36.903Z"
+    },
+    {
+      "name": "Qualcomm",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Broadcom",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Dell Technologies",
+      "route": "oracleRecruiting",
+      "configuredIn": [
+        "oracle-recruiting"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "HP Inc.",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Hewlett Packard Enterprise",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 1425,
+      "active": 72,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 1212
+      },
+      "lastSeen": "2026-11-21T02:40:32.748Z"
+    },
+    {
+      "name": "Micron Technology",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Applied Materials",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "KLA",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Analog Devices",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Texas Instruments",
+      "route": "oracleRecruiting",
+      "configuredIn": [
+        "oracle-recruiting"
+      ],
+      "rows": 298,
+      "active": 15,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 273
+      },
+      "lastSeen": "2026-11-21T02:40:50.949Z"
+    },
+    {
+      "name": "ServiceNow",
+      "route": "smartrecruiters",
+      "configuredIn": [
+        "smartrecruiters-companies"
+      ],
+      "rows": 500,
+      "active": 69,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 308
+      },
+      "lastSeen": "2026-11-21T02:40:44.668Z"
+    },
+    {
+      "name": "Workday",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 375,
+      "active": 33,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 273
+      },
+      "lastSeen": "2026-11-21T02:40:32.757Z"
+    },
+    {
+      "name": "Autodesk",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 3,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 3
+      },
+      "lastSeen": "2026-11-15T15:55:28.682Z"
+    },
+    {
+      "name": "Snowflake",
+      "route": "ashby",
+      "configuredIn": [
+        "ashby-boards"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Databricks",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 498,
+      "active": 2,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 467
+      },
+      "lastSeen": "2026-11-21T02:40:28.952Z"
+    },
+    {
+      "name": "Stripe",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 354,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 319
+      },
+      "lastSeen": "2026-11-21T02:40:29.020Z"
+    },
+    {
+      "name": "Airbnb",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 150,
+      "active": 1,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 136
+      },
+      "lastSeen": "2026-11-21T02:40:28.968Z"
+    },
+    {
+      "name": "Datadog",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 164,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 158
+      },
+      "lastSeen": "2026-11-21T02:40:29.031Z"
+    },
+    {
+      "name": "Cloudflare",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 245,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 222
+      },
+      "lastSeen": "2026-11-21T02:40:29.096Z"
+    },
+    {
+      "name": "MongoDB",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 195,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 179
+      },
+      "lastSeen": "2026-11-21T02:40:29.035Z"
+    },
+    {
+      "name": "Okta",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 135,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 127
+      },
+      "lastSeen": "2026-11-21T02:40:29.046Z"
+    },
+    {
+      "name": "Coinbase",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 143,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 133
+      },
+      "lastSeen": "2026-11-21T02:40:29.037Z"
+    },
+    {
+      "name": "Palantir",
+      "route": "lever",
+      "configuredIn": [
+        "lever-boards"
+      ],
+      "rows": 61,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 61
+      },
+      "lastSeen": "2026-11-21T02:40:24.254Z"
+    },
+    {
+      "name": "Spotify",
+      "route": "lever",
+      "configuredIn": [
+        "lever-boards"
+      ],
+      "rows": 55,
+      "active": 2,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 52
+      },
+      "lastSeen": "2026-11-21T02:40:30.589Z"
+    },
+    {
+      "name": "OpenAI",
+      "route": "ashby",
+      "configuredIn": [
+        "ashby-boards"
+      ],
+      "rows": 536,
+      "active": 2,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 457
+      },
+      "lastSeen": "2026-11-21T02:40:30.528Z"
+    },
+    {
+      "name": "Anthropic",
+      "route": "greenhouse",
+      "configuredIn": [
+        "greenhouse-boards"
+      ],
+      "rows": 398,
+      "active": 0,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 371
+      },
+      "lastSeen": "2026-11-21T02:40:28.995Z"
+    },
+    {
+      "name": "eBay",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "PayPal",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 196,
+      "active": 14,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 144
+      },
+      "lastSeen": "2026-11-21T02:40:31.746Z"
+    },
+    {
+      "name": "CrowdStrike",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 223,
+      "active": 10,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 166
+      },
+      "lastSeen": "2026-11-21T02:40:34.317Z"
+    },
+    {
+      "name": "JPMorgan Chase",
+      "route": "oracleRecruiting",
+      "configuredIn": [
+        "oracle-recruiting"
+      ],
+      "rows": 1101,
+      "active": 152,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 870
+      },
+      "lastSeen": "2026-11-21T02:40:49.704Z"
+    },
+    {
+      "name": "Bank of America",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 125,
+      "active": 6,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 99
+      },
+      "lastSeen": "2026-11-21T02:40:40.939Z"
+    },
+    {
+      "name": "Wells Fargo",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 556,
+      "active": 200,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 257
+      },
+      "lastSeen": "2026-11-21T02:40:40.959Z"
+    },
+    {
+      "name": "Citi",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 1449,
+      "active": 108,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 1152
+      },
+      "lastSeen": "2026-11-21T02:40:52.757Z"
+    },
+    {
+      "name": "Capital One",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 759,
+      "active": 125,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 605
+      },
+      "lastSeen": "2026-11-21T02:40:52.757Z"
+    },
+    {
+      "name": "Morgan Stanley",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "BlackRock",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 140,
+      "active": 2,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 110
+      },
+      "lastSeen": "2026-11-21T02:40:32.216Z"
+    },
+    {
+      "name": "Fidelity Investments",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Vanguard",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Charles Schwab",
+      "route": "icims",
+      "configuredIn": [
+        "icims-portals"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Visa",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public",
+        "smartrecruiters-companies"
+      ],
+      "rows": 323,
+      "active": 29,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 257
+      },
+      "lastSeen": "2026-11-21T02:40:40.084Z"
+    },
+    {
+      "name": "Mastercard",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 241,
+      "active": 3,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 228
+      },
+      "lastSeen": "2026-11-21T02:40:31.737Z"
+    },
+    {
+      "name": "BNY",
+      "route": "oracleRecruiting",
+      "configuredIn": [
+        "oracle-recruiting"
+      ],
+      "rows": 199,
+      "active": 10,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 178
+      },
+      "lastSeen": "2026-11-21T02:40:52.758Z"
+    },
+    {
+      "name": "U.S. Bank",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 259,
+      "active": 56,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 154
+      },
+      "lastSeen": "2026-11-21T02:40:52.757Z"
+    },
+    {
+      "name": "State Street",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 630,
+      "active": 35,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 495
+      },
+      "lastSeen": "2026-11-21T02:40:36.444Z"
+    },
+    {
+      "name": "UnitedHealth Group",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "CVS Health",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 186,
+      "active": 35,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 115
+      },
+      "lastSeen": "2026-11-21T02:40:32.204Z"
+    },
+    {
+      "name": "Elevance Health",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Cigna",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Humana",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 129,
+      "active": 29,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 60
+      },
+      "lastSeen": "2026-11-21T02:40:34.350Z"
+    },
+    {
+      "name": "Kaiser Permanente",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Johnson & Johnson",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 483,
+      "active": 87,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 267
+      },
+      "lastSeen": "2026-11-21T02:40:42.037Z"
+    },
+    {
+      "name": "Pfizer",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 287,
+      "active": 69,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 166
+      },
+      "lastSeen": "2026-11-21T02:40:34.301Z"
+    },
+    {
+      "name": "Merck",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 299,
+      "active": 58,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 161
+      },
+      "lastSeen": "2026-11-21T02:40:42.048Z"
+    },
+    {
+      "name": "Comcast",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 389,
+      "active": 2,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 313
+      },
+      "lastSeen": "2026-11-21T02:40:47.081Z"
+    },
+    {
+      "name": "Verizon",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 101,
+      "active": 1,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 76
+      },
+      "lastSeen": "2026-11-21T02:40:40.145Z"
+    },
+    {
+      "name": "AT&T",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 181,
+      "active": 35,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 122
+      },
+      "lastSeen": "2026-11-21T02:40:40.974Z"
+    },
+    {
+      "name": "T-Mobile",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 371,
+      "active": 45,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 272
+      },
+      "lastSeen": "2026-11-21T02:40:31.112Z"
+    },
+    {
+      "name": "Disney",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Walmart",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 777,
+      "active": 93,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 635
+      },
+      "lastSeen": "2026-11-21T02:40:52.757Z"
+    },
+    {
+      "name": "Target",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 165,
+      "active": 5,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 130
+      },
+      "lastSeen": "2026-11-21T02:40:32.211Z"
+    },
+    {
+      "name": "Costco",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 35,
+      "active": 0,
+      "topDiscard": {
+        "reason": "below near-miss threshold",
+        "n": 29
+      },
+      "lastSeen": "2026-11-21T02:40:52.754Z"
+    },
+    {
+      "name": "The Home Depot",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Lowe's",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Nike",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Boeing",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Northrop Grumman",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 1166,
+      "active": 115,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 885
+      },
+      "lastSeen": "2026-11-21T02:40:44.057Z"
+    },
+    {
+      "name": "RTX",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 1221,
+      "active": 163,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 847
+      },
+      "lastSeen": "2026-11-21T02:40:44.639Z"
+    },
+    {
+      "name": "Honeywell",
+      "route": "oracleRecruiting",
+      "configuredIn": [
+        "oracle-recruiting"
+      ],
+      "rows": 491,
+      "active": 59,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 369
+      },
+      "lastSeen": "2026-11-21T02:40:50.939Z"
+    },
+    {
+      "name": "3M",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "General Motors",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 545,
+      "active": 70,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 387
+      },
+      "lastSeen": "2026-11-21T02:40:33.467Z"
+    },
+    {
+      "name": "John Deere",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null
+    },
+    {
+      "name": "Accenture",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 567,
+      "active": 20,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 511
+      },
+      "lastSeen": "2026-11-21T02:40:40.154Z"
+    },
+    {
+      "name": "Deloitte",
+      "route": "careersUrl",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 30,
+      "active": 1,
+      "topDiscard": {
+        "reason": "sponsorship_denial",
+        "n": 15
+      },
+      "lastSeen": "2026-11-21T02:40:52.757Z"
+    },
+    {
+      "name": "PwC",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 791,
+      "active": 11,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 676
+      },
+      "lastSeen": "2026-11-21T02:40:40.934Z"
+    },
+    {
+      "name": "EY",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 119,
+      "active": 0,
+      "topDiscard": {
+        "reason": "unknown posting date",
+        "n": 119
+      },
+      "lastSeen": "2026-11-21T02:40:25.378Z"
+    },
+    {
+      "name": "KPMG",
+      "route": "careersUrl",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 19,
+      "active": 0,
+      "topDiscard": {
+        "reason": "unknown posting date",
+        "n": 19
+      },
+      "lastSeen": "2026-11-21T02:40:25.380Z"
+    },
+    {
+      "name": "Capgemini",
+      "route": "sitemap",
+      "configuredIn": [
+        "company-careers"
+      ],
+      "rows": 145,
+      "active": 0,
+      "topDiscard": {
+        "reason": "unknown posting date",
+        "n": 145
+      },
+      "lastSeen": "2026-11-21T02:40:25.379Z"
+    },
+    {
+      "name": "Booz Allen Hamilton",
+      "route": "workday",
+      "configuredIn": [
+        "workday-public"
+      ],
+      "rows": 1123,
+      "active": 151,
+      "topDiscard": {
+        "reason": "stale",
+        "n": 880
+      },
+      "lastSeen": "2026-11-21T02:40:52.757Z"
+    },
+    {
+      "name": "Google",
+      "route": "unreachable",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "robots.txt disallows /about/careers/applications/jobs/results, which covers the listing and every job page. Add postings by URL (manual-urls)."
+    },
+    {
+      "name": "Tesla",
+      "route": "unreachable",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "Careers sitemap answers HTTP 403 to an identifying client (verified 2026-11-20)."
+    },
+    {
+      "name": "LinkedIn",
+      "route": "unreachable",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "LinkedIn is a URL reader only, by design (src/search/sources.js)."
+    },
+    {
+      "name": "Cognizant",
+      "route": "unreachable",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "Its WAF answers 403 to the identifying User-Agent; not bypassed."
+    },
+    {
+      "name": "IBM",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "careers.ibm.com answers HTTP 202 with an empty body to every page from an identifying client, including its robots-listed sitemap (2026-11-20). Add postings by URL."
+    },
+    {
+      "name": "Goldman Sachs",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "No job sitemap at higher.gs.com; listings load from a private GraphQL API. Add postings by URL."
+    },
+    {
+      "name": "Uber",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "The old public search endpoint now answers 'Missing RPC handler' (2026-11-20). Add postings by URL."
+    },
+    {
+      "name": "American Express",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "The careers page could not be read (oversized response headers) and no job sitemap was found (2026-11-20). Add postings by URL."
+    },
+    {
+      "name": "Lam Research",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "Careers site found but no ATS board or job sitemap was detected by npm run resolve-careers (2026-11-20)."
+    },
+    {
+      "name": "Expedia Group",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "Workday body markers but no reachable board link or job sitemap (2026-11-20)."
+    },
+    {
+      "name": "Starbucks",
+      "route": "manual",
+      "configuredIn": [],
+      "rows": 0,
+      "active": 0,
+      "topDiscard": null,
+      "lastSeen": null,
+      "reason": "Has an Eightfold job sitemap (apply.starbucks.com/careers/sitemap.xml, 21,994 URLs) but is almost all retail; add it to company-careers if wanted."
+    }
+  ],
+  "funnel": {
+    "relevant": 2030,
+    "stale": 1652,
+    "undated": 3,
+    "excluded": 194,
+    "lowScore": 18,
+    "unread": 24,
+    "active": 139,
+    "excludedBy": {
+      "geography_mismatch": 141,
+      "sponsorship_denial": 32,
+      "role_mismatch": 4,
+      "security_clearance": 17
+    }
+  }
+}

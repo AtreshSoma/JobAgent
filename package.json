@@ -65,14 +65,18 @@
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "test:py": "python -m pytest",
-    "enrich": "node scripts/enrichDescriptions.mjs"
+    "enrich": "node scripts/enrichDescriptions.mjs",
+    "rejudge-stale": "node scripts/rejudgeStale.mjs",
+    "coverage:audit": "node scripts/coverageAudit.mjs",
+    "resolve-careers": "node scripts/resolveCareersSite.mjs"
   },
   "dependencies": {
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "dotenv": "^18.0.10",
     "pino": "^10.4.0",
-    "playwright": "~1.65.0"
+    "playwright": "~1.65.0",
+    "unpdf": "~1.9.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

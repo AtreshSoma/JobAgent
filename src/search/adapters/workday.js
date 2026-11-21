@@ -943,6 +943,9 @@ export function mapJob(p, cfg, { now = new Date() } = {}) {
   // (neither field) stays undated.
   const exact = p.postedOnDate ?? p.startDate ?? null;
   const approx = exact ? null : parseWorkdayPostedOn(p.postedOn, now);
+  // "Posted 30+ Days Ago" (or "N+ months"): the date is a LOWER bound on age,
+  // not an age (audit D7). 17,914 stored rows read "posted 30 day(s) ago".
+  const lowerBound = approx ? postedOnRange(p.postedOn)?.atLeast === true : false;
 
   return normalizeJob({
     source: 'workday',
@@ -969,6 +972,7 @@ export function mapJob(p, cfg, { now = new Date() } = {}) {
       // Be honest about where the date came from: derived from "Posted N Days
       // Ago" is day-accurate, not timestamp-accurate.
       ...(approx ? { postedAtApprox: true, postedOnLabel: String(p.postedOn) } : {}),
+      ...(lowerBound ? { postedAtLowerBound: true } : {}),
     },
   });
 }
