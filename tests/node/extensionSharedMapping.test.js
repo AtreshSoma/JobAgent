@@ -24,7 +24,9 @@ describe('one mapping module', () => {
   });
 
   it('the extension copy is the generated one (run `npm run sync:extension` if this fails)', () => {
-    expect(readFileSync(resolve('extension/fieldLabels.js'), 'utf8')).toBe(generateExtensionFieldLabels());
+    // Line endings are the checkout's business (CRLF on Windows), not the generator's.
+    const copy = readFileSync(resolve('extension/fieldLabels.js'), 'utf8').replace(/\r\n/g, '\n');
+    expect(copy).toBe(generateExtensionFieldLabels());
   });
 });
 

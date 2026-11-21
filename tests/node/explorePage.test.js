@@ -365,6 +365,15 @@ describe('Explore JobAgent: served by the dashboard', { timeout: 120_000 }, () =
       await page.keyboard.press('ArrowUp');
       expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
       expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
+      // The mouse is still resting where it clicked. Re-rendering moves rows under
+      // it, and the browser's synthetic hover must not take the keyboard's choice
+      // (or focus) back; this used to fail about 2 runs in 5.
+      await page.waitForTimeout(150);
+      expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe('Coverage check');
+      expect(await page.evaluate(() => document.activeElement?.getAttribute('aria-expanded'))).toBe('true');
+      // A real move onto another name still spells it out.
+      await reg.getByRole('button', { name: /^Final auto-submit/ }).hover({ position: { x: 4, y: 4 } });
+      expect(await reg.locator('.ex-reg-detail-name').textContent()).toBe('Final auto-submit');
 
       // A count is a filter: Planned shows only what is not built, and says so.
       await reg.locator('.ex-reg-stat[data-status="planned"]').click();
