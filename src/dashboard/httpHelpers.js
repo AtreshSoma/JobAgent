@@ -4,6 +4,7 @@
  * static files and small request validators. Moved out of server.js unchanged.
  */
 import { isDocxBuffer } from '../resume/docxText.js';
+import { isPdfBuffer } from '../resume/pdfText.js';
 import { isPublicHttpUrl } from '../utils/publicUrl.js';
 import { gzipSync } from 'node:zlib';
 
@@ -164,16 +165,24 @@ export function batchJobIds(value) {
 /**
  * A resume sent as base64 JSON ({ contentBase64 }) -> its bytes, or a 400.
  * Same checks as the master-resume upload: strict base64 (Buffer.from would
- * silently drop bad characters), the size cap, and a real .docx.
+ * silently drop bad characters), the size cap, and a real .docx — or, with
+ * `allowPdf`, a real PDF (read for its details only; see src/resume/resumeText.js).
+ *
+ * @param {{ contentBase64?: string }} [body]
+ * @param {{ allowPdf?: boolean }} [options]
  */
-export function decodeResumeUpload(body = {}) {
+export function decodeResumeUpload(body = {}, { allowPdf = false } = {}) {
   const encoded = String(body.contentBase64 ?? '');
   const fail = (message, statusCode = 400) => { throw Object.assign(new Error(message), { statusCode }); };
   if (!encoded) fail('no file contents were received');
   if (!/^[A-Za-z0-9+/\r\n]*={0,2}$/.test(encoded)) fail('the file contents were not transferred correctly, try again');
   const bytes = Buffer.from(encoded, 'base64');
   if (bytes.length > MAX_MASTER_RESUME_BYTES) fail(`that file is over ${Math.round(MAX_MASTER_RESUME_BYTES / 1024 / 1024)} MB`, 413);
-  if (!isDocxBuffer(bytes)) fail('that is not a Word (.docx) file — save it as .docx and try again');
+  if (isDocxBuffer(bytes)) return bytes;
+  if (allowPdf && isPdfBuffer(bytes)) return bytes;
+  fail(allowPdf
+    ? 'that is not a Word (.docx) or PDF file — save it as one of those and try again'
+    : 'that is not a Word (.docx) file — save it as .docx and try again');
   return bytes;
 }
 

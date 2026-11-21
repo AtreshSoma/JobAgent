@@ -11,10 +11,11 @@ import { openProfileDirs } from '../../automation/browser.js';
 import { signOutEverywhere } from '../../profile/signOut.js';
 import { dismissQuestion, loadQuestionQueue, markQuestionAnswered, reopenQuestion, suggestPatterns } from '../../apply/questionQueue.js';
 import { adoptResumeEvidence, readProfile, readScreeningAnswers, upsertScreeningAnswer, writeProfile, writeScreeningAnswers } from '../../config/profileStore.js';
-import { buildBackground, profileFromResume } from '../../profile/fromResume.js';
+import { buildBackground, locationFrom, profileFromResume } from '../../profile/fromResume.js';
+import { splitSections } from '../../resume/resumeProfile.js';
 import { acknowledgeResumeMismatch, activateProfile, createPersonProfile, deleteProfile as deleteSearchProfile, listProfiles as listSearchProfiles, mergeIntoActiveProfile, migrateLegacyCandidate, saveSkillExperienceInActiveProfile, watchSkillInActiveProfile, proposeProfileFromResume, readActiveProfile, readProfile as readSearchProfile, refreshBackgroundFromResume, resumeProfileToReuse, saveProfile as saveSearchProfile, updatePersonProfile } from '../../profile/store.js';
 import { masterResumeFile, workspacePaths } from '../../profile/workspace.js';
-import { extractDocxText } from '../../resume/docxText.js';
+import { emailFromLinks, readResumeText } from '../../resume/resumeText.js';
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { MAX_UPLOAD_BODY_BYTES, decodeResumeUpload, readBody, sendJson } from '../httpHelpers.js';
@@ -135,17 +136,23 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
    * for the form and saved into the NEW person's own workspace only. */
   if (req.method === 'POST' && path === '/api/search-profiles/read-resume') {
     const body = await readBody(req, MAX_UPLOAD_BODY_BYTES);
-    return ctx.saving(res, () => {
-      const bytes = decodeResumeUpload(body);
-      const { paragraphs } = extractDocxText(bytes);
+    return ctx.saving(res, async () => {
+      // A .docx or a PDF. Both read into the same paragraphs, so the form is
+      // filled the same way; only a .docx is later kept as their master resume.
+      const bytes = decodeResumeUpload(body, { allowPdf: true });
+      const { format, paragraphs, links } = await readResumeText(bytes);
       const draft = profileFromResume(paragraphs, {});
+      const { city, state } = locationFrom(splitSections(paragraphs));
       return sendJson(res, 200, {
+        format,
         fields: {
           fullName: draft.identity.fullName,
-          email: draft.contact.email,
+          email: draft.contact.email || emailFromLinks(links),
           phone: draft.contact.phone,
           targetRoles: draft.searchIntent.targetRoles,
           seniority: draft.searchIntent.seniority || '',
+          city,
+          state,
         },
         found: {
           roles: draft.searchIntent.targetRoles.length,
@@ -160,12 +167,15 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
     if (ctx.runState.running && body.activate === true) {
       return sendJson(res, 409, { error: `a ${ctx.runState.phase} run is in progress — add the profile after it finishes` });
     }
-    return ctx.saving(res, () => {
+    return ctx.saving(res, async () => {
       const root = ctx.requireConfigRoot();
       let resume = null;
       if (body.resume?.contentBase64) {
-        const bytes = decodeResumeUpload(body.resume);
-        resume = { bytes, background: buildBackground(extractDocxText(bytes).paragraphs, { sourceFile: '' }) };
+        const bytes = decodeResumeUpload(body.resume, { allowPdf: true });
+        const { format, paragraphs } = await readResumeText(bytes);
+        // Tailoring edits the Word file itself, so only a .docx is kept as
+        // their master resume. A PDF still fills in their background.
+        resume = { bytes: format === 'docx' ? bytes : null, background: buildBackground(paragraphs, { sourceFile: '' }) };
         delete resume.background._name; delete resume.background._headline; delete resume.background._contact;
       }
       const created = createPersonProfile(root, body.fields ?? {}, { resume });
@@ -180,7 +190,7 @@ export async function handleProfileRoutes(ctx, req, res, { path }) {
       }
       const seed = body.seed === true ? ctx.seedNewPerson(root, created.id, viewedDb) : { seeded: 0 };
       if (activated && !warning) ctx.scheduleRescore(); // scores the seeded copies under THEIR profile
-      return sendJson(res, 200, { ...created, activated, warning, workspaceChanged, seeded: seed.seeded });
+      return sendJson(res, 200, { ...created, activated, warning, workspaceChanged, seeded: seed.seeded, resumeSaved: Boolean(resume?.bytes) });
     });
   }
   if (req.method === 'PATCH' && path.startsWith('/api/search-profiles/')) {

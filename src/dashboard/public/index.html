@@ -1082,8 +1082,9 @@
 </dialog>
 
 <!-- Add or edit a person. One short form; "Fill in from their resume" reads a
-     .docx into it, and that file is saved into the NEW person's workspace only
-     — it never replaces anyone's master resume. Every field has a visible
+     .docx or PDF into it. A .docx is saved into the NEW person's workspace as
+     their master resume (a PDF cannot be tailored, so it is only read) — it
+     never replaces anyone's master resume. Every field has a visible
      label; errors are written next to their field and linked to it. -->
 <dialog id="dlgPerson" class="narrow person-dialog" aria-labelledby="dlgPersonTitle" aria-describedby="dlgPersonSub">
   <div class="dlg-head">
@@ -1096,12 +1097,12 @@
   <form method="dialog" class="dlg-form" data-submit="save-person" novalidate>
   <div class="dlg-body">
     <div class="person-resume" id="personResumeRow">
-      <input type="file" id="personResumeFile" aria-label="Choose this person's resume (.docx)" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden>
+      <input type="file" id="personResumeFile" aria-label="Choose this person's resume (.docx or PDF)" accept=".docx,.pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/pdf" hidden>
       <button type="button" class="small" data-action="person-pick-resume">
         <svg class="ic" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 15V4M7.5 8.5 12 4l4.5 4.5M5 15v4h14v-4"/></svg>
         Fill in from their resume
       </button>
-      <span class="person-resume-status" id="personResumeStatus" role="status" aria-live="polite">Optional. A .docx file; it becomes their own master resume.</span>
+      <span class="person-resume-status" id="personResumeStatus" role="status" aria-live="polite">Optional. A .docx or PDF. A .docx also becomes their master resume.</span>
     </div>
 
     <p class="fineprint muted person-legend" id="personLegend"><span class="req" aria-hidden="true">*</span> Required. Everything else is optional.</p>

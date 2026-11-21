@@ -53,6 +53,11 @@ relicensing JobAgent's separate original source files. See
 [Mozilla's MPL FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/) and
 [Lightning CSS source](https://github.com/parcel-bundler/lightningcss).
 
+`unpdf` (MIT), which reads PDF resumes in the Add profile form, bundles a
+build of Mozilla's [pdf.js](https://github.com/mozilla/pdf.js), which is
+licensed **Apache-2.0**. Keep that package's files and notices intact when
+redistributing it.
+
 See the dated [license review](docs/LICENSE_REVIEW.md) and
 [npm inventory](docs/licenses/npm-dependencies.md) for the checked versions.
 Recheck the inventory when dependencies change.

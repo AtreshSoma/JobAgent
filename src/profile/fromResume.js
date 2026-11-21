@@ -208,8 +208,9 @@ export function certificationsIn(sections) {
           if (value.length >= 2 && value.length <= 120) out.push(value);
         }
       }
-    } else {
-      // A credential named in the header or summary still counts.
+    } else if (section.kind === 'header' || section.kind === 'summary') {
+      // A credential named in the header or summary still counts. Only there:
+      // in experience, "Registered Nurse, Cardiac ICU | …" is a job, not a licence.
       for (const line of section.lines) {
         if (line.length <= 120 && CERT_HINT_RE.test(line)) out.push(line.replace(/\s+/g, ' ').trim());
       }
@@ -280,6 +281,20 @@ export function workHistoryIn(sections) {
       // the employer and place follow on the next. Read before layout A, which
       // skips any header line that itself carries a date.
       const inline = DATE_RANGE_RE.exec(lines[i]);
+      // Layout C — everything on one line, the bullets straight after:
+      // "Registered Nurse, Cardiac ICU | Example Hospital   2019 – Present".
+      // Layout B would take the first bullet for the employer line and
+      // refuse it, so the role was dropped.
+      const oneLine = inline && lines[i].length <= 160 ? oneLineRole(lines[i], inline) : null;
+      if (oneLine && (!lines[i + 1] || ACHIEVEMENT_RE.test(lines[i + 1]))) {
+        const highlights = [];
+        for (let j = i + 1; j < lines.length && highlights.length < 3; j += 1) {
+          if (DATE_RANGE_RE.test(lines[j])) break; // next role's line
+          if (ACHIEVEMENT_RE.test(lines[j]) && lines[j].length >= 40) highlights.push(lines[j].replace(/^[•▪◦·*-]\s*/, ''));
+        }
+        roles.push({ ...oneLine, highlights });
+        continue;
+      }
       if (inline && lines[i].length <= 160) {
         const title = clean(lines[i].replace(inline[0], '').replace(/[\s|,–—-]+$/, '').split(',')[0]);
         const next = lines[i + 1];
@@ -340,6 +355,30 @@ export function workHistoryIn(sections) {
   return roles.slice(0, 30);
 }
 
+/**
+ * "Title, Team | Employer | Place   2019 – Present" -> a role, or null when the
+ * line does not name both a title and an employer with a separator between.
+ */
+function oneLineRole(line, dates) {
+  const clean = (t) => String(t ?? '').replace(/\s+/g, ' ').trim();
+  const rest = clean(line.replace(dates[0], '').replace(/[\s|,–—(-]+$/, ''));
+  const parts = rest.includes('|')
+    ? rest.split('|').map(clean)
+    : rest.split(/\s+(?:at|@|—|–)\s+/).map(clean);
+  if (parts.length < 2) return null;
+  const title = clean(parts[0].split(',')[0]);
+  const employer = clean(parts[1].replace(/\([^)]*\)/g, ''));
+  // Not ACHIEVEMENT_RE: "Registered Nurse" opens with an -ed word too. A bullet
+  // is long and ends a sentence; a title is a few words.
+  if (!title || !employer || /[.!?]$/.test(rest) || title.split(' ').length > 8) return null;
+  const end = dates[2];
+  const current = /present|current|now/i.test(end);
+  return {
+    employer, title, location: parts.slice(2).join(', '),
+    startDate: clean(dates[1]), endDate: current ? '' : clean(end), current,
+  };
+}
+
 /** People-leadership evidence, with the lines that produced it. */
 export function leadershipIn(text) {
   const lines = String(text ?? '').split(/\r?\n/);
@@ -369,6 +408,28 @@ export function contactFrom(sections) {
   const phone = (header.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/) ?? [''])[0].trim();
   const handle = (header.match(/linkedin\.com\/in\/[A-Za-z0-9_-]+/i) ?? [''])[0];
   return { email, phone, linkedin: handle ? `https://www.${handle.replace(/^www\./i, '')}` : '' };
+}
+
+const US_STATES = new Set(('AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY '
+  + 'NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR').split(' '));
+
+/**
+ * "Columbus, OH" from the header's contact line, for the City and State boxes.
+ * Only the header is read (a job's place is where they worked, not where they
+ * live), and only a real two-letter US state code counts, so "Engineer, AI"
+ * never reads as a place.
+ *
+ * @returns {{ city: string, state: string }}
+ */
+export function locationFrom(sections) {
+  const header = sections.find((s) => s.kind === 'header')?.lines ?? [];
+  for (const line of header) {
+    for (const piece of line.split(/\s*[|•·▪◦]\s*|\s{2,}/)) {
+      const m = /^([A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,3}),\s*([A-Z]{2})(?:\s+\d{5}(?:-\d{4})?)?(?:\s*\((?:remote|hybrid)\))?$/i.exec(piece.trim());
+      if (m && US_STATES.has(m[2].toUpperCase()) && m[2] === m[2].toUpperCase()) return { city: m[1], state: m[2] };
+    }
+  }
+  return { city: '', state: '' };
 }
 
 /** The name at the top of the resume, if the header states one. */

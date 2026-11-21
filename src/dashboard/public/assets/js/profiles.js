@@ -450,7 +450,7 @@ export async function openAddProfile({ file = null } = {}) {
   $('personResumeRow').hidden = false;
   $('personActivateRow').hidden = false;
   $('personActivate').checked = true;
-  $('personResumeStatus').textContent = 'Optional. A .docx file; it becomes their own master resume.';
+  $('personResumeStatus').textContent = 'Optional. A .docx or PDF. A .docx also becomes their master resume.';
   // The person's name feeds the seed label and the switch notice; on a cold
   // start the form can open before the profile list has arrived.
   if (!listingCache) await loadProfiles();
@@ -491,11 +491,15 @@ export async function openEditProfile(id) {
   $('personName').focus();
 }
 
-/** Read a chosen .docx into the form. Nothing is saved until "Add profile". */
+/**
+ * Read a chosen .docx or PDF into the form. Nothing is saved until "Add
+ * profile". Both fill the form the same way; only a .docx is kept as their
+ * master resume, because tailoring edits the Word file itself.
+ */
 export async function readResumeIntoForm(file) {
   const status = $('personResumeStatus');
   if (!file) return;
-  if (!/\.docx$/i.test(file.name)) { status.textContent = 'Only .docx files can be read. Save it as .docx and try again.'; return; }
+  if (!/\.(docx|pdf)$/i.test(file.name)) { status.textContent = 'Only .docx or PDF files can be read. Save it as one of those and try again.'; return; }
   status.textContent = `Reading ${file.name}…`;
   try {
     const { bytesToBase64 } = await import('./master.js');
@@ -503,16 +507,27 @@ export async function readResumeIntoForm(file) {
     const r = await postJson('/api/search-profiles/read-resume', { contentBase64 });
     form.resumeBase64 = contentBase64;
     // Keep anything already typed; fill only what is empty.
-    const typed = { fullName: $('personName').value, email: $('personEmail').value };
+    const typed = {
+      fullName: $('personName').value, email: $('personEmail').value,
+      city: $('personCity').value, state: $('personState').value, seniority: $('personSeniority').value,
+    };
     fillForm({
       ...r.fields,
       fullName: typed.fullName || r.fields.fullName,
       email: typed.email || r.fields.email,
+      city: typed.city || r.fields.city,
+      state: typed.state || r.fields.state,
+      seniority: typed.seniority || r.fields.seniority,
+      remoteOnly: $('personRemote').checked,
       targetRoles: [...form.roles, ...(r.fields.targetRoles ?? [])],
     }, { pristine: false });
     const found = [r.found.roles && `${r.found.roles} job title${r.found.roles === 1 ? '' : 's'}`,
       r.found.jobs && `${r.found.jobs} past job${r.found.jobs === 1 ? '' : 's'}`].filter(Boolean).join(' and ');
-    status.textContent = found ? `Read ${found} from ${file.name}. Check them below.` : `Read ${file.name}. No job titles found; add them below.`;
+    const read = found ? `Read ${found} from ${file.name}. Check them below.` : `Read ${file.name}. No job titles found; add them below.`;
+    // Said now, not after saving: a PDF fills the form but is not kept.
+    status.textContent = r.format === 'pdf'
+      ? `${read} To tailor their resume, add a .docx copy later in Master resume.`
+      : read;
   } catch (err) {
     form.resumeBase64 = null;
     status.textContent = err.message;
