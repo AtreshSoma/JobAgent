@@ -22,6 +22,13 @@ beforeAll(async () => {
     if (req.url === '/to-metadata') { res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' }); res.end(); return; }
     if (req.url === '/to-rebind') { res.writeHead(302, { location: `http://rebind.example.com:${port}/ok` }); res.end(); return; }
     if (req.url === '/to-ok') { res.writeHead(301, { location: '/ok' }); res.end(); return; }
+    // A redirect WITH a body, written in pieces like a real server: cancelling
+    // it used to raise an uncaught "Controller is already closed".
+    if (req.url === '/to-ok-body') {
+      res.writeHead(301, { location: '/ok', 'content-type': 'text/html' });
+      res.write('<html><body>Moved'); setTimeout(() => res.end(' permanently</body></html>'), 5);
+      return;
+    }
     if (req.url === '/loop') { res.writeHead(302, { location: '/loop' }); res.end(); return; }
     if (req.url === '/echo' && req.method === 'POST') {
       let body = '';
@@ -109,6 +116,20 @@ describe('createSafeFetch', () => {
       const res = await safe(`http://jobs.example.com:${port}/to-ok`);
       expect(await res.text()).toBe('<h1>Data Engineer</h1>');
       expect(res.redirected).toBe(true);
+    });
+
+    it('follows a redirect that carries a body without an uncaught stream error', async () => {
+      const uncaught = [];
+      const onUncaught = (err) => uncaught.push(err);
+      process.on('uncaughtException', onUncaught);
+      try {
+        const res = await safe(`http://jobs.example.com:${port}/to-ok-body`);
+        expect(await res.text()).toBe('<h1>Data Engineer</h1>');
+        await new Promise((r) => setTimeout(r, 30));
+        expect(uncaught).toEqual([]);
+      } finally {
+        process.off('uncaughtException', onUncaught);
+      }
     });
 
     it('refuses a redirect to a metadata address', async () => {

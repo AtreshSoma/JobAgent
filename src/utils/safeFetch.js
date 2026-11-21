@@ -343,11 +343,18 @@ export function createSafeFetch({
         if (hop > 0) Object.defineProperty(response, 'redirected', { value: true });
         return response;
       }
+      // DRAIN a redirect's body, never cancel it. Cancelling the web stream
+      // closes its controller while the Node stream underneath (Readable.toWeb)
+      // is still flowing, and the next chunk then throws "Invalid state:
+      // Controller is already closed" OUTSIDE any promise, as an uncaught
+      // exception that kills the process. Reproduced 2026-11-20 on
+      // jobs.dell.com (301 with a 157-byte body) and careers.lamresearch.com.
+      // Redirect bodies are tiny and capped by maxBytes, so reading them is free.
       if (hop >= maxRedirects) {
-        try { await response.body?.cancel(); } catch { /* already closed */ }
+        await drain(response);
         throw Object.assign(new Error(`too many redirects (more than ${maxRedirects})`), { retryable: false });
       }
-      try { await response.body?.cancel(); } catch { /* already closed */ }
+      await drain(response);
       current = new URL(location, url).href;
       if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
         method = 'GET';
@@ -355,6 +362,11 @@ export function createSafeFetch({
       }
     }
   };
+}
+
+/** Read and discard a response body; a body error is irrelevant to a redirect. */
+async function drain(response) {
+  try { await response.arrayBuffer(); } catch { /* already consumed or failed: nothing to keep */ }
 }
 
 /** The default guarded fetch, using real DNS. */
